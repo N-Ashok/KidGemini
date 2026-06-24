@@ -105,16 +105,115 @@ tokens only (no ad-hoc hex), generous spacing, soft rounded shapes (`rounded-kid
 tap targets, accessible contrast, motion that's gentle. Components are presentational by
 default; data lives in containers/hooks.
 
-## 7. Workflow
+## 7. Development process — **MANDATORY**
 
-- `npm run dev` — local dev. `npm run typecheck` before considering anything done.
-- Keep diffs focused. One concern per change.
-- New module? Give it a type/interface in `src/types` first (Dependency Inversion).
-- Touching safety? Add/extend a test in the mirrored `.test.ts`. Safety code is never untested.
+Every non-trivial change **must** follow this lifecycle, in order. Do not skip a step. Do not
+write feature code before its tests. "It typechecks" and "it boots" are **not** done.
 
-## 8. Environment
+1. **Requirement gathering.** Restate the requirement before building. **If any requirement is
+   unclear AND there is no clear winner among the options, STOP and ask the human** — present
+   the choices and get an explicit decision. Never make a no-clear-winner call unilaterally
+   (cookie strategy, auth model, UX pattern, data shape all count). Obvious defaults: just proceed.
+2. **PRD & plan.** Capture the intent and approach in writing **before coding** — extend
+   `docs/PRD.md` (product intent) and write a short implementation plan (files, interfaces,
+   test list). One plan per feature; keep it in the PR/change description or `docs/`.
+3. **Develop per the coding principles in §4** (SOLID, types-first in `src/types`, config not
+   call-sites, server-only secrets, fail-closed safety). Keep diffs focused — one concern per change.
+4. **Test-first — write tests BEFORE the implementation.** Required layers:
+   - **Unit** — pure logic in `src/lib` (safety, gate, pricing, db queries). Mirror the file as `.test.ts`.
+   - **Integration** — API routes end-to-end with collaborators (mock Gemini, in-memory SQLite):
+     the safety gate, the guest token gate, auth identity resolution.
+   - **Regression** — every fixed bug gets a test that fails before the fix and passes after.
+   - **Safety code is NEVER untested** (it's the whole point of this app). Touching `safety.*`,
+     `/api/chat`, or the gate ⇒ add/extend tests in the same change.
+   - Stack: **Vitest** (unit/integration, `npm run test`), **Playwright** (browser e2e/regression,
+     `npm run test:e2e`). `npm run test` **and** `npm run typecheck` must pass before anything is "done".
+5. **UAT handoff.** Deliver the human a UAT package: a numbered list of user-facing test cases
+   (steps → expected result) covering the change. Then **monitor and fix** reported bugs.
+6. **Bug-solving.** Fixes follow the **Bug-Fix Protocol** in §9 — solve the *class*, not the
+   symptom, and log it. Reproduce → write a failing regression test (step 4) → fix → confirm
+   green → append a `docs/BUG-FIX-LOG.md` entry → note it in the UAT package.
 
-Copy `.env.example` → `.env.local`. `GEMINI_API_KEY` is required and **server-only**.
+New module? Give it a type/interface in `src/types` first (Dependency Inversion). `npm run dev` for local dev.
+
+## 8. Checklists & quality gates
+
+**Before starting a non-trivial task:**
+1. Read the real code path end-to-end — don't build on assumptions.
+2. List the files that will change; confirm scope with the human.
+3. Have the plan (§7 step 2) approved before writing code.
+
+**Before each commit:**
+1. Self-audit against §4 (SRP, DRY, fail-closed safety, minimal change — don't refactor unrelated lines).
+2. Run the tests for the impacted area, then the full suite; fix red before committing. Consult
+   `docs/REGRESSION-TEST-CATALOG.md` for which tests must run when touching which files.
+3. Scan the staged diff for secret patterns (`GEMINI_API_KEY`, `AUTH_SECRET`, `SECRET`, JWT, `-----BEGIN`).
+4. For UI changes: start the dev server, verify the golden path **and** one edge case, at mobile width (375px) too.
+
+**Quality gates — all must pass before "done"/merge:**
+
+| # | Gate | How to verify |
+|---|------|---------------|
+| 1 | Typecheck clean | `npm run typecheck` |
+| 2 | Unit + integration tests green | `npm run test` |
+| 3 | E2e/regression green (UI changes) | `npm run test:e2e` |
+| 4 | Coverage ≥ 70% on `src/lib/**` | included in `npm run test` |
+| 5 | SOLID + fail-closed safety honored | self-review against §4 |
+| 6 | No secrets / data files touched | the Hard rule at the top |
+| 7 | **Scalability checked** — no new unbounded query / per-instance state, or it's an accepted, documented trade-off | §10 + `docs/SCALABILITY_ISSUES.md` |
+| 8 | UAT sign-off | human confirms |
+
+## 9. Bug-Fix Protocol — solve the class, not the symptom
+
+When a bug is reported (UAT, user, log alert):
+
+1. **Read `docs/BUG-FIX-LOG.md` BEFORE proposing a fix.** Scan for prior bugs in the **same
+   surface area** (same file/route/module) and the **same signature** (silent failure, fail-open
+   safety, stale state, count mismatch, swallowed error). Don't interrogate the user with
+   diagnostics first — investigate the code path yourself (reproduce + root-cause).
+2. **Name the class.** If the log shows repeats of this shape, it's a **class regression**, not a
+   one-off. Highest-risk classes here: a **safety fail-open** (unvetted content reaching the
+   client), a **silent block/drop** without logging, **closure stale state** (`setInterval`/
+   `setTimeout` capturing `useState` instead of `useRef`), **secret leak** to the client bundle.
+3. **Solve at the class level.** Fix the symptom at its layer **and** add a contract at the
+   adjacent layer so the same class can't slip past via another path (e.g. a missed client guard
+   also gets a server-side block; a silent drop also gets a log + alert). Safety fixes fail closed.
+4. **Test the contract, not just the bug.** New tests pin the exact symptom (regression-locked)
+   and cover each layer's assertion. Register them in `docs/REGRESSION-TEST-CATALOG.md` with
+   *when to run* (which file paths invalidate which tests).
+5. **Document.** Append a `docs/BUG-FIX-LOG.md` entry (newest first, template in that file);
+   name the class and link prior repeats in **Related**. Move/close the row in `docs/KNOWN_BUGS.md`.
+
+**Hard rule:** the BUG-FIX-LOG entry must exist *before* the commit. The entry IS the deliverable —
+code without it is incomplete.
+
+## 10. Always-on hard stops
+
+Pause and surface to the human — in every mode, including autonomous:
+
+- **Secrets / privacy** — any `.env*`, `data/`, `*.db`, or a string matching an API-key/JWT/private-key pattern about to be read, edited, or committed (this is the Hard rule at the top — it overrides everything).
+- **Safety regression** — a change that could let unvetted model content reach the client, or makes the gate fail *open*.
+- **Destructive git** — `reset --hard`, `checkout <ref> -- <path>`, `branch -D`, `clean -fd`, force-push.
+- **Scalability issue** — a change that won't survive horizontal scale: an **unbounded query**
+  (no `LIMIT`/index — e.g. a per-request `SUM`/scan that grows with history), **in-memory or
+  file-local per-user state** (counters, sessions, the SQLite file, local log files) that diverges
+  across instances/serverless, an append-only table/log with no rotation, or **no inbound
+  rate-limit on an LLM-cost path**. → **STOP, document in `docs/SCALABILITY_ISSUES.md`**, and
+  surface the trade-off in the plan before writing code.
+
+  **Standing rule — compromise ⇒ limit + ready plan.** Whenever we deliberately trade scalability
+  for cost or speed *now*, it ships only with BOTH: (a) the **limit and its trigger symptom**
+  recorded in `docs/SCALABILITY_ISSUES.md`, and (b) a **ready scale-up/migration plan** (trigger →
+  steps → rollback → effort) — inline for simple cases, or a runbook like
+  `docs/SCALABILITY_MIGRATION_PLAN.md` for involved ones. "We'll figure it out later" is not allowed;
+  the plan is part of the deliverable.
+- **Scope creep** — work needs something outside the approved plan → stop and ask.
+- **Unexplained regression** — a previously-green test fails for an unrelated reason.
+
+## 11. Environment
+
+Copy `.env.example` → `.env.local`. `GEMINI_API_KEY` (server-only) and `AUTH_SECRET` /
+`AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` (Google sign-in) are required.
 
 ⚠️ Per the **Hard rule** at the top of this file: never read or edit `.env*` or the `data/`
 database. The human manages those. Only ever touch `.env.example`.

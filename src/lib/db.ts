@@ -11,6 +11,8 @@ import type {
   UsageStore,
   UsageSummary,
 } from "@/types/usage.types";
+import type { IpLimitRecord, RateLimitStatus, RateLimitStore } from "@/types/rate-limit.types";
+import { evaluate } from "./rate-limit";
 
 let db: Database.Database | null = null;
 
@@ -49,6 +51,18 @@ function getDb(): Database.Database {
       blocked INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_usage_createdAt ON usage_events(createdAt);
+    -- Speeds up the guest-gate tally (tokensUsedByUser): per-user lookups instead of a full scan.
+    -- See docs/SCALABILITY_ISSUES.md #2.
+    CREATE INDEX IF NOT EXISTS idx_usage_userId ON usage_events(userId, createdAt);
+    -- Per-IP rate-limit state (docs/SCALABILITY_ISSUES.md #3). Persists so a block lasts until
+    -- next day and strikes are remembered across days for the 3-strike pay wall.
+    CREATE TABLE IF NOT EXISTS ip_limits (
+      ip TEXT PRIMARY KEY,
+      windowStart INTEGER NOT NULL,
+      count INTEGER NOT NULL,
+      blockedUntil INTEGER NOT NULL,
+      strikes INTEGER NOT NULL
+    );
   `);
   return db;
 }
@@ -98,6 +112,16 @@ export class SqliteUsageStore implements UsageStore {
         blocked: event.blocked ? 1 : 0,
       });
     return event;
+  }
+
+  tokensUsedByUser(userId: string): number {
+    const row = getDb()
+      .prepare(
+        `SELECT COALESCE(SUM(promptTokens + outputTokens), 0) AS total
+         FROM usage_events WHERE userId = ?`,
+      )
+      .get(userId) as { total: number };
+    return row.total;
   }
 
   listSince(sinceMs: number): UsageEvent[] {
@@ -174,5 +198,20 @@ export class SqliteUsageStore implements UsageStore {
     summary.byUser = [...users.values()].sort((a, b) => b.costUsd - a.costUsd);
     summary.byLocation = [...locs.values()].sort((a, b) => b.eventCount - a.eventCount);
     return summary;
+  }
+}
+
+export class SqliteRateLimitStore implements RateLimitStore {
+  hit(ip: string, now: number): RateLimitStatus {
+    const db = getDb();
+    const prev = (db.prepare(`SELECT * FROM ip_limits WHERE ip = ?`).get(ip) as IpLimitRecord) ?? null;
+    const { record, status } = evaluate(prev, ip, now);
+    db.prepare(
+      `INSERT INTO ip_limits (ip, windowStart, count, blockedUntil, strikes)
+       VALUES (@ip, @windowStart, @count, @blockedUntil, @strikes)
+       ON CONFLICT(ip) DO UPDATE SET
+         windowStart = @windowStart, count = @count, blockedUntil = @blockedUntil, strikes = @strikes`,
+    ).run(record);
+    return status;
   }
 }

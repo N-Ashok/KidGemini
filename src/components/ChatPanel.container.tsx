@@ -4,10 +4,12 @@
 // Naming: `.container.tsx` = data-fetching component (CLAUDE.md § 5).
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { signIn } from "next-auth/react";
 import { Sidebar } from "./Sidebar";
 import { Composer, type Attachment } from "./Composer";
 import { ArtifactFrame } from "./ArtifactFrame";
 import { MessageItem } from "./MessageItem";
+import { LoginGate } from "./LoginGate";
 import { useTextToSpeech } from "./useTextToSpeech";
 import type { ChatMessage } from "@/types/chat.types";
 
@@ -55,6 +57,9 @@ export function ChatPanelContainer() {
   const [activeId, setActiveId] = useState(convos[0]!.id);
   const [busy, setBusy] = useState(false);
   const [artifact, setArtifact] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer; always visible on md+
+  // Set when the server stops the guest: sign-in gate (token limit), rate-limit, or pay wall.
+  const [gate, setGate] = useState<{ text: string; upgrade: boolean } | null>(null);
   const tts = useTextToSpeech();
 
   const active = convos.find((c) => c.id === activeId) ?? convos[0]!;
@@ -90,12 +95,14 @@ export function ChatPanelContainer() {
     setConvos((list) => [c, ...list]);
     setActiveId(c.id);
     setArtifact(null);
+    setSidebarOpen(false);
   }
 
   function handleSelect(id: string) {
     tts.stop();
     setActiveId(id);
     setArtifact(null);
+    setSidebarOpen(false);
   }
 
   // Core streaming routine, shared by send + regenerate. Fills the message `replyId`.
@@ -123,7 +130,7 @@ export function ChatPanelContainer() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, history, userId: "default-child" }),
+        body: JSON.stringify({ message: text, history }),
         signal: controller.signal,
       });
       const reader = res.body!.getReader();
@@ -160,6 +167,21 @@ export function ChatPanelContainer() {
             setReply(ev.text ?? KIND_FALLBACK);
             finalized = true;
             console.warn(`[chat] blocked by safety monitor`);
+          } else if (ev.type === "gate") {
+            setReply(ev.text ?? "Sign in to keep chatting. ✨");
+            setGate({ text: ev.text ?? "Sign in with Google to keep chatting!", upgrade: false });
+            finalized = true;
+            console.warn(`[chat] gated — sign-in required`);
+          } else if (ev.type === "rate_limited") {
+            setReply(ev.text ?? "Slow down a little! 🐢");
+            setGate({ text: ev.text ?? "Too many messages — come back tomorrow or sign in.", upgrade: false });
+            finalized = true;
+            console.warn(`[chat] rate-limited`);
+          } else if (ev.type === "paywall") {
+            setReply(ev.text ?? "Upgrade to keep chatting. 💳");
+            setGate({ text: ev.text ?? "You've hit the free limit too many times.", upgrade: true });
+            finalized = true;
+            console.warn(`[chat] paywall — strikes exhausted`);
           } else if (ev.type === "error") {
             setReply(ev.text ?? "Oops! Let's try again.");
             finalized = true;
@@ -240,11 +262,24 @@ export function ChatPanelContainer() {
       <Sidebar
         recents={recents}
         activeId={activeId}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
         onNewChat={handleNewChat}
         onSelect={handleSelect}
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
+        {/* Mobile top bar — hamburger opens the drawer; hidden on md+ where the sidebar is static. */}
+        <div className="flex items-center gap-2 border-b border-neutral-200 px-3 py-2 md:hidden">
+          <button
+            aria-label="Open menu"
+            onClick={() => setSidebarOpen(true)}
+            className="rounded-lg p-2 text-neutral-600 hover:bg-neutral-100"
+          >
+            ☰
+          </button>
+          <span className="text-base font-semibold text-neutral-700">✨ KidGemini</span>
+        </div>
         <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-8">
             {active.messages.map((m, i) => (
@@ -285,9 +320,13 @@ export function ChatPanelContainer() {
       </main>
 
       {artifact && (
-        <div className="hidden w-[440px] border-l border-neutral-200 md:block">
+        <div className="fixed inset-0 z-40 bg-white md:static md:inset-auto md:z-auto md:w-[440px] md:border-l md:border-neutral-200">
           <ArtifactFrame html={artifact} onClose={() => setArtifact(null)} />
         </div>
+      )}
+
+      {gate && (
+        <LoginGate message={gate.text} showUpgrade={gate.upgrade} onSignIn={() => signIn("google")} />
       )}
     </div>
   );

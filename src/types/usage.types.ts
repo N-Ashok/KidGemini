@@ -55,4 +55,9 @@ export interface UsageStore {
   /** Events within [sinceMs, nowMs]. */
   listSince(sinceMs: number): UsageEvent[];
   summarizeSince(sinceMs: number): UsageSummary;
+  /**
+   * Total tokens (promptTokens + outputTokens, across every `kind` including safety)
+   * ever attributed to a user. Powers the server-enforced guest gate.
+   */
+  tokensUsedByUser(userId: string): number;
 }
