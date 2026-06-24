@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "KidGemini Guard",
+  "version": "0.1.0",
+  "description": "Watches Gemini and hides unsafe responses from kids until vetted; alerts parents.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://gemini.google.com/*",
+    "http://localhost:3000/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://gemini.google.com/*"],
+      "js": ["safety-rules.js", "content.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "KidGemini Guard"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

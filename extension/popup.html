@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="popup.css" />
+    <title>KidGemini Guard</title>
+  </head>
+  <body>
+    <header>
+      <span class="logo">🛡️</span>
+      <h1>KidGemini Guard</h1>
+    </header>
+
+    <label class="row">
+      <span>Protection</span>
+      <input type="checkbox" id="enabled" />
+    </label>
+
+    <label class="row">
+      <span>Strictness</span>
+      <select id="strictness">
+        <option value="relaxed">Relaxed</option>
+        <option value="standard">Standard</option>
+        <option value="strict">Strict</option>
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Safety API URL (blank = local rules only)</span>
+      <input type="text" id="apiUrl" placeholder="http://localhost:3000/api/safety" />
+    </label>
+
+    <details>
+      <summary>Advanced: response selector</summary>
+      <input type="text" id="responseSelector" />
+      <p class="hint">If guarding stops working after a Gemini update, fix the CSS selector here.</p>
+    </details>
+
+    <button id="save">Save</button>
+    <p id="status" class="status"></p>
+
+    <section>
+      <h2>Recent alerts (<span id="alertCount">0</span>)</h2>
+      <button id="clear" class="link">Clear</button>
+      <ul id="alerts"></ul>
+    </section>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

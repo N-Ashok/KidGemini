@@ -1,0 +1,45 @@
+/* Styles injected into gemini.google.com to hide responses until vetted. */
+
+/* While checking: blur the response and block interaction. */
+.kg-checking {
+  filter: blur(10px) !important;
+  pointer-events: none !important;
+  user-select: none !important;
+  position: relative !important;
+}
+
+/* The "Checking…" / "Blocked" banner overlaid on a guarded response. */
+.kg-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 14px;
+  backdrop-filter: blur(2px);
+}
+.kg-overlay--checking {
+  color: #1f6fe0;
+  background: rgba(238, 246, 255, 0.7);
+}
+.kg-overlay--blocked {
+  color: #b91c1c;
+  background: rgba(254, 226, 226, 0.92);
+  filter: none;
+}
+
+/* Replacement shown to the child when a response is blocked. */
+.kg-blocked-note {
+  font-family: system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #7f1d1d;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 14px;
+  padding: 16px 18px;
+}

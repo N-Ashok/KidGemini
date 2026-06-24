@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-display: "Google Sans", "Nunito", system-ui, sans-serif;
+  --font-body: "Nunito", system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-white text-neutral-900 font-body antialiased;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-blue-500 ring-offset-1;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-2xl shadow-sm border border-neutral-200 p-6;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5
+           text-sm font-medium transition-colors duration-150 min-h-[40px];
+  }
+  .btn-primary {
+    @apply btn bg-neutral-800 text-white hover:bg-neutral-700;
+  }
+  .btn-ghost {
+    @apply btn bg-neutral-100 text-neutral-700 hover:bg-neutral-200;
+  }
+}
+
+/* ── Markdown (assistant replies) — Gemini-like rich text ───────────────────── */
+.markdown {
+  @apply text-[15px] leading-7 text-neutral-800;
+}
+.markdown > :first-child { @apply mt-0; }
+.markdown h1 { @apply mt-6 mb-2 text-2xl font-semibold text-neutral-900; }
+.markdown h2 { @apply mt-6 mb-2 text-xl font-semibold text-neutral-900; }
+.markdown h3 { @apply mt-5 mb-2 text-lg font-semibold text-neutral-900; }
+.markdown p { @apply my-3; }
+.markdown strong { @apply font-semibold text-neutral-900; }
+.markdown ul { @apply my-3 list-disc space-y-1 pl-6; }
+.markdown ol { @apply my-3 list-decimal space-y-1 pl-6; }
+.markdown li { @apply pl-1; }
+.markdown a { @apply text-blue-600 underline underline-offset-2; }
+.markdown blockquote { @apply my-3 border-l-4 border-neutral-200 pl-4 text-neutral-600; }
+.markdown code { @apply rounded bg-neutral-100 px-1.5 py-0.5 text-[13px] font-mono; }
+.markdown pre { @apply my-3 overflow-x-auto rounded-xl bg-neutral-900 p-4 text-neutral-100; }
+.markdown pre code { @apply bg-transparent p-0 text-neutral-100; }
+.markdown table { @apply my-3 w-full border-collapse text-sm; }
+.markdown th, .markdown td { @apply border border-neutral-200 px-3 py-2 text-left; }
+.markdown hr { @apply my-5 border-neutral-200; }
+
+/* Mic pulse + reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .mic-listening { animation: none !important; }
+}
+@keyframes micPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
+.mic-listening { animation: micPulse 1.2s ease-in-out infinite; }

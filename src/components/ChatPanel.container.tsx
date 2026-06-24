@@ -1,0 +1,294 @@
+"use client";
+// Container: owns conversations + chat state, talks to /api/chat (the safety boundary),
+// and drives the sidebar, message list (markdown + read-aloud), composer, and artifact panel.
+// Naming: `.container.tsx` = data-fetching component (CLAUDE.md § 5).
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Sidebar } from "./Sidebar";
+import { Composer, type Attachment } from "./Composer";
+import { ArtifactFrame } from "./ArtifactFrame";
+import { MessageItem } from "./MessageItem";
+import { useTextToSpeech } from "./useTextToSpeech";
+import type { ChatMessage } from "@/types/chat.types";
+
+const CHAT_MODEL_LABEL = "flash lite"; // display only; real model is server-side
+const KIND_FALLBACK = "Let's talk about something else! How about a game? 🌟";
+const SUGGESTIONS = [
+  "Make me a catch-the-stars game 🎮",
+  "Tell me a fun fact about space 🚀",
+  "Tell me a short bedtime story 🌙",
+  "Help me with my math homework ➗",
+];
+
+interface Conversation {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+}
+
+function newConversation(): Conversation {
+  return {
+    id: crypto.randomUUID(),
+    title: "New chat",
+    messages: [
+      {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        text: "Hi! I'm your buddy. Ask me anything, or say **make me a game**! 🌟",
+        createdAt: Date.now(),
+      },
+    ],
+  };
+}
+
+/** Strip markdown so the read-aloud voice doesn't speak symbols. */
+function plain(text: string): string {
+  return text
+    .replace(/[#*_`>~-]/g, " ")
+    .replace(/\[(.*?)\]\(.*?\)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function ChatPanelContainer() {
+  const [convos, setConvos] = useState<Conversation[]>([newConversation()]);
+  const [activeId, setActiveId] = useState(convos[0]!.id);
+  const [busy, setBusy] = useState(false);
+  const [artifact, setArtifact] = useState<string | null>(null);
+  const tts = useTextToSpeech();
+
+  const active = convos.find((c) => c.id === activeId) ?? convos[0]!;
+  const recents = useMemo(
+    () => convos.map((c) => ({ id: c.id, title: c.title })),
+    [convos],
+  );
+
+  // Auto-scroll: follow new content to the bottom as it streams in, unless the user has
+  // scrolled up to read (then leave them where they are — like Gemini).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
+  }, [active.messages]);
+  function handleScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }
+
+  function patchActive(fn: (c: Conversation) => Conversation) {
+    setConvos((list) => list.map((c) => (c.id === activeId ? fn(c) : c)));
+  }
+
+  const abortRef = useRef<AbortController | null>(null);
+  const manualStopRef = useRef(false);
+
+  function handleNewChat() {
+    tts.stop();
+    const c = newConversation();
+    setConvos((list) => [c, ...list]);
+    setActiveId(c.id);
+    setArtifact(null);
+  }
+
+  function handleSelect(id: string) {
+    tts.stop();
+    setActiveId(id);
+    setArtifact(null);
+  }
+
+  // Core streaming routine, shared by send + regenerate. Fills the message `replyId`.
+  async function runStream(text: string, history: ChatMessage[], replyId: string) {
+    const setReply = (t: string, artifactHtml?: string) =>
+      patchActive((c) => ({
+        ...c,
+        messages: c.messages.map((m) => (m.id === replyId ? { ...m, text: t, artifactHtml } : m)),
+      }));
+
+    const STALL_MS = 30_000;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    manualStopRef.current = false;
+    let stall = setTimeout(() => controller.abort(), STALL_MS);
+    const bump = () => { clearTimeout(stall); stall = setTimeout(() => controller.abort(), STALL_MS); };
+    const startedAt = Date.now();
+    let firstTokenAt = 0;
+    let finalized = false;
+    let acc = "";
+    setBusy(true);
+    console.log(`[chat] ▶ sending: "${text.slice(0, 60)}"`);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, history, userId: "default-child" }),
+        signal: controller.signal,
+      });
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bump();
+        buffer += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (!line) continue;
+          const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null };
+          if (ev.type === "delta") {
+            if (!firstTokenAt) { firstTokenAt = Date.now(); console.log(`[chat] first token @${firstTokenAt - startedAt}ms`); }
+            acc += ev.text ?? "";
+            setReply(acc);
+          } else if (ev.type === "done") {
+            setReply(ev.text ?? acc, ev.artifactHtml ?? undefined);
+            if (ev.artifactHtml) setArtifact(ev.artifactHtml);
+            setBusy(false);
+            finalized = true;
+            console.log(`[chat] ✓ shown @${Date.now() - startedAt}ms artifact=${ev.artifactHtml ? "yes" : "no"}`);
+          } else if (ev.type === "retract") {
+            setReply(ev.text ?? KIND_FALLBACK);
+            setArtifact(null);
+            finalized = true;
+            console.warn(`[chat] retracted by safety monitor`);
+          } else if (ev.type === "blocked") {
+            setReply(ev.text ?? KIND_FALLBACK);
+            finalized = true;
+            console.warn(`[chat] blocked by safety monitor`);
+          } else if (ev.type === "error") {
+            setReply(ev.text ?? "Oops! Let's try again.");
+            finalized = true;
+          }
+        }
+      }
+    } catch (err) {
+      const aborted = (err as Error)?.name === "AbortError";
+      if (manualStopRef.current) {
+        setReply(acc || "⏹ Stopped."); // user pressed Stop — keep whatever streamed
+        console.warn(`[chat] stopped by user after ${Date.now() - startedAt}ms`);
+      } else if (finalized) {
+        console.warn(`[chat] post-finalize stream drop (ignored) after ${Date.now() - startedAt}ms`);
+      } else {
+        console.error(`[chat] ✖ ${aborted ? "STALLED (no tokens 30s)" : "stream error"} after ${Date.now() - startedAt}ms`, err);
+        setReply(
+          aborted
+            ? "That took too long 😅 — the model is busy. Try again, or ask for something simpler."
+            : "Oops! Something went wrong. Let's try again.",
+        );
+      }
+    } finally {
+      clearTimeout(stall);
+      abortRef.current = null;
+      setBusy(false);
+      console.log(`[chat] finished; total ${Date.now() - startedAt}ms`);
+    }
+  }
+
+  async function handleSend(text: string, attachment?: Attachment) {
+    const history = active.messages;
+    const replyId = crypto.randomUUID();
+    const displayText = text || (attachment ? "" : "");
+    // What the model receives: the file contents folded in, but kept out of the bubble.
+    const apiMessage = attachment
+      ? `The child attached a file named "${attachment.name}". Its contents:\n\`\`\`\n${attachment.content}\n\`\`\`\n\n${text || "Please take a look at this file."}`
+      : text;
+    patchActive((c) => ({
+      ...c,
+      title: c.title === "New chat" ? (text || attachment?.name || "New chat").slice(0, 40) : c.title,
+      messages: [
+        ...c.messages,
+        { id: crypto.randomUUID(), role: "child", text: displayText, attachmentName: attachment?.name, createdAt: Date.now() },
+        { id: replyId, role: "assistant", text: "", createdAt: Date.now() },
+      ],
+    }));
+    await runStream(apiMessage, history, replyId);
+  }
+
+  function handleStop() {
+    manualStopRef.current = true;
+    abortRef.current?.abort();
+  }
+
+  // Regenerate: re-run the last user prompt, replacing the last answer.
+  async function handleRegenerate() {
+    if (busy) return;
+    const msgs = active.messages;
+    let idx = -1;
+    for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i]!.role === "child") { idx = i; break; }
+    if (idx === -1) return;
+    const userText = msgs[idx]!.text;
+    const history = msgs.slice(0, idx);
+    const replyId = crypto.randomUUID();
+    setArtifact(null);
+    patchActive((c) => ({
+      ...c,
+      messages: [
+        ...c.messages.slice(0, idx + 1),
+        { id: replyId, role: "assistant", text: "", createdAt: Date.now() },
+      ],
+    }));
+    await runStream(userText, history, replyId);
+  }
+
+  return (
+    <div className="flex h-screen w-full bg-white text-neutral-900">
+      <Sidebar
+        recents={recents}
+        activeId={activeId}
+        onNewChat={handleNewChat}
+        onSelect={handleSelect}
+      />
+
+      <main className="flex min-w-0 flex-1 flex-col">
+        <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-8">
+            {active.messages.map((m, i) => (
+              <MessageItem
+                key={m.id}
+                message={m}
+                ttsSupported={tts.isSupported}
+                speechState={tts.state}
+                isActive={tts.activeId === m.id}
+                canRegenerate={!busy && m.role === "assistant" && i === active.messages.length - 1 && i > 0}
+                onPlay={() => tts.speak(m.id, plain(m.text))}
+                onPause={tts.pause}
+                onResume={tts.resume}
+                onStop={tts.stop}
+                onRestart={tts.restart}
+                onRegenerate={handleRegenerate}
+              />
+            ))}
+            {busy && active.messages[active.messages.length - 1]?.text === "" && (
+              <p className="animate-pulse text-neutral-400">Thinking… 💭</p>
+            )}
+            {active.messages.length === 1 && (
+              <div className="flex flex-wrap gap-2 pt-2">
+                {SUGGESTIONS.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => handleSend(s)}
+                    className="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-50"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <Composer disabled={busy} busy={busy} model={CHAT_MODEL_LABEL} onSend={handleSend} onStop={handleStop} />
+      </main>
+
+      {artifact && (
+        <div className="hidden w-[440px] border-l border-neutral-200 md:block">
+          <ArtifactFrame html={artifact} onClose={() => setArtifact(null)} />
+        </div>
+      )}
+    </div>
+  );
+}
