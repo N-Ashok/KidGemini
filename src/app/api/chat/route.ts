@@ -51,6 +51,17 @@ export async function POST(req: NextRequest) {
   // client cannot bypass this — the check and the tally both live here on the server.
   const session = await safeAuth();
   const signedIn = Boolean(session?.user);
+
+  // Force sign-in upfront: unauthenticated callers are rejected here, fail-closed, before any
+  // Gemini token is spent. This is the server contract behind the UI's sign-in screen — the
+  // client never sends an unauthenticated chat request, but if one slips through (curl, a stale
+  // tab, a proxy) it gets a clean 401 instead of silently consuming the guest allowance.
+  // (The guest branch below is retained but unreachable while this gate is in force.)
+  if (!signedIn) {
+    console.log(`[api/chat] ⛔ unauthenticated → 401 auth_required`);
+    return NextResponse.json({ error: "auth_required" }, { status: 401 });
+  }
+
   let setGuestCookie: string | null = null;
   let userId: string;
   let userLabel: string | null;

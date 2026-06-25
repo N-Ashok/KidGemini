@@ -236,6 +236,25 @@ Redis + per-user limits. Treat **inference as the dominant cost of goods**.
 
 ---
 
+## 10a. Authentication & access (force sign-in upfront)
+
+**Decision (2026-06-25):** Chat requires a signed-in Google account. Unauthenticated visitors see
+a full-screen `SignInScreen`; the composer is not rendered until authenticated. There is no guest
+chatting.
+
+- **Why:** the prior guest flow surfaced "sign in" only reactively (an in-band event over an HTTP
+  200 stream) and silently hung on mobile when that event didn't arrive — see
+  `docs/BUG-FIX-LOG.md` (2026-06-25). Forcing sign-in upfront makes access state explicit and
+  closes the anonymous LLM-cost path.
+- **Server contract (fail-closed):** `POST /api/chat` returns **HTTP 401 `auth_required`** for
+  unauthenticated callers before any model call. Any future gate/limit must travel as an HTTP
+  status the client checks — never only as an in-band stream event.
+- **Retained-but-dormant:** the guest token gate (`GUEST_TOKEN_LIMIT`) and per-IP rate limit
+  remain in the code but are unreachable while force-login is in force. Revisit if a guest/trial
+  tier is reintroduced.
+
+---
+
 ## 11. Open questions
 
 - Multiple child profiles per household? (v2)

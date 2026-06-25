@@ -4,8 +4,9 @@
 // Naming: `.container.tsx` = data-fetching component (CLAUDE.md § 5).
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { signIn } from "next-auth/react";
+import { signIn, useSession } from "next-auth/react";
 import { Sidebar } from "./Sidebar";
+import { SignInScreen } from "./SignInScreen";
 import { Composer, type Attachment } from "./Composer";
 import { ArtifactFrame } from "./ArtifactFrame";
 import { MessageItem } from "./MessageItem";
@@ -53,6 +54,7 @@ function plain(text: string): string {
 }
 
 export function ChatPanelContainer() {
+  const { status: authStatus } = useSession();
   const [convos, setConvos] = useState<Conversation[]>([newConversation()]);
   const [activeId, setActiveId] = useState(convos[0]!.id);
   const [busy, setBusy] = useState(false);
@@ -133,7 +135,21 @@ export function ChatPanelContainer() {
         body: JSON.stringify({ message: text, history }),
         signal: controller.signal,
       });
-      const reader = res.body!.getReader();
+      // Fail loud, never hang: a non-streaming response (401 auth gate, 4xx/5xx, or a body-less
+      // reply from a proxy) must surface here instead of stalling on getReader() until the 30s
+      // stall timeout. See BUG-FIX-LOG: "silent hang on non-streaming response".
+      if (!res.ok || !res.body) {
+        if (res.status === 401) {
+          setReply("Please sign in to keep chatting. ✨");
+          setGate({ text: "Sign in with Google to keep chatting!", upgrade: false });
+        } else {
+          setReply("Oops! Something went wrong. Let's try again.");
+        }
+        finalized = true;
+        console.error(`[chat] ✖ non-OK response status=${res.status}`);
+        return;
+      }
+      const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
 
@@ -255,6 +271,15 @@ export function ChatPanelContainer() {
       ],
     }));
     await runStream(userText, history, replyId);
+  }
+
+  // Force sign-in upfront: no chatting until authenticated. While the session resolves we show a
+  // quiet placeholder so authenticated users don't flash the sign-in screen on load.
+  if (authStatus === "loading") {
+    return <div className="h-screen w-full bg-white" aria-busy="true" />;
+  }
+  if (authStatus === "unauthenticated") {
+    return <SignInScreen onSignIn={() => signIn("google")} />;
   }
 
   return (
