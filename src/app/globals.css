@@ -7,6 +7,20 @@
   --font-body: "Nunito", system-ui, sans-serif;
 }
 
+/* App shell: Ariantra header (ArNav) on top, page content fills the rest.
+   Full-viewport screens inside use h-full (not h-screen) so they size to the
+   area below the header; the main area owns page scrolling. */
+body {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+.ar-app-main {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 @layer base {
   body {
     @apply bg-white text-neutral-900 font-body antialiased;

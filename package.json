@@ -7,6 +7,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "deploy": "bash scripts/deploy-rsync.sh",
+    "sync:brand": "bash scripts/sync-brand.sh",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

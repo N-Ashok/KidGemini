@@ -1,8 +1,10 @@
 # CLAUDE.md — KidGemini codebase guide
 
 This is the single source of truth for **how we build** in this repo. Claude Code (and any
-human) should read this before writing code. Product intent lives in `docs/PRD.md`; visual
-language lives in `docs/DESIGN_SYSTEM.md`.
+human) should read this before writing code. **Read the relevant docs BEFORE touching the
+code**: product intent in `docs/PRD.md`; visual language in `docs/DESIGN_SYSTEM.md`; system
+map and hosting in `docs/ARCHITECTURE.md`; feature overview in `docs/FEATURES.md`; known
+issues in `docs/KNOWN_BUGS.md` and `docs/SCALABILITY_ISSUES.md`.
 
 ---
 
@@ -217,3 +219,19 @@ Copy `.env.example` → `.env.local`. `GEMINI_API_KEY` (server-only) and `AUTH_S
 
 ⚠️ Per the **Hard rule** at the top of this file: never read or edit `.env*` or the `data/`
 database. The human manages those. Only ever touch `.env.example`.
+
+## 12. Deployment & shared Ariantra brand
+
+- **Prod host:** EC2, co-hosted with the Ariantra platform (`../Ariantra-Platform`) as a
+  second Next app — pm2 name `kidgemini`, port **3001**, Caddy routes
+  `kidgemini.ariantra.com → 127.0.0.1:3001`. Deploy with `npm run deploy`
+  (`scripts/deploy-rsync.sh`; config in gitignored `scripts/deploy.env`).
+- **SQLite in prod** lives at `/var/lib/kidgemini/kidgemini.db` (absolute `DATABASE_PATH`,
+  outside the app dir so deploys can't wipe it) with a daily WAL-safe `.backup` cron.
+  Exactly ONE instance may run against the file. Full runbook:
+  `../Ariantra-Platform/docs/DEPLOY_RUNBOOK.md` §7.
+- **Shared header:** `src/components/ArNav.tsx` renders the Ariantra nav on every page
+  (mounted in `src/app/layout.tsx`). Its styles come from `public/brand/ariantra-brand.v1.css`
+  — a LOCAL COPY generated in the platform repo from its `theme.ts`. Never hand-edit it;
+  refresh with `npm run sync:brand` (deploy does this automatically). Page content sizes with
+  `h-full` inside the `.ar-app-main` scroll area — don't reintroduce `h-screen` on screens.

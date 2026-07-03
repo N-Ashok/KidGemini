@@ -25,3 +25,7 @@
 .DS_Store
 *.tsbuildinfo
 next-env.d.ts
+
+# deploy config — local SSH target for scripts/deploy-rsync.sh
+/scripts/deploy.env
+/.deploy-lock.sha

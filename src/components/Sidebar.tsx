@@ -35,7 +35,7 @@ export function Sidebar({ recents, activeId, isOpen, onClose, onNewChat, onSelec
         />
       )}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex h-screen w-64 flex-col border-r border-neutral-200
+        className={`fixed inset-y-0 left-0 z-40 flex h-full w-64 flex-col border-r border-neutral-200
                     bg-neutral-50 transition-transform duration-200 md:static md:z-auto md:translate-x-0
                     ${isOpen ? "translate-x-0" : "-translate-x-full"}`}
       >
@@ -65,6 +65,12 @@ export function Sidebar({ recents, activeId, isOpen, onClose, onNewChat, onSelec
         <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 hover:bg-neutral-200/60">
           <span aria-hidden>🔍</span> Search chats
         </button>
+        <a
+          href="/upgrade"
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 hover:bg-neutral-200/60"
+        >
+          <span aria-hidden>✨</span> Go premium
+        </a>
         <a
           href="/parent"
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2 hover:bg-neutral-200/60"

@@ -9,7 +9,7 @@ interface SignInScreenProps {
 
 export function SignInScreen({ onSignIn }: SignInScreenProps) {
   return (
-    <div className="flex h-screen w-full items-center justify-center bg-white p-4 text-neutral-900">
+    <div className="flex h-full w-full items-center justify-center bg-white p-4 text-neutral-900">
       <div className="w-full max-w-sm rounded-kid bg-white p-8 text-center shadow-xl">
         <div className="text-5xl" aria-hidden>
           ✨

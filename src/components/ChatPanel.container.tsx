@@ -276,14 +276,14 @@ export function ChatPanelContainer() {
   // Force sign-in upfront: no chatting until authenticated. While the session resolves we show a
   // quiet placeholder so authenticated users don't flash the sign-in screen on load.
   if (authStatus === "loading") {
-    return <div className="h-screen w-full bg-white" aria-busy="true" />;
+    return <div className="h-full w-full bg-white" aria-busy="true" />;
   }
   if (authStatus === "unauthenticated") {
     return <SignInScreen onSignIn={() => signIn("google")} />;
   }
 
   return (
-    <div className="flex h-screen w-full bg-white text-neutral-900">
+    <div className="flex h-full w-full bg-white text-neutral-900">
       <Sidebar
         recents={recents}
         activeId={activeId}
