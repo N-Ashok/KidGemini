@@ -266,7 +266,8 @@ an access period, but no entitlement gate consumes it. The gate is a deliberate 
 the product funnel is *try free → sign in → (later) pay*.
 
 - **Guest trial:** anyone may chat up to `GUEST_TOKEN_LIMIT` (10K tokens) per device
-  (httpOnly `kg_guest` cookie), server-enforced. At the wall a blocking overlay —
+  (httpOnly `kg_guest` cookie), server-enforced, over a ROLLING `GUEST_WINDOW_MS`
+  (2-day) window — the allowance resets as usage ages out. At the wall a blocking overlay —
   "Please sign in to continue using KidGemini ✨" — forces Ariantra SSO login to proceed.
 - **Abuse control:** per-IP guest cap `IP_GUEST_TOKEN_CAP` (2× the device allowance —
   defeats cookie-clearing while staying generous to shared family/school IPs), plus the

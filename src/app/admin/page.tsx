@@ -77,6 +77,22 @@ export default function AdminPage() {
         <Stat label="Est. cost" value={usd(s.totalCostUsd)} />
       </section>
 
+      {/* Per-day — how much each day, and who spent the most that day */}
+      <Panel title="By day (newest first · top spender)">
+        <Table
+          head={["Day", "Requests", "Prompt tok", "Output tok", "Cost", "Top spender", "Their tokens"]}
+          rows={s.byDay.map((d) => [
+            d.day,
+            String(d.eventCount),
+            d.promptTokens.toLocaleString(),
+            d.outputTokens.toLocaleString(),
+            usd(d.costUsd),
+            d.topUser ? (d.topUser.userLabel ?? d.topUser.userId) : "—",
+            d.topUser ? d.topUser.tokens.toLocaleString() : "—",
+          ])}
+        />
+      </Panel>
+
       {/* Per-user — who uses more / less */}
       <Panel title="By user (most → least cost)">
         <Table

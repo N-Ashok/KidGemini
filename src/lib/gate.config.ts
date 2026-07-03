@@ -2,8 +2,12 @@
 // A signed-out "guest" may use the app up to GUEST_TOKEN_LIMIT total tokens (chat + safety,
 // prompt + output) before /api/chat requires Google sign-in. Signed-in users are unlimited.
 
-/** Total tokens a guest may spend before the sign-in wall. */
+/** Total tokens a guest may spend WITHIN THE ROLLING WINDOW before the
+ *  sign-in wall. Resets naturally as old usage ages out of the window. */
 export const GUEST_TOKEN_LIMIT = 10_000;
+
+/** Rolling window for the guest tallies (device AND per-IP): 2 days. */
+export const GUEST_WINDOW_MS = 2 * 24 * 60 * 60 * 1000;
 
 /** Cookie that identifies an anonymous device so its usage can be tallied server-side. */
 export const GUEST_COOKIE = "kg_guest";

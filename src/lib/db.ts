@@ -138,23 +138,23 @@ export class SqliteUsageStore implements UsageStore {
     return event;
   }
 
-  tokensUsedByUser(userId: string): number {
+  tokensUsedByUser(userId: string, sinceMs = 0): number {
     const row = getDb()
       .prepare(
         `SELECT COALESCE(SUM(promptTokens + outputTokens), 0) AS total
-         FROM usage_events WHERE userId = ?`,
+         FROM usage_events WHERE userId = ? AND createdAt >= ?`,
       )
-      .get(userId) as { total: number };
+      .get(userId, sinceMs) as { total: number };
     return row.total;
   }
 
-  guestTokensUsedByIp(ip: string): number {
+  guestTokensUsedByIp(ip: string, sinceMs = 0): number {
     const row = getDb()
       .prepare(
         `SELECT COALESCE(SUM(promptTokens + outputTokens), 0) AS total
-         FROM usage_events WHERE ip = ? AND userId LIKE 'guest:%'`,
+         FROM usage_events WHERE ip = ? AND userId LIKE 'guest:%' AND createdAt >= ?`,
       )
-      .get(ip) as { total: number };
+      .get(ip, sinceMs) as { total: number };
     return row.total;
   }
 
@@ -201,11 +201,15 @@ export class SqliteUsageStore implements UsageStore {
       totalOutputTokens: 0,
       totalCostUsd: 0,
       eventCount: events.length,
+      byDay: [],
       byUser: [],
       byLocation: [],
     };
     const users = new Map<string, UsageSummary["byUser"][number]>();
     const locs = new Map<string, UsageSummary["byLocation"][number]>();
+    // Per-UTC-day rollup + per-day per-user tally (to name each day's top spender).
+    const days = new Map<string, UsageSummary["byDay"][number]>();
+    const dayUsers = new Map<string, Map<string, { userLabel: string | null; tokens: number }>>();
 
     for (const e of events) {
       summary.totalPromptTokens += e.promptTokens;
@@ -237,8 +241,29 @@ export class SqliteUsageStore implements UsageStore {
       l.eventCount += 1;
       l.costUsd += e.costUsd;
       locs.set(key, l);
+
+      const day = new Date(e.createdAt).toISOString().slice(0, 10);
+      const d = days.get(day) ?? { day, promptTokens: 0, outputTokens: 0, costUsd: 0, eventCount: 0, topUser: null };
+      d.promptTokens += e.promptTokens;
+      d.outputTokens += e.outputTokens;
+      d.costUsd += e.costUsd;
+      d.eventCount += 1;
+      days.set(day, d);
+      const du = dayUsers.get(day) ?? new Map();
+      const rec = du.get(e.userId) ?? { userLabel: e.userLabel, tokens: 0 };
+      rec.tokens += e.promptTokens + e.outputTokens;
+      du.set(e.userId, rec);
+      dayUsers.set(day, du);
     }
 
+    for (const d of days.values()) {
+      let top: UsageSummary["byDay"][number]["topUser"] = null;
+      for (const [userId, rec] of dayUsers.get(d.day) ?? []) {
+        if (!top || rec.tokens > top.tokens) top = { userId, userLabel: rec.userLabel, tokens: rec.tokens };
+      }
+      d.topUser = top;
+    }
+    summary.byDay = [...days.values()].sort((a, b) => (a.day < b.day ? 1 : -1));
     summary.byUser = [...users.values()].sort((a, b) => b.costUsd - a.costUsd);
     summary.byLocation = [...locs.values()].sort((a, b) => b.eventCount - a.eventCount);
     return summary;

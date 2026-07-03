@@ -5,8 +5,8 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 ## Chat (home `/`)
 - Gemini-powered kids chat: text + voice (TTS playback, regenerate last answer)
 - Sandboxed HTML game artifacts the AI can build in-chat
-- Guest trial: chat free up to 10K tokens per device (per-IP backstop at 2× so
-  cookie-clearing doesn't reset it) → then a blocking "Please sign in to continue
+- Guest trial: chat free up to 10K tokens per device per rolling 2-day window
+  (per-IP backstop at 2× so cookie-clearing doesn't reset it) → then a blocking "Please sign in to continue
   using KidGemini" wall → Ariantra SSO (Google or username/password)
 - Signed-in: unlimited today; config-ready daily budget → upgrade paywall
   (`SIGNED_IN_DAILY_TOKEN_LIMIT` env knob, ships OFF)
@@ -20,7 +20,8 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 
 ## Limits & admin
 - Per-IP rate limiting with daily windows + 3-strike escalation
-- Usage/cost tracking per user/model (tokens, USD) — admin dashboard (`/admin`)
+- Usage/cost tracking per user/model (tokens, USD) — admin dashboard (`/admin`):
+  daily totals + top spender per day, per-user and per-location breakdowns, raw log
 
 ## Billing (`/upgrade`)
 - Razorpay one-time payments: plan cards, order creation, checkout

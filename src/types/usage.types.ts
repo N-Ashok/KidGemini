@@ -32,6 +32,15 @@ export interface UsageSummary {
   totalOutputTokens: number;
   totalCostUsd: number;
   eventCount: number;
+  /** Per-UTC-day totals, newest first — the admin "per day / top spender" view. */
+  byDay: Array<{
+    day: string; // YYYY-MM-DD (UTC)
+    promptTokens: number;
+    outputTokens: number;
+    costUsd: number;
+    eventCount: number;
+    topUser: { userId: string; userLabel: string | null; tokens: number } | null;
+  }>;
   byUser: Array<{
     userId: string;
     userLabel: string | null;
@@ -59,9 +68,9 @@ export interface UsageStore {
    * Total tokens (promptTokens + outputTokens, across every `kind` including safety)
    * ever attributed to a user. Powers the server-enforced guest gate.
    */
-  tokensUsedByUser(userId: string): number;
+  tokensUsedByUser(userId: string, sinceMs?: number): number;
   /** Guest tokens spent from an IP across ALL guest cookies — the cookie-clearing backstop. */
-  guestTokensUsedByIp(ip: string): number;
+  guestTokensUsedByIp(ip: string, sinceMs?: number): number;
   /** Tokens attributed to a user since a timestamp — powers the signed-in daily budget. */
   tokensUsedByUserSince(userId: string, sinceMs: number): number;
 }

@@ -52,8 +52,8 @@ vi.mock("@/lib/safety.rules", () => ({
 vi.mock("@/lib/geo", () => ({ resolveGeo: () => ({ ip: "203.0.113.9", country: null, region: null, city: null }) }));
 
 // DB stores — knobs the tests turn.
-const usedByUser = vi.fn((): number => 0); // device tally (guests)
-const usedByIp = vi.fn((): number => 0); // guest tokens across an IP
+const usedByUser = vi.fn((..._a: unknown[]): number => 0); // device tally (guests, windowed)
+const usedByIp = vi.fn((..._a: unknown[]): number => 0); // guest tokens across an IP (windowed)
 const usedByUserSince = vi.fn((): number => 0); // signed-in daily tally
 const rateHit = vi.fn((): { state: string; mustPay?: boolean; until?: number } => ({ state: "ok" }));
 vi.mock("@/lib/db", () => ({
@@ -62,11 +62,11 @@ vi.mock("@/lib/db", () => ({
   },
   SqliteUsageStore: class {
     record() {}
-    tokensUsedByUser() {
-      return usedByUser();
+    tokensUsedByUser(...a: unknown[]) {
+      return usedByUser(...a);
     }
-    guestTokensUsedByIp() {
-      return usedByIp();
+    guestTokensUsedByIp(...a: unknown[]) {
+      return usedByIp(...a);
     }
     tokensUsedByUserSince() {
       return usedByUserSince();
@@ -80,7 +80,7 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import { POST } from "./route";
-import { GUEST_TOKEN_LIMIT, IP_GUEST_TOKEN_CAP, SIGNED_IN_DAILY_TOKEN_LIMIT } from "@/lib/gate.config";
+import { GUEST_TOKEN_LIMIT, IP_GUEST_TOKEN_CAP, GUEST_WINDOW_MS, SIGNED_IN_DAILY_TOKEN_LIMIT } from "@/lib/gate.config";
 
 function makeReq(body: unknown): import("next/server").NextRequest {
   return {
@@ -141,6 +141,20 @@ describe("POST /api/chat — guest trial (10K) with layered abuse control", () =
     expect(res.status).toBe(401);
     expect((await res.json()).error).toBe("auth_required");
     expect(replyStreamMock).not.toHaveBeenCalled();
+  });
+
+  it("G.5 the guest tallies use a rolling 2-day window (limit RESETS — not lifetime)", async () => {
+    authMock.mockResolvedValue(null);
+    replyStreamMock.mockReturnValue(one("Hello!"));
+
+    await POST(makeReq({ message: "hello", history: [] }));
+
+    expect(GUEST_WINDOW_MS).toBe(2 * 24 * 60 * 60 * 1000);
+    const since = usedByUser.mock.calls[0]![1] as number;
+    expect(since).toBeGreaterThan(Date.now() - GUEST_WINDOW_MS - 5_000);
+    expect(since).toBeLessThanOrEqual(Date.now() - GUEST_WINDOW_MS + 5_000);
+    const ipSince = usedByIp.mock.calls[0]![1] as number;
+    expect(ipSince).toBeCloseTo(since, -3);
   });
 
   it("G.4 rate-limited IP → 429; struck-out IP → 402 paywall", async () => {

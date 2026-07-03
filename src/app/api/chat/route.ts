@@ -13,7 +13,7 @@ import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore } from "@/lib/
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
-import { GUEST_TOKEN_LIMIT, GUEST_COOKIE, GUEST_COOKIE_MAX_AGE_S, IP_GUEST_TOKEN_CAP, signedInDailyTokenLimit } from "@/lib/gate.config";
+import { GUEST_TOKEN_LIMIT, GUEST_COOKIE, GUEST_COOKIE_MAX_AGE_S, GUEST_WINDOW_MS, IP_GUEST_TOKEN_CAP, signedInDailyTokenLimit } from "@/lib/gate.config";
 import type { ChatMessage } from "@/types/chat.types";
 import type { SafetyVerdict } from "@/types/safety.types";
 
@@ -110,7 +110,8 @@ export async function POST(req: NextRequest) {
 
       // IP backstop: cookie-clearing must not reset the trial. Checked BEFORE
       // the per-device tally so a fresh cookie on a spent IP walls immediately.
-      const ipUsed = usage.guestTokensUsedByIp(geo.ip);
+      // Both tallies are windowed: the trial RESETS as usage ages past 2 days.
+      const ipUsed = usage.guestTokensUsedByIp(geo.ip, Date.now() - GUEST_WINDOW_MS);
       if (ipUsed >= IP_GUEST_TOKEN_CAP) {
         console.log(`[api/chat] ⛔ gate: ip=${geo.ip} used=${ipUsed}/${IP_GUEST_TOKEN_CAP} → 401`);
         return NextResponse.json(
@@ -121,7 +122,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const used = usage.tokensUsedByUser(guestId);
+    const used = usage.tokensUsedByUser(guestId, Date.now() - GUEST_WINDOW_MS);
     console.log(`[api/chat] guest ${guestId} used=${used}/${GUEST_TOKEN_LIMIT} tokens`);
     if (used >= GUEST_TOKEN_LIMIT) {
       console.log(`[api/chat] ⛔ gate: guest over device limit → 401 sign-in wall`);
