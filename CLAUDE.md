@@ -230,6 +230,9 @@ database. The human manages those. Only ever touch `.env.example`.
   outside the app dir so deploys can't wipe it) with a daily WAL-safe `.backup` cron.
   Exactly ONE instance may run against the file. Full runbook:
   `../Ariantra-Platform/docs/DEPLOY_RUNBOOK.md` §7.
+- **Memory:** the shared box is 1 GB — the deploy script enforces a 256 MB heap +
+  350 MB pm2 restart cap. Don't remove them; budget and escalation triggers live in
+  `../Ariantra-Platform/docs/MEMORY_BUDGET.md`.
 - **Shared header:** `src/components/ArNav.tsx` renders the Ariantra nav on every page
   (mounted in `src/app/layout.tsx`). Its styles come from `public/brand/ariantra-brand.v1.css`
   — a LOCAL COPY generated in the platform repo from its `theme.ts`. Never hand-edit it;

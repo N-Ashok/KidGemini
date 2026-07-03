@@ -71,7 +71,11 @@ if [ ! -f .deploy-lock.sha ] || [ "$(cat .deploy-lock.sha 2>/dev/null)" != "$LOC
 else
   echo "→ [remote] dependencies unchanged — skipping install"
 fi
-pm2 restart "$PM2" --update-env || PORT="$PORT" pm2 start "npm run start" --name "$PM2"
+# Memory budget (1 GB box shared with the platform app — see
+# Ariantra-Platform/docs/MEMORY_BUDGET.md): cap the V8 heap and let pm2
+# recycle the process if RSS balloons, so it can't starve the platform.
+export NODE_OPTIONS="--max-old-space-size=256"
+pm2 restart "$PM2" --update-env || PORT="$PORT" pm2 start "npm run start" --name "$PM2" --max-memory-restart 350M
 pm2 save
 echo "✓ [remote] restarted '$PM2'"
 REMOTE
