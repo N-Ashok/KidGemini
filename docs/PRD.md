@@ -236,6 +236,30 @@ Redis + per-user limits. Treat **inference as the dominant cost of goods**.
 
 ---
 
+## 8a. Payments (Razorpay — rails first)
+
+**Decision (2026-06-26):** Ship the **payment rails** now without enforcing anything yet
+("rails only"). Every signed-in user stays unlimited; a successful payment is recorded and stamps
+an access period, but no entitlement gate consumes it. The gate is a deliberate later step.
+
+- **Provider & model:** Razorpay, **one-time Orders + Standard Checkout** (not the recurring
+  Subscriptions API). Reason: Subscriptions require pre-created **Plans** we don't have; one-time
+  Orders need only the API keys + webhook. Plans: **₹699 (monthly)** and **₹6,000 (annual)** as
+  one-time charges granting 30 / 365 days (per §8 pricing).
+- **Flow:** `/upgrade` → `POST /api/billing/order` (auth-gated, creates the Razorpay order) →
+  Checkout in the browser → `POST /api/billing/verify` (fast UI confirm) **and**
+  `POST /api/billing/webhook` (**source of truth**, HMAC-verified, idempotent). State lives in the
+  `payments` table; `GET /api/billing/status` reports it.
+- **Security:** key **secret** is server-only; signatures verified with constant-time HMAC and
+  **fail closed** (bad/missing signature or missing secret ⇒ reject). Webhook idempotent on the
+  Razorpay event id (`webhook_events`).
+- **Forward path to recurring:** create Razorpay Plans, then swap order→subscription on the same
+  rails. Tracked in `docs/KNOWN_BUGS.md` #2; storage trade-off in `docs/SCALABILITY_ISSUES.md` #6.
+- **Owed before charging real money:** wire an `entitlement(userId)` check + the actual gate, and
+  run live-key UAT.
+
+---
+
 ## 10a. Authentication & access (force sign-in upfront)
 
 **Decision (2026-06-25):** Chat requires a signed-in Google account. Unauthenticated visitors see

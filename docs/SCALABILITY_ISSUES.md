@@ -93,3 +93,28 @@ Statuses: `ACCEPTED` (known limit, deliberately deferred) · `OPEN` (needs actio
 - **Ready plan:** add size/time **log rotation** (or cap + truncate) for single-instance; when going
   multi-instance, drop the file tee and log to **stdout** for the platform's log aggregator
   (Vercel/Cloud Run/Datadog). **Effort:** ~2–3 hours rotation; ~half a day for stdout + aggregator wiring.
+
+## 6. Payments stored in file-local SQLite (`payments`, `webhook_events`) — **ACCEPTED (inherits #1)**
+
+- **Decided:** 2026-06-26. Razorpay one-time payment rails ship recording state in SQLite
+  (`payments`, `webhook_events` in `src/lib/db.ts`), the same file-local store as #1.
+- **What:** `payments` (one row per order) and the `webhook_events` idempotency table are
+  per-instance/file-local. On a multi-instance or serverless deploy: (a) the webhook may land on a
+  different instance than the one that created the order — it still works (it looks up by
+  `razorpayOrderId`), but only if all instances share the DB file, which file-local SQLite does
+  **not** guarantee; (b) the `webhook_events` idempotency guard is per-file, so the same event
+  retried against two instances could be processed twice; (c) `webhook_events` is append-only with
+  no rotation.
+- **Why accepted:** "rails only, no entitlement gate yet" + single-box pilot. Money volume is low
+  and the webhook is idempotent **within** an instance; the source-of-truth is recoverable from
+  Razorpay's dashboard/API if state diverges.
+- **Limit:** correctness of payment state depends on **one shared DB**. Diverges exactly when #1
+  diverges (multi-instance / serverless). `webhook_events` grows unbounded.
+- **Trigger to act:** any multi-instance / serverless deploy (same trigger as #1) · before wiring a
+  real **entitlement gate** on payment state (divergence becomes user-visible: paid users wrongly
+  blocked / unpaid wrongly allowed) · payment volume growth.
+- **Ready plan:** move `payments` + `webhook_events` to the shared hosted DB in #1's migration
+  (Postgres/Turso); make idempotency a single `INSERT … ON CONFLICT` against that shared table.
+  Add rotation/archival for `webhook_events`. Until then, treat Razorpay's dashboard as the
+  reconciliation source of truth. **Effort:** folds into the #1 migration; ~2–3 hours for the
+  idempotency/rotation specifics.

@@ -37,3 +37,13 @@ npm run typecheck            # tsc --noEmit
 
 > Rows marked _(to be written)_ are the retrofit owed per `docs/KNOWN_BUGS.md` #1. Replace the
 > placeholder path with the real test file and add the bug-fix ref when each lands.
+
+---
+
+## Payment (Razorpay) contracts
+
+| When to run (file touched) | Test to run | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/razorpay.ts` | **`src/lib/razorpay.test.ts`** (8 tests, passing) | Signature verification is the payment security boundary: valid ⇒ accept; tampered/empty ⇒ reject; **fail-closed** when no secret; `createOrder` POSTs with basic auth and propagates non-OK as an error. | KNOWN_BUGS #2 |
+| `src/app/api/billing/order/route.ts`, `src/lib/auth-identity.ts`, `src/lib/billing.config.ts` | **`src/app/api/billing/order/route.test.ts`** (3 tests, passing) | Unauthenticated ⇒ 401 and Razorpay never called; unknown plan ⇒ 400; authed ⇒ order created + recorded. | KNOWN_BUGS #2 |
+| `src/app/api/billing/webhook/route.ts`, `src/lib/db.ts` (`SqlitePaymentStore`) | **`src/app/api/billing/webhook/route.test.ts`** (3 tests, passing) | Invalid signature ⇒ 400 + no write (fail-closed); valid `payment.captured` ⇒ `markPaid`; duplicate event id ⇒ idempotent (not paid twice). | KNOWN_BUGS #2, SCALABILITY_ISSUES #6 |

@@ -12,6 +12,7 @@ import type {
   UsageSummary,
 } from "@/types/usage.types";
 import type { IpLimitRecord, RateLimitStatus, RateLimitStore } from "@/types/rate-limit.types";
+import type { PaymentRecord, PaymentStore } from "@/types/billing.types";
 import { evaluate } from "./rate-limit";
 
 let db: Database.Database | null = null;
@@ -62,6 +63,27 @@ function getDb(): Database.Database {
       count INTEGER NOT NULL,
       blockedUntil INTEGER NOT NULL,
       strikes INTEGER NOT NULL
+    );
+    -- Razorpay one-time payments (docs/SCALABILITY_ISSUES.md #4). One row per order. "Rails only":
+    -- a paid row stamps periodEndsAt but nothing is gated on it yet.
+    CREATE TABLE IF NOT EXISTS payments (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      planKey TEXT NOT NULL,
+      amountPaise INTEGER NOT NULL,
+      currency TEXT NOT NULL,
+      razorpayOrderId TEXT NOT NULL UNIQUE,
+      razorpayPaymentId TEXT,
+      status TEXT NOT NULL,
+      periodEndsAt INTEGER,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_payments_userId ON payments(userId, createdAt);
+    -- Webhook idempotency: each Razorpay event id is processed at most once (retries are common).
+    CREATE TABLE IF NOT EXISTS webhook_events (
+      eventId TEXT PRIMARY KEY,
+      createdAt INTEGER NOT NULL
     );
   `);
   return db;
@@ -198,6 +220,89 @@ export class SqliteUsageStore implements UsageStore {
     summary.byUser = [...users.values()].sort((a, b) => b.costUsd - a.costUsd);
     summary.byLocation = [...locs.values()].sort((a, b) => b.eventCount - a.eventCount);
     return summary;
+  }
+}
+
+function mapPaymentRow(r: Record<string, unknown>): PaymentRecord {
+  return {
+    id: r.id as string,
+    userId: r.userId as string,
+    planKey: r.planKey as string,
+    amountPaise: r.amountPaise as number,
+    currency: r.currency as string,
+    razorpayOrderId: r.razorpayOrderId as string,
+    razorpayPaymentId: (r.razorpayPaymentId as string) ?? null,
+    status: r.status as PaymentRecord["status"],
+    periodEndsAt: (r.periodEndsAt as number) ?? null,
+    createdAt: r.createdAt as number,
+    updatedAt: r.updatedAt as number,
+  };
+}
+
+export class SqlitePaymentStore implements PaymentStore {
+  create(input: {
+    userId: string;
+    planKey: string;
+    amountPaise: number;
+    currency: string;
+    razorpayOrderId: string;
+  }): PaymentRecord {
+    const now = Date.now();
+    const rec: PaymentRecord = {
+      ...input,
+      id: newId(),
+      razorpayPaymentId: null,
+      status: "created",
+      periodEndsAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    getDb()
+      .prepare(
+        `INSERT INTO payments
+         (id, userId, planKey, amountPaise, currency, razorpayOrderId, razorpayPaymentId,
+          status, periodEndsAt, createdAt, updatedAt)
+         VALUES (@id, @userId, @planKey, @amountPaise, @currency, @razorpayOrderId,
+          @razorpayPaymentId, @status, @periodEndsAt, @createdAt, @updatedAt)`,
+      )
+      .run(rec);
+    return rec;
+  }
+
+  markPaid(razorpayOrderId: string, razorpayPaymentId: string, periodEndsAt: number): PaymentRecord | null {
+    const info = getDb()
+      .prepare(
+        `UPDATE payments SET status = 'paid', razorpayPaymentId = ?, periodEndsAt = ?, updatedAt = ?
+         WHERE razorpayOrderId = ?`,
+      )
+      .run(razorpayPaymentId, periodEndsAt, Date.now(), razorpayOrderId);
+    if (info.changes === 0) return null;
+    return this.getByOrderId(razorpayOrderId);
+  }
+
+  isNewEvent(eventId: string): boolean {
+    try {
+      getDb()
+        .prepare(`INSERT INTO webhook_events (eventId, createdAt) VALUES (?, ?)`)
+        .run(eventId, Date.now());
+      return true;
+    } catch {
+      return false; // UNIQUE violation ⇒ already processed
+    }
+  }
+
+  getByOrderId(razorpayOrderId: string): PaymentRecord | null {
+    const r = getDb()
+      .prepare(`SELECT * FROM payments WHERE razorpayOrderId = ?`)
+      .get(razorpayOrderId) as Record<string, unknown> | undefined;
+    return r ? mapPaymentRow(r) : null;
+  }
+
+  latestForUser(userId: string): PaymentRecord | null {
+    const r = getDb()
+      .prepare(`SELECT * FROM payments WHERE userId = ? ORDER BY createdAt DESC LIMIT 1`)
+      .get(userId) as Record<string, unknown> | undefined;
+    return r ? mapPaymentRow(r) : null;
   }
 }
 
