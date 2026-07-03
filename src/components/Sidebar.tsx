@@ -2,9 +2,9 @@
 // Gemini-style left sidebar: brand, New chat, search, recent conversations, profile.
 // Presentational; raises events via props. Recents are passed in by the container.
 // The profile footer reflects the Auth.js session: real account when signed in, else a
-// "Sign in with Google" button (mirrors how Gemini surfaces the account).
+// "Sign in to Ariantra" button (mirrors how Gemini surfaces the account).
 
-import { useSession, signIn, signOut } from "next-auth/react";
+import { useSession, signIn, signOut } from "@/lib/useAriantraSession";
 
 interface RecentItem {
   id: string;
@@ -132,11 +132,11 @@ export function Sidebar({ recents, activeId, isOpen, onClose, onNewChat, onSelec
           </div>
         ) : (
           <button
-            onClick={() => signIn("google")}
+            onClick={() => signIn()}
             className="flex w-full items-center justify-center gap-2 rounded-full border border-neutral-300
                        bg-white px-4 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
           >
-            <span aria-hidden>🔆</span> Sign in with Google
+            <span aria-hidden>🔆</span> Sign in to Ariantra
           </button>
         )}
       </div>

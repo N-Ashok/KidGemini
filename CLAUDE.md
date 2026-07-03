@@ -4,7 +4,8 @@ This is the single source of truth for **how we build** in this repo. Claude Cod
 human) should read this before writing code. **Read the relevant docs BEFORE touching the
 code**: product intent in `docs/PRD.md`; visual language in `docs/DESIGN_SYSTEM.md`; system
 map and hosting in `docs/ARCHITECTURE.md`; feature overview in `docs/FEATURES.md`; known
-issues in `docs/KNOWN_BUGS.md` and `docs/SCALABILITY_ISSUES.md`.
+issues in `docs/KNOWN_BUGS.md` and `docs/SCALABILITY_ISSUES.md`; deferred work in
+`../Ariantra-Platform/docs/TECH_DEBT.md` (cross-repo register — add to it when deferring).
 
 ---
 
@@ -106,6 +107,14 @@ Professional and polished **and** kid-friendly — not childish. Follow `docs/DE
 tokens only (no ad-hoc hex), generous spacing, soft rounded shapes (`rounded-kid`), large
 tap targets, accessible contrast, motion that's gentle. Components are presentational by
 default; data lives in containers/hooks.
+
+**Non-negotiable UX bar:** no blank screens (loading states), no silent failures (every
+error tells the user what to do next — and travels as an HTTP status, never only an
+in-band event), no dead ends, mobile-first checks, visual pass before "done".
+
+**Non-negotiable SEO/AI-answer bar:** every public page ships with unique title +
+meta description, OpenGraph, canonical URL, and SSR-readable content; keep
+sitemap/robots current so search engines AND AI assistants represent KidGemini well.
 
 ## 7. Development process — **MANDATORY**
 
@@ -214,8 +223,14 @@ Pause and surface to the human — in every mode, including autonomous:
 
 ## 11. Environment
 
-Copy `.env.example` → `.env.local`. `GEMINI_API_KEY` (server-only) and `AUTH_SECRET` /
-`AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` (Google sign-in) are required.
+Copy `.env.example` → `.env.local`. `GEMINI_API_KEY` (server-only) and
+`AUTH_JWT_SECRET` (Ariantra SSO — MUST equal the platform's value; see
+`docs/ARCHITECTURE.md` §Auth) are required. There is no local OAuth anymore.
+
+Local dev convention: **kidgemini runs on :3001, the platform on :3000** (the
+env-aware nav/login links assume this pairing). Start both with one command:
+`npm run dev:all` in the platform repo. kidgemini alone is fine once you're
+logged in (the browser cookie lasts 30 days); first login needs the platform up.
 
 ⚠️ Per the **Hard rule** at the top of this file: never read or edit `.env*` or the `data/`
 database. The human manages those. Only ever touch `.env.example`.

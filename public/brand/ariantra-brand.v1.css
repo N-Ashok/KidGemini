@@ -28,6 +28,12 @@
   --ar-shadow-lift: 0 18px 40px rgba(16, 24, 40, 0.12);
   --ar-shadow-accent: 0 6px 18px rgba(255, 92, 0, 0.25);
   --ar-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --ar-dark-bg: #0f172a;
+  --ar-dark-text: #ffffff;
+  --ar-dark-body: #cbd5e1;
+  --ar-dark-dim: #94a3b8;
+  --ar-dark-faint: #64748b;
+  --ar-dark-border: rgba(255, 255, 255, 0.1);
 }
 
 /* Ambient page background (soft radial brand glows) — apply to full pages. */
@@ -47,9 +53,9 @@
   font-family: var(--ar-font);
 }
 .ar-nav-inner {
-  max-width: 1160px;
-  margin: 0 auto;
-  padding: 0.8rem 1.25rem;
+  /* Full-bleed like ariantra.com: logo hard left, menu hard right (no
+     max-width container — the landing set the pattern, all surfaces follow). */
+  padding: 0.8rem 1.5rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -138,3 +144,98 @@
   color: var(--ar-dim);
   line-height: 1;
 }
+
+/* ── Dark hero (signature pattern: white header + dark hero banner) ───── */
+.ar-hero-dark {
+  background:
+    radial-gradient(900px 480px at 80% -10%, rgba(255, 92, 0, 0.14), transparent 60%),
+    var(--ar-dark-bg);
+  color: var(--ar-dark-text);
+}
+
+/* ── Shared footer (dark, from ariantra.com) — one footer on EVERY surface */
+.ar-footer {
+  background: var(--ar-dark-bg);
+  color: var(--ar-dark-body);
+  padding: 56px 24px 28px;
+  font-family: var(--ar-font);
+}
+.ar-footer-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.ar-footer-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr;
+  gap: 40px;
+  padding-bottom: 36px;
+  border-bottom: 1px solid var(--ar-dark-border);
+}
+@media (max-width: 720px) {
+  .ar-footer-grid { grid-template-columns: 1fr; gap: 28px; }
+}
+.ar-footer-logo {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--ar-dark-text);
+  letter-spacing: -0.5px;
+}
+.ar-footer-logo span { color: var(--ar-accent); }
+.ar-footer-tag {
+  font-size: 13px;
+  color: var(--ar-dark-dim);
+  margin: 6px 0 14px;
+}
+.ar-footer-desc {
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--ar-dark-dim);
+  max-width: 360px;
+}
+.ar-footer-col h4 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--ar-dark-text);
+  margin: 0 0 14px;
+}
+.ar-footer-col a, .ar-footer-col p {
+  display: block;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ar-dark-dim);
+  text-decoration: none;
+  margin: 0 0 10px;
+}
+.ar-footer-col a:hover { color: var(--ar-accent); }
+.ar-footer-social {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+.ar-footer-social a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ar-dark-body);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border: 1px solid var(--ar-dark-border);
+  border-radius: var(--ar-radius-pill);
+  transition: color 0.15s, border-color 0.15s;
+}
+.ar-footer-social a:hover { color: var(--ar-accent); border-color: var(--ar-accent); }
+.ar-footer-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 20px;
+  font-size: 12px;
+  color: var(--ar-dark-faint);
+}
+.ar-footer-bottom a { color: var(--ar-dark-faint); text-decoration: none; }
+.ar-footer-bottom a:hover { color: var(--ar-accent); }

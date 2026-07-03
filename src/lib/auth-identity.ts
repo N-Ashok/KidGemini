@@ -1,15 +1,13 @@
 // Resolve the signed-in user's stable id. Single responsibility: identity, nothing else.
-// Mirrors the id shape used by /api/chat (`user:<email>`), so a user is the same key everywhere.
-// Never throws — if auth is misconfigured we treat the caller as signed-out (fail-closed).
+// Source of truth is the shared Ariantra SSO session (ariantra_session cookie —
+// see ariantra-session.ts). Email-first keying preserves the pre-SSO rows
+// (`user:<email>` from the Google-login era). Never throws — unauthenticated
+// or misconfigured ⇒ null (callers fail closed).
 
-import { auth } from "@/auth";
+import "server-only";
+import { getAriantraSession } from "./ariantra-session.server";
 
 export async function resolveUserId(): Promise<string | null> {
-  try {
-    const session = await auth();
-    if (!session?.user) return null;
-    return `user:${session.user.email ?? session.user.name ?? "google"}`;
-  } catch {
-    return null;
-  }
+  const session = await getAriantraSession();
+  return session?.userId ?? null;
 }

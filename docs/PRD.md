@@ -260,22 +260,24 @@ an access period, but no entitlement gate consumes it. The gate is a deliberate 
 
 ---
 
-## 10a. Authentication & access (force sign-in upfront)
+## 10a. Authentication & access (guest trial → sign in → pay)
 
-**Decision (2026-06-25):** Chat requires a signed-in Google account. Unauthenticated visitors see
-a full-screen `SignInScreen`; the composer is not rendered until authenticated. There is no guest
-chatting.
+**Decision (2026-07-03, supersedes 2026-06-25 force-login):** the guest trial is RESTORED —
+the product funnel is *try free → sign in → (later) pay*.
 
-- **Why:** the prior guest flow surfaced "sign in" only reactively (an in-band event over an HTTP
-  200 stream) and silently hung on mobile when that event didn't arrive — see
-  `docs/BUG-FIX-LOG.md` (2026-06-25). Forcing sign-in upfront makes access state explicit and
-  closes the anonymous LLM-cost path.
-- **Server contract (fail-closed):** `POST /api/chat` returns **HTTP 401 `auth_required`** for
-  unauthenticated callers before any model call. Any future gate/limit must travel as an HTTP
-  status the client checks — never only as an in-band stream event.
-- **Retained-but-dormant:** the guest token gate (`GUEST_TOKEN_LIMIT`) and per-IP rate limit
-  remain in the code but are unreachable while force-login is in force. Revisit if a guest/trial
-  tier is reintroduced.
+- **Guest trial:** anyone may chat up to `GUEST_TOKEN_LIMIT` (10K tokens) per device
+  (httpOnly `kg_guest` cookie), server-enforced. At the wall a blocking overlay —
+  "Please sign in to continue using KidGemini ✨" — forces Ariantra SSO login to proceed.
+- **Abuse control:** per-IP guest cap `IP_GUEST_TOKEN_CAP` (2× the device allowance —
+  defeats cookie-clearing while staying generous to shared family/school IPs), plus the
+  per-IP rate limit with 3-strike escalation → paywall (HTTP 402).
+- **Paid stage (config-ready, OFF):** signed-in users are unlimited until the
+  `SIGNED_IN_DAILY_TOKEN_LIMIT` env knob is set (>0 ⇒ daily budget ⇒ HTTP 402 ⇒
+  upgrade screen; Razorpay rails are already wired).
+- **Server contract (fail-closed, prevention rule from 2026-06-25 KEPT):** every
+  gate/limit travels as an HTTP status the client checks — 401 `auth_required`,
+  429 `rate_limited`, 402 `payment_required` — never only as an in-band stream event.
+  Gemini is never called on a blocked request. Pinned by `route.test.ts` G.1–G.4 / S.1–S.3.
 
 ---
 

@@ -60,4 +60,8 @@ export interface UsageStore {
    * ever attributed to a user. Powers the server-enforced guest gate.
    */
   tokensUsedByUser(userId: string): number;
+  /** Guest tokens spent from an IP across ALL guest cookies — the cookie-clearing backstop. */
+  guestTokensUsedByIp(ip: string): number;
+  /** Tokens attributed to a user since a timestamp — powers the signed-in daily budget. */
+  tokensUsedByUserSince(userId: string, sinceMs: number): number;
 }

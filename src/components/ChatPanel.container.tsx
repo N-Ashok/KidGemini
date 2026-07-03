@@ -4,9 +4,8 @@
 // Naming: `.container.tsx` = data-fetching component (CLAUDE.md § 5).
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { signIn, useSession } from "next-auth/react";
+import { signIn, useSession } from "@/lib/useAriantraSession";
 import { Sidebar } from "./Sidebar";
-import { SignInScreen } from "./SignInScreen";
 import { Composer, type Attachment } from "./Composer";
 import { ArtifactFrame } from "./ArtifactFrame";
 import { MessageItem } from "./MessageItem";
@@ -139,9 +138,16 @@ export function ChatPanelContainer() {
       // reply from a proxy) must surface here instead of stalling on getReader() until the 30s
       // stall timeout. See BUG-FIX-LOG: "silent hang on non-streaming response".
       if (!res.ok || !res.body) {
+        // Gate statuses (silent-hang prevention: blocks travel as HTTP statuses).
+        const body = (await res.json().catch(() => ({}))) as { message?: string };
         if (res.status === 401) {
-          setReply("Please sign in to keep chatting. ✨");
-          setGate({ text: "Sign in with Google to keep chatting!", upgrade: false });
+          setReply(body.message ?? "Please sign in to continue using KidGemini ✨");
+          setGate({ text: body.message ?? "Please sign in to continue using KidGemini ✨", upgrade: false });
+        } else if (res.status === 402) {
+          setReply(body.message ?? "Upgrade to keep chatting! ⭐");
+          setGate({ text: body.message ?? "Upgrade to keep chatting! ⭐", upgrade: true });
+        } else if (res.status === 429) {
+          setReply(body.message ?? "Whoa, slow down! 🐢 Take a short break and try again.");
         } else {
           setReply("Oops! Something went wrong. Let's try again.");
         }
@@ -273,15 +279,8 @@ export function ChatPanelContainer() {
     await runStream(userText, history, replyId);
   }
 
-  // Force sign-in upfront: no chatting until authenticated. While the session resolves we show a
-  // quiet placeholder so authenticated users don't flash the sign-in screen on load.
-  if (authStatus === "loading") {
-    return <div className="h-full w-full bg-white" aria-busy="true" />;
-  }
-  if (authStatus === "unauthenticated") {
-    return <SignInScreen onSignIn={() => signIn("google")} />;
-  }
-
+  // Guests may chat up to the free-token trial (server-enforced); the sign-in
+  // wall arrives as an HTTP 401 → LoginGate. No upfront block anymore.
   return (
     <div className="flex h-full w-full bg-white text-neutral-900">
       <Sidebar
@@ -351,7 +350,7 @@ export function ChatPanelContainer() {
       )}
 
       {gate && (
-        <LoginGate message={gate.text} showUpgrade={gate.upgrade} onSignIn={() => signIn("google")} />
+        <LoginGate message={gate.text} showUpgrade={gate.upgrade} onSignIn={() => signIn()} />
       )}
     </div>
   );

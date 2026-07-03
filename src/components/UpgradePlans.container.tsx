@@ -6,7 +6,7 @@
 // The key SECRET never reaches here — only the publishable keyId, returned per-order by the server.
 
 import { useEffect, useState } from "react";
-import { signIn, useSession } from "next-auth/react";
+import { signIn, useSession } from "@/lib/useAriantraSession";
 import { BILLING_PLANS } from "@/lib/billing.config";
 import { PlanCard } from "./PlanCard";
 
@@ -144,10 +144,10 @@ export function UpgradePlans() {
         <h1 className="text-2xl font-semibold text-neutral-800">Sign in to upgrade</h1>
         <p className="text-sm text-neutral-600">You need an account to manage a subscription.</p>
         <button
-          onClick={() => signIn("google")}
+          onClick={() => signIn()}
           className="rounded-full bg-neutral-800 px-5 py-3 text-base font-medium text-white hover:bg-neutral-700"
         >
-          🔆 Sign in with Google
+          🔆 Sign in to Ariantra
         </button>
       </main>
     );

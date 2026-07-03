@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { AuthProvider } from "@/components/AuthProvider";
 import { ArNav } from "@/components/ArNav";
+import { ArFooter } from "@/components/ArFooter";
 
 // Ariantra brand kit (tokens + shared header CSS). Served from OUR public/ —
 // a local copy so the header never depends on another origin being up. The copy
@@ -31,10 +31,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="stylesheet" href={BRAND_CSS_URL} />
       </head>
       <body>
-        <AuthProvider>
-          <ArNav />
-          <div className="ar-app-main">{children}</div>
-        </AuthProvider>
+        <ArNav />
+          {/* Footer sits INSIDE the scroll area, below the app screen — full-
+              height screens (chat) fill the viewport; scrolling reveals it. */}
+        <div className="ar-app-main">
+          {children}
+          <ArFooter />
+        </div>
       </body>
     </html>
   );

@@ -23,7 +23,7 @@ export function SignInScreen({ onSignIn }: SignInScreenProps) {
           className="mt-6 flex w-full items-center justify-center gap-2 rounded-full bg-neutral-800
                      px-4 py-3 text-base font-medium text-white hover:bg-neutral-700"
         >
-          <span aria-hidden>🔆</span> Sign in with Google
+          <span aria-hidden>🔆</span> Sign in to Ariantra
         </button>
       </div>
     </div>

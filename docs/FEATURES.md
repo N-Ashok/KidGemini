@@ -5,7 +5,12 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 ## Chat (home `/`)
 - Gemini-powered kids chat: text + voice (TTS playback, regenerate last answer)
 - Sandboxed HTML game artifacts the AI can build in-chat
-- Google sign-in required up front (no guest chat); recents sidebar, new-chat
+- Guest trial: chat free up to 10K tokens per device (per-IP backstop at 2× so
+  cookie-clearing doesn't reset it) → then a blocking "Please sign in to continue
+  using KidGemini" wall → Ariantra SSO (Google or username/password)
+- Signed-in: unlimited today; config-ready daily budget → upgrade paywall
+  (`SIGNED_IN_DAILY_TOKEN_LIMIT` env knob, ships OFF)
+- Recents sidebar, new-chat
 
 ## Safety (the core value)
 - Server-enforced safety gate on every message (separate Gemini safety model)

@@ -18,7 +18,8 @@ Browser ── pages: / (chat) · /parent · /admin · /upgrade
 /api/alerts    → parent alert feed (PIN-gated)
 /api/usage     → usage/cost admin feed
 /api/billing/* → Razorpay order + verified/idempotent webhook
-/api/auth/*    → Auth.js v5 (Google), trustHost
+/api/session   → SSO whoami (verifies shared ariantra_session cookie)
+/api/logout    → clears the .ariantra.com session cookie (signs out ALL surfaces)
    │
    ▼ src/lib/db.ts — Store interfaces (AlertStore, UsageStore, RateLimitStore, PaymentStore)
 SQLite (better-sqlite3, WAL): alerts · usage_events · ip_limits · payments · webhook_events
@@ -28,6 +29,16 @@ SQLite (better-sqlite3, WAL): alerts · usage_events · ip_limits · payments ·
   Mongo later is an adapter change, not an app rewrite.
 - SQLite ⇒ **single instance only**. Prod path `/var/lib/kidgemini/kidgemini.db`
   (absolute `DATABASE_PATH`), daily WAL-safe `.backup` cron.
+
+## Auth (Ariantra SSO — no local OAuth)
+
+Login happens ONCE on the platform (`studio.ariantra.com/login` — Google or
+username/password). The platform sets the `ariantra_session` cookie
+(Domain=.ariantra.com, HS256 JWT); this app verifies it with the SHARED
+`AUTH_JWT_SECRET` (`src/lib/ariantra-session.ts`, pure + tested) and keys rows
+by `user:<email>` (continuity with pre-SSO accounts). Client state:
+`src/lib/useAriantraSession.tsx` (drop-in useSession/signIn/signOut). Fail
+closed everywhere: no/invalid cookie ⇒ /api/chat 401.
 
 ## Hosting (prod)
 

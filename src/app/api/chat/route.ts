@@ -12,8 +12,8 @@ import { RulesClassifier } from "@/lib/safety.rules";
 import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore } from "@/lib/db";
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
-import { auth } from "@/auth";
-import { GUEST_TOKEN_LIMIT, GUEST_COOKIE, GUEST_COOKIE_MAX_AGE_S } from "@/lib/gate.config";
+import { getAriantraSession } from "@/lib/ariantra-session.server";
+import { GUEST_TOKEN_LIMIT, GUEST_COOKIE, GUEST_COOKIE_MAX_AGE_S, IP_GUEST_TOKEN_CAP, signedInDailyTokenLimit } from "@/lib/gate.config";
 import type { ChatMessage } from "@/types/chat.types";
 import type { SafetyVerdict } from "@/types/safety.types";
 
@@ -50,25 +50,36 @@ export async function POST(req: NextRequest) {
   // httpOnly device cookie and capped at GUEST_TOKEN_LIMIT total tokens (chat + safety). The
   // client cannot bypass this — the check and the tally both live here on the server.
   const session = await safeAuth();
-  const signedIn = Boolean(session?.user);
+  const signedIn = Boolean(session);
 
-  // Force sign-in upfront: unauthenticated callers are rejected here, fail-closed, before any
-  // Gemini token is spent. This is the server contract behind the UI's sign-in screen — the
-  // client never sends an unauthenticated chat request, but if one slips through (curl, a stale
-  // tab, a proxy) it gets a clean 401 instead of silently consuming the guest allowance.
-  // (The guest branch below is retained but unreachable while this gate is in force.)
-  if (!signedIn) {
-    console.log(`[api/chat] ⛔ unauthenticated → 401 auth_required`);
-    return NextResponse.json({ error: "auth_required" }, { status: 401 });
-  }
+  // Guest trial (PRD "guest gate", restored): new visitors chat up to
+  // GUEST_TOKEN_LIMIT tokens, backstopped per-IP; signed-in users have a
+  // config-ready daily budget (OFF by default). EVERY block below travels as
+  // an HTTP STATUS the client checks — never only an in-band stream event
+  // (silent-hang prevention class, BUG-FIX-LOG 2026-06-25).
 
   let setGuestCookie: string | null = null;
   let userId: string;
   let userLabel: string | null;
 
   if (signedIn) {
-    userId = `user:${session!.user!.email ?? session!.user!.name ?? "google"}`;
-    userLabel = session!.user!.name ?? session!.user!.email ?? null;
+    userId = session!.userId; // email-first key from the SSO session (pre-SSO row continuity)
+    userLabel = session!.name ?? session!.email ?? null;
+
+    // Paid-funnel stage 2 (config-ready, OFF while the env knob is 0): daily budget → 402.
+    const dailyLimit = signedInDailyTokenLimit();
+    if (dailyLimit > 0) {
+      const dayStart = new Date().setUTCHours(0, 0, 0, 0);
+      const usedToday = usage.tokensUsedByUserSince(userId, dayStart);
+      if (usedToday >= dailyLimit) {
+        console.log(`[api/chat] ⛔ daily budget userId=${userId} used=${usedToday}/${dailyLimit} → 402`);
+        return NextResponse.json(
+          { error: "payment_required", reason: "daily_budget",
+            message: "You've used today's free tokens — upgrade to keep chatting, or come back tomorrow! ⭐" },
+          { status: 402 },
+        );
+      }
+    }
   } else {
     let guestId = req.cookies.get(GUEST_COOKIE)?.value;
     if (!guestId) {
@@ -84,20 +95,28 @@ export async function POST(req: NextRequest) {
       const rl = rateLimit.hit(geo.ip, Date.now());
       if (rl.state === "blocked") {
         console.log(`[api/chat] ⛔ rate-limit ip=${geo.ip} until=${rl.until} mustPay=${rl.mustPay}`);
-        return ndjson(
-          (send) =>
-            send(
-              rl.mustPay
-                ? {
-                    type: "paywall",
-                    text: "You've hit the free limit too many times. Upgrade to keep chatting — or sign in with Google. 💳",
-                  }
-                : {
-                    type: "rate_limited",
-                    text: "Whoa, slow down! 🐢 That's a lot of messages — take a break and come back tomorrow, or sign in with Google to keep going.",
-                  },
-            ),
-          guestCookieHeader(setGuestCookie),
+        return rl.mustPay
+          ? NextResponse.json(
+              { error: "payment_required", reason: "strikes",
+                message: "You've hit the free limit a few times now. Sign in and upgrade to keep chatting! 💳" },
+              { status: 402, headers: guestCookieHeader(setGuestCookie) },
+            )
+          : NextResponse.json(
+              { error: "rate_limited",
+                message: "Whoa, slow down! 🐢 That's a lot of messages — take a short break, or sign in to keep going." },
+              { status: 429, headers: guestCookieHeader(setGuestCookie) },
+            );
+      }
+
+      // IP backstop: cookie-clearing must not reset the trial. Checked BEFORE
+      // the per-device tally so a fresh cookie on a spent IP walls immediately.
+      const ipUsed = usage.guestTokensUsedByIp(geo.ip);
+      if (ipUsed >= IP_GUEST_TOKEN_CAP) {
+        console.log(`[api/chat] ⛔ gate: ip=${geo.ip} used=${ipUsed}/${IP_GUEST_TOKEN_CAP} → 401`);
+        return NextResponse.json(
+          { error: "auth_required", reason: "ip_limit",
+            message: "Please sign in to continue using KidGemini ✨" },
+          { status: 401, headers: guestCookieHeader(setGuestCookie) },
         );
       }
     }
@@ -105,14 +124,11 @@ export async function POST(req: NextRequest) {
     const used = usage.tokensUsedByUser(guestId);
     console.log(`[api/chat] guest ${guestId} used=${used}/${GUEST_TOKEN_LIMIT} tokens`);
     if (used >= GUEST_TOKEN_LIMIT) {
-      console.log(`[api/chat] ⛔ gate: guest over limit → require sign-in`);
-      return ndjson(
-        (send) =>
-          send({
-            type: "gate",
-            text: "You've reached the free limit — sign in with Google to keep chatting! ✨",
-          }),
-        guestCookieHeader(setGuestCookie),
+      console.log(`[api/chat] ⛔ gate: guest over device limit → 401 sign-in wall`);
+      return NextResponse.json(
+        { error: "auth_required", reason: "guest_limit",
+          message: "Please sign in to continue using KidGemini ✨" },
+        { status: 401, headers: guestCookieHeader(setGuestCookie) },
       );
     }
   }
@@ -189,13 +205,13 @@ export async function POST(req: NextRequest) {
   }, guestCookieHeader(setGuestCookie));
 }
 
-/** Resolve the Auth.js session, but never throw — if auth is misconfigured (e.g. before the
- *  Google credentials are set) we fail safe to "guest" so the app still runs. */
+/** Resolve the shared Ariantra SSO session, but never throw — if auth is
+ *  misconfigured (e.g. AUTH_JWT_SECRET unset) we fail safe to "guest". */
 async function safeAuth() {
   try {
-    return await auth();
+    return await getAriantraSession();
   } catch (err) {
-    console.warn(`[api/chat] auth() unavailable, treating as guest: ${(err as Error).message}`);
+    console.warn(`[api/chat] session unavailable, treating as guest: ${(err as Error).message}`);
     return null;
   }
 }

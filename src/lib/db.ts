@@ -55,6 +55,8 @@ function getDb(): Database.Database {
     -- Speeds up the guest-gate tally (tokensUsedByUser): per-user lookups instead of a full scan.
     -- See docs/SCALABILITY_ISSUES.md #2.
     CREATE INDEX IF NOT EXISTS idx_usage_userId ON usage_events(userId, createdAt);
+    -- Per-IP guest tally (gate.config IP_GUEST_TOKEN_CAP): the cookie-clearing backstop.
+    CREATE INDEX IF NOT EXISTS idx_usage_ip ON usage_events(ip);
     -- Per-IP rate-limit state (docs/SCALABILITY_ISSUES.md #3). Persists so a block lasts until
     -- next day and strikes are remembered across days for the 3-strike pay wall.
     CREATE TABLE IF NOT EXISTS ip_limits (
@@ -143,6 +145,26 @@ export class SqliteUsageStore implements UsageStore {
          FROM usage_events WHERE userId = ?`,
       )
       .get(userId) as { total: number };
+    return row.total;
+  }
+
+  guestTokensUsedByIp(ip: string): number {
+    const row = getDb()
+      .prepare(
+        `SELECT COALESCE(SUM(promptTokens + outputTokens), 0) AS total
+         FROM usage_events WHERE ip = ? AND userId LIKE 'guest:%'`,
+      )
+      .get(ip) as { total: number };
+    return row.total;
+  }
+
+  tokensUsedByUserSince(userId: string, sinceMs: number): number {
+    const row = getDb()
+      .prepare(
+        `SELECT COALESCE(SUM(promptTokens + outputTokens), 0) AS total
+         FROM usage_events WHERE userId = ? AND createdAt >= ?`,
+      )
+      .get(userId, sinceMs) as { total: number };
     return row.total;
   }
 
