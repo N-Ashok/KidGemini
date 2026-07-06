@@ -36,67 +36,129 @@
   --ar-dark-border: rgba(255, 255, 255, 0.1);
 }
 
+/* Stop iOS Safari inflating text on rotation to landscape (all surfaces
+   include this stylesheet, so the guard applies platform-wide). */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 /* Ambient page background (soft radial brand glows) — apply to full pages. */
 .ar-page-bg {
   background: radial-gradient(900px 500px at 80% -10%, rgba(255, 92, 0, 0.06), transparent 60%),radial-gradient(700px 500px at 0% 0%, rgba(99, 102, 241, 0.05), transparent 55%), #f7f8fa;
 }
 
-/* ── Shared sticky header ─────────────────────────────────────────────── */
+/* ── Shared sticky header — classic ariantra.com style (2026-07-03) ────── */
 .ar-nav {
   position: sticky;
   top: 0;
-  z-index: 30;
-  backdrop-filter: saturate(140%) blur(12px);
-  -webkit-backdrop-filter: saturate(140%) blur(12px);
-  background: var(--ar-nav-bg);
-  border-bottom: 1px solid var(--ar-border);
+  z-index: 100;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.95);
+  border-bottom: 1px solid #eee;
   font-family: var(--ar-font);
 }
 .ar-nav-inner {
   /* Full-bleed like ariantra.com: logo hard left, menu hard right (no
      max-width container — the landing set the pattern, all surfaces follow). */
-  padding: 0.8rem 1.5rem;
+  padding: 16px 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 16px;
 }
 .ar-nav-links {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 26px;
+  /* Menu sits CENTERED in the bar (logo left, CTA right) — the three-child
+     space-between layout does this; matches ariantra.com. */
 }
 .ar-link {
-  color: var(--ar-dim);
+  color: var(--ar-text);
   text-decoration: none;
   font-weight: 600;
-  font-size: 0.9rem;
-  padding: 0.5rem 0.8rem;
-  border-radius: var(--ar-radius-sm);
-  transition: color 0.15s, background 0.15s;
+  font-size: 14px;
+  transition: color 0.15s;
 }
 .ar-link:hover {
-  color: var(--ar-text);
-  background: var(--ar-surface2);
+  color: var(--ar-accent);
 }
 .ar-link.on {
-  color: var(--ar-text);
+  color: var(--ar-accent);
+}
+.ar-signin {
+  color: var(--ar-dim);
+}
+.ar-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 .ar-cta {
-  margin-left: 0.4rem;
   color: var(--ar-on-accent);
   text-decoration: none;
   font-weight: 700;
-  font-size: 0.9rem;
-  padding: 0.55rem 1rem;
+  font-size: 14px;
+  padding: 9px 18px;
   border-radius: var(--ar-radius-pill);
   background: var(--ar-accent);
-  box-shadow: 0 6px 18px rgba(255, 92, 0, 0.28);
-  transition: transform 0.12s;
+  white-space: nowrap;
+  transition: background 0.15s;
   display: inline-block;
 }
 .ar-cta:hover {
-  transform: translateY(-1px);
+  background: #e65300;
+}
+
+/* Mobile: links collapse behind a checkbox-pattern hamburger (no JS — the
+   same markup works in React and in the static partial). CTA stays visible. */
+.ar-nav-toggle { display: none; }
+.ar-nav-burger {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  /* border-box: hosts without a global reset (the Next apps) would otherwise
+     add padding+border on top of 40px and push the burger past the viewport. */
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
+  padding: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.ar-nav-burger span {
+  display: block;
+  height: 2px;
+  background: var(--ar-text);
+  border-radius: 2px;
+  transition: transform 0.2s, opacity 0.2s;
+}
+.ar-nav-toggle:checked ~ .ar-nav-right .ar-nav-burger span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.ar-nav-toggle:checked ~ .ar-nav-right .ar-nav-burger span:nth-child(2) { opacity: 0; }
+.ar-nav-toggle:checked ~ .ar-nav-right .ar-nav-burger span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+@media (max-width: 860px) {
+  .ar-nav-burger { display: flex; }
+  .ar-nav-links {
+    display: none;
+    position: fixed;
+    top: 69px;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    background: #fff;
+    border-bottom: 1px solid #eee;
+    padding: 8px 0;
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.08);
+  }
+  .ar-nav-toggle:checked ~ .ar-nav-links { display: flex; }
+  .ar-nav-links .ar-link { display: block; width: 100%; padding: 13px 24px; font-size: 15px; }
+  .ar-cta { padding: 9px 14px; font-size: 13px; }
 }
 
 /* ── Wordmark (stacked: ARIANTRA / line·dot·line / AI FOUNDRY) ────────── */

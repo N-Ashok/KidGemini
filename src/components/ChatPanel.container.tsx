@@ -320,6 +320,7 @@ export function ChatPanelContainer() {
                 onStop={tts.stop}
                 onRestart={tts.restart}
                 onRegenerate={handleRegenerate}
+                onOpenArtifact={m.artifactHtml ? () => setArtifact(m.artifactHtml!) : undefined}
               />
             ))}
             {busy && active.messages[active.messages.length - 1]?.text === "" && (

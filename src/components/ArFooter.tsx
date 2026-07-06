@@ -29,8 +29,8 @@ export function ArFooter() {
           <div className="ar-footer-col">
             <h4>Explore</h4>
             <a href="https://games.ariantra.com">All games</a>
-            <a href="https://www.ariantra.com/#videos">Videos</a>
-            <a href="https://kidgemini.ariantra.com">KidGemini</a>
+            <a href="https://ariantra.com/#videos">Videos</a>
+            <a href="/">KidGemini</a>
             <a href="https://studio.ariantra.com">Creator Studio</a>
           </div>
           <div className="ar-footer-col">
@@ -43,8 +43,8 @@ export function ArFooter() {
         <div className="ar-footer-bottom">
           <span>© 2026 Ariantra AI Foundry Private Limited. Made with curiosity in India.</span>
           <span>
-            <a href="https://www.ariantra.com/terms.html">Terms &amp; Conditions</a> &nbsp;·&nbsp;
-            <a href="https://www.ariantra.com/privacy.html">Privacy Policy</a> &nbsp;·&nbsp; CIN: U63119DL2026PTC465754
+            <a href="https://ariantra.com/terms.html">Terms &amp; Conditions</a> &nbsp;·&nbsp;
+            <a href="https://ariantra.com/privacy.html">Privacy Policy</a> &nbsp;·&nbsp; CIN: U63119DL2026PTC465754
           </span>
         </div>
       </div>

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { ArNav } from "@/components/ArNav";
 import { ArFooter } from "@/components/ArFooter";
+import { MIXPANEL_SNIPPET } from "@/lib/mixpanel-snippet";
 
 // Ariantra brand kit (tokens + shared header CSS). Served from OUR public/ —
 // a local copy so the header never depends on another origin being up. The copy
@@ -12,6 +13,8 @@ const BRAND_CSS_URL =
 export const metadata: Metadata = {
   title: "KidGemini — a friendly, safe AI buddy",
   description: "A kids-safe AI chat with voice, games, and parent controls.",
+  // Ariantra brand mark — local copy refreshed by `npm run sync:brand`.
+  icons: { icon: "/brand/ariantra-favicon.svg" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -29,6 +32,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
         <link rel="stylesheet" href={BRAND_CSS_URL} />
+        {/* Mixpanel analytics — privacy-hardened for a kids' product: recordings
+            mask ALL text (chat included), no input/text capture, no IP stored,
+            iframes (game artifacts) blocked. See lib/mixpanel-snippet.ts. */}
+        <script dangerouslySetInnerHTML={{ __html: MIXPANEL_SNIPPET }} />
       </head>
       <body>
         <ArNav />

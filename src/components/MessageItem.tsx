@@ -20,6 +20,7 @@ interface MessageItemProps {
   onStop: () => void;
   onRestart: () => void;
   onRegenerate: () => void;
+  onOpenArtifact?: () => void; // set when the message carries artifactHtml
 }
 
 export function MessageItem(props: MessageItemProps) {
@@ -45,6 +46,14 @@ export function MessageItem(props: MessageItemProps) {
   return (
     <div className="group">
       <Markdown>{m.text}</Markdown>
+      {m.artifactHtml && props.onOpenArtifact && (
+        <button
+          onClick={props.onOpenArtifact}
+          className="mt-2 flex items-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-2.5 text-sm font-medium text-neutral-800 hover:border-neutral-300 hover:bg-neutral-100"
+        >
+          🎮 Open game
+        </button>
+      )}
       {m.text !== "" && (
         <div className="mt-1 flex items-center gap-1 text-neutral-400">
           <CopyButton text={m.text} />

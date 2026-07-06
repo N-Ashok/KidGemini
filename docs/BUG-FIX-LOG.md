@@ -45,6 +45,38 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-06 — Artifact Code tab didn't scroll; on mobile the preview trapped the user (no visible way back to chat, closed games unrecoverable)
+
+- **Symptom (what the user saw):** (1) Switching the artifact panel to **Code**
+  showed the top of the game's HTML with no scrollbar — the rest was cut off.
+  (2) On a phone the preview covers the whole screen; the only exit was the
+  small ✕, and once closed there was no way to ever reopen that game.
+- **Surface area:** `src/components/ArtifactFrame.tsx`,
+  `src/components/MessageItem.tsx`, `src/components/ChatPanel.container.tsx`.
+- **Root cause:** the `<pre>` used `h-full flex-1` inside the flex column —
+  `h-full` sized it to 100% of the panel *on top of* the header rows, so the
+  code block overflowed past the panel bottom and its own `overflow-auto`
+  scrollbar never engaged (the correct flex-scroll idiom is `flex-1 min-h-0`).
+  For (2): messages persist `artifactHtml`, but nothing in the UI rendered a
+  reopen affordance, and the fullscreen mobile overlay relied solely on ✕.
+- **Fix:** `ArtifactFrame.tsx` — `min-h-0 flex-1` on both the code `<pre>` and
+  the preview iframe (dropped `h-full`); added a mobile-only "← Chat" back
+  button in the panel header. `MessageItem.tsx` + `ChatPanel.container.tsx` —
+  assistant messages carrying `artifactHtml` now render a "🎮 Open game" chip
+  that reopens the preview, so closing it is never a dead end.
+- **Result (verified):** `npx tsc --noEmit` clean; full suite 42/42 green.
+  Presentational-only change — needs one manual UAT pass: generate a game,
+  Code tab scrolls to the bottom, close on mobile via "← Chat", reopen via the
+  chip.
+- **Impact:** kids on phones can move freely between the game preview and the
+  conversation; generated code is fully readable.
+- **Prevention:** class = *flex child with its own scroll must be
+  `flex-1 min-h-0`, never `h-full`* (second member of this class: the chat
+  scroll region already uses `min-h-0 flex-1` correctly). No component test
+  harness exists yet (vitest is node-env, `.test.ts` only) — covered by the
+  UAT step above until the component-testing retrofit (KNOWN_BUGS #1) lands.
+- **Related:** 2026-06-25 entry (same mobile-UAT blind spot).
+
 ### 2026-06-25 — Guest chat silently hung on mobile ("Thinking…" forever); login was never surfaced
 
 - **Symptom (what the user saw):** On mobile, while **not** signed in, sending a prompt did nothing — the UI showed "Thinking… 💭" and never produced an answer or an error. Signing in fixed it. The app appeared to "force login" but gave the user no way to discover that.

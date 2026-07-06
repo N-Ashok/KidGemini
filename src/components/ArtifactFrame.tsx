@@ -37,6 +37,15 @@ export function ArtifactFrame({ html, onClose }: ArtifactFrameProps) {
     <aside className="flex h-full w-full flex-col bg-white">
       <header className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-2.5">
         <div className="flex items-center gap-2">
+          {/* Mobile-only: the frame covers the whole screen there, so give an
+              explicit way back to the conversation (✕ alone wasn't found). */}
+          <button
+            onClick={onClose}
+            className="rounded-lg px-2 py-1 text-sm font-medium text-neutral-600 hover:bg-neutral-100 md:hidden"
+            aria-label="Back to chat"
+          >
+            ← Chat
+          </button>
           <button onClick={() => setTab("preview")} className={tabBtn("preview", "Preview")}>
             ▶ Preview
           </button>
@@ -78,10 +87,13 @@ export function ArtifactFrame({ html, onClose }: ArtifactFrameProps) {
           title="AI-generated game"
           sandbox="allow-scripts"
           srcDoc={html}
-          className="h-full w-full flex-1 border-0"
+          className="min-h-0 w-full flex-1 border-0"
         />
       ) : (
-        <pre className="h-full flex-1 overflow-auto bg-neutral-900 p-4 text-[12px] leading-5 text-neutral-100">
+        /* min-h-0 (not h-full): a flex child refuses to shrink below its content
+           by default, so with h-full the code block overflowed past the panel
+           and the overflow-auto scrollbar never appeared. */
+        <pre className="min-h-0 flex-1 overflow-auto bg-neutral-900 p-4 text-[12px] leading-5 text-neutral-100">
           <code>{html}</code>
         </pre>
       )}

@@ -18,4 +18,7 @@ fi
 
 mkdir -p "$REPO_DIR/public/brand"
 cp "$SRC" "$REPO_DIR/public/brand/ariantra-brand.v1.css"
-echo "✓ brand CSS synced from $SRC"
+# Favicon ships with the kit too (generated alongside the CSS).
+FAVICON="$PLATFORM_DIR/public/brand/ariantra-favicon.svg"
+[ -f "$FAVICON" ] && cp "$FAVICON" "$REPO_DIR/public/brand/ariantra-favicon.svg"
+echo "✓ brand CSS + favicon synced from $PLATFORM_DIR/public/brand/"
