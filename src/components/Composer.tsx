@@ -27,8 +27,8 @@ export function Composer({ disabled, busy, model, onSend, onStop }: ComposerProp
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [fileError, setFileError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
-  const { isListening, isSupported, toggle, start, stop } = useSpeechInput((text) =>
-    setValue((v) => (v ? `${v} ${text}` : text)),
+  const { isListening, isSupported, error: micError, clearError: clearMicError, toggle, start, stop } = useSpeechInput(
+    (text) => setValue((v) => (v ? `${v} ${text}` : text)),
   );
 
   function handleRestart() {
@@ -72,6 +72,12 @@ export function Composer({ disabled, busy, model, onSend, onStop }: ComposerProp
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pb-4">
+      {micError && !isListening && (
+        <div className="mb-2 flex items-center justify-between rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2">
+          <span className="text-sm font-medium text-amber-800">{micError}</span>
+          <button type="button" onClick={clearMicError} aria-label="Dismiss" className="rounded-full px-2 text-amber-800 hover:bg-amber-100">✕</button>
+        </div>
+      )}
       {isListening && (
         <div className="mb-2 flex items-center justify-between rounded-2xl border border-blue-200 bg-blue-50 px-4 py-2">
           <span className="flex items-center gap-2 text-sm font-medium text-blue-700">

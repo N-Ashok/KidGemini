@@ -48,9 +48,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Pick a name with some letters or numbers in it 🙂" }, { status: 422 });
   }
 
-  // Availability check — no gates needed (harmless, and the kid is still typing).
+  // Availability check — no gates needed (harmless, and the kid is still
+  // typing). The session rides along so the platform can answer "that taken
+  // name is YOUR game" → the UI offers Update instead of a rename.
   if (body.check === true) {
-    const { status, data } = await partner({ check: true, slug });
+    const sessionToken = cookies().get(SESSION_COOKIE)?.value ?? "";
+    const { status, data } = await partner({ check: true, slug, ...(sessionToken ? { sessionToken } : {}) });
     return NextResponse.json({ slug, ...data }, { status });
   }
 

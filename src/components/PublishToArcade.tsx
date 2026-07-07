@@ -32,7 +32,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
     if (authStatus === "authenticated") setStep((s) => (s === "signin" ? "name" : s));
   }, [authStatus]);
   const [name, setName] = useState(suggestedName ?? "");
-  const [check, setCheck] = useState<{ state: "idle" | "checking" | "free" | "taken" | "unknown"; suggestions: string[] }>({ state: "idle", suggestions: [] });
+  const [check, setCheck] = useState<{ state: "idle" | "checking" | "free" | "taken" | "mine" | "unknown"; suggestions: string[] }>({ state: "idle", suggestions: [] });
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [liveUrl, setLiveUrl] = useState("");
@@ -40,6 +40,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
   const checkTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const slug = nameToSlug(name);
+  const isUpdate = check.state === "mine"; // republishing the kid's own game
 
   // Debounced availability check while the kid types.
   useEffect(() => {
@@ -54,10 +55,11 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ check: true, name }),
         });
-        const data = (await res.json()) as { free?: boolean; suggestions?: string[] };
+        const data = (await res.json()) as { free?: boolean; mine?: boolean; suggestions?: string[] };
         // "taken" ONLY on a confirmed answer — a failed check (network, server)
         // must not claim the name is gone; publish re-validates server-side.
         if (res.ok && data.free === true) setCheck({ state: "free", suggestions: [] });
+        else if (res.ok && data.free === false && data.mine === true) setCheck({ state: "mine", suggestions: [] });
         else if (res.ok && data.free === false) setCheck({ state: "taken", suggestions: data.suggestions ?? [] });
         else setCheck({ state: "unknown", suggestions: [] });
       } catch {
@@ -145,6 +147,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
             <p className="mt-2 min-h-5 text-xs font-bold">
               {check.state === "checking" && <span className="text-neutral-400">checking…</span>}
               {check.state === "free" && <span className="text-emerald-600">✓ {slug}.ariantra.com is free!</span>}
+              {check.state === "mine" && <span className="text-emerald-600">🔄 that&rsquo;s YOUR game — this updates {slug}.ariantra.com!</span>}
               {check.state === "taken" && <span className="text-red-500">someone got that one first — try a 🎲 idea!</span>}
               {check.state === "unknown" && <span className="text-neutral-400">couldn&rsquo;t check the name — you can still continue</span>}
             </p>
@@ -163,7 +166,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
               onClick={() => setStep("pin")}
               className="w-full rounded-2xl bg-orange-500 py-3.5 text-base font-extrabold text-white shadow-lg shadow-orange-500/30 disabled:opacity-40"
             >
-              Next → ask a grown-up
+              {isUpdate ? "Next → update my game" : "Next → ask a grown-up"}
             </button>
           </>
         )}
@@ -172,7 +175,11 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
           <>
             <h3 className="font-display text-xl font-bold">Ask a grown-up 🧑‍🚀</h3>
             <p className="mb-3 text-sm text-neutral-500">
-              Publishing puts <b>{name}</b> on the internet where anyone can play it. A grown-up needs to say OK.
+              {isUpdate ? (
+                <>This replaces the version of <b>{name}</b> that&rsquo;s already on the internet. A grown-up needs to say OK.</>
+              ) : (
+                <>Publishing puts <b>{name}</b> on the internet where anyone can play it. A grown-up needs to say OK.</>
+              )}
             </p>
             <input
               autoFocus
@@ -191,7 +198,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
               onClick={() => void publish()}
               className="w-full rounded-2xl bg-orange-500 py-3.5 text-base font-extrabold text-white shadow-lg shadow-orange-500/30 disabled:opacity-40"
             >
-              🚀 Publish {name}
+              {isUpdate ? `🔄 Update ${name}` : `🚀 Publish ${name}`}
             </button>
           </>
         )}
@@ -213,8 +220,8 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
         {step === "done" && (
           <div className="py-2 text-center">
             <div className="mb-1 text-5xl">🏆</div>
-            <h3 className="font-display text-xl font-bold">{name} is LIVE! 🎉</h3>
-            <p className="mb-3 text-sm text-neutral-500">You&rsquo;re a real game maker now.</p>
+            <h3 className="font-display text-xl font-bold">{name} is {isUpdate ? "UPDATED" : "LIVE"}! 🎉</h3>
+            <p className="mb-3 text-sm text-neutral-500">{isUpdate ? "The new version is playing at the same address." : "You’re a real game maker now."}</p>
             <div className="mb-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
               <div className="text-sm font-extrabold text-orange-600">{liveUrl.replace(/^https:\/\//, "").replace(/\/$/, "")}</div>
               <div className="mt-1 text-[11px] text-neutral-400">High scores &amp; leaderboard: ON automatically 🏆</div>

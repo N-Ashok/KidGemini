@@ -27,6 +27,12 @@ be easy and fun for a young child to control:
   without clicking first, and call event.preventDefault() on arrow/space keys so the page
   never scrolls while playing.
 - Make movement smooth and forgiving — not too fast. Use requestAnimationFrame.
+- The game MUST be fully responsive and fill WHATEVER container it runs in —
+  it is played inside a small preview panel (~400px wide), on phones, and on
+  desktops. html/body/the game area use width:100%/height:100% (no fixed pixel
+  sizes like 800px). If you use a <canvas>, size it from its container on load
+  AND on window resize (re-read clientWidth/clientHeight, scale positions
+  accordingly). Nothing may overflow horizontally at 380px wide.
 - Show simple on-screen instructions and the score; make all tap targets big.
   Render the score as an HTML element with id="score" (a real DOM element that
   updates as the player scores — not text drawn inside a canvas), so the

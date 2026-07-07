@@ -13,6 +13,10 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   grown-up approves with the parent PIN, then it goes live under the family's
   SSO account with auto-score/leaderboard/thumbnail included
   (`PublishToArcade.tsx` + `/api/arcade/publish` → platform partner bridge)
+- **🔄 Update mode**: if the name resolves to the kid's OWN published game
+  (session-verified `mine` check), the sheet flips to "this updates
+  {slug}.ariantra.com" — same address, new version — instead of demanding a
+  new name; still parent-PIN gated
 - Guest trial: chat free up to 10K tokens per device per rolling 2-day window
   (per-IP backstop at 2× so cookie-clearing doesn't reset it) → then a blocking "Please sign in to continue
   using KidGemini" wall → Ariantra SSO (Google or username/password)

@@ -45,6 +45,53 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-07 — SSO login never synced to kidgemini (env, not code): AUTH_JWT_SECRET differed between the apps
+
+- **Symptom:** login at studio.ariantra.com → back on kidgemini → still
+  signed out; "Put it in the Arcade" could therefore never publish (screen
+  recording repro). Also the partner bridge returned 403.
+- **Root cause (measured chain, no code defect):** kidgemini's `.env` on the
+  box carried a DIFFERENT `AUTH_JWT_SECRET` than the platform's. That one
+  value is both the partner-bridge shared secret AND the key kidgemini uses
+  to verify the `ariantra_session` cookie — so platform-minted logins could
+  never validate here. Proven remotely: the bridge 403'd (secret compare in
+  code), flipped to 200 the moment the secrets were aligned.
+- **Fix (ops):** owner copied the platform's AUTH_JWT_SECRET line into
+  kidgemini/.env on the box (never displayed) + `pm2 restart kidgemini`.
+- **Result (verified):** bridge check → HTTP 200 `{free:true}`. Login sync
+  uses the identical verification path.
+- **Prevention:** `deploy:all` already has an SSO-secret preflight — extend it
+  to compare the REMOTE `.env`s (the drift was on the box, not locally).
+  Class: one shared secret, one source of truth.
+
+### 2026-07-07 — Mic "did nothing" on phones; generated games overflowed the small preview
+
+- **Symptom (what the user saw):** tapping 🎤 on a phone produced nothing —
+  no listening, no message. Separately, generated games assumed a big screen
+  and didn't work in the ~400px preview panel.
+- **Surface area:** `useSpeechInput.ts`, `Composer.tsx`, new
+  `lib/mic-errors.ts`; `gemini.ts` (system prompt).
+- **Root cause (mic, three code-level defects):** (1) the recognizer was
+  destroyed/recreated EVERY render (the setup effect depended on an inline
+  callback prop) — iOS WebKit drops sessions when the instance churns;
+  (2) `onerror` swallowed every failure, so permission-denied /
+  dictation-off / no-speech looked like a dead button; (3) no secure-context
+  guard — plain-http (LAN-IP dev) silently blocks the mic API.
+- **Fix:** one recognizer per mount (callback via ref); error codes map to
+  kid-friendly banners (`micErrorMessage`, unit-tested) shown above the
+  composer; `isSecureContext` required for `isSupported`. Games: the
+  server-side system prompt now REQUIRES fully responsive games (100%
+  container sizing, canvas resize handling, no horizontal overflow at 380px)
+  — enforced before the kid's words ever reach Gemini.
+- **Result (verified):** Playwright: mocked `not-allowed` recognizer → the
+  friendly "allow the microphone" banner renders; live generation → the game
+  fits a 400px viewport with zero horizontal overflow. 64 tests green.
+- **Prevention:** mic-errors.test.ts; class = browser-API failures must be
+  surfaced to the kid, never swallowed. Real-iOS caveat: the banner now
+  REPORTS the true reason (e.g. Siri & Dictation off), so a phone repro after
+  deploy becomes self-diagnosing.
+- **Related:** 2026-07-07 preview-trap entry (same mobile UAT sweep).
+
 ### 2026-07-07 — Mobile game preview was a trap: nav swallowed every exit tap; publish bar sat on game controls
 
 - **Symptom (what the user saw):** on a phone, once the game preview opened
