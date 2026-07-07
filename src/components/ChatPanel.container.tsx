@@ -11,22 +11,19 @@ import { ArtifactFrame } from "./ArtifactFrame";
 import { MessageItem } from "./MessageItem";
 import { LoginGate } from "./LoginGate";
 import { useTextToSpeech } from "./useTextToSpeech";
-import type { ChatMessage } from "@/types/chat.types";
+import type { ChatMessage, Conversation } from "@/types/chat.types";
+import { loadChats, saveChats } from "@/lib/chat-store";
 
 const CHAT_MODEL_LABEL = "flash lite"; // display only; real model is server-side
 const KIND_FALLBACK = "Let's talk about something else! How about a game? 🌟";
+// Game-making platform → every starter is a GAME (user decision 2026-07-07),
+// four different genres so kids see the range.
 const SUGGESTIONS = [
-  "Make me a catch-the-stars game 🎮",
-  "Tell me a fun fact about space 🚀",
-  "Tell me a short bedtime story 🌙",
-  "Help me with my math homework ➗",
+  "Make me a car racing game 🏎️",
+  "Make me a space shooter with aliens 👾",
+  "Make me a dino jump-and-run game 🦖",
+  "Make me a puzzle game with colors 🧩",
 ];
-
-interface Conversation {
-  id: string;
-  title: string;
-  messages: ChatMessage[];
-}
 
 function newConversation(): Conversation {
   return {
@@ -62,6 +59,26 @@ export function ChatPanelContainer() {
   // Set when the server stops the guest: sign-in gate (token limit), rate-limit, or pay wall.
   const [gate, setGate] = useState<{ text: string; upgrade: boolean } | null>(null);
   const tts = useTextToSpeech();
+
+  // Chats survive navigation (sign-in round trips, Studio links) via
+  // localStorage — restore exactly ONCE on mount, persist on every change.
+  // The ref makes restore one-shot: without it, StrictMode's double effect
+  // pass re-reads storage AFTER the save effect has already written the fresh
+  // greeting convo, clobbering the restore.
+  const hydratedFromStore = useRef(false);
+  useEffect(() => {
+    if (hydratedFromStore.current) return;
+    hydratedFromStore.current = true;
+    const saved = loadChats(window.localStorage);
+    if (saved) {
+      setConvos(saved.convos);
+      setActiveId(saved.activeId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (hydratedFromStore.current) saveChats(window.localStorage, convos, activeId);
+  }, [convos, activeId]);
 
   const active = convos.find((c) => c.id === activeId) ?? convos[0]!;
   const recents = useMemo(
@@ -344,9 +361,12 @@ export function ChatPanelContainer() {
         <Composer disabled={busy} busy={busy} model={CHAT_MODEL_LABEL} onSend={handleSend} onStop={handleStop} />
       </main>
 
+      {/* z-[110]: must sit ABOVE the sticky brand nav (.ar-nav, z-100) — at
+          z-40 the nav floated over the panel's header and swallowed every tap
+          on ← Chat / ✕ (BUG-FIX-LOG 2026-07-07: "can't come out"). */}
       {artifact && (
-        <div className="fixed inset-0 z-40 bg-white md:static md:inset-auto md:z-auto md:w-[440px] md:border-l md:border-neutral-200">
-          <ArtifactFrame html={artifact} onClose={() => setArtifact(null)} />
+        <div className="fixed inset-0 z-[110] bg-white md:static md:inset-auto md:z-auto md:w-[440px] md:border-l md:border-neutral-200">
+          <ArtifactFrame html={artifact} busy={busy} onClose={() => setArtifact(null)} />
         </div>
       )}
 

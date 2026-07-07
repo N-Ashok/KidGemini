@@ -5,17 +5,27 @@
 
 import { useState } from "react";
 import { downloadCode } from "./download";
+import { PublishToArcade } from "./PublishToArcade";
 
 interface ArtifactFrameProps {
   html: string | null;
+  /** True while the reply is still streaming — publish waits for the full game. */
+  busy?: boolean;
   onClose: () => void;
 }
 
 type Tab = "preview" | "code";
 
-export function ArtifactFrame({ html, onClose }: ArtifactFrameProps) {
+/** Suggested arcade name from the game's own <title>, if it has one. */
+function titleOf(html: string): string {
+  const m = html.match(/<title>([^<]{2,40})<\/title>/i);
+  return m?.[1]?.trim() ?? "";
+}
+
+export function ArtifactFrame({ html, busy, onClose }: ArtifactFrameProps) {
   const [tab, setTab] = useState<Tab>("preview");
   const [copied, setCopied] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   if (!html) return null;
 
   async function copy() {
@@ -53,20 +63,31 @@ export function ArtifactFrame({ html, onClose }: ArtifactFrameProps) {
             {"</>"} Code
           </button>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
+          {/* Publish lives HERE (not a bar under the game — that sat exactly on
+              kids' on-screen controls). Compact pill, hidden while streaming. */}
+          {!busy && (
+            <button
+              onClick={() => setPublishing(true)}
+              className="rounded-full bg-orange-500 px-3 py-1.5 text-sm font-extrabold text-white shadow shadow-orange-500/30"
+              aria-label="Put it in the Arcade"
+            >
+              🚀 <span className="hidden sm:inline">Arcade</span>
+            </button>
+          )}
           <button
             onClick={() => downloadCode(html ?? "", "html", "game.html")}
             className="rounded-lg px-2 py-1 text-sm text-neutral-600 hover:bg-neutral-100"
             aria-label="Download game"
           >
-            ⬇ Download
+            ⬇<span className="hidden md:inline"> Download</span>
           </button>
           <button
             onClick={copy}
             className="rounded-lg px-2 py-1 text-sm text-neutral-600 hover:bg-neutral-100"
             aria-label="Copy HTML"
           >
-            {copied ? "✓ Copied" : "⧉ Copy"}
+            {copied ? "✓" : "⧉"}<span className="hidden md:inline">{copied ? " Copied" : " Copy"}</span>
           </button>
           <button
             onClick={onClose}
@@ -96,6 +117,10 @@ export function ArtifactFrame({ html, onClose }: ArtifactFrameProps) {
         <pre className="min-h-0 flex-1 overflow-auto bg-neutral-900 p-4 text-[12px] leading-5 text-neutral-100">
           <code>{html}</code>
         </pre>
+      )}
+
+      {publishing && (
+        <PublishToArcade html={html} suggestedName={titleOf(html)} onClose={() => setPublishing(false)} />
       )}
     </aside>
   );

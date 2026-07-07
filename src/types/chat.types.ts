@@ -13,6 +13,13 @@ export interface ChatMessage {
   createdAt: number;
 }
 
+/** A chat thread as the UI holds it (and chat-store persists it). */
+export interface Conversation {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+}
+
 /** Any conversational model is a ChatModel (swappable / mockable). */
 export interface ChatModel {
   /** Returns the model's draft answer. Caller is responsible for the safety gate. */

@@ -8,6 +8,11 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   (code pane scrolls), download/copy; on mobile the panel is fullscreen with a
   "← Chat" back button, and any game message shows a "🎮 Open game" chip to
   reopen a closed preview
+- **🚀 Put it in the Arcade** (2026-07-07): CTA under the preview publishes the
+  game to games.ariantra.com — kid names it (live URL check + 🎲 ideas), a
+  grown-up approves with the parent PIN, then it goes live under the family's
+  SSO account with auto-score/leaderboard/thumbnail included
+  (`PublishToArcade.tsx` + `/api/arcade/publish` → platform partner bridge)
 - Guest trial: chat free up to 10K tokens per device per rolling 2-day window
   (per-IP backstop at 2× so cookie-clearing doesn't reset it) → then a blocking "Please sign in to continue
   using KidGemini" wall → Ariantra SSO (Google or username/password)
@@ -24,6 +29,12 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 
 ## Safety (the core value)
 - Server-enforced safety gate on every message (separate Gemini safety model)
+- **Game-action exemption** (owner decision 2026-07-06): classic game genres —
+  space shooters, sword adventures, cartoon battles — are allowed (system
+  prompt welcomes them, cartoonish/bloodless only; Gemini DANGEROUS_CONTENT
+  at MEDIUM; classifier judges only graphic/realistic violence + REAL-WORLD
+  dangerous acts). Verified live: "shooting game with laser gun" → full game;
+  "make a real gun at home" → hard_block. Locked by safety.config.test.ts
 - Parent alerting: flagged interactions recorded with severity/action/reason
 - Parent dashboard (`/parent`, PIN-gated): review alerts
 - Kids' transcripts stay local (SQLite) — never in git, never read by tooling

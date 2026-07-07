@@ -45,6 +45,62 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-07 — Mobile game preview was a trap: nav swallowed every exit tap; publish bar sat on game controls
+
+- **Symptom (what the user saw):** on a phone, once the game preview opened
+  there was NO way back to the chat — ← Chat and ✕ looked fine but did
+  nothing. Separately, the "Put it in the Arcade" bar covered the game's own
+  bottom touch controls.
+- **Surface area:** `ChatPanel.container.tsx` (overlay z-index),
+  `ArtifactFrame.tsx` (header layout, publish placement).
+- **Root cause:** the fullscreen artifact overlay used `z-40` while the sticky
+  brand nav (`.ar-nav`) is `z-100` — the nav floated invisibly over the
+  panel's header strip and intercepted every tap on ← Chat/✕ (caught by
+  Playwright: "ar-logo-word … intercepts pointer events"). The publish CTA was
+  a full-width bar under the preview, exactly where generated games put their
+  on-screen buttons.
+- **Fix:** overlay `z-[110]` (above the nav; publish sheet `z-[120]`); publish
+  moved into the panel header as a compact 🚀 pill; Download/Copy collapse to
+  icons on phones so the header always fits 390px. Also: suggestion chips are
+  now four GAME starters (racing/space/dino/puzzle) — kidgemini is a
+  game-making platform (user decision 2026-07-07).
+- **Result (verified):** Playwright on iPhone-14 viewport, real generation:
+  ← Chat tap returns to chat ✓, "🎮 Open game" chip reopens ✓, header fits ✓,
+  game's bottom controls unobstructed ✓. 61 tests green.
+- **Prevention:** class = fullscreen overlays must stack ABOVE the sticky nav
+  (z ≥ 110); any tap-dead UI report → check for pointer interception first
+  (Playwright names the intercepting element).
+- **Related:** 2026-07-06 artifact-panel entry (same surface).
+
+### 2026-07-07 — Chat lost on any navigation; publish flow asked for PIN before sign-in
+
+- **Symptom (what the user saw):** navigating to Studio (or any sign-in round
+  trip) wiped the whole conversation; the "Put it in the Arcade" sheet asked
+  for the parent PIN first, THEN discovered the family was signed out and sent
+  them to Studio — losing the chat and the game on the way.
+- **Surface area:** `ChatPanel.container.tsx`, `PublishToArcade.tsx`,
+  new `src/lib/chat-store.ts`.
+- **Root cause:** conversations lived ONLY in React state — nothing persisted
+  client-side (server keeps safety transcripts, but the UI never reloads
+  them). And the publish sheet's step order checked auth last instead of
+  first, with a new-tab Studio link instead of the existing `signIn()`
+  round-trip.
+- **Fix:** (1) chat-store.ts persists conversations to localStorage (cap 20,
+  never throws; one-shot restore guarded by a ref — StrictMode's double
+  effect pass otherwise clobbers the restore with the fresh greeting convo).
+  (2) The sheet now checks the SSO session FIRST (`useSession`) and shows a
+  "sign in — your chat is safe" step before naming/PIN; `signIn()` returns to
+  the same page and the chat survives.
+- **Result (verified):** Playwright — conversation ids stable across reload
+  AND leave-site-and-return; 61 tests green.
+- **Impact:** kids can hop between kidgemini, Studio, and sign-in without
+  losing work; the publish flow asks the family for things in a sane order.
+- **Prevention:** chat-store.test.ts (round-trip, cap, corrupt-data). Class:
+  UI state a kid invested effort in must survive navigation.
+- **Related:** "kidgemini shows signed-out even after Studio login" is NOT
+  this bug — that's the box-side AUTH_JWT_SECRET alignment (platform BUG_LOG
+  #5 partner 403 has the same root); verify with the .env diff on the box.
+
 ### 2026-07-06 — Artifact Code tab didn't scroll; on mobile the preview trapped the user (no visible way back to chat, closed games unrecoverable)
 
 - **Symptom (what the user saw):** (1) Switching the artifact panel to **Code**

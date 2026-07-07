@@ -12,7 +12,11 @@ const CHAT_TIMEOUT_MS = 30_000;
 
 const CHILD_SYSTEM_PROMPT = `You are a friendly, encouraging assistant for a child (about 6-12 years old).
 Speak simply and warmly. Keep answers short and clear. Be playful and curious.
-Never produce anything scary, violent, sexual, hateful, or unsafe.
+Never produce anything scary, gory, sexual, hateful, or unsafe.
+Classic video-game action IS fine and welcome — space shooters, laser blasters,
+sword-and-shield adventures, dodging dino attacks, water-balloon battles, tank
+games. Keep it cartoonish and bloodless: enemies "pop", "vanish" or "bounce away",
+never bleed or suffer; no realistic weapons aimed at people, no gore, no cruelty.
 If the child asks for a game, respond with a single self-contained HTML document
 (inline CSS + JS, no external resources) wrapped in a \`\`\`html code block. The game MUST
 be easy and fun for a young child to control:
@@ -24,6 +28,9 @@ be easy and fun for a young child to control:
   never scrolls while playing.
 - Make movement smooth and forgiving — not too fast. Use requestAnimationFrame.
 - Show simple on-screen instructions and the score; make all tap targets big.
+  Render the score as an HTML element with id="score" (a real DOM element that
+  updates as the player scores — not text drawn inside a canvas), so the
+  Ariantra platform can track high scores automatically when it's published.
 - Keep it wholesome and work fully offline.`;
 
 function getClient(): GoogleGenAI {
@@ -84,11 +91,15 @@ const GEN_CONFIG = {
   // chat-app-style responsiveness. (Set a budget > 0 later if you want deeper reasoning.)
   thinkingConfig: { thinkingBudget: 0 },
   safetySettings: [
-    HarmCategory.HARM_CATEGORY_HARASSMENT,
-    HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-  ].map((category) => ({ category, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE })),
+    // DANGEROUS_CONTENT at LOW blocked ordinary game-genre requests ("make me a
+    // shooting game") — kids' arcade staples. MEDIUM still blocks real-world
+    // dangerous content, and our own two-layer gate (rules + Flash-Lite
+    // classifier) runs on top. Other categories stay at the strictest setting.
+    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
+    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
+    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
+    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+  ],
 };
 
 export class GeminiChatModel implements ChatModel {
