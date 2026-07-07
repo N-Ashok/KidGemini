@@ -24,10 +24,15 @@ const PLATFORM_BASE = process.env.ARIANTRA_API_BASE ?? "https://studio.ariantra.
 
 interface Body {
   check?: boolean;
+  list?: boolean;
   name?: string;
   html?: string;
   pin?: string;
+  /** Explicit target slug (update picker) — otherwise derived from name. */
+  slug?: string;
 }
+
+const SLUG_RE = /^[a-z0-9-]{2,40}$/;
 
 async function partner(payload: unknown): Promise<{ status: number; data: Record<string, unknown> }> {
   const secret = process.env.AUTH_JWT_SECRET ?? "";
@@ -42,8 +47,19 @@ async function partner(payload: unknown): Promise<{ status: number; data: Record
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const body = (await req.json().catch(() => ({}))) as Body;
+
+  // "Update one of mine" picker: the kid's own games from the platform.
+  if (body.list === true) {
+    const sessionToken = cookies().get(SESSION_COOKIE)?.value ?? "";
+    if (!sessionToken) return NextResponse.json({ error: "signed_out" }, { status: 401 });
+    const { status, data } = await partner({ list: true, sessionToken });
+    return NextResponse.json(data, { status });
+  }
+
   const name = (body.name ?? "").trim().slice(0, 60);
-  const slug = nameToSlug(name);
+  // Explicit slug (update picker) wins over name derivation — validated to
+  // the platform slug charset so nothing weird rides through.
+  const slug = body.slug && SLUG_RE.test(body.slug) ? body.slug : nameToSlug(name);
   if (!slug) {
     return NextResponse.json({ error: "Pick a name with some letters or numbers in it 🙂" }, { status: 422 });
   }

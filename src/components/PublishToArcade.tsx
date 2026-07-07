@@ -14,7 +14,13 @@ interface Props {
   onClose: () => void;
 }
 
-type Step = "signin" | "name" | "pin" | "publishing" | "done";
+type Step = "signin" | "choose" | "pick" | "name" | "pin" | "publishing" | "done";
+
+interface MyGame {
+  slug: string;
+  name: string;
+  status: string;
+}
 
 const NAME_IDEAS = [
   "Sky Dragon", "Star Dash", "Robo Run", "Mega Maze", "Pixel Quest",
@@ -27,9 +33,31 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
   // family account is required to publish, and signIn() round-trips back to
   // this exact page — the chat survives via chat-store.
   const { status: authStatus } = useSession();
+  const [myGames, setMyGames] = useState<MyGame[] | null>(null); // null = not fetched
+  const [updateTarget, setUpdateTarget] = useState<MyGame | null>(null);
+
+  // Signed in → fetch the kid's games; any existing ones mean we ASK first:
+  // brand-new game, or update one of theirs (user decision 2026-07-07).
   useEffect(() => {
-    if (authStatus === "unauthenticated") setStep("signin");
-    if (authStatus === "authenticated") setStep((s) => (s === "signin" ? "name" : s));
+    if (authStatus === "unauthenticated") { setStep("signin"); return; }
+    if (authStatus !== "authenticated") return;
+    let alive = true;
+    fetch("/api/arcade/publish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ list: true }),
+    })
+      .then((r) => (r.ok ? r.json() : { games: [] }))
+      .then((d: { games?: MyGame[] }) => {
+        if (!alive) return;
+        const games = d.games ?? [];
+        setMyGames(games);
+        setStep((s) => (s === "signin" || s === "name" ? (games.length > 0 ? "choose" : "name") : s));
+      })
+      .catch(() => alive && setMyGames([]));
+    return () => {
+      alive = false;
+    };
   }, [authStatus]);
   const [name, setName] = useState(suggestedName ?? "");
   const [check, setCheck] = useState<{ state: "idle" | "checking" | "free" | "taken" | "mine" | "unknown"; suggestions: string[] }>({ state: "idle", suggestions: [] });
@@ -39,8 +67,9 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
   const [stage, setStage] = useState(0);
   const checkTimer = useRef<ReturnType<typeof setTimeout>>();
 
-  const slug = nameToSlug(name);
-  const isUpdate = check.state === "mine"; // republishing the kid's own game
+  const slug = updateTarget ? updateTarget.slug : nameToSlug(name);
+  const displayName = updateTarget ? updateTarget.name : name;
+  const isUpdate = updateTarget !== null || check.state === "mine"; // republishing the kid's own game
 
   // Debounced availability check while the kid types.
   useEffect(() => {
@@ -87,7 +116,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
       const res = await fetch("/api/arcade/publish", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, html, pin }),
+        body: JSON.stringify({ name: displayName, html, pin, ...(updateTarget ? { slug: updateTarget.slug } : {}) }),
       });
       const data = (await res.json()) as { url?: string; error?: string; suggestions?: string[] };
       clearTimeout(t1);
@@ -105,7 +134,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
       setStep("pin");
       setError("That didn't work — nothing is broken. Check the internet and try again.");
     }
-  }, [name, html, pin]);
+  }, [displayName, html, pin, updateTarget]);
 
   return (
     <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/50" onClick={onClose}>
@@ -129,6 +158,50 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
               className="w-full rounded-2xl bg-orange-500 py-3.5 text-base font-extrabold text-white shadow-lg shadow-orange-500/30"
             >
               Sign in with Google →
+            </button>
+          </>
+        )}
+
+        {step === "choose" && (
+          <>
+            <h3 className="font-display text-xl font-bold">What are we doing? 🎮</h3>
+            <p className="mb-4 text-sm text-neutral-500">You already have {myGames?.length === 1 ? "a game" : "games"} in the Arcade!</p>
+            <button
+              onClick={() => { setUpdateTarget(null); setStep("name"); }}
+              className="mb-2 w-full rounded-2xl bg-orange-500 py-3.5 text-base font-extrabold text-white shadow-lg shadow-orange-500/30"
+            >
+              🆕 Publish a brand-new game
+            </button>
+            <button
+              onClick={() => setStep("pick")}
+              className="w-full rounded-2xl border-2 border-neutral-200 py-3.5 text-base font-bold text-neutral-800 hover:border-orange-400"
+            >
+              🔄 Update one of my games
+            </button>
+          </>
+        )}
+
+        {step === "pick" && (
+          <>
+            <h3 className="font-display text-xl font-bold">Which game gets the new version? 🔄</h3>
+            <p className="mb-3 text-sm text-neutral-500">Same address — the new version replaces the old one.</p>
+            <div className="max-h-72 space-y-2 overflow-y-auto">
+              {(myGames ?? []).map((g) => (
+                <button
+                  key={g.slug}
+                  onClick={() => { setUpdateTarget(g); setStep("pin"); }}
+                  className="flex w-full items-center justify-between rounded-2xl border-2 border-neutral-200 px-4 py-3 text-left hover:border-orange-400"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-base font-bold">{g.name}</span>
+                    <span className="block truncate text-xs text-neutral-400">{g.slug}.ariantra.com</span>
+                  </span>
+                  <span className="ml-2 shrink-0 text-sm font-extrabold text-orange-500">Update →</span>
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setStep("choose")} className="mt-3 w-full py-2 text-sm font-bold text-neutral-500">
+              ← Back
             </button>
           </>
         )}
@@ -176,9 +249,9 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
             <h3 className="font-display text-xl font-bold">Ask a grown-up 🧑‍🚀</h3>
             <p className="mb-3 text-sm text-neutral-500">
               {isUpdate ? (
-                <>This replaces the version of <b>{name}</b> that&rsquo;s already on the internet. A grown-up needs to say OK.</>
+                <>This replaces the version of <b>{displayName}</b> that&rsquo;s already on the internet. A grown-up needs to say OK.</>
               ) : (
-                <>Publishing puts <b>{name}</b> on the internet where anyone can play it. A grown-up needs to say OK.</>
+                <>Publishing puts <b>{displayName}</b> on the internet where anyone can play it. A grown-up needs to say OK.</>
               )}
             </p>
             <input
@@ -198,7 +271,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
               onClick={() => void publish()}
               className="w-full rounded-2xl bg-orange-500 py-3.5 text-base font-extrabold text-white shadow-lg shadow-orange-500/30 disabled:opacity-40"
             >
-              {isUpdate ? `🔄 Update ${name}` : `🚀 Publish ${name}`}
+              {isUpdate ? `🔄 Update ${displayName}` : `🚀 Publish ${displayName}`}
             </button>
           </>
         )}
@@ -220,7 +293,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
         {step === "done" && (
           <div className="py-2 text-center">
             <div className="mb-1 text-5xl">🏆</div>
-            <h3 className="font-display text-xl font-bold">{name} is {isUpdate ? "UPDATED" : "LIVE"}! 🎉</h3>
+            <h3 className="font-display text-xl font-bold">{displayName} is {isUpdate ? "UPDATED" : "LIVE"}! 🎉</h3>
             <p className="mb-3 text-sm text-neutral-500">{isUpdate ? "The new version is playing at the same address." : "You’re a real game maker now."}</p>
             <div className="mb-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
               <div className="text-sm font-extrabold text-orange-600">{liveUrl.replace(/^https:\/\//, "").replace(/\/$/, "")}</div>
