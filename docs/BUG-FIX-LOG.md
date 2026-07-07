@@ -45,6 +45,33 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-07 — "Oops! Something went wrong" after the code streamed in (mobile socket drops)
+
+- **Symptom:** on the phone, the game code streams in, then the whole reply is
+  REPLACED by "Oops! Something went wrong. Let's try again." Server error log
+  spammed with `stream error: Invalid state: Controller is already closed`.
+- **Investigation (measured):** server completes fine via curl (79 deltas +
+  done); real WebKit browser against prod completes a 29s AND a 38s
+  generation with a heavy persisted chat store — hypothesis "chat-store jank"
+  REJECTED. The only consistent read: the CLIENT's socket dies mid-stream
+  (server enqueue throws "already closed"; client sees a non-abort stream
+  error). Failure timings (~20s, and 1–3s on retries) fit iOS killing
+  sockets on screen auto-lock / app switch during the generation wait.
+- **Root cause (handling, not prevention):** the socket drop itself is the
+  phone's prerogative — but the app made it catastrophic: the client threw
+  away everything already streamed and showed a dead-end "Oops"; the server
+  kept enqueueing into the dead controller, one ERROR per token.
+- **Fix:** client keeps the partial reply and appends a friendly note
+  ("connection hiccuped — ask me again, this happens if the screen locks");
+  server `ndjson()` turns sends into no-ops after the first failed enqueue
+  (one info line, generation + safety monitor finish quietly).
+- **Result:** typecheck + 64 tests green. Prevention class: streamed UX must
+  survive client disconnects — never discard streamed content, never
+  hard-error a dead socket.
+- **Open question (honest):** the exact phone-side trigger is inferred from
+  timing, not observed. If Oops-style failures persist AFTER this ships with
+  the screen kept awake, reopen with the phone's remote-inspector console.
+
 ### 2026-07-07 — SSO login never synced to kidgemini (env, not code): AUTH_JWT_SECRET differed between the apps
 
 - **Symptom:** login at studio.ariantra.com → back on kidgemini → still

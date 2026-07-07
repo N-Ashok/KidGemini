@@ -236,11 +236,14 @@ export function ChatPanelContainer() {
         console.warn(`[chat] post-finalize stream drop (ignored) after ${Date.now() - startedAt}ms`);
       } else {
         console.error(`[chat] ✖ ${aborted ? "STALLED (no tokens 30s)" : "stream error"} after ${Date.now() - startedAt}ms`, err);
-        setReply(
-          aborted
-            ? "That took too long 😅 — the model is busy. Try again, or ask for something simpler."
-            : "Oops! Something went wrong. Let's try again.",
-        );
+        // NEVER discard what already streamed (BUG-FIX-LOG 2026-07-07: phones
+        // drop the socket on screen-lock/app-switch mid-generation — the kid
+        // watched the code arrive, then "Oops" ATE it). Keep the partial reply
+        // and append a friendly next step instead.
+        const note = aborted
+          ? "\n\n---\n😅 That took too long — the model is busy. Ask me again!"
+          : "\n\n---\n📶 The connection hiccuped before I finished (this happens if the screen locks). Ask me again and I'll redo it!";
+        setReply(acc ? acc + note : note.replace(/^\n+---\n/, ""));
       }
     } finally {
       clearTimeout(stall);

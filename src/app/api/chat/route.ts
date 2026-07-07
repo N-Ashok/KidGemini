@@ -234,11 +234,27 @@ function ndjson(
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (obj: unknown) => controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
+      // Phones drop the socket mid-stream (screen lock / app switch) — after
+      // that every enqueue throws "Controller is already closed". Sends turn
+      // into no-ops instead: the generation finishes quietly (the safety
+      // monitor still runs) and the log gets ONE info line, not an ERROR per
+      // token (BUG-FIX-LOG 2026-07-07).
+      let closed = false;
+      const send = (obj: unknown) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
+        } catch {
+          closed = true;
+          console.log("[api/chat] client disconnected mid-stream — continuing quietly");
+        }
+      };
       try {
         await produce(send);
       } finally {
-        controller.close();
+        if (!closed) {
+          try { controller.close(); } catch { /* closed by client cancel */ }
+        }
       }
     },
   });
