@@ -7,6 +7,7 @@
 import "@/lib/logger"; // tees all server console output to logs/app.log
 import { NextRequest, NextResponse } from "next/server";
 import { GeminiChatModel, extractArtifact } from "@/lib/gemini";
+import { trimHistory } from "@/lib/history-trim";
 import { injectThreeJsIfNeeded } from "@/lib/three-vendor";
 import { FlashLiteClassifier } from "@/lib/safety";
 import { RulesClassifier } from "@/lib/safety.rules";
@@ -43,7 +44,9 @@ export async function POST(req: NextRequest) {
   }
 
   const message = (body.message ?? "").trim();
-  const history = body.history ?? [];
+  // Trim what the MODEL sees (stale game versions stripped + sliding window,
+  // see history-trim.ts) — the client's stored conversation is untouched.
+  const history = trimHistory(body.history ?? []);
   if (!message) return NextResponse.json({ error: "Empty message" }, { status: 400 });
 
   // ── Identity & the guest gate (server-enforced; fail-closed) ──────────────

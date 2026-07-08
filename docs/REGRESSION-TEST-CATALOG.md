@@ -61,6 +61,12 @@ npm run typecheck            # tsc --noEmit
 | `src/lib/game-console.ts`, `src/components/ArtifactFrame.tsx` | **`src/lib/game-console.test.ts`** (7 tests, passing; runs the injected script for real in `node:vm`, not just string matching) | Capture script is injected as early as possible (`<head>` → after `<html>` → doc start) and never double-injected; `console.log/warn/error`, `window.onerror`, and `unhandledrejection` all forward a `GameConsoleMessage` to the parent via `postMessage` | — (new feature, not a bug fix) |
 | `src/lib/three-vendor.ts`, `scripts/vendor-three.mjs`, `src/lib/gemini.ts` (CHILD_SYSTEM_PROMPT's Three.js import list) | **`src/lib/three-vendor.test.ts`** (6 tests, passing) | Plain 2D games pass through byte-identical (no `USES_THREE` marker ⇒ no-op); marked games get the marker stripped + a `<script type="importmap">` inserted as early as possible, mapping the bare specifier `"three"` to a base64 `data:` URI; that bundle is verified tree-shaken (no leftover relative imports that would break from a data: URI) and actually contains the classes the prompt teaches (`PerspectiveCamera`, `WebGLRenderer`, `BoxGeometry`, `MeshStandardMaterial`, `Scene`) | — (new feature, not a bug fix) |
 
+## Chat history trim (2026-07-08)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/history-trim.ts`, `src/app/api/chat/route.ts` | **`src/lib/history-trim.test.ts`** (7 tests, passing) | Only the newest game's code reaches the model (older versions → placeholder, prose kept); child messages never touched; 12-message sliding window; the newest game is swapped INTO the window when it falls outside (cap still holds); empty history safe | — (token-cost optimization, not a bug fix) |
+
 ## Published-game sizing (2026-07-08)
 
 | When to run | Test | What it pins | Bug-fix ref |
