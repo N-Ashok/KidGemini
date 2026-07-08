@@ -39,12 +39,6 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 - Signed-in: unlimited today; config-ready daily budget → upgrade paywall
   (`SIGNED_IN_DAILY_TOKEN_LIMIT` env knob, ships OFF)
 - Recents sidebar, new-chat
-- **History trim** (2026-07-08, server-side): the model only sees the last 12
-  messages and only the NEWEST game's code — older game versions collapse to
-  a placeholder (each carried ~10-15K input tokens on every message of an
-  iterating conversation). The newest game rides along even if it's older
-  than the window, so "update my game" always has code to work from. The
-  stored conversation/UI is untouched (`src/lib/history-trim.ts`)
 
 ## Analytics (Mixpanel — 2026-07-06)
 - Privacy-hardened snippet in the root layout (`src/lib/mixpanel-snippet.ts`,
