@@ -45,6 +45,44 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-08 — 3D games: preview never opened in prod (deploy didn't ship the vendored Three.js bundle)
+
+- **Symptom (what the user saw):** on live kidgemini.ariantra.com, asking for
+  a game streamed the code as text but the preview panel never opened
+  (reported during history-trim UAT; the trigger predates that deploy — it
+  shipped with the Three.js feature earlier the same day).
+- **Surface area:** `scripts/deploy-rsync.sh` (ship list), `src/lib/three-vendor.ts`
+  (runtime `readFileSync`), `src/app/api/chat/route.ts` (done event).
+- **Root cause:** `three-vendor.ts` reads
+  `src/lib/vendor/three-bundle.generated.js` off disk at runtime — webpack
+  does NOT bundle a `readFileSync` path into `.next`. The deploy rsyncs only
+  `.next public package.json package-lock.json next.config.js`, so the file
+  didn't exist on the box. For any reply where Gemini chose 3D
+  (`<!--USES_THREE-->` present), `injectThreeJsIfNeeded` threw ENOENT *after*
+  streaming finished but *before* the `done` event was sent — the client got
+  all the deltas (code as text) but never the `done` carrying `artifactHtml`,
+  so the preview never opened. Worked locally (src/ always present) — a
+  prod-only failure.
+- **Fix (two layers — solve the class):**
+  1. Root cause: `deploy-rsync.sh` now ships `src/lib/vendor` (with a comment
+     that any new runtime-read file must join the ship list).
+  2. Contract at the adjacent layer: the chat route wraps the injection in
+     try/catch — on ANY post-processing failure it logs and falls back to the
+     raw artifact, so `done` always carries the game. The preview opens; a 3D
+     game's import error surfaces in its Console tab instead of a dead end.
+- **Result (verified):** new route tests P.1 (injector throws ⇒ `done` still
+  carries the raw game — failed before the fix, passes after) and P.2
+  (injected html used on success); `three-vendor.deploy.test.ts` pins the
+  rsync ship list textually + the bundle's local existence. Full suite green
+  (91 tests), typecheck clean.
+- **Impact:** 3D game previews work on prod; 2D games were never affected.
+- **Prevention/class:** "runtime-read file missing from the deploy ship list"
+  — the ship-list guard test + the route-level fallback each catch it
+  independently. Same *signature* as the silent-hang class (a lost terminal
+  event): the done event is now contractually unloseable to post-processing.
+- **Related:** silent-hang class (BUG-FIX-LOG 2026-06-25 — blocks must travel
+  as HTTP statuses); Three.js feature commit `aa2cd33`.
+
 ### 2026-07-08 — Published games: on-screen controls hidden behind the mobile browser's address bar
 
 - **Symptom (what the user saw):** "the games mobile view is covering the
