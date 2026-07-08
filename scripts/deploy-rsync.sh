@@ -57,13 +57,6 @@ rsync -az --delete \
   .next public package.json package-lock.json next.config.js \
   "$SSH_TARGET:$REMOTE_DIR/"
 
-# src/lib/vendor is read off disk AT RUNTIME by three-vendor.ts (readFileSync —
-# webpack does NOT bundle it into .next). Forgetting to ship it broke every 3D
-# game's preview in prod (BUG-FIX-LOG 2026-07-08). Any new runtime-read file
-# must be added to the ship list too.
-ssh "$SSH_TARGET" "mkdir -p $REMOTE_DIR/src/lib"
-rsync -az --delete src/lib/vendor "$SSH_TARGET:$REMOTE_DIR/src/lib/"
-
 echo "→ [local] installing prod deps (if lockfile changed) + restarting on EC2…"
 ssh "$SSH_TARGET" 'bash -s' -- "$REMOTE_DIR" "$PM2_NAME" "$PORT" <<'REMOTE'
 set -euo pipefail

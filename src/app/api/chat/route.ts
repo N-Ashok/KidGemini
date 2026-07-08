@@ -196,21 +196,7 @@ export async function POST(req: NextRequest) {
     // and only 3D games (marked by the model itself) carry the extra weight
     // even once published as a standalone static file (see three-vendor.ts).
     const toCheck = `${cleaned}\n${(artifactHtml ?? "").slice(0, SAFETY_HTML_SAMPLE)}`;
-    // CONTRACT: post-processing can never cost the child the game (BUG-FIX-LOG
-    // 2026-07-08: the injector read a file the deploy didn't ship → ENOENT →
-    // the done event was lost — code streamed as text, the preview never
-    // opened). On any injection failure, fall back to the raw artifact: the
-    // preview opens, and a 3D game's import error lands in its Console tab
-    // instead of a silent dead end.
-    let deliverableHtml: string | null = null;
-    if (artifactHtml) {
-      try {
-        deliverableHtml = injectThreeJsIfNeeded(artifactHtml);
-      } catch (err) {
-        console.error(`[api/chat] ✖ three-js injection failed @${ms()}ms (serving raw artifact): ${(err as Error).message}`);
-        deliverableHtml = artifactHtml;
-      }
-    }
+    const deliverableHtml = artifactHtml ? injectThreeJsIfNeeded(artifactHtml) : null;
 
     // Finalize the message NOW — the child already watched it stream in. Send the FULL
     // text (code block kept inline, Gemini-style) for the chat, and the extracted HTML

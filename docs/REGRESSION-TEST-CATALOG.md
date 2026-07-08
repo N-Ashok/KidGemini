@@ -61,13 +61,6 @@ npm run typecheck            # tsc --noEmit
 | `src/lib/game-console.ts`, `src/components/ArtifactFrame.tsx` | **`src/lib/game-console.test.ts`** (7 tests, passing; runs the injected script for real in `node:vm`, not just string matching) | Capture script is injected as early as possible (`<head>` → after `<html>` → doc start) and never double-injected; `console.log/warn/error`, `window.onerror`, and `unhandledrejection` all forward a `GameConsoleMessage` to the parent via `postMessage` | — (new feature, not a bug fix) |
 | `src/lib/three-vendor.ts`, `scripts/vendor-three.mjs`, `src/lib/gemini.ts` (CHILD_SYSTEM_PROMPT's Three.js import list) | **`src/lib/three-vendor.test.ts`** (6 tests, passing) | Plain 2D games pass through byte-identical (no `USES_THREE` marker ⇒ no-op); marked games get the marker stripped + a `<script type="importmap">` inserted as early as possible, mapping the bare specifier `"three"` to a base64 `data:` URI; that bundle is verified tree-shaken (no leftover relative imports that would break from a data: URI) and actually contains the classes the prompt teaches (`PerspectiveCamera`, `WebGLRenderer`, `BoxGeometry`, `MeshStandardMaterial`, `Scene`) | — (new feature, not a bug fix) |
 
-## 3D game delivery (2026-07-08)
-
-| When to run | Test | What it pins | Bug-fix ref |
-|---|---|---|---|
-| `scripts/deploy-rsync.sh`, `src/lib/three-vendor.ts` | **`src/lib/three-vendor.deploy.test.ts`** (2 tests, passing) | The deploy ship list includes `src/lib/vendor` (read at runtime via `readFileSync` — NOT bundled into `.next`), and the vendored bundle exists locally | BUG-FIX-LOG 2026-07-08 (3D preview dead in prod) |
-| `src/app/api/chat/route.ts` (artifact post-processing) | **`src/app/api/chat/route.test.ts`** P.1/P.2 | The `done` event can never be lost to post-processing: injector throws ⇒ raw artifact still delivered (preview opens); injector succeeds ⇒ injected html delivered | BUG-FIX-LOG 2026-07-08 (same) |
-
 ## Chat history trim (2026-07-08)
 
 | When to run | Test | What it pins | Bug-fix ref |
