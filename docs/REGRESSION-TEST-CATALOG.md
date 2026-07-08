@@ -53,16 +53,3 @@ npm run typecheck            # tsc --noEmit
 | When to run | Test | What it pins | Bug-fix ref |
 |---|---|---|---|
 | `src/app/api/chat/route.ts`, `src/lib/gate.config.ts`, `src/lib/db.ts` (usage store) | `src/app/api/chat/route.test.ts` | Guest 10K trial streams then 401-walls; IP cap defeats cookie-clearing; 429/402 statuses; signed-in budget OFF by default; Gemini never called on any blocked path; all blocks are HTTP statuses (silent-hang class) | BUG-FIX-LOG 2026-06-25 + follow-up 2026-07-03 |
-
-## Game preview console (2026-07-08)
-
-| When to run | Test | What it pins | Bug-fix ref |
-|---|---|---|---|
-| `src/lib/game-console.ts`, `src/components/ArtifactFrame.tsx` | **`src/lib/game-console.test.ts`** (7 tests, passing; runs the injected script for real in `node:vm`, not just string matching) | Capture script is injected as early as possible (`<head>` → after `<html>` → doc start) and never double-injected; `console.log/warn/error`, `window.onerror`, and `unhandledrejection` all forward a `GameConsoleMessage` to the parent via `postMessage` | — (new feature, not a bug fix) |
-| `src/lib/three-vendor.ts`, `scripts/vendor-three.mjs`, `src/lib/gemini.ts` (CHILD_SYSTEM_PROMPT's Three.js import list) | **`src/lib/three-vendor.test.ts`** (6 tests, passing) | Plain 2D games pass through byte-identical (no `USES_THREE` marker ⇒ no-op); marked games get the marker stripped + a `<script type="importmap">` inserted as early as possible, mapping the bare specifier `"three"` to a base64 `data:` URI; that bundle is verified tree-shaken (no leftover relative imports that would break from a data: URI) and actually contains the classes the prompt teaches (`PerspectiveCamera`, `WebGLRenderer`, `BoxGeometry`, `MeshStandardMaterial`, `Scene`) | — (new feature, not a bug fix) |
-
-## Published-game sizing (2026-07-08)
-
-| When to run | Test | What it pins | Bug-fix ref |
-|---|---|---|---|
-| `src/lib/gemini.ts` (CHILD_SYSTEM_PROMPT's sizing instructions) | **`src/lib/gemini.test.ts`** (1 test, passing) | The prompt requires `height:100dvh`, never a bare `height:100vh` sizing instruction — `100vh` doesn't shrink for a mobile browser's address bar, hiding a game's own bottom on-screen controls | BUG-FIX-LOG 2026-07-08 (backward-compatible half in `Ariantra-Platform` `docs/BUG_LOG.md` #9) |

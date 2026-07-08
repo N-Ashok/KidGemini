@@ -10,14 +10,11 @@
 // user stays in Studio after signing in there). The subtle "Log in" enters
 // KIDGEMINI's session via the shared SSO (signIn() → studio /login?returnTo=
 // here) and hides once authenticated.
-// Mobile (2026-07-08): primary nav moves to an app-like bottom tab bar
-// (.ar-tabbar, same CSS as the platform's NavBar) — Chat · Arcade · Parent —
-// instead of the hamburger. Desktop keeps the full top menu unchanged.
+// Mobile: CSS checkbox burger from the brand kit (ar-nav-toggle/ar-nav-burger).
 
 // Environment-aware cross-links: `next dev` keeps navigation on localhost
 // (platform app on :3000 by convention) so local dev never ejects to prod.
 // NODE_ENV is inlined per build — server & client render identical hrefs.
-import { usePathname } from "next/navigation";
 import { signIn, useSession } from "@/lib/useAriantraSession";
 
 const DEV = process.env.NODE_ENV === "development";
@@ -29,65 +26,44 @@ const BOOK_URL =
 
 export function ArNav() {
   const { status } = useSession();
-  const pathname = usePathname();
   return (
-    <>
-      <header className="ar-nav">
-        <div className="ar-nav-inner">
-          <a href={WWW_URL} aria-label="Ariantra AI Foundry" className="ar-logo">
-            <span className="ar-logo-word">Ariantra</span>
-            <span className="ar-logo-divider">
-              <span className="ar-logo-line" />
-              <span className="ar-logo-dot" />
-              <span className="ar-logo-line" />
-            </span>
-            <span className="ar-logo-sub">AI Foundry</span>
-          </a>
-          <nav className="ar-nav-links">
-            <a href={GAMES_URL} className="ar-link">Games</a>
-            <a href="/" className="ar-link on">KidGemini</a>
-            <a href={`${WWW_URL}/#how`} className="ar-link">How it works</a>
-            <a href={`${WWW_URL}/#videos`} className="ar-link">Videos</a>
-            <a href={STUDIO_URL} className="ar-link">Studio</a>
-            {status !== "authenticated" && (
-              <a
-                href="#login"
-                className="ar-link ar-signin"
-                onClick={(e) => { e.preventDefault(); signIn(); }}
-              >
-                Log in
-              </a>
-            )}
-          </nav>
-          <div className="ar-nav-right">
-            <a href={BOOK_URL} target="_blank" rel="noopener" className="ar-cta">
-              Book a free session
+    <header className="ar-nav">
+      <div className="ar-nav-inner">
+        <a href={WWW_URL} aria-label="Ariantra AI Foundry" className="ar-logo">
+          <span className="ar-logo-word">Ariantra</span>
+          <span className="ar-logo-divider">
+            <span className="ar-logo-line" />
+            <span className="ar-logo-dot" />
+            <span className="ar-logo-line" />
+          </span>
+          <span className="ar-logo-sub">AI Foundry</span>
+        </a>
+        <input type="checkbox" id="ar-nav-toggle" className="ar-nav-toggle" aria-hidden="true" />
+        <nav className="ar-nav-links">
+          <a href={GAMES_URL} className="ar-link">Games</a>
+          <a href="/" className="ar-link on">KidGemini</a>
+          <a href={`${WWW_URL}/#how`} className="ar-link">How it works</a>
+          <a href={`${WWW_URL}/#videos`} className="ar-link">Videos</a>
+          <a href={STUDIO_URL} className="ar-link">Studio</a>
+          {status !== "authenticated" && (
+            <a
+              href="#login"
+              className="ar-link ar-signin"
+              onClick={(e) => { e.preventDefault(); signIn(); }}
+            >
+              Log in
             </a>
-            {status !== "authenticated" && (
-              <a
-                href="#login"
-                className="ar-link ar-account-icon"
-                aria-label="Log in"
-                onClick={(e) => { e.preventDefault(); signIn(); }}
-              >
-                <span className="ar-signin-icon" aria-hidden="true">👤</span>
-                <span className="ar-signin-label">Log in</span>
-              </a>
-            )}
-          </div>
+          )}
+        </nav>
+        <div className="ar-nav-right">
+          <a href={BOOK_URL} target="_blank" rel="noopener" className="ar-cta">
+            Book a free session
+          </a>
+          <label htmlFor="ar-nav-toggle" className="ar-nav-burger" aria-label="Menu">
+            <span></span><span></span><span></span>
+          </label>
         </div>
-      </header>
-      <nav className="ar-tabbar" aria-label="Primary">
-        <a href="/" className={`ar-tab ${pathname === "/" ? "on" : ""}`}>
-          <span className="ar-tab-icon" aria-hidden="true">💬</span>Chat
-        </a>
-        <a href={GAMES_URL} className="ar-tab">
-          <span className="ar-tab-icon" aria-hidden="true">🎮</span>Arcade
-        </a>
-        <a href="/parent" className={`ar-tab ${pathname === "/parent" ? "on" : ""}`}>
-          <span className="ar-tab-icon" aria-hidden="true">👪</span>Parent
-        </a>
-      </nav>
-    </>
+      </div>
+    </header>
   );
 }
