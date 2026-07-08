@@ -59,3 +59,9 @@ npm run typecheck            # tsc --noEmit
 | When to run | Test | What it pins | Bug-fix ref |
 |---|---|---|---|
 | `src/lib/history-trim.ts`, `src/app/api/chat/route.ts` | **`src/lib/history-trim.test.ts`** (7 tests, passing) | Only the newest game's code reaches the model (older versions → placeholder, prose kept); child messages never touched; 12-message sliding window; the newest game is swapped INTO the window when it falls outside (cap still holds); empty history safe | — (token-cost optimization, not a bug fix) |
+
+## Starter suggestion chips (2026-07-08)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/game-suggestions.ts`, `src/components/ChatPanel.container.tsx` (chips) | **`src/lib/game-suggestions.test.ts`** (7 tests, passing) | Pool holds ≥500 unique non-empty game prompts; every entry starts a game ("Make me a … game"); `pickSuggestions` returns 4 distinct pool entries, is rand-injectable/deterministic, safe when count > pool | — (feature, not a bug fix) |

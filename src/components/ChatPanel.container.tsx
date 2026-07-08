@@ -13,17 +13,10 @@ import { LoginGate } from "./LoginGate";
 import { useTextToSpeech } from "./useTextToSpeech";
 import type { ChatMessage, Conversation } from "@/types/chat.types";
 import { loadChats, saveChats } from "@/lib/chat-store";
+import { pickSuggestions } from "@/lib/game-suggestions";
 
 const CHAT_MODEL_LABEL = "flash lite"; // display only; real model is server-side
 const KIND_FALLBACK = "Let's talk about something else! How about a game? 🌟";
-// Game-making platform → every starter is a GAME (user decision 2026-07-07),
-// four different genres so kids see the range.
-const SUGGESTIONS = [
-  "Make me a car racing game 🏎️",
-  "Make me a space shooter with aliens 👾",
-  "Make me a dino jump-and-run game 🦖",
-  "Make me a puzzle game with colors 🧩",
-];
 
 function newConversation(): Conversation {
   return {
@@ -58,6 +51,11 @@ export function ChatPanelContainer() {
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer; always visible on md+
   // Set when the server stops the guest: sign-in gate (token limit), rate-limit, or pay wall.
   const [gate, setGate] = useState<{ text: string; upgrade: boolean } | null>(null);
+  // Starter chips: a fresh random four per load AND per chat switch. Picked in
+  // an effect — not at render — so the server HTML matches the first client
+  // render (random at render = hydration mismatch).
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  useEffect(() => setSuggestions(pickSuggestions(4)), [activeId]);
   const tts = useTextToSpeech();
 
   // Chats survive navigation (sign-in round trips, Studio links) via
@@ -348,7 +346,7 @@ export function ChatPanelContainer() {
             )}
             {active.messages.length === 1 && (
               <div className="flex flex-wrap gap-2 pt-2">
-                {SUGGESTIONS.map((s) => (
+                {suggestions.map((s) => (
                   <button
                     key={s}
                     onClick={() => handleSend(s)}

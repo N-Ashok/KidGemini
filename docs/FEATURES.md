@@ -4,6 +4,9 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 
 ## Chat (home `/`)
 - Gemini-powered kids chat: text + voice (TTS playback, regenerate last answer)
+- **Starter chips** (2026-07-08): 4 random game prompts from a 500-strong pool
+  (`src/lib/game-suggestions.ts`, 10 mechanics × 50 themes) — fresh picks every
+  load and every new chat, so kids don't see the same four twice
 - Sandboxed HTML game artifacts the AI can build in-chat — Preview/Code tabs
   (code pane scrolls), download/copy; on mobile the panel is fullscreen with a
   "← Chat" back button, and any game message shows a "🎮 Open game" chip to
