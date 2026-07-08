@@ -13,13 +13,17 @@ secrets or the raw Gemini API.
 Browser ── pages: / (chat) · /parent · /admin · /upgrade
    │
    ▼ API routes (runtime: nodejs)
-/api/chat      → safety gate (Gemini safety model) → chat (Gemini chat model)
+/api/chat      → history trim (newest game + last 12 msgs, lib/history-trim.ts)
+                 → safety gate (Gemini safety model) → chat (Gemini chat model)
 /api/safety    → standalone safety checks
 /api/alerts    → parent alert feed (PIN-gated)
 /api/usage     → usage/cost admin feed
 /api/billing/* → Razorpay order + verified/idempotent webhook
 /api/session   → SSO whoami (verifies shared ariantra_session cookie)
 /api/logout    → clears the .ariantra.com session cookie (signs out ALL surfaces)
+/api/arcade/publish → parent-PIN + session gate → platform partner bridge
+                 (server-to-server publish/list/slug-check; the platform
+                 re-verifies everything — see platform ARCHITECTURE.md §Partner)
    │
    ▼ src/lib/db.ts — Store interfaces (AlertStore, UsageStore, RateLimitStore, PaymentStore)
 SQLite (better-sqlite3, WAL): alerts · usage_events · ip_limits · payments · webhook_events
