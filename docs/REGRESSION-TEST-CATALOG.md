@@ -53,3 +53,9 @@ npm run typecheck            # tsc --noEmit
 | When to run | Test | What it pins | Bug-fix ref |
 |---|---|---|---|
 | `src/app/api/chat/route.ts`, `src/lib/gate.config.ts`, `src/lib/db.ts` (usage store) | `src/app/api/chat/route.test.ts` | Guest 10K trial streams then 401-walls; IP cap defeats cookie-clearing; 429/402 statuses; signed-in budget OFF by default; Gemini never called on any blocked path; all blocks are HTTP statuses (silent-hang class) | BUG-FIX-LOG 2026-06-25 + follow-up 2026-07-03 |
+
+## Chat history trim (2026-07-08, re-introduced after the same-day revert)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/history-trim.ts`, `src/app/api/chat/route.ts` | **`src/lib/history-trim.test.ts`** (7 tests, passing) | Only the newest game's code reaches the model (older versions → placeholder, prose kept); child messages never touched; 12-message sliding window; the newest game is swapped INTO the window when it falls outside (cap still holds); empty history safe | — (token-cost optimization, not a bug fix) |
