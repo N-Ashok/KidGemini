@@ -115,6 +115,10 @@ html {
 /* Mobile: links collapse behind a checkbox-pattern hamburger (no JS — the
    same markup works in React and in the static partial). CTA stays visible. */
 .ar-nav-toggle { display: none; }
+/* Icon-only account link — mobile-only (see @media below); the desktop menu
+   already has a text "Log in" link, so this stays hidden there to avoid a
+   duplicate (2026-07-08 bug: this was unscoped and showed on both). */
+.ar-account-icon { display: none; align-items: center; gap: 4px; }
 .ar-nav-burger {
   display: none;
   flex-direction: column;
@@ -141,25 +145,57 @@ html {
 .ar-nav-toggle:checked ~ .ar-nav-right .ar-nav-burger span:nth-child(2) { opacity: 0; }
 .ar-nav-toggle:checked ~ .ar-nav-right .ar-nav-burger span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
 @media (max-width: 860px) {
-  .ar-nav-burger { display: flex; }
-  .ar-nav-links {
-    display: none;
+  /* App-like mobile nav (2026-07-08): the bottom tab bar (.ar-tabbar below)
+     replaces the burger/dropdown as primary navigation on mobile — desktop
+     keeps the classic top menu untouched. Burger markup stays in the DOM
+     (older cached partials still reference it) but is hidden here. */
+  .ar-nav-burger { display: none; }
+  .ar-nav-links { display: none; }
+  .ar-cta { padding: 9px 14px; font-size: 13px; }
+  /* Account/sign-in collapses to an icon-only tap target next to the CTA. */
+  .ar-account-icon { display: inline-flex; }
+  .ar-signin-label { display: none; }
+}
+
+/* ── Bottom tab bar (mobile "app" nav, 2026-07-08) ─────────────────────
+   Fixed, thumb-reachable, icon+label per tab — the native-app pattern.
+   Desktop keeps the top .ar-nav-links menu; this is mobile-only. */
+.ar-tabbar { display: none; }
+@media (max-width: 860px) {
+  .ar-tabbar {
+    display: flex;
     position: fixed;
-    top: 69px;
+    bottom: 0;
     left: 0;
     right: 0;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0;
-    background: #fff;
-    border-bottom: 1px solid #eee;
-    padding: 8px 0;
-    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.08);
+    z-index: 100;
+    background: rgba(255, 255, 255, 0.98);
+    border-top: 1px solid var(--ar-border);
+    box-shadow: 0 -4px 16px rgba(16, 24, 40, 0.08);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+    font-family: var(--ar-font);
   }
-  .ar-nav-toggle:checked ~ .ar-nav-links { display: flex; }
-  .ar-nav-links .ar-link { display: block; width: 100%; padding: 13px 24px; font-size: 15px; }
-  .ar-cta { padding: 9px 14px; font-size: 13px; }
+  /* Every page under a sticky top nav + fixed bottom tab bar needs room at
+     the bottom so content/footer isn't hidden behind the bar. */
+  body { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
 }
+.ar-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 2px;
+  color: var(--ar-dim);
+  text-decoration: none;
+  font-size: 10.5px;
+  font-weight: 600;
+  border-radius: var(--ar-radius-sm);
+  transition: color 0.15s;
+}
+.ar-tab-icon { font-size: 20px; line-height: 1; }
+.ar-tab.on { color: var(--ar-accent); }
 
 /* ── Wordmark (stacked: ARIANTRA / line·dot·line / AI FOUNDRY) ────────── */
 .ar-logo {

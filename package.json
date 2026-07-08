@@ -4,13 +4,17 @@
   "private": true,
   "description": "Kids-safe Gemini chat with a parental safety gate and sandboxed game artifacts",
   "scripts": {
+    "predev": "npm run vendor:three",
     "dev": "next dev",
+    "prebuild": "npm run vendor:three",
     "build": "next build",
     "start": "next start",
     "deploy": "bash scripts/deploy-rsync.sh",
     "sync:brand": "bash scripts/sync-brand.sh",
+    "vendor:three": "node scripts/vendor-three.mjs",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "pretest": "npm run vendor:three",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -30,8 +34,10 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.19",
+    "esbuild": "^0.28.1",
     "postcss": "^8.4.39",
     "tailwindcss": "^3.4.7",
+    "three": "^0.185.1",
     "typescript": "^5.5.4",
     "vitest": "^4.1.9"
   }

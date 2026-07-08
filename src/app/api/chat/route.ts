@@ -7,6 +7,7 @@
 import "@/lib/logger"; // tees all server console output to logs/app.log
 import { NextRequest, NextResponse } from "next/server";
 import { GeminiChatModel, extractArtifact } from "@/lib/gemini";
+import { injectThreeJsIfNeeded } from "@/lib/three-vendor";
 import { FlashLiteClassifier } from "@/lib/safety";
 import { RulesClassifier } from "@/lib/safety.rules";
 import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore } from "@/lib/db";
@@ -186,13 +187,20 @@ export async function POST(req: NextRequest) {
     console.log(`[api/chat] stream done @${ms()}ms chars=${full.length}`);
 
     const { text: cleaned, artifactHtml } = extractArtifact(full);
+    // Three.js is baked in HERE — after the safety sample below is computed
+    // from the model's OWN raw output, and before anything is sent/stored —
+    // so the ~500KB vendored bundle never dilutes the safety scan window,
+    // and only 3D games (marked by the model itself) carry the extra weight
+    // even once published as a standalone static file (see three-vendor.ts).
+    const toCheck = `${cleaned}\n${(artifactHtml ?? "").slice(0, SAFETY_HTML_SAMPLE)}`;
+    const deliverableHtml = artifactHtml ? injectThreeJsIfNeeded(artifactHtml) : null;
+
     // Finalize the message NOW — the child already watched it stream in. Send the FULL
     // text (code block kept inline, Gemini-style) for the chat, and the extracted HTML
     // for the side panel preview. The output monitor runs next and can RETRACT.
-    send({ type: "done", text: full, artifactHtml: artifactHtml ?? null });
+    send({ type: "done", text: full, artifactHtml: deliverableHtml });
     console.log(`[api/chat] ✓ shown @${ms()}ms; running output monitor…`);
 
-    const toCheck = `${cleaned}\n${(artifactHtml ?? "").slice(0, SAFETY_HTML_SAMPLE)}`;
     const outVerdict = await classifier.classify({ text: toCheck, origin: "model" });
     console.log(`[api/chat] output-monitor action=${outVerdict.action} @${ms()}ms`);
     recordUsage("chat", chatModelName, message, cleaned, outVerdict.action !== "allow");

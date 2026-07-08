@@ -8,6 +8,19 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   (code pane scrolls), download/copy; on mobile the panel is fullscreen with a
   "← Chat" back button, and any game message shows a "🎮 Open game" chip to
   reopen a closed preview
+- **🛠 Console tab** (2026-07-08): a capture script is injected into every
+  game's iframe (before the game's own code runs) that forwards
+  `console.log/warn/error`, uncaught errors, and unhandled promise rejections
+  to the Console tab — a red badge shows the error count, and the panel
+  auto-opens the first time a game throws, so a broken game shows WHY instead
+  of a blank frozen canvas (`src/lib/game-console.ts`)
+- **Optional 3D graphics** (2026-07-08): the model can build a game with real
+  3D (Three.js primitives + lighting) instead of flat 2D canvas by emitting a
+  marker comment; the platform then bakes a self-contained, tree-shaken
+  Three.js bundle into that game's HTML (`src/lib/three-vendor.ts` +
+  `scripts/vendor-three.mjs`) — plain 2D games stay untouched/small, even
+  once published as a static file. A curated 3D model library (named assets
+  like "fox"/"car") is future work, not built yet
 - **🚀 Put it in the Arcade** (2026-07-07): CTA under the preview publishes the
   game to games.ariantra.com — kid names it (live URL check + 🎲 ideas), a
   grown-up approves with the parent PIN, then it goes live under the family's
@@ -60,5 +73,8 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 - Shared Ariantra header on every page (`ArNav`): Home · Games · KidGemini · Studio
   — pixel-identical with the platform via the generated brand CSS (local copy,
   `npm run sync:brand`)
+- **Mobile app-like nav** (2026-07-08): fixed bottom tab bar — Chat · Arcade ·
+  Parent — replaces the hamburger on phones (same `.ar-tabbar` CSS the
+  platform uses, kidgemini-specific tabs); desktop nav is unchanged
 - Co-hosted on the Ariantra EC2 box at `kidgemini.ariantra.com` (:3001 behind Caddy)
 - One-command deploy: `npm run deploy` (rsync + pm2, SQLite kept on a persistent path)
