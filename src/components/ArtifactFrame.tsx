@@ -3,9 +3,11 @@
 // SECURITY: preview runs in a sandboxed iframe — sandbox="allow-scripts" only (no
 // same-origin, no top-navigation, no forms). Presentational.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { downloadCode } from "./download";
 import { PublishToArcade } from "./PublishToArcade";
+import { GAME_CONSOLE_SOURCE, injectConsoleCapture } from "@/lib/game-console";
+import type { GameConsoleMessage } from "@/types/game-console.types";
 
 interface ArtifactFrameProps {
   html: string | null;
@@ -14,7 +16,7 @@ interface ArtifactFrameProps {
   onClose: () => void;
 }
 
-type Tab = "preview" | "code";
+type Tab = "preview" | "code" | "console";
 
 /** Suggested arcade name from the game's own <title>, if it has one. */
 function titleOf(html: string): string {
@@ -26,7 +28,26 @@ export function ArtifactFrame({ html, busy, onClose }: ArtifactFrameProps) {
   const [tab, setTab] = useState<Tab>("preview");
   const [copied, setCopied] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [consoleMessages, setConsoleMessages] = useState<GameConsoleMessage[]>([]);
+
+  // Each new/updated game is a fresh iframe load — start its console clean,
+  // and jump the kid straight to the Console tab the moment something breaks
+  // (a blank frozen canvas is a dead end otherwise; see CLAUDE.md UX bar).
+  useEffect(() => {
+    setConsoleMessages([]);
+    function handleMessage(event: MessageEvent) {
+      if (event.data?.source !== GAME_CONSOLE_SOURCE) return;
+      const message = event.data.message as GameConsoleMessage;
+      setConsoleMessages((prev) => [...prev, message]);
+      if (message.level === "error") setTab((t) => (t === "preview" ? "console" : t));
+    }
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [html]);
+
   if (!html) return null;
+
+  const errorCount = consoleMessages.filter((m) => m.level === "error").length;
 
   async function copy() {
     try {
@@ -61,6 +82,14 @@ export function ArtifactFrame({ html, busy, onClose }: ArtifactFrameProps) {
           </button>
           <button onClick={() => setTab("code")} className={tabBtn("code", "Code")}>
             {"</>"} Code
+          </button>
+          <button onClick={() => setTab("console")} className={`relative ${tabBtn("console", "Console")}`}>
+            🛠 <span className="hidden sm:inline">Console</span>
+            {errorCount > 0 && (
+              <span className="ml-1 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                {errorCount}
+              </span>
+            )}
           </button>
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -103,20 +132,44 @@ export function ArtifactFrame({ html, busy, onClose }: ArtifactFrameProps) {
         Made by AI · runs safely in a sandbox
       </p>
 
-      {tab === "preview" ? (
+      {tab === "preview" && (
         <iframe
           title="AI-generated game"
           sandbox="allow-scripts"
-          srcDoc={html}
+          srcDoc={injectConsoleCapture(html)}
           className="min-h-0 w-full flex-1 border-0"
         />
-      ) : (
+      )}
+      {tab === "code" && (
         /* min-h-0 (not h-full): a flex child refuses to shrink below its content
            by default, so with h-full the code block overflowed past the panel
            and the overflow-auto scrollbar never appeared. */
         <pre className="min-h-0 flex-1 overflow-auto bg-neutral-900 p-4 text-[12px] leading-5 text-neutral-100">
           <code>{html}</code>
         </pre>
+      )}
+      {tab === "console" && (
+        <div className="min-h-0 flex-1 overflow-auto bg-neutral-950 p-3 font-mono text-[12px] leading-5">
+          {consoleMessages.length === 0 ? (
+            <p className="text-neutral-500">No console output yet — play the game to see logs and errors here.</p>
+          ) : (
+            consoleMessages.map((m, i) => (
+              <div
+                key={i}
+                className={`whitespace-pre-wrap border-b border-neutral-800 py-1 ${
+                  m.level === "error"
+                    ? "text-red-400"
+                    : m.level === "warn"
+                      ? "text-amber-400"
+                      : "text-neutral-300"
+                }`}
+              >
+                <span className="mr-1 opacity-60">{m.level === "error" ? "✕" : m.level === "warn" ? "⚠" : "›"}</span>
+                {m.text}
+              </div>
+            ))
+          )}
+        </div>
       )}
 
       {publishing && (

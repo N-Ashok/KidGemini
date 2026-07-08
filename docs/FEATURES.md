@@ -11,6 +11,13 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   (code pane scrolls), download/copy; on mobile the panel is fullscreen with a
   "← Chat" back button, and any game message shows a "🎮 Open game" chip to
   reopen a closed preview
+- **🛠 Console tab** (2026-07-08, re-introduced after the same-day revert): a
+  capture script is injected into every game's iframe (before the game's own
+  code runs) that forwards `console.log/warn/error`, uncaught errors, and
+  unhandled promise rejections to the Console tab — a red badge shows the
+  error count, and the panel auto-opens the first time a game throws, so a
+  broken game shows WHY instead of a blank frozen canvas
+  (`src/lib/game-console.ts`)
 - **🚀 Put it in the Arcade** (2026-07-07): CTA under the preview publishes the
   game to games.ariantra.com — kid names it (live URL check + 🎲 ideas), a
   grown-up approves with the parent PIN, then it goes live under the family's
