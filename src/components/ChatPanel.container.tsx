@@ -15,7 +15,6 @@ import type { ChatMessage, Conversation } from "@/types/chat.types";
 import { loadChats, saveChats } from "@/lib/chat-store";
 import { pickSuggestions } from "@/lib/game-suggestions";
 
-const CHAT_MODEL_LABEL = "flash lite"; // display only; real model is server-side
 const KIND_FALLBACK = "Let's talk about something else! How about a game? 🌟";
 
 function newConversation(): Conversation {
@@ -359,7 +358,7 @@ export function ChatPanelContainer() {
             )}
           </div>
         </div>
-        <Composer disabled={busy} busy={busy} model={CHAT_MODEL_LABEL} onSend={handleSend} onStop={handleStop} />
+        <Composer disabled={busy} busy={busy} onSend={handleSend} onStop={handleStop} />
       </main>
 
       {/* z-[110]: must sit ABOVE the sticky brand nav (.ar-nav, z-100) — at

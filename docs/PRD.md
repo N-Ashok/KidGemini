@@ -38,10 +38,12 @@ experience that is safe by construction and keeps a parent in the loop.
 
 1. Child opens the app → big, friendly chat with a mic button.
 2. Child types **or speaks** (speech-to-text). 
-3. Request is checked by a fast **Flash-Lite classifier** for red flags.
-4. The main model answers; the answer is checked **again** before display.
-5. If safe → shown to child. If a game is requested → rendered in the **sandboxed artifact panel**.
-6. If flagged → child sees a gentle, age-appropriate redirect; **parent is alerted**.
+3. Request is checked by **instant deterministic rules** for red flags (block + parent alert).
+4. The main model answers under strict built-in safety thresholds **plus** an explicit
+   child-safety system instruction (audience: child aged 7–14).
+5. The answer streams to the child. If a game is requested → rendered in the **sandboxed
+   artifact panel**. Games are **never** blocked or retracted by the safety layer.
+6. If the input is flagged → child sees a gentle, age-appropriate redirect; **parent is alerted**.
 
 ---
 
@@ -52,8 +54,18 @@ experience that is safe by construction and keeps a parent in the loop.
 - Gemini built-in safety settings set to the strictest thresholds.
 
 ### F2 — Layered safety gate (must-have)
-The gate is **defense-in-depth and fail-closed**, mixing deterministic and probabilistic
-layers so most traffic is decided cheaply, predictably, and auditably:
+
+> **Posture change (owner decision, 2026-07-09):** the Flash-Lite classifier was removed from
+> the chat path — its output monitor retracted harmless games (chess) after they streamed, and
+> games must never be restricted. `/api/chat` safety is now **Layer 0 (input rules) + Gemini
+> built-in thresholds + a child-safety system instruction** ("be careful in the way you speak
+> and be cautious about safety — you are talking to a child aged between 7 and 14"). The
+> classifier design below is retained for `/api/safety` (extension endpoint) and as the
+> re-enable path if prompt-level safety proves insufficient (trigger: any unsafe output
+> reaching a child, or a rise in parent-reported misses).
+
+The original gate design — **defense-in-depth and fail-closed**, mixing deterministic and
+probabilistic layers so most traffic is decided cheaply, predictably, and auditably:
 
 - **Layer 0 — Deterministic rules (₹0, instant, 100% reproducible):** wordlist/normalization
   (profanity, slurs, leetspeak), **PII regex** (phone, address, email, school), known
@@ -71,8 +83,9 @@ Each → `allow | soft-block | hard-block`; the `ALWAYS_HARD_BLOCK` set (sexual,
 stranger-contact) can never be downgraded. The gate runs **server-side only** — the client
 never receives unvetted text. See `CLAUDE.md` § 3 and `src/lib/safety*.ts`.
 
-> **Status:** the Flash-Lite layer + fail-closed behavior are built; the deterministic rules
-> layer, cache, and golden-test set are designed but **not yet implemented**.
+> **Status:** the Flash-Lite layer + fail-closed behavior are built but **detached from
+> `/api/chat`** (2026-07-09 posture change above); the deterministic input rules run on every
+> chat message; the cache and golden-test set are designed but **not yet implemented**.
 
 ### F3 — Parent alerting & dashboard (must-have)
 - Every flag is logged with: timestamp, severity, category, the triggering text, the action taken.

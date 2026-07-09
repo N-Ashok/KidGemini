@@ -2,6 +2,13 @@
 // 2026-07-07: errors were swallowed → the mic just "did nothing" on phones).
 // Pure function so it unit-tests plain.
 
+/** True when the error means listening cannot continue (permission, hardware,
+ *  network). Pauses in speech ("no-speech", "aborted") are NOT fatal — the
+ *  recognizer should silently restart so the kid can keep talking. */
+export function isFatalMicError(code: string): boolean {
+  return ["not-allowed", "service-not-allowed", "audio-capture", "network"].includes(code);
+}
+
 export function micErrorMessage(code: string): string {
   switch (code) {
     case "not-allowed":

@@ -1,9 +1,9 @@
 "use client";
-// Gemini-style composer: rounded bar with a + action, growing textarea, model selector,
+// Gemini-style composer: rounded bar with a + action, growing textarea,
 // mic (speech-to-text), and a send button that appears once there's text.
 // Presentational; raises events via props.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSpeechInput } from "./useSpeechInput";
 
 export interface Attachment {
@@ -14,19 +14,30 @@ export interface Attachment {
 interface ComposerProps {
   disabled?: boolean;
   busy?: boolean;
-  model: string;
   onSend: (text: string, attachment?: Attachment) => void;
   onStop?: () => void;
 }
 
 const ACCEPT = ".html,.htm,.txt,.js,.ts,.css,.json,.md,.csv";
 const MAX_FILE_BYTES = 200_000;
+// Matches max-h-40 (10rem) — the textarea grows to here, then scrolls.
+const MAX_TEXTAREA_PX = 160;
 
-export function Composer({ disabled, busy, model, onSend, onStop }: ComposerProps) {
+export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
   const [value, setValue] = useState("");
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [fileError, setFileError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-grow: track the content's height whether it was typed, dictated, or
+  // cleared on send — an effect on `value` covers all three paths.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_PX)}px`;
+  }, [value]);
   const { isListening, isSupported, error: micError, clearError: clearMicError, toggle, start, stop } = useSpeechInput(
     (text) => setValue((v) => (v ? `${v} ${text}` : text)),
   );
@@ -136,20 +147,17 @@ export function Composer({ disabled, busy, model, onSend, onStop }: ComposerProp
         </button>
 
         <textarea
+          ref={textareaRef}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
           rows={1}
           placeholder="Ask me anything…"
           disabled={disabled}
-          className="max-h-40 flex-1 resize-none bg-transparent py-2.5 text-[15px] leading-6 text-neutral-800 outline-none placeholder:text-neutral-400"
+          className="max-h-40 flex-1 resize-none overflow-y-auto bg-transparent py-2.5 text-[15px] leading-6 text-neutral-800 outline-none placeholder:text-neutral-400 focus-visible:ring-0 focus-visible:ring-offset-0"
         />
 
         <div className="flex shrink-0 items-center gap-1">
-          <span className="flex items-center gap-1 rounded-full px-3 py-1.5 text-sm text-neutral-500">
-            {model.replace("gemini-2.5-", "").replace("-", " ")} <span aria-hidden>⌄</span>
-          </span>
-
           {isSupported && (
             <button
               type="button"

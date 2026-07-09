@@ -10,9 +10,15 @@ import { withRetry, withTimeout } from "./retry";
 // than leave a child staring at "Thinking…".
 const CHAT_TIMEOUT_MS = 30_000;
 
-const CHILD_SYSTEM_PROMPT = `You are a friendly, encouraging assistant for a child (about 6-12 years old).
+// Exported so tests can pin the child-safety instruction (it replaced the
+// Flash-Lite output monitor — see docs/BUG-FIX-LOG.md 2026-07-09).
+export const CHILD_SYSTEM_PROMPT = `You are a friendly, encouraging assistant for a child aged between 7 and 14.
+Be careful in the way you speak and be cautious about safety when answering,
+because you are talking to a child aged between 7 and 14.
 Speak simply and warmly. Keep answers short and clear. Be playful and curious.
 Never produce anything scary, gory, sexual, hateful, or unsafe.
+Games the child asks for are ALWAYS welcome — chess, puzzles, arcade games,
+anything playful — never refuse a game request; just keep its content wholesome.
 Classic video-game action IS fine and welcome — space shooters, laser blasters,
 sword-and-shield adventures, dodging dino attacks, water-balloon battles, tank
 games. Keep it cartoonish and bloodless: enemies "pop", "vanish" or "bounce away",
@@ -87,8 +93,9 @@ export function extractArtifact(text: string): { text: string; artifactHtml?: st
 }
 
 // Shared generation config — strict built-in safety + token headroom for full games.
-// Built-in safety is our real-time blocker when streaming (the Flash-Lite gate then runs
-// as a parallel monitor rather than a serial pre-display gate).
+// Built-in safety is our real-time blocker when streaming; the system prompt above
+// carries the child-safety instruction (the Flash-Lite monitor was removed 2026-07-09
+// because it retracted harmless games like chess).
 const GEN_CONFIG = {
   systemInstruction: CHILD_SYSTEM_PROMPT,
   maxOutputTokens: 8192,
@@ -99,8 +106,8 @@ const GEN_CONFIG = {
   safetySettings: [
     // DANGEROUS_CONTENT at LOW blocked ordinary game-genre requests ("make me a
     // shooting game") — kids' arcade staples. MEDIUM still blocks real-world
-    // dangerous content, and our own two-layer gate (rules + Flash-Lite
-    // classifier) runs on top. Other categories stay at the strictest setting.
+    // dangerous content, and the deterministic input rules run on top.
+    // Other categories stay at the strictest setting.
     { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
     { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
     { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },

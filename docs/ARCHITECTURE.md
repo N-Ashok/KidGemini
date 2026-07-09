@@ -14,8 +14,10 @@ Browser ── pages: / (chat) · /parent · /admin · /upgrade
    │
    ▼ API routes (runtime: nodejs)
 /api/chat      → history trim (newest game + last 12 msgs, lib/history-trim.ts)
-                 → safety gate (Gemini safety model) → chat (Gemini chat model)
-/api/safety    → standalone safety checks
+                 → input rules (deterministic, lib/safety.rules.ts)
+                 → chat (Gemini chat model: built-in safety thresholds +
+                   child-safety system prompt; no output monitor — 2026-07-09)
+/api/safety    → standalone safety checks (Flash-Lite classifier)
 /api/alerts    → parent alert feed (PIN-gated)
 /api/usage     → usage/cost admin feed
 /api/billing/* → Razorpay order + verified/idempotent webhook

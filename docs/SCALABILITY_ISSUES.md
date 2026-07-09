@@ -68,16 +68,22 @@ Statuses: `ACCEPTED` (known limit, deliberately deferred) · `OPEN` (needs actio
   path: rate-limit by IP (not just cookie) so new-cookie evasion is throttled. **Effort:** ~half a
   day single-instance; folds into the #1 migration for the shared-store version.
 
-## 4. 2–3 LLM calls per turn (input + output safety + chat) — **ACCEPTED (safety, non-negotiable)**
+## 4. LLM calls per turn — **RESOLVED as a cost issue 2026-07-09 (safety posture change)**
+
+> **2026-07-09 (owner decision):** the Flash-Lite classifier was removed from `/api/chat`
+> (it retracted harmless games — see BUG-FIX-LOG 2026-07-09). Per-turn cost is now **1 chat
+> call** (deterministic input rules are free). The former 2–3× safety-call multiplier is gone;
+> the trade is safety-coverage, not scale — output safety now rests on Gemini built-in
+> thresholds + the child-safety system prompt. If the classifier is ever re-enabled
+> (trigger: unsafe output reaching a child), the cost levers below apply again.
+
+### Original analysis — **(was) ACCEPTED (safety, non-negotiable)**
 
 - **Compromise (cost for safety):** every turn runs a chat generation **plus** a Flash-Lite output
   monitor, **plus** a background input classifier (`src/app/api/chat/route.ts`). Cost scales ~2–3×
-  the chat-only token volume. This is intentional and **stays** — fail-closed safety is the product
-  (CLAUDE.md §3); we don't trade it away for cost.
-- **Limit:** per-turn LLM cost ≈ chat + 2× safety classifier; the safety model can dominate spend at volume.
-- **Trigger to revisit (optimize, never weaken):** safety-model spend dominating the cost dashboard.
-- **Ready plan (cost levers that preserve fail-closed):** deterministic input rules already
-  short-circuit safe prompts before any input-LLM block (keep that); (a) cache classifier verdicts
+  the chat-only token volume.
+- **Ready plan (cost levers that preserve fail-closed):** deterministic input rules
+  short-circuit safe prompts before any input-LLM block; (a) cache classifier verdicts
   for identical/near-identical content; (b) keep the cheapest model that still passes the safety
   bar; (c) batch/sample output monitoring **only** for provably low-risk classes, with the default
   staying "classify + fail closed." Any change here needs new safety tests (CLAUDE.md §7.4).

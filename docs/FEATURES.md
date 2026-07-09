@@ -51,14 +51,19 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   `mixpanel-snippet.test.ts`
 
 ## Safety (the core value)
-- Server-enforced safety gate on every message (separate Gemini safety model)
+- **Posture (owner decision 2026-07-09):** the Flash-Lite classifier is no
+  longer in the chat path — it retracted harmless games (chess). Safety on
+  `/api/chat` is now: instant deterministic input rules (block + parent alert)
+  → Gemini built-in safety thresholds (real-time blocking while streaming)
+  → an explicit child-safety system instruction (age 7–14, "be careful in the
+  way you speak / cautious about safety"). **Games are never blocked or
+  retracted.** Locked by route.test.ts R.1 + gemini.prompt.test.ts.
+  (`/api/safety`, the extension endpoint, still uses the classifier.)
 - **Game-action exemption** (owner decision 2026-07-06): classic game genres —
   space shooters, sword adventures, cartoon battles — are allowed (system
   prompt welcomes them, cartoonish/bloodless only; Gemini DANGEROUS_CONTENT
-  at MEDIUM; classifier judges only graphic/realistic violence + REAL-WORLD
-  dangerous acts). Verified live: "shooting game with laser gun" → full game;
-  "make a real gun at home" → hard_block. Locked by safety.config.test.ts
-- Parent alerting: flagged interactions recorded with severity/action/reason
+  at MEDIUM). Locked by safety.config.test.ts
+- Parent alerting: input-rule flags recorded with severity/action/reason
 - Parent dashboard (`/parent`, PIN-gated): review alerts
 - Kids' transcripts stay local (SQLite) — never in git, never read by tooling
 

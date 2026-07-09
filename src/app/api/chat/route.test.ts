@@ -32,14 +32,9 @@ vi.mock("@/lib/gemini", () => ({
   extractArtifact: (t: string) => ({ text: t, artifactHtml: undefined }),
 }));
 
-// Safety classifiers — always allow (we're testing the gate, not safety).
-vi.mock("@/lib/safety", () => ({
-  FlashLiteClassifier: class {
-    async classify() {
-      return { category: null, severity: "low", action: "allow", reason: "" };
-    }
-  },
-}));
+// Input rules classifier — always allow (we're testing the gate, not safety).
+// The Flash-Lite classifier is gone from this route entirely (2026-07-09):
+// output safety = Gemini built-in blocking + child-safety system prompt.
 vi.mock("@/lib/safety.rules", () => ({
   RulesClassifier: class {
     classifySync() {
@@ -171,6 +166,20 @@ describe("POST /api/chat — guest trial (10K) with layered abuse control", () =
     expect((await struck.json()).error).toBe("payment_required");
 
     expect(replyStreamMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/chat — no post-hoc safety retraction (chess-block class, 2026-07-09)", () => {
+  it("R.1 a streamed game reaches 'done' and is NEVER followed by a retract event", async () => {
+    authMock.mockResolvedValue(null);
+    replyStreamMock.mockReturnValue(one("Here's chess! ```html<!doctype html>...```"));
+
+    const res = await POST(makeReq({ message: "make me a chess game", history: [] }));
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain('"type":"done"');
+    expect(text).not.toContain('"type":"retract"');
   });
 });
 

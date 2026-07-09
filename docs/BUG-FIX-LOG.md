@@ -45,6 +45,73 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-09 — Safety monitor retracted harmless games (chess blocked) → monitor removed, prompt-level safety (owner decision)
+
+- **Symptom:** asking for a **chess game** (and other harmless games) streamed in fully, then
+  got yanked and replaced with the "Let's talk about something else!" redirect — the Flash-Lite
+  output monitor mis-classified game HTML and retracted it.
+- **Surface area:** `src/app/api/chat/route.ts`, `src/lib/gemini.ts` (system prompt).
+- **Root cause:** the post-stream Flash-Lite output monitor judged raw game markup/JS out of
+  context and returned block verdicts for benign games; any non-`allow` verdict retracted the
+  already-shown reply.
+- **Fix (owner decision, 2026-07-09 — accepted safety trade-off):** removed the Flash-Lite
+  classifier from `/api/chat` entirely (background input classify + output monitor + retract).
+  Output safety now = Gemini built-in safety thresholds (unchanged, real-time) **plus** an
+  explicit child-safety system instruction in `CHILD_SYSTEM_PROMPT` ("be careful in the way you
+  speak and be cautious about safety… child aged between 7 and 14"; games are always welcome,
+  never refused). Deterministic input rules (`RulesClassifier`) + parent alerting on input stay.
+  Side effect: per-turn cost drops from chat + 2 safety calls to chat only.
+- **Result (verified):** `route.test.ts` R.1 — a streamed game reaches `done` with **no**
+  `retract` event; `gemini.prompt.test.ts` pins the safety instruction. Full suite green (94).
+- **Impact:** games are never blocked or retracted by the safety layer. **Posture change:** the
+  LLM output check is gone — output safety relies on Gemini built-in blocking + the system
+  prompt. Parent alerts now come only from the deterministic input rules. `/api/safety`
+  (extension endpoint) still uses `FlashLiteClassifier` — unchanged.
+- **Prevention:** class = **post-hoc retraction of benign content**. R.1 locks "no retract
+  after done"; `gemini.prompt.test.ts` locks the replacement instruction so it can't silently
+  disappear.
+- **Related:** FEATURES.md "Game-action exemption" (2026-07-06) — same class, earlier layer
+  (Gemini thresholds); PRD §F2 updated; SCALABILITY_ISSUES #4 re-scoped.
+
+### 2026-07-09 — Mic stopped by itself mid-sentence (kid still talking)
+
+- **Symptom:** the mic turned itself off after the first pause in speech — a kid telling a
+  longer story had to keep re-tapping the mic.
+- **Surface area:** `src/components/useSpeechInput.ts`, `src/lib/mic-errors.ts`.
+- **Root cause:** `SpeechRecognition.continuous` was `false`, so the browser ended the session
+  at the first silence; `onend` just set `isListening=false`. Browsers ALSO end continuous
+  sessions on longer silence, and "no-speech" errors surfaced as if the mic broke.
+- **Fix:** `continuous = true`; `onresult` reads only NEW results (`e.resultIndex`) so restarts
+  don't duplicate text; a `wantListeningRef` keep-alive silently restarts recognition in `onend`
+  until the kid stops it; only fatal errors (`isFatalMicError`: permission / hardware / network)
+  end the session — pause-class errors ("no-speech", "aborted") auto-restart.
+- **Result (verified):** `mic-errors.test.ts` (isFatalMicError suite) green; manual pass —
+  mic stays on across multi-sentence dictation until ⏸/toggle.
+- **Impact:** the mic now listens until explicitly stopped. Battery/privacy note: it no longer
+  turns itself off — the listening banner + pulsing icon stay visible the whole time.
+- **Prevention:** class = **session auto-teardown treated as user intent** (same family as the
+  2026-07-07 recognizer-teardown bug). The fatal/non-fatal split is a pure tested function.
+- **Related:** 2026-07-07 mobile mic hardening entry.
+
+### 2026-07-09 — Composer polish: inner focus box, no auto-grow, misleading "flash lite" chip
+
+- **Symptom:** (a) clicking the prompt drew a second box (blue ring) INSIDE the rounded
+  composer; (b) long prompts didn't expand the box (stuck at one line, tiny scroll);
+  (c) a "flash lite ⌄" chip implied a model picker and the wrong model name.
+- **Surface area:** `src/components/Composer.tsx`, `src/components/ChatPanel.container.tsx`.
+- **Root cause:** (a) the global `:focus-visible` ring in `globals.css` — text fields always
+  match `:focus-visible`, so the a11y ring rendered inside the pill; (b) `rows={1}` with no
+  height sync to content; (c) leftover display-only label.
+- **Fix:** textarea gets `focus-visible:ring-0` (the pill itself is the focus affordance;
+  the global ring stays for everything else); auto-grow effect syncs height to `scrollHeight`
+  capped at `max-h-40` then scrolls; model chip + `model` prop removed.
+- **Result (verified):** typecheck + suite green; visual pass at desktop and 375px — multi-line
+  prompts grow the pill, no inner box, no model chip.
+- **Impact:** UI-only. The composer now matches the Gemini-style single-pill look.
+- **Prevention:** class = **global base style leaking into a composed control** — noted here;
+  any new inset input inside a styled container needs the same ring exemption check.
+- **Related:** none prior.
+
 ### 2026-07-07 — "Oops! Something went wrong" after the code streamed in (mobile socket drops)
 
 - **Symptom:** on the phone, the game code streams in, then the whole reply is

@@ -49,8 +49,13 @@ src/types/             shared TypeScript types
 
 **Rules that must never be broken:**
 1. **The Gemini API key is server-only.** Never `NEXT_PUBLIC_`. All model calls go through `src/app/api/*`.
-2. **The client never receives unvetted content.** The safety gate runs server-side before any token reaches the browser.
-3. **Fail closed.** If the safety classifier errors or is unsure → block + log, never show.
+2. **All safety decisions are server-side.** Current posture (owner decision 2026-07-09):
+   deterministic input rules (block + parent alert) → Gemini built-in safety thresholds →
+   child-safety system prompt (age 7–14). The Flash-Lite output monitor is REMOVED from
+   `/api/chat` — it retracted harmless games (chess); **games are never blocked or retracted**
+   (`route.test.ts` R.1). Re-enable path: PRD §F2.
+3. **Fail closed where a classifier decides.** The input rules block on match; `/api/safety`
+   (which still uses the Flash-Lite classifier) blocks + logs on error, never shows.
 4. **Generated HTML is sandboxed.** Always `<iframe srcdoc sandbox="allow-scripts">` — never inject into the parent DOM.
 
 ## 4. Coding principles

@@ -1,14 +1,15 @@
 // POST /api/chat — the safety boundary, now STREAMING.
-// Posture (user-chosen): live-stream tokens while Gemini's built-in strict safety blocks
-// in real time; the Flash-Lite gate runs as a parallel monitor that can retract + alert.
-// Input is pre-checked with instant deterministic rules so safe prompts don't wait ~2s.
+// Posture (user-chosen, 2026-07-09): live-stream tokens while Gemini's built-in strict
+// safety blocks in real time, with a child-safety system prompt (age 7-14) on every
+// generation. The Flash-Lite output monitor was REMOVED — it retracted harmless games
+// (chess!) after they had streamed; games must never be blocked by the safety layer.
+// Input is still pre-checked with instant deterministic rules (blocks + parent alerts).
 // Response is NDJSON: {type:"delta"|"done"|"blocked"|"error", ...}. See CLAUDE.md § 3.
 
 import "@/lib/logger"; // tees all server console output to logs/app.log
 import { NextRequest, NextResponse } from "next/server";
 import { GeminiChatModel, extractArtifact } from "@/lib/gemini";
 import { trimHistory } from "@/lib/history-trim";
-import { FlashLiteClassifier } from "@/lib/safety";
 import { RulesClassifier } from "@/lib/safety.rules";
 import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore } from "@/lib/db";
 import { resolveGeo } from "@/lib/geo";
@@ -20,7 +21,6 @@ import type { SafetyVerdict } from "@/types/safety.types";
 
 export const runtime = "nodejs";
 
-const classifier = new FlashLiteClassifier();
 const rules = new RulesClassifier();
 const chatModel = new GeminiChatModel();
 const alerts = new SqliteAlertStore();
@@ -29,7 +29,6 @@ const rateLimit = new SqliteRateLimitStore();
 
 const KIND_REDIRECT =
   "Let's talk about something else! How about a fun fact, a story, or a game? 🌟";
-const SAFETY_HTML_SAMPLE = 3000;
 
 const estTokens = (t: string) => Math.ceil(t.length / 4);
 
@@ -137,7 +136,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const safetyModel = process.env.GEMINI_SAFETY_MODEL ?? "gemini-2.5-flash-lite";
   const chatModelName = process.env.GEMINI_CHAT_MODEL ?? "gemini-2.5-flash";
 
   const t0 = Date.now();
@@ -166,13 +164,10 @@ export async function POST(req: NextRequest) {
       send({ type: "blocked", text: KIND_REDIRECT });
     }, guestCookieHeader(setGuestCookie));
   }
-  // LLM input check runs in the BACKGROUND purely for parent alerting — never blocks the stream.
-  classifier.classify({ text: message, origin: "child" }).then((v) => {
-    recordUsage("safety", safetyModel, message, JSON.stringify(v), v.action !== "allow");
-    if (v.action !== "allow") alert("child", message, v);
-  }).catch(() => {});
 
-  // ── 2. STREAM generation; 3. monitor output safety after stream ───────────
+  // ── 2. STREAM generation. Output safety = Gemini built-in blocking + the
+  // child-safety system prompt; no post-hoc monitor, so games are NEVER
+  // retracted after they stream (chess-block class, BUG-FIX-LOG 2026-07-09).
   return ndjson(async (send) => {
     let full = "";
     try {
@@ -189,23 +184,11 @@ export async function POST(req: NextRequest) {
     console.log(`[api/chat] stream done @${ms()}ms chars=${full.length}`);
 
     const { text: cleaned, artifactHtml } = extractArtifact(full);
-    // Finalize the message NOW — the child already watched it stream in. Send the FULL
-    // text (code block kept inline, Gemini-style) for the chat, and the extracted HTML
-    // for the side panel preview. The output monitor runs next and can RETRACT.
+    // Send the FULL text (code block kept inline, Gemini-style) for the chat,
+    // and the extracted HTML for the side panel preview.
     send({ type: "done", text: full, artifactHtml: artifactHtml ?? null });
-    console.log(`[api/chat] ✓ shown @${ms()}ms; running output monitor…`);
-
-    const toCheck = `${cleaned}\n${(artifactHtml ?? "").slice(0, SAFETY_HTML_SAMPLE)}`;
-    const outVerdict = await classifier.classify({ text: toCheck, origin: "model" });
-    console.log(`[api/chat] output-monitor action=${outVerdict.action} @${ms()}ms`);
-    recordUsage("chat", chatModelName, message, cleaned, outVerdict.action !== "allow");
-    recordUsage("safety", safetyModel, toCheck, JSON.stringify(outVerdict), outVerdict.action !== "allow");
-
-    if (outVerdict.action !== "allow") {
-      alert("model", toCheck, outVerdict);
-      send({ type: "retract", text: KIND_REDIRECT });
-      console.log(`[api/chat] ⟲ retracted @${ms()}ms`);
-    }
+    recordUsage("chat", chatModelName, message, cleaned, false);
+    console.log(`[api/chat] ✓ shown @${ms()}ms`);
   }, guestCookieHeader(setGuestCookie));
 }
 
