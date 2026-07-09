@@ -13,7 +13,10 @@ import { LoginGate } from "./LoginGate";
 import { useTextToSpeech } from "./useTextToSpeech";
 import type { ChatMessage, Conversation } from "@/types/chat.types";
 import { loadChats, saveChats } from "@/lib/chat-store";
+import { searchChats } from "@/lib/chat-search";
 import { pickSuggestions } from "@/lib/game-suggestions";
+import { shouldAutoRetry } from "@/lib/stream-recovery";
+import { useWakeLock } from "./useWakeLock";
 
 const KIND_FALLBACK = "Let's talk about something else! How about a game? 🌟";
 
@@ -48,6 +51,7 @@ export function ChatPanelContainer() {
   const [busy, setBusy] = useState(false);
   const [artifact, setArtifact] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer; always visible on md+
+  const [searchQuery, setSearchQuery] = useState(""); // sidebar chat search (title + message text)
   // Set when the server stops the guest: sign-in gate (token limit), rate-limit, or pay wall.
   const [gate, setGate] = useState<{ text: string; upgrade: boolean } | null>(null);
   // Starter chips: a fresh random four per load AND per chat switch. Picked in
@@ -56,6 +60,9 @@ export function ChatPanelContainer() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   useEffect(() => setSuggestions(pickSuggestions(4)), [activeId]);
   const tts = useTextToSpeech();
+  // Screen lock kills the socket mid-stream on phones — keep the screen awake
+  // while a reply is streaming (BUG-FIX-LOG 2026-07-09).
+  useWakeLock(busy);
 
   // Chats survive navigation (sign-in round trips, Studio links) via
   // localStorage — restore exactly ONCE on mount, persist on every change.
@@ -79,8 +86,8 @@ export function ChatPanelContainer() {
 
   const active = convos.find((c) => c.id === activeId) ?? convos[0]!;
   const recents = useMemo(
-    () => convos.map((c) => ({ id: c.id, title: c.title })),
-    [convos],
+    () => searchChats(convos, searchQuery).map((c) => ({ id: c.id, title: c.title })),
+    [convos, searchQuery],
   );
 
   // Auto-scroll: follow new content to the bottom as it streams in, unless the user has
@@ -110,6 +117,7 @@ export function ChatPanelContainer() {
     setConvos((list) => [c, ...list]);
     setActiveId(c.id);
     setArtifact(null);
+    setSearchQuery("");
     setSidebarOpen(false);
   }
 
@@ -120,8 +128,24 @@ export function ChatPanelContainer() {
     setSidebarOpen(false);
   }
 
+  /** Resolves immediately if the page is visible, else on the next return to
+   *  the foreground — retrying while the screen is locked would just drop again. */
+  function whenVisible(): Promise<void> {
+    if (typeof document === "undefined" || !document.hidden) return Promise.resolve();
+    return new Promise((resolve) => {
+      const onVisibility = () => {
+        if (document.hidden) return;
+        document.removeEventListener("visibilitychange", onVisibility);
+        resolve();
+      };
+      document.addEventListener("visibilitychange", onVisibility);
+    });
+  }
+
   // Core streaming routine, shared by send + regenerate. Fills the message `replyId`.
-  async function runStream(text: string, history: ChatMessage[], replyId: string) {
+  // `attempt` counts silent auto-retries after mid-stream drops (screen lock /
+  // app switch) — the kid only sees a message once retries are exhausted.
+  async function runStream(text: string, history: ChatMessage[], replyId: string, attempt = 0) {
     const setReply = (t: string, artifactHtml?: string) =>
       patchActive((c) => ({
         ...c,
@@ -137,6 +161,7 @@ export function ChatPanelContainer() {
     const startedAt = Date.now();
     let firstTokenAt = 0;
     let finalized = false;
+    let willRetry = false;
     let acc = "";
     setBusy(true);
     console.log(`[chat] ▶ sending: "${text.slice(0, 60)}"`);
@@ -231,22 +256,39 @@ export function ChatPanelContainer() {
         console.warn(`[chat] stopped by user after ${Date.now() - startedAt}ms`);
       } else if (finalized) {
         console.warn(`[chat] post-finalize stream drop (ignored) after ${Date.now() - startedAt}ms`);
+      } else if (shouldAutoRetry({ manualStop: manualStopRef.current, finalized, attempt })) {
+        // Retry by ourselves (BUG-FIX-LOG 2026-07-09) — "Ask me again" put the
+        // recovery work on the kid, and screen-lock drops happen constantly.
+        willRetry = true;
+        console.warn(`[chat] ↻ stream ${aborted ? "stalled" : "dropped"} after ${Date.now() - startedAt}ms — auto-retry ${attempt + 1}`);
+        setReply(`${acc ? `${acc}\n\n---\n` : ""}📶 Reconnecting… hang tight!`);
       } else {
-        console.error(`[chat] ✖ ${aborted ? "STALLED (no tokens 30s)" : "stream error"} after ${Date.now() - startedAt}ms`, err);
+        console.error(`[chat] ✖ ${aborted ? "STALLED (no tokens 30s)" : "stream error"} after ${Date.now() - startedAt}ms (retries exhausted)`, err);
         // NEVER discard what already streamed (BUG-FIX-LOG 2026-07-07: phones
         // drop the socket on screen-lock/app-switch mid-generation — the kid
         // watched the code arrive, then "Oops" ATE it). Keep the partial reply
         // and append a friendly next step instead.
         const note = aborted
           ? "\n\n---\n😅 That took too long — the model is busy. Ask me again!"
-          : "\n\n---\n📶 The connection hiccuped before I finished (this happens if the screen locks). Ask me again and I'll redo it!";
+          : "\n\n---\n📶 The connection keeps hiccuping — I tried a few times. Ask me again and I'll redo it!";
         setReply(acc ? acc + note : note.replace(/^\n+---\n/, ""));
       }
     } finally {
       clearTimeout(stall);
       abortRef.current = null;
-      setBusy(false);
-      console.log(`[chat] finished; total ${Date.now() - startedAt}ms`);
+      if (!willRetry) setBusy(false); // stay "busy" across a retry — no flicker, Stop still works
+      console.log(`[chat] finished; total ${Date.now() - startedAt}ms${willRetry ? " (retrying)" : ""}`);
+    }
+
+    if (willRetry) {
+      await whenVisible(); // screen locked? wait for the kid to come back first
+      await new Promise((r) => setTimeout(r, 800));
+      if (manualStopRef.current) {
+        setReply(acc || "⏹ Stopped.");
+        setBusy(false);
+        return;
+      }
+      await runStream(text, history, replyId, attempt + 1);
     }
   }
 
@@ -304,6 +346,8 @@ export function ChatPanelContainer() {
         recents={recents}
         activeId={activeId}
         isOpen={sidebarOpen}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
         onClose={() => setSidebarOpen(false)}
         onNewChat={handleNewChat}
         onSelect={handleSelect}

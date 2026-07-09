@@ -35,7 +35,10 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   using KidGemini" wall → Ariantra SSO (Google or username/password)
 - Signed-in: unlimited today; config-ready daily budget → upgrade paywall
   (`SIGNED_IN_DAILY_TOKEN_LIMIT` env knob, ships OFF)
-- Recents sidebar, new-chat
+- Recents sidebar, new-chat, **chat search** (2026-07-09): the sidebar 🔍 is an
+  inline filter over titles AND message text (client-side, `src/lib/chat-search.ts`;
+  game artifact HTML excluded to avoid noise matches), with match count and a
+  friendly no-results state
 - **History trim** (2026-07-08, server-side): the model only sees the last 12
   messages and only the NEWEST game's code — older game versions collapse to
   a placeholder (each carried ~10-15K input tokens on every message of an

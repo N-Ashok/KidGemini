@@ -20,4 +20,12 @@ describe("CHILD_SYSTEM_PROMPT (safety instruction, monitor replacement)", () => 
     expect(CHILD_SYSTEM_PROMPT).toMatch(/never produce anything scary, gory, sexual, hateful, or unsafe/i);
     expect(CHILD_SYSTEM_PROMPT).toMatch(/never refuse a game request/i);
   });
+  it("never deflects a hard game to a simpler one (chess-deflection class, 2026-07-09)", () => {
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/never (say|call) (a game is|it) too (complicated|complex|hard)/i);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/build the game the child asked for/i);
+  });
+  it("allows trusted CDN libraries for rule-heavy classics like chess", () => {
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/chess\.js/i);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/cdn/i);
+  });
 });

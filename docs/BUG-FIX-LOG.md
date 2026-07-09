@@ -45,6 +45,81 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-09 — Sidebar "Search chats" button did nothing (shipped without a handler)
+
+- **Symptom (what the user saw):** the 🔍 "Search chats" row in the sidebar looked exactly like
+  Gemini's working search entry but had no effect when tapped — a dead-end control. Surfaced by
+  the gemini.google.com gap analysis.
+- **Surface area:** `src/components/Sidebar.tsx`, `src/components/ChatPanel.container.tsx`.
+- **Root cause:** the button was created as visual scaffolding (Gemini-parity layout) with no
+  `onClick` and no search implementation behind it; nothing failed loudly, so it shipped.
+- **Fix:** inline sidebar filter. New pure helper `searchChats()` (`src/lib/chat-search.ts`) does
+  case-insensitive matching over conversation titles AND message text (artifact HTML deliberately
+  excluded — game source matches like `div`/`function` are noise). Clicking 🔍 swaps the row for an
+  autofocused input (✕ / Escape closes and clears); the container owns `searchQuery` and filters
+  the `recents` memo; header shows a match count; zero matches shows "No chats found — try another
+  word, or start a New chat." Picking a result or starting a new chat resets the filter.
+- **Result (verified):** `chat-search.test.ts` (7 cases) written first and failing, green after
+  implementation; full suite 108 passing; manual UAT — message-body search narrows the list,
+  clear restores it, empty state shows on nonsense queries; mobile-drawer screenshot pass.
+- **Impact:** kids/parents can now find old chats by any word they remember; no behaviour change
+  for anyone who never taps search. Client-side only — no new API surface, transcripts stay local.
+- **Prevention:** class = **decorative control shipped without a handler**. `chat-search.test.ts`
+  guards the matching logic; visual-pass rule (CLAUDE.md hard rule: no dead-end UX) now includes
+  clicking every control on the changed surface, not just looking at it.
+- **Related:** gap-analysis item "conversation management"; FEATURES.md chat section updated.
+
+### 2026-07-09 — "The connection hiccuped… Ask me again" appeared constantly → wake lock + silent auto-retry
+
+- **Symptom:** on phones, replies frequently ended in "📶 The connection hiccuped before I
+  finished (this happens if the screen locks). Ask me again and I'll redo it!" — the recovery
+  work was dumped on the kid, every time the screen auto-locked mid-generation.
+- **Surface area:** `src/components/ChatPanel.container.tsx` (`runStream`),
+  `src/components/useWakeLock.ts` (new), `src/lib/stream-recovery.ts` (new).
+- **Root cause:** two gaps on top of the 2026-07-07 keep-partial fix. (1) Nothing stopped the
+  trigger: phones auto-lock during a 20–40s generation and iOS kills the socket. (2) Nothing
+  retried: the client showed a "re-ask me" note instead of just re-requesting. (Unlike the real
+  Gemini app, we don't persist generations server-side, so a dropped client simply loses the
+  reply — see the deferred resume plan in TECH_DEBT #23.)
+- **Fix:** **prevent** — `useWakeLock(busy)` holds a screen wake lock while a reply streams
+  (re-acquired on `visibilitychange`; no-op where unsupported). **Recover** — on a non-manual,
+  non-finalized drop or stall, `runStream` retries itself up to `STREAM_RETRY_LIMIT` (2) times:
+  shows "📶 Reconnecting… hang tight!", waits for the page to be visible again + 800ms, and
+  re-runs the request; `busy` stays true across retries (no flicker, Stop keeps working, and
+  Stop during the wait is honored). Only after exhausted retries does the kid see a message.
+- **Result (verified):** `stream-recovery.test.ts` (5 tests) green; full suite 101 passing;
+  page smoke test clean (no JS errors).
+- **Impact:** the common screen-lock case now self-heals invisibly. Trade-off: each retry is a
+  fresh paid generation (hence the cap of 2); the durable fix (server-side resumable
+  generations) is registered as TECH_DEBT #23.
+- **Prevention:** class = **recovery work pushed onto the user**. The retry decision is a pure
+  tested function (`shouldAutoRetry`); manual-stop and finalized replies can never retry.
+- **Related:** 2026-07-07 "Oops! Something went wrong" entry (same class, first layer).
+
+### 2026-07-09 — Model deflected "make me a chess game" to a simpler game (prompt fix)
+
+- **Symptom:** child asked for "a chess game like any professional site" → the model refused
+  twice: "quite tricky… How about something simpler?" — not a safety block, a **capability
+  deflection** encouraged by our own prompt ("easy and fun for a young child") and its
+  no-external-resources rule.
+- **Surface area:** `src/lib/gemini.ts` (`CHILD_SYSTEM_PROMPT`).
+- **Root cause:** the prompt never told the model it must BUILD what was asked; it also banned
+  external resources, making rule-heavy classics (chess) genuinely hard to deliver in one shot,
+  so the model bailed to "let's make a dodge game instead".
+- **Fix:** prompt now (a) forbids calling a game too complicated or deflecting to a different
+  simpler game — "build the game the child asked for, complete and playable, in one go";
+  (b) allows well-known open-source CDN libraries via `<script src>` for rule-heavy classics
+  (e.g. chess.js) so rules are professional-grade; all other games stay self-contained/offline.
+  Checked: the app sets no CSP and the `sandbox="allow-scripts"` iframe permits network loads,
+  so CDN scripts work in the preview.
+- **Result (verified):** `gemini.prompt.test.ts` extended (deflection ban + chess.js/CDN
+  allowance pinned); suite green.
+- **Impact:** classic games get real rules; games needing a CDN won't run fully offline —
+  accepted (owner direction: "we can import").
+- **Prevention:** class = **prompt-induced refusal**; the instruction is regression-pinned so
+  it can't silently disappear.
+- **Related:** 2026-07-09 safety-monitor entry (the earlier chess blocker — different layer).
+
 ### 2026-07-09 — Safety monitor retracted harmless games (chess blocked) → monitor removed, prompt-level safety (owner decision)
 
 - **Symptom:** asking for a **chess game** (and other harmless games) streamed in fully, then

@@ -4,6 +4,7 @@
 // The profile footer reflects the Auth.js session: real account when signed in, else a
 // "Sign in to Ariantra" button (mirrors how Gemini surfaces the account).
 
+import { useState } from "react";
 import { useSession, signIn, signOut } from "@/lib/useAriantraSession";
 
 interface RecentItem {
@@ -15,12 +16,21 @@ interface SidebarProps {
   recents: RecentItem[];
   activeId: string | null;
   isOpen: boolean;
+  /** Live filter over recents (title + message text) — owned by the container. */
+  searchQuery: string;
+  onSearchChange: (query: string) => void;
   onClose: () => void;
   onNewChat: () => void;
   onSelect: (id: string) => void;
 }
 
-export function Sidebar({ recents, activeId, isOpen, onClose, onNewChat, onSelect }: SidebarProps) {
+export function Sidebar(props: SidebarProps) {
+  const { recents, activeId, isOpen, searchQuery, onSearchChange, onClose, onNewChat, onSelect } = props;
+  const [isSearching, setIsSearching] = useState(false);
+  function closeSearch() {
+    onSearchChange("");
+    setIsSearching(false);
+  }
   const { data: session } = useSession();
   const user = session?.user ?? null;
   const initial = (user?.name ?? user?.email ?? "?").charAt(0).toUpperCase();
@@ -62,9 +72,37 @@ export function Sidebar({ recents, activeId, isOpen, onClose, onNewChat, onSelec
       </div>
 
       <nav className="mt-2 px-3 text-sm text-neutral-600">
-        <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 hover:bg-neutral-200/60">
-          <span aria-hidden>🔍</span> Search chats
-        </button>
+        {isSearching ? (
+          <div className="flex w-full items-center gap-2 rounded-lg bg-white px-3 py-1.5 ring-1 ring-neutral-300">
+            <span aria-hidden>🔍</span>
+            <input
+              autoFocus
+              type="text"
+              value={searchQuery}
+              placeholder="Search chats"
+              aria-label="Search chats"
+              onChange={(e) => onSearchChange(e.target.value)}
+              onKeyDown={(e) => e.key === "Escape" && closeSearch()}
+              className="w-full min-w-0 bg-transparent py-0.5 text-sm text-neutral-700 outline-none
+                         placeholder:text-neutral-400"
+            />
+            <button
+              aria-label="Close search"
+              title="Close search"
+              onClick={closeSearch}
+              className="rounded-lg px-1 text-neutral-500 hover:bg-neutral-200/60"
+            >
+              ✕
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setIsSearching(true)}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 hover:bg-neutral-200/60"
+          >
+            <span aria-hidden>🔍</span> Search chats
+          </button>
+        )}
         <a
           href="/upgrade"
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2 hover:bg-neutral-200/60"
@@ -87,16 +125,25 @@ export function Sidebar({ recents, activeId, isOpen, onClose, onNewChat, onSelec
 
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-3">
         <p className="px-3 pb-1 pt-2 text-xs font-medium uppercase tracking-wide text-neutral-400">
-          Recent
+          {searchQuery.trim()
+            ? `Recent — ${recents.length} ${recents.length === 1 ? "match" : "matches"}`
+            : "Recent"}
         </p>
         <ul className="space-y-0.5">
           {recents.length === 0 && (
-            <li className="px-3 py-2 text-xs text-neutral-400">No chats yet</li>
+            <li className="px-3 py-2 text-xs text-neutral-400">
+              {searchQuery.trim()
+                ? "No chats found — try another word, or start a New chat."
+                : "No chats yet"}
+            </li>
           )}
           {recents.map((r) => (
             <li key={r.id}>
               <button
-                onClick={() => onSelect(r.id)}
+                onClick={() => {
+                  closeSearch();
+                  onSelect(r.id);
+                }}
                 className={`w-full truncate rounded-lg px-3 py-2 text-left text-sm
                   ${r.id === activeId ? "bg-neutral-200 text-neutral-900" : "text-neutral-600 hover:bg-neutral-200/60"}`}
                 title={r.title}
