@@ -20,10 +20,17 @@ export interface Conversation {
   messages: ChatMessage[];
 }
 
+/** A picture the child attached for context (base64 payload, no data: prefix).
+ *  Guards live in image-attachment.ts — mime allow-list + size cap, fail-closed. */
+export interface ImageAttachment {
+  mimeType: "image/jpeg" | "image/png" | "image/webp";
+  data: string;
+}
+
 /** Any conversational model is a ChatModel (swappable / mockable). */
 export interface ChatModel {
   /** Returns the model's draft answer. Caller is responsible for the safety gate. */
-  reply(input: { history: ChatMessage[]; message: string }): Promise<{
+  reply(input: { history: ChatMessage[]; message: string; image?: ImageAttachment }): Promise<{
     text: string;
     artifactHtml?: string;
   }>;

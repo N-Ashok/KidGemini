@@ -6,10 +6,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useSpeechInput } from "./useSpeechInput";
 
-export interface Attachment {
-  name: string;
-  content: string;
-}
+export type Attachment =
+  | { kind: "text"; name: string; content: string }
+  | { kind: "image"; name: string; mimeType: "image/jpeg"; data: string; previewUrl: string };
 
 interface ComposerProps {
   disabled?: boolean;
@@ -18,8 +17,11 @@ interface ComposerProps {
   onStop?: () => void;
 }
 
-const ACCEPT = ".html,.htm,.txt,.js,.ts,.css,.json,.md,.csv";
+// Pictures (context for the model) + the code/text types games are made of.
+const ACCEPT = "image/*,.html,.htm,.txt,.js,.ts,.css,.json,.md,.csv";
 const MAX_FILE_BYTES = 200_000;
+const MAX_IMAGE_BYTES = 15_000_000; // raw camera photos; downscaled before sending
+const MAX_IMAGE_EDGE_PX = 1024;
 // Matches max-h-40 (10rem) — the textarea grows to here, then scrolls.
 const MAX_TEXTAREA_PX = 160;
 
@@ -54,13 +56,33 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-selecting the same file
     if (!file) return;
+
+    if (file.type.startsWith("image/")) {
+      if (file.size > MAX_IMAGE_BYTES) {
+        setFileError("That picture is too big — try a smaller one.");
+        return;
+      }
+      try {
+        // Downscale to ≤1024px JPEG: keeps the payload ~100-200 KB (localStorage
+        // and request-size safe) and normalizes any camera format (HEIC included,
+        // where the browser can decode it) to a type the server allow-lists.
+        const previewUrl = await downscaleImage(file, MAX_IMAGE_EDGE_PX);
+        const data = previewUrl.split(",")[1] ?? "";
+        if (!data) throw new Error("empty");
+        setAttachment({ kind: "image", name: file.name, mimeType: "image/jpeg", data, previewUrl });
+      } catch {
+        setFileError("Couldn't read that picture — try a JPG or PNG. 📷");
+      }
+      return;
+    }
+
     if (file.size > MAX_FILE_BYTES) {
       setFileError("That file is too big (max 200 KB).");
       return;
     }
     try {
       const content = await file.text();
-      setAttachment({ name: file.name, content });
+      setAttachment({ kind: "text", name: file.name, content });
     } catch {
       setFileError("Couldn't read that file.");
     }
@@ -114,9 +136,16 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
       )}
       {attachment && (
         <div className="mb-2 flex items-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm">
-          <span aria-hidden>📎</span>
+          {attachment.kind === "image" ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={attachment.previewUrl} alt="" className="h-10 w-10 rounded-lg object-cover" />
+          ) : (
+            <span aria-hidden>📎</span>
+          )}
           <span className="truncate font-medium text-neutral-700">{attachment.name}</span>
-          <span className="text-neutral-400">({Math.ceil(attachment.content.length / 1024)} KB)</span>
+          {attachment.kind === "text" && (
+            <span className="text-neutral-400">({Math.ceil(attachment.content.length / 1024)} KB)</span>
+          )}
           <button
             type="button"
             onClick={() => setAttachment(null)}
@@ -200,4 +229,22 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
       </p>
     </div>
   );
+}
+
+/** Decode → fit within maxEdge → re-encode as a JPEG data URL. Throws if the
+ *  browser can't decode the file (surfaced as a friendly picker error). */
+async function downscaleImage(file: File, maxEdge: number): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("no 2d context");
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.85);
+  } finally {
+    bitmap.close();
+  }
 }

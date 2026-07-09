@@ -16,7 +16,8 @@ import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
 import { GUEST_TOKEN_LIMIT, GUEST_COOKIE, GUEST_COOKIE_MAX_AGE_S, GUEST_WINDOW_MS, IP_GUEST_TOKEN_CAP, signedInDailyTokenLimit } from "@/lib/gate.config";
-import type { ChatMessage } from "@/types/chat.types";
+import { validateImageAttachment } from "@/lib/image-attachment";
+import type { ChatMessage, ImageAttachment } from "@/types/chat.types";
 import type { SafetyVerdict } from "@/types/safety.types";
 
 export const runtime = "nodejs";
@@ -34,7 +35,7 @@ const estTokens = (t: string) => Math.ceil(t.length / 4);
 
 export async function POST(req: NextRequest) {
   const geo = resolveGeo(req);
-  let body: { message?: string; history?: ChatMessage[] };
+  let body: { message?: string; history?: ChatMessage[]; image?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -46,6 +47,22 @@ export async function POST(req: NextRequest) {
   // see history-trim.ts) — the client's stored conversation is untouched.
   const history = trimHistory(body.history ?? []);
   if (!message) return NextResponse.json({ error: "Empty message" }, { status: 400 });
+
+  // Picture upload (context for the model): deterministic guards, fail-closed —
+  // a malformed/off-list/oversized image rejects the whole request rather than
+  // silently continuing without it (the child would think we saw the picture).
+  let image: ImageAttachment | undefined;
+  if (body.image !== undefined) {
+    const v = validateImageAttachment(body.image);
+    if (!v.ok) {
+      console.log(`[api/chat] ⛔ image rejected (${v.reason})`);
+      return NextResponse.json(
+        { error: "bad_image", message: "That picture didn't work — try a photo or screenshot (JPG or PNG). 📷" },
+        { status: 400 },
+      );
+    }
+    image = v.image;
+  }
 
   // ── Identity & the guest gate (server-enforced; fail-closed) ──────────────
   // Signed-in users are unlimited and keyed by their Google account. Guests are keyed by an
@@ -140,10 +157,14 @@ export async function POST(req: NextRequest) {
 
   const t0 = Date.now();
   const ms = () => Date.now() - t0;
-  console.log(`[api/chat] ▶ start userId=${userId} chars=${message.length} chatModel=${chatModelName}`);
+  console.log(`[api/chat] ▶ start userId=${userId} chars=${message.length} image=${image ? image.mimeType : "no"} chatModel=${chatModelName}`);
+
+  // Gemini bills a small fixed token count per image tile (~258 for our ≤1024px
+  // uploads) — count it so the guest gate can't be bypassed with picture spam.
+  const IMAGE_PROMPT_TOKENS = 258;
 
   function recordUsage(kind: "chat" | "safety", model: string, requestText: string, outputText: string, blocked: boolean) {
-    const promptTokens = estTokens(requestText);
+    const promptTokens = estTokens(requestText) + (image && kind === "chat" ? IMAGE_PROMPT_TOKENS : 0);
     const outputTokens = estTokens(outputText);
     usage.record({
       userId, userLabel, model, kind, promptTokens, outputTokens,
@@ -172,7 +193,7 @@ export async function POST(req: NextRequest) {
     let full = "";
     try {
       console.log(`[api/chat] streaming… @${ms()}ms`);
-      for await (const delta of chatModel.replyStream({ history, message })) {
+      for await (const delta of chatModel.replyStream({ history, message, image })) {
         full += delta;
         send({ type: "delta", text: delta });
       }

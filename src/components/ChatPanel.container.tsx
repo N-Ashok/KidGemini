@@ -111,6 +111,13 @@ export function ChatPanelContainer() {
   const abortRef = useRef<AbortController | null>(null);
   const manualStopRef = useRef(false);
 
+  // Session memory for uploaded pictures (per conversation): follow-up messages
+  // and regenerate re-send the latest picture so the model keeps "seeing" it —
+  // Gemini-app behaviour for the upload→iterate flow. Deliberately a ref, NOT
+  // persisted: images would blow the localStorage quota (TECH_DEBT #26 lifts
+  // this with server-side history). Lost on reload — the honest client-only limit.
+  const sessionImagesRef = useRef(new Map<string, { mimeType: string; data: string }>());
+
   function handleNewChat() {
     tts.stop();
     const c = newConversation();
@@ -145,21 +152,34 @@ export function ChatPanelContainer() {
   // Core streaming routine, shared by send + regenerate. Fills the message `replyId`.
   // `attempt` counts silent auto-retries after mid-stream drops (screen lock /
   // app switch) — the kid only sees a message once retries are exhausted.
-  async function runStream(text: string, history: ChatMessage[], replyId: string, attempt = 0) {
+  async function runStream(
+    text: string,
+    history: ChatMessage[],
+    replyId: string,
+    attempt = 0,
+    image?: { mimeType: string; data: string },
+  ) {
     const setReply = (t: string, artifactHtml?: string) =>
       patchActive((c) => ({
         ...c,
         messages: c.messages.map((m) => (m.id === replyId ? { ...m, text: t, artifactHtml } : m)),
       }));
 
+    // Phase-aware stall guard: builder turns THINK silently before the first
+    // token (bounded budget, see builder-mode.ts) — give the start more rope,
+    // then expect steady deltas once streaming has begun.
+    const FIRST_TOKEN_STALL_MS = 90_000;
     const STALL_MS = 30_000;
     const controller = new AbortController();
     abortRef.current = controller;
     manualStopRef.current = false;
-    let stall = setTimeout(() => controller.abort(), STALL_MS);
-    const bump = () => { clearTimeout(stall); stall = setTimeout(() => controller.abort(), STALL_MS); };
     const startedAt = Date.now();
     let firstTokenAt = 0;
+    let stall = setTimeout(() => controller.abort(), FIRST_TOKEN_STALL_MS);
+    const bump = () => {
+      clearTimeout(stall);
+      stall = setTimeout(() => controller.abort(), firstTokenAt ? STALL_MS : FIRST_TOKEN_STALL_MS);
+    };
     let finalized = false;
     let willRetry = false;
     let acc = "";
@@ -170,7 +190,7 @@ export function ChatPanelContainer() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, history }),
+        body: JSON.stringify({ message: text, history, ...(image ? { image } : {}) }),
         signal: controller.signal,
       });
       // Fail loud, never hang: a non-streaming response (401 auth gate, 4xx/5xx, or a body-less
@@ -187,6 +207,8 @@ export function ChatPanelContainer() {
           setGate({ text: body.message ?? "Upgrade to keep chatting! ⭐", upgrade: true });
         } else if (res.status === 429) {
           setReply(body.message ?? "Whoa, slow down! 🐢 Take a short break and try again.");
+        } else if (res.status === 400 && body.message) {
+          setReply(body.message); // e.g. rejected picture — server says what to do next
         } else {
           setReply("Oops! Something went wrong. Let's try again.");
         }
@@ -288,7 +310,7 @@ export function ChatPanelContainer() {
         setBusy(false);
         return;
       }
-      await runStream(text, history, replyId, attempt + 1);
+      await runStream(text, history, replyId, attempt + 1, image);
     }
   }
 
@@ -296,10 +318,22 @@ export function ChatPanelContainer() {
     const history = active.messages;
     const replyId = crypto.randomUUID();
     const displayText = text || (attachment ? "" : "");
-    // What the model receives: the file contents folded in, but kept out of the bubble.
-    const apiMessage = attachment
-      ? `The child attached a file named "${attachment.name}". Its contents:\n\`\`\`\n${attachment.content}\n\`\`\`\n\n${text || "Please take a look at this file."}`
-      : text;
+    // What the model receives: text files fold their contents into the prompt;
+    // pictures travel as a real image part (base64) NEXT to the prompt — and are
+    // NOT stored in history (localStorage quota; single-turn context by design).
+    const isImage = attachment?.kind === "image";
+    const apiMessage =
+      attachment && attachment.kind === "text"
+        ? `The child attached a file named "${attachment.name}". Its contents:\n\`\`\`\n${attachment.content}\n\`\`\`\n\n${text || "Please take a look at this file."}`
+        : isImage
+          ? text || "Please take a look at this picture."
+          : text;
+    // A fresh upload replaces the conversation's remembered picture; otherwise
+    // keep sending the one from earlier this session (if any).
+    const image = isImage
+      ? { mimeType: attachment.mimeType, data: attachment.data }
+      : sessionImagesRef.current.get(activeId);
+    if (isImage && image) sessionImagesRef.current.set(activeId, image);
     patchActive((c) => ({
       ...c,
       title: c.title === "New chat" ? (text || attachment?.name || "New chat").slice(0, 40) : c.title,
@@ -309,7 +343,7 @@ export function ChatPanelContainer() {
         { id: replyId, role: "assistant", text: "", createdAt: Date.now() },
       ],
     }));
-    await runStream(apiMessage, history, replyId);
+    await runStream(apiMessage, history, replyId, 0, image);
   }
 
   function handleStop() {
@@ -335,7 +369,7 @@ export function ChatPanelContainer() {
         { id: replyId, role: "assistant", text: "", createdAt: Date.now() },
       ],
     }));
-    await runStream(userText, history, replyId);
+    await runStream(userText, history, replyId, 0, sessionImagesRef.current.get(activeId));
   }
 
   // Guests may chat up to the free-token trial (server-enforced); the sign-in

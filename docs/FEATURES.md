@@ -4,6 +4,26 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 
 ## Chat (home `/`)
 - Gemini-powered kids chat: text + voice (TTS playback, regenerate last answer)
+- **Picture upload** (2026-07-09): the + button accepts images (and the camera on
+  mobile) so kids can give visual context — e.g. a screenshot of a broken game.
+  Client downscales to ≤1024px JPEG (`Composer.tsx`); the server validates with
+  deterministic fail-closed guards (mime allow-list png/jpeg/webp + size cap,
+  `src/lib/image-attachment.ts`) and sends it as a real image part on the final
+  turn (`buildChatContents`). Owner decision: content judged by Gemini's built-in
+  strict safety in-generation (no separate pre-check call). **Session memory**
+  (same day): the latest picture per conversation is kept in React state and
+  re-sent with follow-ups and regenerate, so "now fix the jumping too" still
+  sees the screenshot; a new upload replaces it. Never stored in localStorage
+  (quota) — lost on reload until server-side history (TECH_DEBT #26)
+- **Builder mode** (2026-07-09, middle-path thinking): game-BUILD turns (message
+  says "game", or the chat already has a game artifact) run with a bounded
+  thinking budget (2048) + extended output (24576 tokens) — the two config gaps
+  that made gemini.google.com's Flash write better game code than ours. Ordinary
+  chat keeps thinking 0 / instant first token. Env-tunable
+  (`GEMINI_BUILDER_THINKING_BUDGET`, `GEMINI_BUILDER_MAX_OUTPUT_TOKENS`);
+  client stall guard is phase-aware (90s to first token, then 30s between
+  tokens) so the silent thinking phase isn't treated as a dead stream
+  (`src/lib/builder-mode.ts`)
 - **Starter chips** (2026-07-08): 4 random game prompts from a 500-strong pool
   (`src/lib/game-suggestions.ts`, 10 mechanics × 50 themes) — fresh picks every
   load and every new chat, so kids don't see the same four twice

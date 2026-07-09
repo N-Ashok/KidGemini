@@ -3,7 +3,8 @@
 
 import "server-only";
 import { GoogleGenAI, HarmBlockThreshold, HarmCategory } from "@google/genai";
-import type { ChatMessage, ChatModel } from "@/types/chat.types";
+import type { ChatMessage, ChatModel, ImageAttachment } from "@/types/chat.types";
+import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
 import { withRetry, withTimeout } from "./retry";
 
 // A single generation shouldn't exceed this; beyond it we'd rather fail gracefully
@@ -107,7 +108,8 @@ const GEN_CONFIG = {
   maxOutputTokens: 8192,
   // gemini-2.5-* models "think" before emitting tokens — that silent phase can be tens of
   // seconds, so streaming shows nothing until it ends. Disable it for fast first-token,
-  // chat-app-style responsiveness. (Set a budget > 0 later if you want deeper reasoning.)
+  // chat-app-style responsiveness. GAME-BUILD turns override this with a bounded
+  // budget + more output headroom (middle path, 2026-07-09 — see builder-mode.ts).
   thinkingConfig: { thinkingBudget: 0 },
   safetySettings: [
     // DANGEROUS_CONTENT at LOW blocked ordinary game-genre requests ("make me a
@@ -121,21 +123,38 @@ const GEN_CONFIG = {
   ],
 };
 
+/** Request shape sent to Gemini. Exported for tests (gemini.contents.test.ts pins it).
+ *  An uploaded picture rides as inlineData on the FINAL user turn only — history
+ *  never carries images (they aren't persisted; single-turn context by design). */
+export function buildChatContents(input: { history: ChatMessage[]; message: string; image?: ImageAttachment }) {
+  const lastParts: ({ text: string } | { inlineData: ImageAttachment })[] = input.image
+    ? [{ inlineData: { mimeType: input.image.mimeType, data: input.image.data } }, { text: input.message }]
+    : [{ text: input.message }];
+  return [
+    ...input.history.map((m) => ({
+      role: m.role === "child" ? "user" : "model",
+      parts: [{ text: m.text }] as ({ text: string } | { inlineData: ImageAttachment })[],
+    })),
+    { role: "user", parts: lastParts },
+  ];
+}
+
 export class GeminiChatModel implements ChatModel {
   private model = process.env.GEMINI_CHAT_MODEL ?? "gemini-2.5-flash";
 
-  private buildContents(input: { history: ChatMessage[]; message: string }) {
-    return [
-      ...input.history.map((m) => ({
-        role: m.role === "child" ? "user" : "model",
-        parts: [{ text: m.text }],
-      })),
-      { role: "user", parts: [{ text: input.message }] },
-    ];
+  private buildContents(input: { history: ChatMessage[]; message: string; image?: ImageAttachment }) {
+    return buildChatContents(input);
+  }
+
+  /** Fast chat config, or the builder overrides when this turn builds a game. */
+  private configFor(input: { history: ChatMessage[]; message: string }) {
+    if (!isGameBuildTurn(input.message, input.history)) return GEN_CONFIG;
+    console.log("[gemini] builder mode — thinking on, extended output");
+    return { ...GEN_CONFIG, ...builderGenOverrides(process.env) };
   }
 
   /** One-shot reply (used where streaming isn't needed). */
-  async reply(input: { history: ChatMessage[]; message: string }) {
+  async reply(input: { history: ChatMessage[]; message: string; image?: ImageAttachment }) {
     const ai = getClient();
     try {
       const res = await withRetry(
@@ -143,7 +162,7 @@ export class GeminiChatModel implements ChatModel {
           () => ai.models.generateContent({
             model: this.model,
             contents: this.buildContents(input),
-            config: GEN_CONFIG,
+            config: this.configFor(input),
           }),
           CHAT_TIMEOUT_MS,
           "gemini.chat",
@@ -157,7 +176,7 @@ export class GeminiChatModel implements ChatModel {
   }
 
   /** Streaming reply — yields text deltas as they're generated (Gemini-like). */
-  async *replyStream(input: { history: ChatMessage[]; message: string }): AsyncGenerator<string> {
+  async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment }): AsyncGenerator<string> {
     const ai = getClient();
     let stream;
     try {
@@ -165,7 +184,7 @@ export class GeminiChatModel implements ChatModel {
         () => ai.models.generateContentStream({
           model: this.model,
           contents: this.buildContents(input),
-          config: GEN_CONFIG,
+          config: this.configFor(input),
         }),
         { label: "gemini.chat.stream", retries: 2 },
       );
