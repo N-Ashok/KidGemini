@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ArNav } from "@/components/ArNav";
-import { ArFooter } from "@/components/ArFooter";
 import { MIXPANEL_SNIPPET } from "@/lib/mixpanel-snippet";
 
 // Ariantra brand kit (tokens + shared header CSS). Served from OUR public/ —
@@ -39,12 +38,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <ArNav />
-          {/* Footer sits INSIDE the scroll area, below the app screen — full-
-              height screens (chat) fill the viewport; scrolling reveals it. */}
-        <div className="ar-app-main">
-          {children}
-          <ArFooter />
-        </div>
+        {/* NO footer here: the chat (/) is a full-height APP screen, and a
+            footer below it is a scroll trap — the message list swallows the
+            upward scroll, so kids couldn't get back (BUG-FIX-LOG 2026-07-10).
+            Grown-up pages (/parent, /admin, /upgrade) render the footer via
+            their own layouts; chat carries Terms/Privacy in the composer. */}
+        <div className="ar-app-main">{children}</div>
       </body>
     </html>
   );

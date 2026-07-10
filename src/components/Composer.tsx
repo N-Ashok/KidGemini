@@ -4,6 +4,7 @@
 // Presentational; raises events via props.
 
 import { useEffect, useRef, useState } from "react";
+import { composeDictation } from "@/lib/speech-transcript";
 import { useSpeechInput } from "./useSpeechInput";
 
 export type Attachment =
@@ -24,6 +25,8 @@ const MAX_IMAGE_BYTES = 15_000_000; // raw camera photos; downscaled before send
 const MAX_IMAGE_EDGE_PX = 1024;
 // Matches max-h-40 (10rem) — the textarea grows to here, then scrolls.
 const MAX_TEXTAREA_PX = 160;
+// Silence (no new dictated words) before the banner nudges "tap Done to send".
+const DICTATION_NUDGE_MS = 5000;
 
 export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
   const [value, setValue] = useState("");
@@ -32,17 +35,42 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Auto-grow: track the content's height whether it was typed, dictated, or
-  // cleared on send — an effect on `value` covers all three paths.
+  const {
+    isListening,
+    isSupported,
+    error: micError,
+    interim,
+    clearError: clearMicError,
+    toggle,
+    start,
+    stop,
+    discardAndStop,
+  } = useSpeechInput((text) => setValue((v) => (v ? `${v} ${text}` : text)));
+
+  // Live dictation: words appear AS the kid speaks (interim), then firm up
+  // when the recognizer finalizes them into `value`. Display-only — the hook
+  // owns committing interims, the composer never does.
+  const displayValue = composeDictation(value, interim);
+
+  // Auto-grow: track the content's height whether it was typed, dictated
+  // (including the live interim), or cleared on send.
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_PX)}px`;
-  }, [value]);
-  const { isListening, isSupported, error: micError, clearError: clearMicError, toggle, start, stop } = useSpeechInput(
-    (text) => setValue((v) => (v ? `${v} ${text}` : text)),
-  );
+  }, [displayValue]);
+
+  // Closing the dictation loop: once words stop arriving for a bit, nudge
+  // the kid toward ✅ Done — "mic is on, text is there, now what?" was not
+  // intuitive. The timer resets on every new dictated word.
+  const [dictationIdle, setDictationIdle] = useState(false);
+  useEffect(() => {
+    setDictationIdle(false);
+    if (!isListening || !displayValue.trim()) return;
+    const t = setTimeout(() => setDictationIdle(true), DICTATION_NUDGE_MS);
+    return () => clearTimeout(t);
+  }, [isListening, displayValue]);
 
   function handleRestart() {
     setValue("");
@@ -89,8 +117,12 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
   }
 
   function submit() {
-    const text = value.trim();
+    // Send what the kid SEES — mid-dictation that includes the live interim.
+    const text = displayValue.trim();
     if ((!text && !attachment) || disabled) return;
+    // The interim is going out with the message: kill the session without
+    // committing it, or it would reappear as a stray draft after the send.
+    if (isListening || interim) discardAndStop();
     onSend(text, attachment ?? undefined);
     setValue("");
     setAttachment(null);
@@ -112,11 +144,25 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
         </div>
       )}
       {isListening && (
-        <div className="mb-2 flex items-center justify-between rounded-2xl border border-blue-200 bg-blue-50 px-4 py-2">
-          <span className="flex items-center gap-2 text-sm font-medium text-blue-700">
-            <span className="mic-listening text-lg" aria-hidden>🎙️</span> Listening…
+        <div className="mb-2 flex items-center justify-between gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-2">
+          <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-blue-700">
+            <span className="mic-listening text-lg" aria-hidden>🎙️</span>
+            <span className="truncate">
+              {dictationIdle ? "All done? Tap ✅ Done to send." : "Listening… say your idea!"}
+            </span>
           </span>
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
+            {displayValue.trim() && (
+              <button
+                type="button"
+                onClick={submit}
+                className={`rounded-full bg-blue-600 px-3 py-1 text-sm font-bold text-white shadow-sm hover:bg-blue-700 ${
+                  dictationIdle ? "animate-pulse" : ""
+                }`}
+              >
+                ✅ Done<span className="hidden sm:inline"> — send it!</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={stop}
@@ -177,12 +223,17 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
 
         <textarea
           ref={textareaRef}
-          value={value}
+          value={displayValue}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
           rows={1}
           placeholder="Ask me anything…"
           disabled={disabled}
+          // While dictating the box shows value + live interim; a keyboard
+          // edit would commit the interim into `value` and it would then
+          // ALSO arrive via the recognizer (doubled words). Read-only while
+          // the mic is on — Enter-to-send still works; ⏸ Pause to edit.
+          readOnly={isListening}
           className="max-h-40 flex-1 resize-none overflow-y-auto bg-transparent py-2.5 text-[15px] leading-6 text-neutral-800 outline-none placeholder:text-neutral-400 focus-visible:ring-0 focus-visible:ring-offset-0"
         />
 
@@ -225,7 +276,15 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
         </div>
       </div>
       <p className="pt-2 text-center text-xs text-neutral-400">
-        KidGemini is AI and can make mistakes. A grown-up keeps you safe. 🛡️
+        KidGemini is AI and can make mistakes. A grown-up keeps you safe. 🛡️{" "}
+        {/* The chat screen has no footer (scroll trap) — legal links live here. */}
+        <a href="https://ariantra.com/terms.html" className="underline hover:text-neutral-600">
+          Terms
+        </a>{" "}
+        ·{" "}
+        <a href="https://ariantra.com/privacy.html" className="underline hover:text-neutral-600">
+          Privacy
+        </a>
       </p>
     </div>
   );

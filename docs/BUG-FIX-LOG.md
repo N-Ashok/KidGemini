@@ -45,6 +45,65 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-10 — Long speech lost: mic on, but only the last sentence arrived
+
+- **Symptom (what the user saw):** with the mic on, speaking a long request
+  ("not capturing everything we speak long… only the last sentence is
+  available") — the composer ended up with just the final sentence.
+- **Surface area:** `src/components/useSpeechInput.ts`, new
+  `src/lib/speech-transcript.ts`.
+- **Root cause:** `interimResults = false` meant the Web Speech API only
+  delivered FINALIZED segments — and one long unbroken monologue may finalize
+  nothing until a pause. Browsers hard-end recognition sessions mid-speech
+  (even with `continuous = true`); everything recognized-but-not-final was
+  discarded with the session, the keep-alive restarted fresh, and only the
+  last sentence (followed by a pause) ever finalized. The kid's explicit stop
+  mid-sentence lost the tail the same way.
+- **Fix:** `interimResults = true`; `splitSpeechResults()` (pure, unit-tested)
+  splits each result event into fresh finals (committed immediately) and the
+  not-yet-final interim tail; `onend` flushes the pending interim before the
+  keep-alive restart — so a hard-capped session, a silence timeout, or the
+  kid's stop all keep every recognized word.
+- **Result (verified):** `speech-transcript.test.ts` (7 tests: long monologue
+  all-interim is preserved, finalized segments never double, already-delivered
+  finals never re-emit, resultIndex fallback); full suite 201 green.
+- **Impact:** voice input now survives long kid monologues; no behaviour
+  change for short utterances.
+- **Prevention:** class = **"lossy event stream — data only committed on a
+  happy-path event that may never fire."** Guarded by `speech-transcript.test.ts`;
+  the flush lives in the ONE `onend` all session-end paths share.
+- **Related:** mobile-hardening entry 2026-07-07 and keep-alive entry
+  2026-07-09 (same hook; the keep-alive made the loss WORSE by silently
+  restarting over discarded audio).
+
+### 2026-07-10 — Footer scroll trap: once you reach the footer, no way back to the chat
+
+- **Symptom (what the user saw):** scrolling down on the chat page revealed
+  the Ariantra footer — and then the page seemed stuck; there was "no way to
+  go back to the chat-window-only view."
+- **Surface area:** `src/app/layout.tsx`, `src/app/globals.css` shell,
+  `src/app/{parent,admin,upgrade}/layout.tsx` (new), `Composer.tsx`.
+- **Root cause:** the root layout rendered `<ArFooter/>` inside `.ar-app-main`
+  (the page scroller) BELOW the full-height chat screen. Scrolling back up
+  required scrolling `.ar-app-main`, but the pointer sits over the chat
+  message list — its own scroll region, normally at its bottom. Browser
+  scroll-chaining feeds wheel-up to the INNER list first, so upward scroll
+  paged back through chat history instead of un-revealing the footer.
+- **Fix:** the chat is an app screen — no footer under it. `ArFooter` removed
+  from the root layout; the grown-up pages (`/parent`, `/admin`, `/upgrade`)
+  render it via their own tiny layouts; Terms & Privacy links moved into the
+  composer disclaimer line so they stay reachable from the chat.
+- **Result (verified):** `footer-placement.test.ts` (root layout has no
+  footer; all three grown-up layouts do; composer carries terms/privacy
+  links); full suite 201 green.
+- **Impact:** kids can't get stuck below the chat anymore; footer/SEO content
+  still present on every normal-scrolling page.
+- **Prevention:** class = **"marketing chrome inside an app-screen scroll
+  context."** `footer-placement.test.ts` fails if `ArFooter` returns to the
+  root layout.
+- **Related:** self-healing entry below (same day); design rule
+  DESIGN_SYSTEM.md §6 (kid view is a full-height app shell).
+
 ### 2026-07-10 — Self-healing preview stuck on "Fixing…" forever + falsely "repaired" a healthy game
 
 - **Symptom (what the user saw):** after generating a game, the preview cover

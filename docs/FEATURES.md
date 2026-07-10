@@ -4,6 +4,19 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 
 ## Chat (home `/`)
 - Gemini-powered kids chat: text + voice (TTS playback, regenerate last answer)
+- **Live dictation** (2026-07-10): while the mic is on, words appear in the
+  composer AS the kid speaks (interim results stream in, then firm up when
+  the recognizer finalizes them — `composeDictation`/`splitSpeechResults` in
+  `src/lib/speech-transcript.ts`). No punctuation: Web Speech emits none,
+  and heuristics only punctuated pause boundaries (owner decision
+  2026-07-10 — none beats inconsistent; a server STT, e.g. Gemini audio,
+  is the upgrade path). The listening banner carries a **✅ Done —
+  send it!** button; ~5s of silence nudges "All done? Tap ✅ Done to send"
+  (closes the say-it-then-what loop). The box is read-only during dictation
+  (⏸ Pause to edit); Enter/Done mid-speech sends everything shown and aborts
+  the session so nothing re-appears as a stray draft. Session ends (silence
+  timeout, browser hard cap, kid's stop) flush the pending interim, so long
+  monologues keep every word
 - **Anchor scroll** (2026-07-09, Gemini behaviour): on send (and regenerate) the
   child's request pins to the TOP of the view and the reply streams in below —
   the screen never chases a long code stream (replaced stick-to-bottom).
