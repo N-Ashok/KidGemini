@@ -39,21 +39,37 @@ describe("injectConsoleCapture — placement", () => {
  */
 describe("injectConsoleCapture — runtime behavior (sandboxed via node:vm)", () => {
   function runInSandbox() {
-    const posted: unknown[] = [];
+    const posted: any[] = [];
+    const handlers: Record<string, Array<(e: unknown) => void>> = {};
     const sandbox: Record<string, unknown> = {
       console: { log: () => {}, warn: () => {}, error: () => {} },
       parent: { postMessage: (msg: unknown) => posted.push(msg) },
       window: undefined,
-      addEventListener: () => {},
+      addEventListener: (name: string, fn: (e: unknown) => void) => {
+        (handlers[name] ??= []).push(fn);
+      },
     };
     sandbox.window = sandbox;
     vm.createContext(sandbox);
     vm.runInContext(buildConsoleCaptureScript(), sandbox);
-    return { sandbox, posted };
+    const fire = (name: string, event: unknown) => handlers[name]?.forEach((fn) => fn(event));
+    /** Parent handshake — flushes the in-iframe buffer (PRD §0 A2 race fix). */
+    const ready = () => fire("message", { data: { source: "kidgemini-parent", type: "ready" } });
+    return { sandbox, posted, fire, ready };
   }
 
-  it("forwards console.error calls to the parent as a GameConsoleEvent", () => {
-    const { sandbox, posted } = runInSandbox();
+  it("buffers everything until the parent posts ready, then flushes in order", () => {
+    const { sandbox, posted, ready } = runInSandbox();
+    (sandbox.console as any).error("boom");
+    (sandbox.console as any).log("score 3");
+    expect(posted).toHaveLength(0); // nothing leaks before the handshake
+    ready();
+    expect(posted.map((p) => p.message.text)).toEqual(["boom", "score 3"]);
+  });
+
+  it("posts directly (no buffering) after the ready handshake", () => {
+    const { sandbox, posted, ready } = runInSandbox();
+    ready();
     (sandbox.console as any).error("boom", 42);
     expect(posted).toHaveLength(1);
     expect(posted[0]).toMatchObject({
@@ -63,31 +79,59 @@ describe("injectConsoleCapture — runtime behavior (sandboxed via node:vm)", ()
   });
 
   it("forwards console.warn and console.log at their own levels", () => {
-    const { sandbox, posted } = runInSandbox();
+    const { sandbox, posted, ready } = runInSandbox();
+    ready();
     (sandbox.console as any).warn("careful");
     (sandbox.console as any).log("score is 3");
-    expect(posted).toEqual([
-      { source: GAME_CONSOLE_SOURCE, message: { level: "warn", text: "careful" } },
-      { source: GAME_CONSOLE_SOURCE, message: { level: "log", text: "score is 3" } },
+    expect(posted.map((p) => p.message)).toEqual([
+      { level: "warn", text: "careful" },
+      { level: "log", text: "score is 3" },
     ]);
   });
 
-  it("captures uncaught runtime errors via window.onerror", () => {
-    const { sandbox, posted } = runInSandbox();
-    (sandbox.window as any).onerror("Uncaught ReferenceError: fox is not defined", "game.html", 12, 4);
+  it("captures runtime errors STRUCTURED — message, filename, line, col and stack (V.1)", () => {
+    const { posted, fire, ready } = runInSandbox();
+    ready();
+    fire("error", {
+      message: "Uncaught ReferenceError: fox is not defined",
+      filename: "game.html",
+      lineno: 12,
+      colno: 4,
+      error: { stack: "ReferenceError: fox is not defined\n  at gameLoop (game.html:12:4)" },
+    });
     expect(posted).toHaveLength(1);
-    expect((posted[0] as any).message.level).toBe("error");
-    expect((posted[0] as any).message.text).toContain("ReferenceError");
+    expect(posted[0].message).toMatchObject({
+      level: "error",
+      kind: "error",
+      filename: "game.html",
+      line: 12,
+      col: 4,
+    });
+    expect(posted[0].message.stack).toContain("at gameLoop");
+    expect(posted[0].message.text).toContain("ReferenceError");
   });
 
-  it("captures unhandled promise rejections", () => {
-    const { sandbox, posted } = runInSandbox();
-    const handlers: Record<string, (e: unknown) => void> = {};
-    (sandbox.addEventListener as unknown) = (name: string, fn: (e: unknown) => void) => {
-      handlers[name] = fn;
-    };
-    vm.runInContext(buildConsoleCaptureScript(), sandbox);
-    handlers["unhandledrejection"]?.({ reason: new Error("network down") });
-    expect(posted.some((m) => (m as any).message?.text?.includes("network down"))).toBe(true);
+  it("captures failed subresource loads as kind:resource with the URL (V.3)", () => {
+    const { sandbox, posted, fire, ready } = runInSandbox();
+    ready();
+    fire("error", { target: { src: "https://cdn.example.com/lib.js", tagName: "SCRIPT" } });
+    expect(posted).toHaveLength(1);
+    expect(posted[0].message).toMatchObject({
+      level: "error",
+      kind: "resource",
+      url: "https://cdn.example.com/lib.js",
+    });
+    expect(sandbox).toBeDefined();
+  });
+
+  it("captures unhandled promise rejections with their stack", () => {
+    const { posted, fire, ready } = runInSandbox();
+    ready();
+    const err = new Error("network down");
+    fire("unhandledrejection", { reason: err });
+    expect(posted).toHaveLength(1);
+    expect(posted[0].message.kind).toBe("rejection");
+    expect(posted[0].message.text).toContain("network down");
+    expect(posted[0].message.stack).toContain("network down");
   });
 });

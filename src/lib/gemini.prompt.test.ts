@@ -28,4 +28,22 @@ describe("CHILD_SYSTEM_PROMPT (safety instruction, monitor replacement)", () => 
     expect(CHILD_SYSTEM_PROMPT).toMatch(/chess\.js/i);
     expect(CHILD_SYSTEM_PROMPT).toMatch(/cdn/i);
   });
+
+  // Self-healing preview batch (PRD §10 + TECH_DEBT #22, 2026-07-10): the
+  // playability contract. These are prompt rules, not probes — a game that
+  // kills the player at spawn runs "perfectly" and no probe can catch it.
+  it("mandates the game loop start immediately and synchronously on load (async-loop class)", () => {
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/immediately and synchronously/i);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/never wrap .* async|not .* async function/i);
+  });
+  it("gives the player a 3-second grace period before any hazard", () => {
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/first 3 seconds/i);
+  });
+  it("requires safe spawn distance and an escape move", () => {
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/never overlapping|safe distance/i);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/escape/i);
+  });
+  it("requires difficulty to ramp gently", () => {
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/starts? slow|first .* slow/i);
+  });
 });

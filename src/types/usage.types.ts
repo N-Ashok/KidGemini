@@ -14,7 +14,9 @@ export interface UsageEvent {
   userId: string;
   userLabel: string | null; // friendly name shown in the dashboard
   model: string;
-  kind: "chat" | "safety";
+  /** "repair" = self-healing preview fix call — recorded for cost visibility
+   *  but EXEMPT from the guest/daily token gates (PRD §12 decision). */
+  kind: "chat" | "safety" | "repair";
   promptTokens: number;
   outputTokens: number;
   /** Estimated USD cost for this single call. */
@@ -65,8 +67,9 @@ export interface UsageStore {
   listSince(sinceMs: number): UsageEvent[];
   summarizeSince(sinceMs: number): UsageSummary;
   /**
-   * Total tokens (promptTokens + outputTokens, across every `kind` including safety)
-   * ever attributed to a user. Powers the server-enforced guest gate.
+   * Total tokens (promptTokens + outputTokens, across every gated `kind` —
+   * chat + safety; kind:"repair" is exempt) ever attributed to a user.
+   * Powers the server-enforced guest gate.
    */
   tokensUsedByUser(userId: string, sinceMs?: number): number;
   /** Guest tokens spent from an IP across ALL guest cookies — the cookie-clearing backstop. */

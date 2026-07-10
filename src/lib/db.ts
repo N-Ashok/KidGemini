@@ -138,11 +138,16 @@ export class SqliteUsageStore implements UsageStore {
     return event;
   }
 
+  // Gate tallies exclude kind:'repair' — self-healing repair calls are exempt
+  // from the guest/daily budgets by decision (PRD-SELF-HEALING-PREVIEW §12,
+  // 2026-07-10): the kid didn't ask for the bug. Repair rows are still
+  // recorded, so admin cost dashboards (summarizeSince) see them in full.
+
   tokensUsedByUser(userId: string, sinceMs = 0): number {
     const row = getDb()
       .prepare(
         `SELECT COALESCE(SUM(promptTokens + outputTokens), 0) AS total
-         FROM usage_events WHERE userId = ? AND createdAt >= ?`,
+         FROM usage_events WHERE userId = ? AND createdAt >= ? AND kind != 'repair'`,
       )
       .get(userId, sinceMs) as { total: number };
     return row.total;
@@ -152,7 +157,7 @@ export class SqliteUsageStore implements UsageStore {
     const row = getDb()
       .prepare(
         `SELECT COALESCE(SUM(promptTokens + outputTokens), 0) AS total
-         FROM usage_events WHERE ip = ? AND userId LIKE 'guest:%' AND createdAt >= ?`,
+         FROM usage_events WHERE ip = ? AND userId LIKE 'guest:%' AND createdAt >= ? AND kind != 'repair'`,
       )
       .get(ip, sinceMs) as { total: number };
     return row.total;
@@ -162,7 +167,7 @@ export class SqliteUsageStore implements UsageStore {
     const row = getDb()
       .prepare(
         `SELECT COALESCE(SUM(promptTokens + outputTokens), 0) AS total
-         FROM usage_events WHERE userId = ? AND createdAt >= ?`,
+         FROM usage_events WHERE userId = ? AND createdAt >= ? AND kind != 'repair'`,
       )
       .get(userId, sinceMs) as { total: number };
     return row.total;

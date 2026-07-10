@@ -50,6 +50,16 @@ If the child asks for a game, respond with a single HTML document wrapped in a
   Render the score as an HTML element with id="score" (a real DOM element that
   updates as the player scores — not text drawn inside a canvas), so the
   Ariantra platform can track high scores automatically when it's published.
+- Start the game loop immediately and synchronously when the script loads —
+  never wrap the setup or the loop in an async function or behind an await:
+  canvas sizing, world generation and the first requestAnimationFrame must all
+  run straight away, so the game is visibly moving the moment it appears.
+- The game must be winnable by a young child from the very first second:
+  no enemy, obstacle or hazard may touch the player in the first 3 seconds of
+  play; the player spawns at a safe distance from every hazard (never
+  overlapping, never adjacent); the player always has at least one escape
+  move available; difficulty ramps up — the first enemy starts slow and rare,
+  and speed/spawn rate grow gradually with time or score.
 - Keep it wholesome; work fully offline unless a CDN library is allowed above.`;
 
 function getClient(): GoogleGenAI {
@@ -172,6 +182,37 @@ export class GeminiChatModel implements ChatModel {
       return extractArtifact(res.text ?? "");
     } catch (err) {
       throw new GeminiError(`chat generation failed: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * One-shot repair call (self-healing preview, PRD §7). Same model as
+   * generation — repair needs the same code competence (§9) — but its own
+   * system prompt (minimal-patch contract) and tighter output headroom:
+   * a patch is ~8 lines, and output tokens dominate repair latency (§7.1).
+   */
+  async repair(input: { systemPrompt: string; prompt: string }): Promise<string> {
+    const ai = getClient();
+    try {
+      const res = await withRetry(
+        () => withTimeout(
+          () => ai.models.generateContent({
+            model: this.model,
+            contents: [{ role: "user", parts: [{ text: input.prompt }] }],
+            config: {
+              ...GEN_CONFIG,
+              systemInstruction: input.systemPrompt,
+              maxOutputTokens: 4096,
+            },
+          }),
+          CHAT_TIMEOUT_MS,
+          "gemini.repair",
+        ),
+        { label: "gemini.repair", retries: 1 },
+      );
+      return res.text ?? "";
+    } catch (err) {
+      throw new GeminiError(`repair generation failed: ${(err as Error).message}`);
     }
   }
 

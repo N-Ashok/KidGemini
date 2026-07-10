@@ -25,26 +25,62 @@ export function buildConsoleCaptureScript(): string {
     }
     return String(a);
   }
-  function post(level, text) {
+  // The parent's message listener mounts in a React effect, so a message fired
+  // in the game's first ticks could race it and vanish. Buffer until the
+  // parent posts {source:"kidgemini-parent", type:"ready"}, then flush.
+  var buffer = [];
+  var ready = false;
+  function send(message) {
     try {
-      parent.postMessage({ source: "${GAME_CONSOLE_SOURCE}", message: { level: level, text: text } }, "*");
+      parent.postMessage({ source: "${GAME_CONSOLE_SOURCE}", message: message }, "*");
     } catch (e) { /* parent gone (frame closed mid-post) — nothing to do */ }
   }
+  function post(message) {
+    if (ready) send(message); else buffer.push(message);
+  }
+  addEventListener("message", function (event) {
+    var d = event && event.data;
+    if (!d || d.source !== "kidgemini-parent" || d.type !== "ready") return;
+    ready = true;
+    for (var i = 0; i < buffer.length; i++) send(buffer[i]);
+    buffer = [];
+  });
   ["log", "warn", "error"].forEach(function (level) {
     var original = console[level] ? console[level].bind(console) : function () {};
     console[level] = function () {
       var args = Array.prototype.slice.call(arguments);
-      post(level, args.map(fmt).join(" "));
+      post({ level: level, text: args.map(fmt).join(" ") });
       original.apply(console, args);
     };
   });
-  window.onerror = function (message, source, lineno, colno) {
-    post("error", fmt(message) + " (" + source + ":" + lineno + ":" + colno + ")");
-  };
+  // Capture-phase window listener sees BOTH uncaught throws and failed
+  // subresource loads (script/img error events don't bubble). The structured
+  // fields — especially the stack — are the repair input (PRD §5.1).
+  addEventListener("error", function (e) {
+    var t = e && e.target;
+    if (t && t !== window && (t.src || t.href)) {
+      var url = String(t.src || t.href);
+      post({ level: "error", text: "Failed to load: " + url, kind: "resource", url: url });
+      return;
+    }
+    post({
+      level: "error",
+      kind: "error",
+      text: fmt(e && e.message) + " (" + (e && e.filename) + ":" + (e && e.lineno) + ":" + (e && e.colno) + ")",
+      filename: (e && e.filename) || "",
+      line: (e && e.lineno) || 0,
+      col: (e && e.colno) || 0,
+      stack: e && e.error && e.error.stack ? String(e.error.stack) : "",
+    });
+  }, true);
   addEventListener("unhandledrejection", function (event) {
-    var reason = event.reason;
-    var text = (reason && reason.message) ? reason.message : fmt(reason);
-    post("error", "Unhandled promise rejection: " + text);
+    var reason = event && event.reason;
+    post({
+      level: "error",
+      kind: "rejection",
+      text: "Unhandled promise rejection: " + ((reason && reason.message) || fmt(reason)),
+      stack: reason && reason.stack ? String(reason.stack) : "",
+    });
   });
 })();
 `.trim();

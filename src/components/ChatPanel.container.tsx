@@ -90,19 +90,35 @@ export function ChatPanelContainer() {
     [convos, searchQuery],
   );
 
-  // Auto-scroll: follow new content to the bottom as it streams in, unless the user has
-  // scrolled up to read (then leave them where they are — like Gemini).
+  // Scroll model = Gemini's "anchor to the prompt" (2026-07-09, replaces
+  // stick-to-bottom): on send, the child's request pins to the TOP of the view
+  // and the reply streams in below it — the screen never chases a long code
+  // stream. During streaming we deliberately do nothing; the kid scrolls freely.
+  // Switching/opening a chat still jumps to the latest messages.
   const scrollRef = useRef<HTMLDivElement>(null);
-  const stickToBottom = useRef(true);
+  const anchorIdRef = useRef<string | null>(null);
   useEffect(() => {
     const el = scrollRef.current;
-    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
+    const anchorId = anchorIdRef.current;
+    if (!el || !anchorId) return;
+    const target = document.getElementById(`msg-${anchorId}`);
+    if (!target) return;
+    // Right after send there may not be enough content below to put the request
+    // at the top — the browser clamps the scroll. Keep the anchor active and
+    // keep pulling on every stream update until the request reaches the top
+    // (Gemini's slide-up), then let go. A manual scroll cancels it (see below).
+    const desired = target.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - 12;
+    el.scrollTop = desired;
+    if (el.scrollTop >= desired - 1) anchorIdRef.current = null;
   }, [active.messages]);
-  function handleScroll() {
-    const el = scrollRef.current;
-    if (!el) return;
-    stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  // The kid taking over the scrollbar always wins over the anchor.
+  function handleManualScroll() {
+    anchorIdRef.current = null;
   }
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [activeId]);
 
   function patchActive(fn: (c: Conversation) => Conversation) {
     setConvos((list) => list.map((c) => (c.id === activeId ? fn(c) : c)));
@@ -334,12 +350,14 @@ export function ChatPanelContainer() {
       ? { mimeType: attachment.mimeType, data: attachment.data }
       : sessionImagesRef.current.get(activeId);
     if (isImage && image) sessionImagesRef.current.set(activeId, image);
+    const childId = crypto.randomUUID();
+    anchorIdRef.current = childId; // pin the request to the top of the view
     patchActive((c) => ({
       ...c,
       title: c.title === "New chat" ? (text || attachment?.name || "New chat").slice(0, 40) : c.title,
       messages: [
         ...c.messages,
-        { id: crypto.randomUUID(), role: "child", text: displayText, attachmentName: attachment?.name, createdAt: Date.now() },
+        { id: childId, role: "child", text: displayText, attachmentName: attachment?.name, createdAt: Date.now() },
         { id: replyId, role: "assistant", text: "", createdAt: Date.now() },
       ],
     }));
@@ -362,6 +380,7 @@ export function ChatPanelContainer() {
     const history = msgs.slice(0, idx);
     const replyId = crypto.randomUUID();
     setArtifact(null);
+    anchorIdRef.current = msgs[idx]!.id; // re-pin the request being regenerated
     patchActive((c) => ({
       ...c,
       messages: [
@@ -399,11 +418,16 @@ export function ChatPanelContainer() {
           </button>
           <span className="text-base font-semibold text-neutral-700">✨ KidGemini</span>
         </div>
-        <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto">
+        <div
+          ref={scrollRef}
+          onWheel={handleManualScroll}
+          onTouchMove={handleManualScroll}
+          className="min-h-0 flex-1 overflow-y-auto"
+        >
           <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-8">
             {active.messages.map((m, i) => (
+              <div key={m.id} id={`msg-${m.id}`}>
               <MessageItem
-                key={m.id}
                 message={m}
                 ttsSupported={tts.isSupported}
                 speechState={tts.state}
@@ -417,6 +441,7 @@ export function ChatPanelContainer() {
                 onRegenerate={handleRegenerate}
                 onOpenArtifact={m.artifactHtml ? () => setArtifact(m.artifactHtml!) : undefined}
               />
+              </div>
             ))}
             {busy && active.messages[active.messages.length - 1]?.text === "" && (
               <p className="animate-pulse text-neutral-400">Thinking… 💭</p>
@@ -444,7 +469,14 @@ export function ChatPanelContainer() {
           on ← Chat / ✕ (BUG-FIX-LOG 2026-07-07: "can't come out"). */}
       {artifact && (
         <div className="fixed inset-0 z-[110] bg-white md:static md:inset-auto md:z-auto md:w-[440px] md:border-l md:border-neutral-200">
-          <ArtifactFrame html={artifact} busy={busy} onClose={() => setArtifact(null)} />
+          <ArtifactFrame
+            html={artifact}
+            busy={busy}
+            // The kid's latest ask — self-healing repair prompts carry it so a
+            // fix never drifts from intent (PRD §7 / R.5).
+            originalRequest={[...active.messages].reverse().find((m) => m.role === "child")?.text ?? ""}
+            onClose={() => setArtifact(null)}
+          />
         </div>
       )}
 
