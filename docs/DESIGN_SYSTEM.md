@@ -120,7 +120,7 @@ Kid shell (/)                         Admin/Parent shell (/parent, /admin)
 | **ChatBubble** | `.bubble-assistant`, `.bubble-child` | assistant (brand-50 / ink) · child (brand-500 / white) · thinking (assistant + `animate-pulse`). |
 | **MicButton** | `Composer.tsx` | idle (brand-500) · listening (`mic-listening` pulse, danger-500) · unsupported (hidden). |
 | **Composer** | `Composer.tsx` | enabled · disabled (while busy). Mic shown only if Web Speech is supported. |
-| **ArtifactFrame** | `ArtifactFrame.tsx` | hidden (no game) · open (sandboxed iframe). Always shows the "Made by AI" label. |
+| **ArtifactFrame** | `ArtifactFrame.tsx` | hidden (no game) · open (sandboxed iframe). Always shows the "Made by AI" label. Device pills (Fit/Laptop/Tablet/Phone) restyle the same iframe: `rounded-kid` device card, `shadow-md`, `bg-neutral-100` backdrop, scaled-to-fit via transform. |
 | **Card** | `.card` | base surface. Variant by left accent border: `border-l-4 border-danger-500/warn-500/brand-300`. |
 | **Stat** | `admin/page.tsx` | metric tile (label + big value). |
 | **SafetyBadge / AlertCard** | `parent/page.tsx` | severity accent: high=danger · medium=warn · low=brand. |

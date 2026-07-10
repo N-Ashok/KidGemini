@@ -35,6 +35,12 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   (code pane scrolls), download/copy; on mobile the panel is fullscreen with a
   "← Chat" back button, and any game message shows a "🎮 Open game" chip to
   reopen a closed preview
+- **Device preview** (2026-07-10): Fit · Laptop · Tablet · Phone pills in the
+  preview bar simulate real viewports (1366×768 / 820×1180 / 390×844,
+  `src/lib/device-preview.ts`) — the device box keeps its true CSS-pixel size
+  and scales DOWN to fit the panel (never up), restyling the SAME iframe so
+  the running game never reloads. Disabled while the verify cover is up
+  (probes always measure at panel size); resets to Fit on each new game
 - **🩹 Self-healing preview** (2026-07-10, platform
   `docs/PRD-SELF-HEALING-PREVIEW.md`): every generated game is verified BEHIND
   an opaque cover card before the kid's first look — structured error trap
@@ -45,6 +51,12 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   to `/api/repair`, which asks Gemini for a MINIMAL SEARCH/REPLACE patch
   (`src/lib/repair-prompt.ts`) — max 2 attempts, 20s total wall clock, then the
   best version uncovers with a kid-facing question (never a stack trace).
+  **Only hard-evidence codes may spend a repair call** (`REPAIRABLE_CODES`:
+  thrown error, async init, 404'd resource, occluded Start); probe-inference
+  reads (frozen canvas, no loop, dead flag) are telemetry-only pass-through —
+  a live UAT falsely "repaired" a healthy game (BUG-FIX-LOG 2026-07-10). The
+  state machine is the framework-free `preview-verify-controller.ts` (same
+  bug: a React effect cancelled its own repair continuation).
   Repair tokens are recorded (kind:"repair") but EXEMPT from the guest gate.
   Kill switch: `NEXT_PUBLIC_PREVIEW_REPAIR=0` (instrument-only). Telemetry:
   `preview_verify` / `preview_repair` Mixpanel events (`src/lib/analytics.ts`).

@@ -45,6 +45,60 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-10 — Self-healing preview stuck on "Fixing…" forever + falsely "repaired" a healthy game
+
+- **Symptom (what the user saw):** after generating a game, the preview cover
+  showed "Oops — Nothing's drawing. Fixing…" with a bouncing 🔧 and never
+  lifted ("it is going on a loop"). Meanwhile the SAME game, downloaded and
+  opened in Chrome, worked perfectly — so a healthy game was being "repaired",
+  and then the repair never landed. Prod logs proved the server side succeeded:
+  `[api/repair] ✓ patch @4796ms` with no corresponding client update.
+- **Surface area:** `usePreviewVerify.ts`, `preview-verify.ts` (probe script +
+  classification), `verify-policy.ts`, `ArtifactFrame.tsx`.
+- **Root cause:** two distinct defects. (1) **Self-cancelling effect:** the
+  verify round ran inside a React effect whose dependency array included
+  `phase`; the hook's own `setPhase("repairing")` re-ran the effect, the
+  cleanup set the round's `cancelled` flag, and the in-flight repair
+  continuation saw `cancelled === true` and dropped the server's patch —
+  leaving phase stuck at "repairing" with no path forward. (2) **Probe-inference
+  false positive:** `canvas_static` (pixel variance) condemned a game whose
+  first real paint fell outside the sampling window; the taxonomy treated a
+  weak inference with the same confidence as a thrown error, so a healthy
+  game burned a Gemini call and then hit defect (1).
+- **Fix:** extracted the whole verify/repair state machine into
+  `src/lib/preview-verify-controller.ts` — framework-free, dependency-injected
+  (fetch/track/now/timers), so no React lifecycle can cancel its own
+  continuation; `usePreviewVerify` is now a thin adapter (browser events in,
+  state out; disposal only on unmount/new html). Repair eligibility narrowed
+  to hard-evidence codes only (`REPAIRABLE_CODES` in `verify-policy.ts`:
+  load_error, async_loop, resource_404, start_occluded) — probe-inference
+  codes (canvas_static, no_loop, start_no_loop, canvas_zero_size) are
+  telemetry-only pass-through until live `preview_verify` data proves them.
+  Also hardened in the same pass: the probe script counts `setInterval`
+  loops (healthy non-rAF games no longer read as "dead"), and the parent's
+  ready ack carries `verify:false` on post-verify reloads so the reloaded
+  document never ghost-clicks the kid's Start button.
+- **Result (verified):** `preview-verify-controller.test.ts` — "applies the
+  server's patch after its OWN phase transition to repairing" (the exact
+  dropped-continuation path) + 11 more controller rows; "probe-inference codes
+  pass through SILENTLY"; 183 tests green. Real-browser E2E: stubbed broken
+  generation (`gameLop()` ReferenceError) → cover → "Fixing…" → REAL
+  /api/repair Gemini patch (HTTP 200) → cover lifted → repaired ball animating
+  (screenshots r1/r2).
+- **Impact:** kids can no longer be trapped behind a stuck cover; healthy
+  games are never rewritten by a false probe; repair spend now only follows
+  hard evidence. Telemetry still records every classification, so the
+  demoted codes can be re-promoted with data.
+- **Prevention:** class = **state machine inside a self-invalidating React
+  effect** (an effect that mutates its own dependencies cannot await anything
+  safely). The controller is plain TS with injected deps — every future flow
+  change gets a node-level regression test, no browser needed. Second class =
+  **treating probe inference as hard evidence**: any new failure code starts
+  telemetry-only and must earn its way into `REPAIRABLE_CODES`.
+- **Related:** platform `docs/PRD-SELF-HEALING-PREVIEW.md` §16, TECH_DEBT #30
+  (the skipped instrument-first bake predicted exactly this false-positive
+  risk); commit d419e78 (feature), this fix follows it.
+
 ### 2026-07-09 — Sidebar "Search chats" button did nothing (shipped without a handler)
 
 - **Symptom (what the user saw):** the 🔍 "Search chats" row in the sidebar looked exactly like

@@ -55,6 +55,8 @@ function bootVerify(opts: {
   imageData?: () => { data: number[] };
   /** Runs after injection, standing in for the game's own script. */
   game?: (w: Record<string, any>) => void;
+  /** Parent ready ack payload override (default verify:true). */
+  ready?: Record<string, unknown>;
 }) {
   const posted: any[] = [];
   const handlers: Record<string, Array<(e: unknown) => void>> = {};
@@ -70,6 +72,7 @@ function bootVerify(opts: {
       fn();
       return 0;
     },
+    setInterval: () => 0,
     requestAnimationFrame: (cb: () => void) => {
       rafCallbacks.push(cb);
       return rafCallbacks.length;
@@ -96,7 +99,7 @@ function bootVerify(opts: {
 
   opts.game?.(sandbox); // game script executes after injection, before load
   handlers["message"]?.forEach((fn) =>
-    fn({ data: { source: "kidgemini-parent", type: "ready" } }),
+    fn({ data: { source: "kidgemini-parent", type: "ready", ...(opts.ready ?? {}) } }),
   );
   handlers["load"]?.forEach((fn) => fn({})); // load fires → settle elapses → probes run
 
@@ -289,6 +292,38 @@ describe("verify script probes", () => {
     });
     expect(evidence!.start).toMatchObject({ found: true, occluded: false, clickRafDelta: 1 });
     expect(classifyVerify({ errors: [], evidence, interrupted: false })).toEqual({ code: "clean" });
+  });
+
+  it("an interval-driven loop counts as running — no false no_loop on non-rAF games", () => {
+    const { evidence } = bootVerify({
+      game: (w) => {
+        w.setInterval(() => {}, 16); // game loop via setInterval, zero rAF
+      },
+    });
+    expect(evidence!.rafCountAtSettle).toBe(0);
+    expect(evidence!.intervalCount).toBe(1);
+    expect(evidence!.start).toBeNull(); // start probe skipped — loop considered running
+    expect(classifyVerify({ errors: [], evidence, interrupted: false })).toEqual({ code: "clean" });
+  });
+
+  it("ready ack with verify:false keeps the probes inert — no result, no ghost click", () => {
+    let clicked = 0;
+    const btn = el({
+      tagName: "BUTTON",
+      innerText: "Start",
+      rect: { left: 150, top: 200, width: 100, height: 40 },
+      click: () => {
+        clicked++;
+      },
+    });
+    const { evidence, posted } = bootVerify({
+      clickables: [btn],
+      elementFromPoint: () => btn,
+      ready: { verify: false }, // post-verify pristine reload
+    });
+    expect(evidence).toBeNull(); // probes never ran
+    expect(clicked).toBe(0); // the kid's Start button was never ghost-clicked
+    expect(posted.filter((p) => p?.event?.type === "check")).toHaveLength(0);
   });
 
   it("picks the SMALLEST matching element — the button, not the 'Tap Start' overlay around it", () => {

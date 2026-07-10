@@ -43,22 +43,47 @@ export function buildVerifyScript(): string {
     } catch (e) { /* parent gone — nothing to do */ }
   }
   function post(ev) { if (ready) send(ev); else buffer.push(ev); }
+  // Probes run ONLY when the parent's ready ack says verify:true. After a
+  // clean verify the parent reloads the iframe for a pristine start — that
+  // reloaded document must never re-probe (a ghost .click() on the kid's
+  // Start button). No ack at all → no probes; the parent's hard timeout
+  // passes the game through (fail-open).
+  var verifyOk = null;
+  var settleElapsed = false;
+  var ran = false;
+  function maybeRun() {
+    if (ran || verifyOk !== true || !settleElapsed) return;
+    ran = true;
+    run();
+  }
   addEventListener("message", function (event) {
     var d = event && event.data;
     if (!d || d.source !== "${PARENT_READY_SOURCE}" || d.type !== "ready") return;
     ready = true;
+    verifyOk = d.verify !== false;
     for (var i = 0; i < buffer.length; i++) send(buffer[i]);
     buffer = [];
+    maybeRun();
   });
 
   // §5.2 frame counter — the single highest-signal bit: 0 after settle means
-  // the loop never started, and it fires with no exception thrown.
+  // the loop never started, and it fires with no exception thrown. Games that
+  // drive their loop with setInterval instead of rAF are counted too (a real
+  // false-positive class: healthy interval games read as "dead" otherwise).
   var rafCount = 0;
+  var intervalCount = 0;
   var origRaf = window.requestAnimationFrame;
   if (origRaf) {
     window.requestAnimationFrame = function (cb) {
       rafCount++;
       return origRaf.call(window, cb);
+    };
+  }
+  var origInterval = window.setInterval;
+  if (origInterval) {
+    window.setInterval = function () {
+      intervalCount++;
+      return origInterval.apply(window, arguments);
     };
   }
 
@@ -123,15 +148,17 @@ export function buildVerifyScript(): string {
   }
 
   function run() {
+    var loopRan = rafCount > 0 || intervalCount > 0;
     var evidence = {
       rafCountAtSettle: rafCount,
       rafCountFinal: rafCount,
+      intervalCount: intervalCount,
       canvas: null,
       pixel: null,
       pixelAfterClick: null,
       start: null
     };
-    post({ type: "check", check: "loop", ok: rafCount > 0 });
+    post({ type: "check", check: "loop", ok: loopRan });
 
     var canvas = biggestCanvas();
     if (canvas) {
@@ -176,7 +203,7 @@ export function buildVerifyScript(): string {
       }, ${CLICK_WAIT_MS});
     }
 
-    if (evidence.rafCountAtSettle > 0) {
+    if (loopRan) {
       // Loop is running — P3 checks it actually repaints (only meaningful with
       // a non-zero canvas; DOM-only games pass through).
       if (canvas && (canvas.width || 0) > 0 && (canvas.height || 0) > 0) {
@@ -212,8 +239,12 @@ export function buildVerifyScript(): string {
     startProbe(finish);
   }
 
-  if (document.readyState === "complete") setTimeout(run, ${SETTLE_MS});
-  else addEventListener("load", function () { setTimeout(run, ${SETTLE_MS}); });
+  function onSettle() {
+    settleElapsed = true;
+    maybeRun();
+  }
+  if (document.readyState === "complete") setTimeout(onSettle, ${SETTLE_MS});
+  else addEventListener("load", function () { setTimeout(onSettle, ${SETTLE_MS}); });
 })();
 `.trim();
 }
@@ -269,7 +300,8 @@ export function classifyVerify(input: {
   // No result posted (verify script never finished) — never repair blind.
   if (!evidence) return { code: "inconclusive" };
 
-  if (evidence.rafCountAtSettle === 0) {
+  const loopRan = evidence.rafCountAtSettle > 0 || (evidence.intervalCount ?? 0) > 0;
+  if (!loopRan) {
     if (interrupted) return { code: "inconclusive" }; // V.11 — backgrounded tab
     const start = evidence.start;
     if (start?.found) {

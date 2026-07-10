@@ -21,7 +21,25 @@ export function shouldStartVerify(documentHidden: boolean): boolean {
   return !documentHidden;
 }
 
+/**
+ * Codes confident enough to SPEND A GEMINI CALL on (2026-07-10, after live
+ * UAT falsely "repaired" a game that ran perfectly when downloaded): only
+ * failures backed by hard browser facts — a thrown error with a stack, a
+ * 404'd resource, an elementFromPoint-proven occluded Start. Probe-inference
+ * codes (canvas_static, no_loop, start_no_loop, canvas_zero_size) are
+ * TELEMETRY-ONLY pass-through until preview_verify data proves them reliable
+ * — a false repair of a healthy game is worse than any bug we'd fix.
+ */
+export const REPAIRABLE_CODES: ReadonlySet<string> = new Set([
+  "load_error",
+  "async_loop",
+  "resource_404",
+  "start_occluded",
+]);
+
 export interface RepairDecisionInput {
+  /** The classified failure code. */
+  code: string;
   /** Repairs already attempted for this generation. */
   attempt: number;
   /** ms since the verify pass began (performance.now() delta). */
@@ -35,6 +53,7 @@ export interface RepairDecisionInput {
  */
 export function shouldRepair(input: RepairDecisionInput): boolean {
   if (!input.enabled) return false;
+  if (!REPAIRABLE_CODES.has(input.code)) return false;
   if (input.attempt >= MAX_REPAIR_ATTEMPTS) return false;
   if (input.elapsedMs >= WALL_CLOCK_CAP_MS) return false;
   return true;

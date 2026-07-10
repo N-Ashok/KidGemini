@@ -17,21 +17,34 @@ describe("shouldStartVerify (V.10)", () => {
 });
 
 describe("shouldRepair", () => {
+  const base = { code: "load_error", enabled: true };
+
   it("R.2 — caps at 2 attempts: a third is never issued", () => {
-    expect(shouldRepair({ attempt: 0, elapsedMs: 1000, enabled: true })).toBe(true);
-    expect(shouldRepair({ attempt: 1, elapsedMs: 1000, enabled: true })).toBe(true);
-    expect(shouldRepair({ attempt: MAX_REPAIR_ATTEMPTS, elapsedMs: 1000, enabled: true })).toBe(false);
+    expect(shouldRepair({ ...base, attempt: 0, elapsedMs: 1000 })).toBe(true);
+    expect(shouldRepair({ ...base, attempt: 1, elapsedMs: 1000 })).toBe(true);
+    expect(shouldRepair({ ...base, attempt: MAX_REPAIR_ATTEMPTS, elapsedMs: 1000 })).toBe(false);
   });
 
   it("R.3 — past the 20s wall clock it bails even with attempts left", () => {
-    expect(shouldRepair({ attempt: 0, elapsedMs: WALL_CLOCK_CAP_MS, enabled: true })).toBe(false);
-    expect(shouldRepair({ attempt: 0, elapsedMs: WALL_CLOCK_CAP_MS - 1, enabled: true })).toBe(true);
+    expect(shouldRepair({ ...base, attempt: 0, elapsedMs: WALL_CLOCK_CAP_MS })).toBe(false);
+    expect(shouldRepair({ ...base, attempt: 0, elapsedMs: WALL_CLOCK_CAP_MS - 1 })).toBe(true);
   });
 
   it("kill switch (rollout step 2, instrument-only) disables repair", () => {
-    expect(shouldRepair({ attempt: 0, elapsedMs: 0, enabled: false })).toBe(false);
+    expect(shouldRepair({ ...base, attempt: 0, elapsedMs: 0, enabled: false })).toBe(false);
     expect(repairEnabled({ NEXT_PUBLIC_PREVIEW_REPAIR: "0" })).toBe(false);
     expect(repairEnabled({})).toBe(true);
+  });
+
+  it("only hard-evidence codes may spend a Gemini call (false-repair UAT, 2026-07-10)", () => {
+    for (const code of ["load_error", "async_loop", "resource_404", "start_occluded"]) {
+      expect(shouldRepair({ code, attempt: 0, elapsedMs: 0, enabled: true })).toBe(true);
+    }
+    // Probe-inference codes are telemetry-only until live data proves them:
+    // a healthy downloaded game was falsely "repaired" as canvas_static.
+    for (const code of ["canvas_static", "no_loop", "start_no_loop", "canvas_zero_size", "no_start_button"]) {
+      expect(shouldRepair({ code, attempt: 0, elapsedMs: 0, enabled: true })).toBe(false);
+    }
   });
 });
 

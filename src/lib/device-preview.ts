@@ -1,0 +1,35 @@
+// Device-preview presets + scale math for ArtifactFrame's laptop/tablet/phone
+// switcher. Pure logic (no React, no DOM) so it's unit-testable in node.
+//
+// Viewports are common CSS-pixel sizes (MacBook Air-class laptop, iPad-class
+// tablet, iPhone-class phone). The simulated device is CENTERED in the panel
+// and scaled DOWN to fit via CSS transform — never up (blurry canvas).
+import type { DevicePreset, PreviewDeviceId } from "@/types/device-preview.types";
+
+export const DEVICE_PRESETS: readonly DevicePreset[] = [
+  { id: "fit", label: "Fit", width: null, height: null, hint: "Fill the panel" },
+  { id: "laptop", label: "Laptop", width: 1366, height: 768, hint: "1366 × 768" },
+  { id: "tablet", label: "Tablet", width: 820, height: 1180, hint: "820 × 1180" },
+  { id: "phone", label: "Phone", width: 390, height: 844, hint: "390 × 844" },
+];
+
+export function deviceById(id: PreviewDeviceId): DevicePreset {
+  // The list is a closed union — this can't miss.
+  return DEVICE_PRESETS.find((d) => d.id === id)!;
+}
+
+/**
+ * Scale factor that fits a device viewport inside the panel.
+ * - Never upscales (cap at 1).
+ * - A zero/unmeasured container (first paint, ResizeObserver not fired yet)
+ *   returns 1 rather than collapsing the frame with scale(0).
+ */
+export function fitScale(
+  containerWidth: number,
+  containerHeight: number,
+  deviceWidth: number,
+  deviceHeight: number,
+): number {
+  if (containerWidth <= 0 || containerHeight <= 0) return 1;
+  return Math.min(1, containerWidth / deviceWidth, containerHeight / deviceHeight);
+}

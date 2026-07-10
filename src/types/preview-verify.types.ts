@@ -30,6 +30,9 @@ export interface VerifyEvidence {
   rafCountAtSettle: number;
   /** rAF calls at the moment the final result was posted. */
   rafCountFinal: number;
+  /** setInterval registrations — interval-driven loops count as running (a
+   *  healthy non-rAF game must not read as "dead"). */
+  intervalCount?: number;
   /** Largest canvas's bitmap size, or null when the game has no canvas (P2). */
   canvas: { width: number; height: number } | null;
   /** P3 — null when skipped (no loop / no canvas); "tainted" is inconclusive. */
@@ -70,6 +73,9 @@ export interface VerifyPostedEvent {
 export interface ParentReadyMessage {
   source: "kidgemini-parent";
   type: "ready";
+  /** false = flush captures but DO NOT probe (post-verify reload — probing
+   *  again would ghost-click the kid's Start button). Absent = true. */
+  verify?: boolean;
 }
 
 /** Where a verify run ended, for telemetry (§11). */

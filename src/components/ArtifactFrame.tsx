@@ -11,13 +11,15 @@
 // trace); the console is a debug tool now, hidden unless localStorage
 // "kidgemini:debug" = "1" (grown-ups only — see docs).
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { downloadCode } from "./download";
 import { PublishToArcade } from "./PublishToArcade";
-import { GAME_CONSOLE_SOURCE } from "@/lib/game-console";
+import { GAME_CONSOLE_SOURCE, injectConsoleCapture } from "@/lib/game-console";
+import { DEVICE_PRESETS, deviceById, fitScale } from "@/lib/device-preview";
 import { injectPreviewInstrumentation } from "@/lib/preview-verify";
 import { usePreviewVerify } from "./usePreviewVerify";
 import type { GameConsoleMessage } from "@/types/game-console.types";
+import type { PreviewDeviceId } from "@/types/device-preview.types";
 import type { VerifyCheckId } from "@/types/preview-verify.types";
 
 interface ArtifactFrameProps {
@@ -60,8 +62,38 @@ export function ArtifactFrame({ html, busy, originalRequest, onClose }: Artifact
     }
   }, []);
 
-  const { view, iframeRef, onIframeLoad, reloadToken } = usePreviewVerify(html ?? "", originalRequest ?? "");
-  const covered = view.phase !== "done";
+  // Device preview: simulate a laptop/tablet/phone viewport inside the panel.
+  // The device box keeps the preset's real CSS-pixel size and is scaled DOWN
+  // (never up) to fit — so the game truly lays out at that viewport.
+  const [device, setDevice] = useState<PreviewDeviceId>("fit");
+  const previewBoxRef = useRef<HTMLDivElement>(null);
+  const [panelSize, setPanelSize] = useState({ w: 0, h: 0 });
+  useEffect(() => setDevice("fit"), [html]); // new game → verify at panel size
+
+  const { state, iframeRef, onIframeLoad } = usePreviewVerify(html ?? "", originalRequest ?? "");
+  // Pinned per round: probesEnabled flips false on every finish, and letting
+  // srcDoc change without a round bump would reload (flash) a game we decided
+  // NOT to reload. A new round = new document; anything else stays put.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const srcDoc = useMemo(
+    () =>
+      state.probesEnabled
+        ? injectPreviewInstrumentation(state.currentHtml)
+        : injectConsoleCapture(state.currentHtml),
+    [state.round],
+  );
+  const covered = state.phase !== "done";
+
+  // Track the panel's size while a device frame is shown (scale-to-fit).
+  useEffect(() => {
+    const el = previewBoxRef.current;
+    if (!el || device === "fit") return;
+    const ro = new ResizeObserver(([entry]) => {
+      if (entry) setPanelSize({ w: entry.contentRect.width, h: entry.contentRect.height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [device, tab]);
 
   // Each new/updated game is a fresh iframe load — start its console clean.
   // (No auto-switch on error anymore: errors now feed the verify/repair loop.)
@@ -84,7 +116,7 @@ export function ArtifactFrame({ html, busy, originalRequest, onClose }: Artifact
   // repaired game is the game, not the broken original.
   async function copy() {
     try {
-      await navigator.clipboard.writeText(view.currentHtml);
+      await navigator.clipboard.writeText(state.currentHtml);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -143,7 +175,7 @@ export function ArtifactFrame({ html, busy, originalRequest, onClose }: Artifact
             </button>
           )}
           <button
-            onClick={() => downloadCode(view.currentHtml, "html", "game.html")}
+            onClick={() => downloadCode(state.currentHtml, "html", "game.html")}
             className="rounded-lg px-2 py-1 text-sm text-neutral-600 hover:bg-neutral-100"
             aria-label="Download game"
           >
@@ -166,47 +198,100 @@ export function ArtifactFrame({ html, busy, originalRequest, onClose }: Artifact
         </div>
       </header>
 
-      <p className="border-b border-neutral-100 px-4 py-1.5 text-xs text-neutral-400">
-        Made by AI · runs safely in a sandbox
-      </p>
+      <div className="flex items-center justify-between gap-2 border-b border-neutral-100 px-4 py-1.5">
+        <p className="hidden truncate text-xs text-neutral-400 sm:block">
+          Made by AI · runs safely in a sandbox
+        </p>
+        {/* Device switcher: "how does it look on a phone?" — resizes the SAME
+            iframe (no reload); disabled while the verify cover is up so the
+            probes always measure the game at panel size. */}
+        {tab === "preview" && (
+          <div className="flex items-center gap-1" role="group" aria-label="Preview device size">
+            {DEVICE_PRESETS.map((d) => (
+              <button
+                key={d.id}
+                onClick={() => setDevice(d.id)}
+                disabled={covered}
+                title={d.hint}
+                aria-pressed={device === d.id}
+                className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                  device === d.id ? "bg-neutral-900 text-white" : "text-neutral-500 hover:bg-neutral-100"
+                } disabled:opacity-40`}
+              >
+                {d.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* §9.1 — repair exhausted: a question, never an apology + stack trace. */}
-      {view.question && tab === "preview" && (
+      {state.question && tab === "preview" && (
         <div className="border-b border-orange-100 bg-orange-50 px-4 py-2 text-sm text-orange-800">
-          {view.question}
+          {state.question}
         </div>
       )}
 
       {tab === "preview" && (
-        <div className="relative min-h-0 w-full flex-1">
-          <iframe
-            key={reloadToken} // reload after a probe-click clean → pristine title screen
-            ref={iframeRef}
-            title="AI-generated game"
-            sandbox="allow-scripts"
-            srcDoc={injectPreviewInstrumentation(view.currentHtml)}
-            onLoad={onIframeLoad}
-            className="h-full w-full border-0"
-          />
+        <div
+          ref={previewBoxRef}
+          className={`relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden ${
+            device === "fit" ? "" : "bg-neutral-100"
+          }`}
+        >
+          {(() => {
+            const preset = deviceById(device);
+            const framed = preset.width !== null && preset.height !== null;
+            // 24px breathing room around the device frame.
+            const scale = framed
+              ? fitScale(panelSize.w - 24, panelSize.h - 24, preset.width!, preset.height!)
+              : 1;
+            return (
+              /* One stable wrapper around ONE stable iframe — switching device
+                 restyles, never remounts (a remount would reload the game). */
+              <div
+                className={
+                  framed
+                    ? "shrink-0 overflow-hidden rounded-kid border border-neutral-200 bg-white shadow-md"
+                    : "h-full w-full"
+                }
+                style={
+                  framed
+                    ? { width: preset.width!, height: preset.height!, transform: `scale(${scale})` }
+                    : undefined
+                }
+              >
+                <iframe
+                  key={state.round} // bumps per verify round AND for the pristine reload after a probe-click clean
+                  ref={iframeRef}
+                  title="AI-generated game"
+                  sandbox="allow-scripts"
+                  srcDoc={srcDoc}
+                  onLoad={onIframeLoad}
+                  className="h-full w-full border-0"
+                />
+              </div>
+            );
+          })()}
           {/* §8.1 — the cover card. The iframe is RENDERED AND PAINTING under
               this opaque layer (display:none would stop rAF and make healthy
               games look dead); the kid sees the checklist, not the probes. */}
           {covered && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-white px-6">
-              {view.phase === "repairing" && view.kidLine ? (
+              {state.phase === "repairing" && state.kidLine ? (
                 <>
                   <span className="animate-bounce text-3xl" aria-hidden>🔧</span>
-                  <p className="text-center text-base font-semibold text-neutral-800">{view.kidLine}</p>
+                  <p className="text-center text-base font-semibold text-neutral-800">{state.kidLine}</p>
                 </>
               ) : (
                 <>
                   <p className="text-base font-semibold text-neutral-800">Testing your game…</p>
                   <ul className="space-y-1 text-sm text-neutral-600">
                     {(Object.keys(CHECK_LABELS) as VerifyCheckId[]).map((id) => {
-                      const done = view.checks.find((c) => c.check === id);
+                      const done = state.checks.find((c) => c.check === id);
                       // Only show rows the probes have reached or will reach next —
                       // real results, not a fake progress bar (§8.3).
-                      if (!done && !view.checks.length && id !== "loop") return null;
+                      if (!done && !state.checks.length && id !== "loop") return null;
                       return (
                         <li key={id}>
                           {done ? (done.ok ? "✓" : "…") : "⟳"} {CHECK_LABELS[id]}
@@ -225,7 +310,7 @@ export function ArtifactFrame({ html, busy, originalRequest, onClose }: Artifact
            by default, so with h-full the code block overflowed past the panel
            and the overflow-auto scrollbar never appeared. */
         <pre className="min-h-0 flex-1 overflow-auto bg-neutral-900 p-4 text-[12px] leading-5 text-neutral-100">
-          <code>{view.currentHtml}</code>
+          <code>{state.currentHtml}</code>
         </pre>
       )}
       {tab === "console" && debug && (
@@ -254,7 +339,7 @@ export function ArtifactFrame({ html, busy, originalRequest, onClose }: Artifact
       )}
 
       {publishing && (
-        <PublishToArcade html={view.currentHtml} suggestedName={titleOf(view.currentHtml)} onClose={() => setPublishing(false)} />
+        <PublishToArcade html={state.currentHtml} suggestedName={titleOf(state.currentHtml)} onClose={() => setPublishing(false)} />
       )}
     </aside>
   );
