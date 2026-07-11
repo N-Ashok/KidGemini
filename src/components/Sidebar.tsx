@@ -103,12 +103,9 @@ export function Sidebar(props: SidebarProps) {
             <span aria-hidden>🔍</span> Search chats
           </button>
         )}
-        <a
-          href="/upgrade"
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 hover:bg-neutral-200/60"
-        >
-          <span aria-hidden>✨</span> Go premium
-        </a>
+        {/* No premium/upgrade tab here: plans are sold on ariantra.com, not in the
+            kid UI (2026-07-11 pricing revamp). The upgrade route still exists for
+            deep links. Guarded by sidebar-no-premium.test.ts. */}
         <a
           href="/parent"
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2 hover:bg-neutral-200/60"

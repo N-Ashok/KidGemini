@@ -175,6 +175,17 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 - Razorpay one-time payments: plan cards, order creation, checkout
 - Webhook with signature verification + idempotency (each event processed once)
 - Rails-only for now: paid rows stamp `periodEndsAt`; nothing gated on it yet
+- NOT linked from the kid UI (2026-07-11): the sidebar's "Go premium" tab was
+  removed — plans are sold on ariantra.com (Explorer ₹1,200/yr · Assisted
+  Starter ₹3,990/4 classes · Assisted Pro ₹10,000/8 classes). `/upgrade` stays
+  reachable by direct link only. Guarded by
+  `src/components/sidebar-no-premium.test.ts`
+- Plans (2026-07-11): `explorer` / `assisted4` / `assisted8` in
+  `src/lib/billing.config.ts`, pinned by `billing.config.test.ts` — the keys are
+  a public contract with ariantra.com's pricing cards, which deep-link to
+  `/upgrade?plan=<key>`; after sign-in (param survives the Auth.js round-trip)
+  Checkout auto-opens for that plan unless the account already has an active
+  one (`upgrade-deeplink.test.ts`)
 
 ## Ariantra integration
 - Shared Ariantra header on every page (`ArNav`): Home · Games · KidGemini · Studio

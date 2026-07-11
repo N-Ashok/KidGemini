@@ -66,7 +66,7 @@ describe("POST /api/billing/webhook", () => {
   it("marks the order paid on a valid payment.captured event", async () => {
     verifyWebhookSignatureMock.mockReturnValue(true);
     isNewEventMock.mockReturnValue(true);
-    getByOrderIdMock.mockReturnValue({ planKey: "monthly", userId: "user:kid@example.com" });
+    getByOrderIdMock.mockReturnValue({ planKey: "explorer", userId: "user:kid@example.com" });
 
     const res = await POST(
       makeReq(capturedBody, { "x-razorpay-signature": "good", "x-razorpay-event-id": "evt_1" }),

@@ -18,7 +18,7 @@ export function PlanCard({ plan, highlight = false, busy = false, onSelect }: Pl
     >
       {highlight && (
         <span className="mx-auto mb-2 rounded-full bg-neutral-800 px-3 py-0.5 text-xs font-medium text-white">
-          Best value
+          Most popular
         </span>
       )}
       <h2 className="text-lg font-semibold text-neutral-800">{plan.label}</h2>

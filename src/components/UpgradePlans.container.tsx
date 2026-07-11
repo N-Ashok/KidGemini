@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { signIn, useSession } from "@/lib/useAriantraSession";
-import { BILLING_PLANS } from "@/lib/billing.config";
+import { BILLING_PLANS, findPlan } from "@/lib/billing.config";
 import { PlanCard } from "./PlanCard";
 
 const CHECKOUT_SRC = "https://checkout.razorpay.com/v1/checkout.js";
@@ -67,14 +67,32 @@ export function UpgradePlans() {
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
   const [alreadyPaid, setAlreadyPaid] = useState(false);
+  const [statusChecked, setStatusChecked] = useState(false);
+  const [autoStarted, setAutoStarted] = useState(false);
 
   useEffect(() => {
     if (authStatus !== "authenticated") return;
     fetch("/api/billing/status")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setAlreadyPaid(Boolean(d?.paid)))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setStatusChecked(true));
   }, [authStatus]);
+
+  // Deep link from ariantra.com's pricing section: /upgrade?plan=<key> opens
+  // Checkout for that plan as soon as the signed-in, not-yet-paid state is known.
+  // Signed-out visitors see the sign-in gate first; the param survives sign-in
+  // because Auth.js returns to the same URL.
+  useEffect(() => {
+    if (autoStarted || alreadyPaid || !statusChecked || authStatus !== "authenticated") return;
+    const key = new URLSearchParams(window.location.search).get("plan");
+    if (key && findPlan(key)) {
+      setAutoStarted(true);
+      void handleSelect(key);
+    }
+    // handleSelect is stable in practice (no memoization in this component).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authStatus, statusChecked, alreadyPaid, autoStarted]);
 
   async function handleSelect(planKey: string) {
     setStatus("idle");
@@ -158,9 +176,10 @@ export function UpgradePlans() {
       <a href="/" className="self-start text-sm text-neutral-500 hover:text-neutral-700">
         ← Back to chat
       </a>
-      <h1 className="mt-6 text-3xl font-bold text-neutral-900">Go premium ✨</h1>
+      <h1 className="mt-6 text-3xl font-bold text-neutral-900">Choose your plan ✨</h1>
       <p className="mt-2 max-w-md text-sm text-neutral-600">
-        Support KidGemini and keep the fun going. Pick a plan below.
+        Every plan includes KidGemini and a year on the platform. Assisted plans add live
+        one-on-one classes with a teacher.
       </p>
 
       {alreadyPaid && (
@@ -174,7 +193,7 @@ export function UpgradePlans() {
           <PlanCard
             key={plan.key}
             plan={plan}
-            highlight={plan.key === "annual"}
+            highlight={plan.key === "assisted8"}
             busy={pending === plan.key}
             onSelect={() => handleSelect(plan.key)}
           />

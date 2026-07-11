@@ -4,8 +4,8 @@
 // the root layout, so this header is pixel-identical across www / catalog /
 // studio / kidgemini. Header-only rebrand: the kid-styled interior is untouched.
 //
-// Canonical menu (2026-07-03 unification, mirrors the platform's nav-links.ts):
-//   Games · KidGemini(active) · How it works · Videos · Studio · [Log in] · [Book CTA]
+// Canonical menu (2026-07-11: Skills added, mirrors the platform's nav-links.ts):
+//   Skills · Games · KidGemini(active) · How it works · Videos · Studio · [Log in] · [Book CTA]
 // "Studio" is a plain menu item that OPENS the Studio app (no returnTo — the
 // user stays in Studio after signing in there). The subtle "Log in" enters
 // KIDGEMINI's session via the shared SSO (signIn() → studio /login?returnTo=
@@ -24,8 +24,9 @@ const DEV = process.env.NODE_ENV === "development";
 const WWW_URL = DEV ? "http://localhost:3000" : "https://ariantra.com";
 const GAMES_URL = DEV ? "http://localhost:3000/catalog" : "https://games.ariantra.com";
 const STUDIO_URL = DEV ? "http://localhost:3000/studio" : "https://studio.ariantra.com";
-const BOOK_URL =
-  "https://wa.me/918800364622?text=Hi%2C%20I%27d%20like%20to%20book%20a%20free%20first%20session%20for%20my%20kid.";
+// 2026-07-11 CTA revamp: the loud CTA creates a game. On KidGemini itself that
+// means starting a new chat — "/" — not a cross-site hop (guarded by ar-cta.test.ts).
+const CREATE_URL = "/";
 
 export function ArNav() {
   const { status } = useSession();
@@ -44,6 +45,8 @@ export function ArNav() {
             <span className="ar-logo-sub">AI Foundry</span>
           </a>
           <nav className="ar-nav-links">
+            {/* Landing anchor — always prod, like #how/#videos below. */}
+            <a href="https://ariantra.com/#skills" className="ar-link">Skills</a>
             <a href={GAMES_URL} className="ar-link">Games</a>
             <a href="/" className="ar-link on">KidGemini</a>
             <a href={`${WWW_URL}/#how`} className="ar-link">How it works</a>
@@ -60,8 +63,8 @@ export function ArNav() {
             )}
           </nav>
           <div className="ar-nav-right">
-            <a href={BOOK_URL} target="_blank" rel="noopener" className="ar-cta">
-              Book a free session
+            <a href={CREATE_URL} className="ar-cta">
+              Create your first game
             </a>
             {status !== "authenticated" && (
               <a

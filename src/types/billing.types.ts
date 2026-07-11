@@ -7,7 +7,7 @@
 
 /** A purchasable plan = a one-time charge granting `periodDays` of access. Amounts in paise (₹1 = 100). */
 export interface BillingPlan {
-  key: string; // "monthly" | "annual"
+  key: string; // "explorer" | "assisted4" | "assisted8"
   label: string; // shown on the plan card
   amountPaise: number; // charge amount in paise
   periodDays: number; // access granted — used when entitlement is wired later
