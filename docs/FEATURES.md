@@ -99,9 +99,14 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   `localStorage["kidgemini:debug"]="1"`
 - **🚀 Put it in the Arcade** (2026-07-07): CTA under the preview publishes the
   game to games.ariantra.com — kid names it (live URL check + 🎲 ideas), a
-  grown-up approves with the parent PIN, then it goes live under the family's
-  SSO account with auto-score/leaderboard/thumbnail included
-  (`PublishToArcade.tsx` + `/api/arcade/publish` → platform partner bridge)
+  grown-up approves with the FAMILY's 4-digit parent PIN (verified via
+  `/api/parent/verify-pin` → 30-min parent-session cookie; the publish route
+  checks the cookie's account MATCHES the SSO session, so a parent from
+  another family can never approve — PRD-PARENT-AUTH-ALERT-SCOPING), then it
+  goes live under the family's SSO account with auto-score/leaderboard/
+  thumbnail included (`PublishToArcade.tsx` + `/api/arcade/publish` →
+  platform partner bridge). A parent verified in the last 30 min skips the
+  PIN prompt entirely
 - **🔄 Update mode**: when the kid already has games, the sheet ASKS first —
   "brand-new game" or "update one of mine" with a picker of their games
   (fetched via the partner `list` action, session-verified). Picking one
@@ -146,13 +151,25 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   prompt welcomes them, cartoonish/bloodless only; Gemini DANGEROUS_CONTENT
   at MEDIUM). Locked by safety.config.test.ts
 - Parent alerting: input-rule flags recorded with severity/action/reason
-- Parent dashboard (`/parent`, PIN-gated): review alerts
+- **Parent dashboard** (`/parent`) — per-FAMILY auth (2026-07-10,
+  PRD-PARENT-AUTH-ALERT-SCOPING Phase 1): each signed-in family sets its own
+  4-digit PIN (hashed scrypt in SQLite `parent_auth`; set/reset requires a
+  FRESH SSO login ≤5 min — a kid on a parent's old session can't set it).
+  Verify is POST-body only, throttled (5 tries → 15-min lock, repeat within
+  24h → 1h) and issues a 30-min HttpOnly parent-session cookie that gates
+  `/api/alerts`. Guests see sign-up copy, never a PIN form (D3). The old
+  shared `PARENT_PIN` env var (with its `"1234"` fallback!) is DELETED.
+  INTERIM: alerts are still a global list until Phase 2 child scoping
+  (platform TECH_DEBT #32)
 - Kids' transcripts stay local (SQLite) — never in git, never read by tooling
 
 ## Limits & admin
 - Per-IP rate limiting with daily windows + 3-strike escalation
 - Usage/cost tracking per user/model (tokens, USD) — admin dashboard (`/admin`):
-  daily totals + top spender per day, per-user and per-location breakdowns, raw log
+  daily totals + top spender per day, per-user and per-location breakdowns, raw
+  log. OPERATOR-ONLY since 2026-07-10: gated by `ADMIN_SECRET` (POST body,
+  timing-safe compare, 503 when unset — never open), independent of the parent
+  PIN, and no longer linked from the kid UI
 
 ## Billing (`/upgrade`)
 - Razorpay one-time payments: plan cards, order creation, checkout

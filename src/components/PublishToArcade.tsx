@@ -104,7 +104,10 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
     setName(pick);
   };
 
-  const publish = useCallback(async () => {
+  // targetOverride: the update picker calls publish in the same tick as
+  // setUpdateTarget — state would be stale, so the picked game rides along.
+  const publish = useCallback(async (targetOverride?: MyGame) => {
+    const target = targetOverride ?? updateTarget;
     setStep("publishing");
     setError("");
     setStage(1);
@@ -116,12 +119,18 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
       const res = await fetch("/api/arcade/publish", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: displayName, html, pin, ...(updateTarget ? { slug: updateTarget.slug } : {}) }),
+        body: JSON.stringify({
+          name: target ? target.name : displayName,
+          html,
+          ...(target ? { slug: target.slug } : {}),
+        }),
       });
       const data = (await res.json()) as { url?: string; error?: string; suggestions?: string[] };
       clearTimeout(t1);
       clearTimeout(t2);
-      if (res.status === 403) { setStep("pin"); setPin(""); setError("That's not the right PIN — try again!"); return; }
+      // parent_required: no live parent session yet — ask for the PIN. (If a
+      // grown-up verified within the last 30 min, this never shows.)
+      if (res.status === 403) { setStep("pin"); setPin(""); return; }
       if (res.status === 401) { setStep("signin"); return; } // session expired mid-flow
       if (res.status === 409) { setStep("name"); setCheck({ state: "taken", suggestions: data.suggestions ?? [] }); return; }
       if (!res.ok || !data.url) { setStep("pin"); setError(data.error ?? "That didn't work — nothing is broken. Try again in a minute."); return; }
@@ -134,7 +143,48 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
       setStep("pin");
       setError("That didn't work — nothing is broken. Check the internet and try again.");
     }
-  }, [displayName, html, pin, updateTarget]);
+  }, [displayName, html, updateTarget]);
+
+  // PIN step: verify against /api/parent/verify-pin (which sets the HttpOnly
+  // parent-session cookie), THEN publish. The PIN itself never rides on the
+  // publish request (PRD-PARENT-AUTH-ALERT-SCOPING §8).
+  const verifyThenPublish = useCallback(async () => {
+    setError("");
+    try {
+      const res = await fetch("/api/parent/verify-pin", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      if (res.ok) {
+        setPin("");
+        return publish();
+      }
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        attemptsLeft?: number;
+        unlockAt?: number;
+      };
+      if (res.status === 401 && data.error === "signed_out") { setStep("signin"); return; }
+      if (res.status === 404) {
+        setError("No parent PIN is set up yet — a grown-up can set one in the Parent area first.");
+        return;
+      }
+      if (res.status === 429) {
+        const at = data.unlockAt ? new Date(data.unlockAt).toLocaleTimeString() : "later";
+        setError(`Too many tries — the PIN is locked until ${at}.`);
+        return;
+      }
+      setError(
+        `That's not the right PIN — try again!${
+          typeof data.attemptsLeft === "number" ? ` (${data.attemptsLeft} tries left)` : ""
+        }`,
+      );
+      setPin("");
+    } catch {
+      setError("That didn't work — nothing is broken. Check the internet and try again.");
+    }
+  }, [pin, publish]);
 
   return (
     <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/50" onClick={onClose}>
@@ -189,7 +239,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
               {(myGames ?? []).map((g) => (
                 <button
                   key={g.slug}
-                  onClick={() => { setUpdateTarget(g); setStep("pin"); }}
+                  onClick={() => { setUpdateTarget(g); void publish(g); }}
                   className="flex w-full items-center justify-between rounded-2xl border-2 border-neutral-200 px-4 py-3 text-left hover:border-orange-400"
                 >
                   <span className="min-w-0">
@@ -236,7 +286,10 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
             </div>
             <button
               disabled={!slug || check.state === "taken"}
-              onClick={() => setStep("pin")}
+              // Straight to publish: if a grown-up verified the PIN within
+              // the last 30 min the game just goes; otherwise the server's
+              // parent_required 403 routes to the PIN step.
+              onClick={() => void publish()}
               className="w-full rounded-2xl bg-orange-500 py-3.5 text-base font-extrabold text-white shadow-lg shadow-orange-500/30 disabled:opacity-40"
             >
               {isUpdate ? "Next → update my game" : "Next → ask a grown-up"}
@@ -258,17 +311,17 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
               autoFocus
               type="password"
               inputMode="numeric"
-              maxLength={8}
+              maxLength={4}
               value={pin}
-              onChange={(e) => setPin(e.target.value)}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
               placeholder="Parent PIN"
               className="w-full rounded-xl border-2 border-neutral-200 px-4 py-3 text-center text-xl font-extrabold tracking-[0.5em] outline-none focus:border-orange-500"
             />
-            <p className="mb-3 mt-1 text-center text-xs text-neutral-400">Same PIN as the Parent Dashboard</p>
+            <p className="mb-3 mt-1 text-center text-xs text-neutral-400">Same 4-digit PIN as the Parent area</p>
             {error && <p className="mb-2 text-center text-xs font-bold text-red-500">{error}</p>}
             <button
-              disabled={pin.length < 4}
-              onClick={() => void publish()}
+              disabled={pin.length !== 4}
+              onClick={() => void verifyThenPublish()}
               className="w-full rounded-2xl bg-orange-500 py-3.5 text-base font-extrabold text-white shadow-lg shadow-orange-500/30 disabled:opacity-40"
             >
               {isUpdate ? `🔄 Update ${displayName}` : `🚀 Publish ${displayName}`}

@@ -18,7 +18,10 @@ function usd(n: number): string {
 }
 
 export default function AdminPage() {
-  const [pin, setPin] = useState("");
+  // OPERATOR tooling — ADMIN_SECRET, nothing to do with the parent PIN
+  // (PRD-PARENT-AUTH-ALERT-SCOPING D2). POST body so the secret never lands
+  // in access logs or browser history.
+  const [secret, setSecret] = useState("");
   const [days, setDays] = useState(30);
   const [data, setData] = useState<UsageResponse | null>(null);
   const [error, setError] = useState("");
@@ -26,9 +29,17 @@ export default function AdminPage() {
   async function load(e?: React.FormEvent) {
     e?.preventDefault();
     setError("");
-    const res = await fetch(`/api/usage?pin=${encodeURIComponent(pin)}&days=${days}&detail=1`);
+    const res = await fetch("/api/usage", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ secret, days, detail: true }),
+    });
     if (!res.ok) {
-      setError("Wrong PIN");
+      setError(
+        res.status === 503
+          ? "ADMIN_SECRET isn't configured on the server — the dashboard is offline."
+          : "Wrong admin secret.",
+      );
       return;
     }
     setData(await res.json());
@@ -41,9 +52,9 @@ export default function AdminPage() {
         <form onSubmit={load} className="card space-y-4">
           <input
             type="password"
-            value={pin}
-            onChange={(e) => setPin(e.target.value)}
-            placeholder="Parent PIN"
+            value={secret}
+            onChange={(e) => setSecret(e.target.value)}
+            placeholder="Admin secret"
             className="w-full rounded-kid border-2 border-brand-100 px-4 py-3 text-lg"
           />
           {error && <p className="text-danger-600">{error}</p>}

@@ -12,6 +12,7 @@ import type {
   UsageSummary,
 } from "@/types/usage.types";
 import type { IpLimitRecord, RateLimitStatus, RateLimitStore } from "@/types/rate-limit.types";
+import type { ParentAuthRecord, ParentAuthStore } from "@/types/parent-auth.types";
 import type { PaymentRecord, PaymentStore } from "@/types/billing.types";
 import { evaluate } from "./rate-limit";
 
@@ -86,6 +87,16 @@ function getDb(): Database.Database {
     CREATE TABLE IF NOT EXISTS webhook_events (
       eventId TEXT PRIMARY KEY,
       createdAt INTEGER NOT NULL
+    );
+    -- Per-family parent PIN (PRD-PARENT-AUTH-ALERT-SCOPING §8). Keyed by the
+    -- SSO userId — kidgemini has no local accounts table; identity is the JWT.
+    CREATE TABLE IF NOT EXISTS parent_auth (
+      accountId TEXT PRIMARY KEY,
+      pinHash TEXT NOT NULL,
+      setAt INTEGER NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      lockedUntil INTEGER,
+      lastLockoutAt INTEGER
     );
   `);
   return db;
@@ -355,6 +366,47 @@ export class SqlitePaymentStore implements PaymentStore {
       .prepare(`SELECT * FROM payments WHERE userId = ? ORDER BY createdAt DESC LIMIT 1`)
       .get(userId) as Record<string, unknown> | undefined;
     return r ? mapPaymentRow(r) : null;
+  }
+}
+
+export class SqliteParentAuthStore implements ParentAuthStore {
+  get(accountId: string): ParentAuthRecord | null {
+    const r = getDb().prepare(`SELECT * FROM parent_auth WHERE accountId = ?`).get(accountId) as
+      | Record<string, unknown>
+      | undefined;
+    if (!r) return null;
+    return {
+      accountId: r.accountId as string,
+      pinHash: r.pinHash as string,
+      setAt: r.setAt as number,
+      attempts: r.attempts as number,
+      lockedUntil: (r.lockedUntil as number | null) ?? null,
+      lastLockoutAt: (r.lastLockoutAt as number | null) ?? null,
+    };
+  }
+
+  put(record: ParentAuthRecord): void {
+    getDb()
+      .prepare(
+        `INSERT INTO parent_auth (accountId, pinHash, setAt, attempts, lockedUntil, lastLockoutAt)
+         VALUES (@accountId, @pinHash, @setAt, @attempts, @lockedUntil, @lastLockoutAt)
+         ON CONFLICT(accountId) DO UPDATE SET
+           pinHash = @pinHash, setAt = @setAt, attempts = @attempts,
+           lockedUntil = @lockedUntil, lastLockoutAt = @lastLockoutAt`,
+      )
+      .run(record);
+  }
+
+  recordAttempt(
+    accountId: string,
+    fields: Pick<ParentAuthRecord, "attempts" | "lockedUntil" | "lastLockoutAt">,
+  ): void {
+    getDb()
+      .prepare(
+        `UPDATE parent_auth SET attempts = @attempts, lockedUntil = @lockedUntil,
+           lastLockoutAt = @lastLockoutAt WHERE accountId = @accountId`,
+      )
+      .run({ accountId, ...fields });
   }
 }
 

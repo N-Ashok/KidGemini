@@ -1,26 +1,118 @@
 "use client";
-// Parent dashboard — PIN-gated alert log. Container-style page; presentational
-// pieces stay simple. Real product would harden auth (session, hashed PIN).
+// Parent dashboard — per-family PIN (PRD-PARENT-AUTH-ALERT-SCOPING Phase 1).
+// Flow: live parent session → alerts; otherwise verify the 4-digit PIN
+// (POST body, throttled server-side); first visit → set-PIN interstitial,
+// which requires a FRESH SSO login (the kid holding a parent's old session
+// can't set it). Guests see sign-up copy, never a PIN form (D3).
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { signIn, useSession } from "@/lib/useAriantraSession";
 import type { ParentAlert } from "@/types/alert.types";
 
+type View =
+  | { kind: "loading" }
+  | { kind: "verify" }
+  | { kind: "set" }
+  | { kind: "signed-out" }
+  | { kind: "alerts"; alerts: ParentAlert[] };
+
 export default function ParentPage() {
+  const [view, setView] = useState<View>({ kind: "loading" });
   const [pin, setPin] = useState("");
-  const [alerts, setAlerts] = useState<ParentAlert[] | null>(null);
+  const [pin2, setPin2] = useState("");
   const [error, setError] = useState("");
 
-  async function handleUnlock(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    const res = await fetch(`/api/alerts?pin=${encodeURIComponent(pin)}`);
-    if (!res.ok) {
-      setError("Wrong PIN");
+  const loadAlerts = useCallback(async (): Promise<boolean> => {
+    const res = await fetch("/api/alerts");
+    if (!res.ok) return false;
+    const data = (await res.json()) as { alerts: ParentAlert[] };
+    setView({ kind: "alerts", alerts: data.alerts });
+    return true;
+  }, []);
+
+  // Guests never see a PIN form (D3) — sign-up copy instead. A signed-in
+  // parent with a live parent session (last 30 min) skips the PIN entirely.
+  const session = useSession();
+  useEffect(() => {
+    if (session.status === "loading") return;
+    if (session.status === "unauthenticated") {
+      setView({ kind: "signed-out" });
       return;
     }
-    const data = await res.json();
-    setAlerts(data.alerts);
+    void (async () => {
+      if (!(await loadAlerts())) setView({ kind: "verify" });
+    })();
+  }, [session.status, loadAlerts]);
+
+  async function handleVerify(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    const res = await fetch("/api/parent/verify-pin", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pin }),
+    });
+    setPin("");
+    if (res.ok) {
+      await loadAlerts();
+      return;
+    }
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      attemptsLeft?: number;
+      unlockAt?: number;
+    };
+    if (res.status === 401 && data.error === "signed_out") { setView({ kind: "signed-out" }); return; }
+    if (res.status === 404) { setView({ kind: "set" }); return; }
+    if (res.status === 429) {
+      const at = data.unlockAt ? new Date(data.unlockAt).toLocaleTimeString() : "later";
+      setError(`Too many tries — locked until ${at}.`);
+      return;
+    }
+    setError(
+      `Wrong PIN${typeof data.attemptsLeft === "number" ? ` — ${data.attemptsLeft} tries left` : ""}.`,
+    );
   }
+
+  async function handleSet(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    if (pin !== pin2) {
+      setError("Those don't match — type the same 4 digits twice.");
+      return;
+    }
+    const res = await fetch("/api/parent/pin", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pin }),
+    });
+    if (res.ok) {
+      setPin("");
+      setPin2("");
+      await loadAlerts();
+      return;
+    }
+    const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+    if (res.status === 401) { setView({ kind: "signed-out" }); return; }
+    if (res.status === 403 && data.error === "stale_session") {
+      setError("For safety, sign in again first — then come straight back here.");
+      return;
+    }
+    setError(data.message ?? "That PIN won't work — pick 4 digits that aren't an easy pattern.");
+  }
+
+  const pinInput = (value: string, set: (v: string) => void, placeholder: string, autoFocus = false) => (
+    <input
+      autoFocus={autoFocus}
+      type="password"
+      inputMode="numeric"
+      maxLength={4}
+      value={value}
+      onChange={(e) => set(e.target.value.replace(/\D/g, ""))}
+      placeholder={placeholder}
+      className="w-full rounded-kid border-2 border-brand-100 px-4 py-3 text-center text-xl font-bold tracking-[0.5em] outline-none focus:border-brand-500"
+    />
+  );
 
   const accent: Record<string, string> = {
     high: "border-danger-500",
@@ -30,31 +122,83 @@ export default function ParentPage() {
 
   return (
     <main className="mx-auto max-w-3xl p-8">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="font-display text-3xl font-bold text-ink-900">Parent area</h1>
-        <a href="/admin" className="text-sm text-brand-600 hover:underline">
-          Usage &amp; cost dashboard →
-        </a>
-      </div>
+      <h1 className="mb-6 font-display text-3xl font-bold text-ink-900">Parent area</h1>
 
-      {!alerts ? (
-        <form onSubmit={handleUnlock} className="card max-w-sm space-y-4">
-          <label className="block text-lg font-semibold">Enter parent PIN</label>
-          <input
-            type="password"
-            value={pin}
-            onChange={(e) => setPin(e.target.value)}
-            className="w-full rounded-kid border-2 border-brand-100 px-4 py-3 text-lg"
-            placeholder="••••"
-          />
-          {error && <p className="text-danger-600">{error}</p>}
-          <button className="btn-primary w-full">Unlock</button>
+      {view.kind === "loading" && (
+        <div className="card max-w-sm animate-pulse space-y-3">
+          <div className="h-5 w-2/3 rounded bg-neutral-200" />
+          <div className="h-12 rounded-kid bg-neutral-100" />
+        </div>
+      )}
+
+      {view.kind === "signed-out" && (
+        <div className="card max-w-sm space-y-4 text-center">
+          <div className="text-4xl" aria-hidden>🛡️</div>
+          <h2 className="text-lg font-semibold">The parent area needs a family account</h2>
+          <p className="text-sm text-ink-700">
+            Sign in (or make a free account) and you&rsquo;ll see your child&rsquo;s safety alerts
+            here — plus you&rsquo;ll set the parent PIN that approves publishing games.
+          </p>
+          <button onClick={() => signIn()} className="btn-primary w-full">
+            Sign in to Ariantra
+          </button>
+        </div>
+      )}
+
+      {view.kind === "verify" && (
+        <form onSubmit={handleVerify} className="card max-w-sm space-y-4">
+          <label className="block text-lg font-semibold">Enter your parent PIN</label>
+          {pinInput(pin, setPin, "••••", true)}
+          {error && <p className="text-sm font-medium text-danger-600">{error}</p>}
+          <button disabled={pin.length !== 4} className="btn-primary w-full disabled:opacity-40">
+            Unlock
+          </button>
+          <button
+            type="button"
+            onClick={() => { setError(""); setView({ kind: "set" }); }}
+            className="w-full text-sm text-brand-600 hover:underline"
+          >
+            First time here? Set your PIN →
+          </button>
         </form>
-      ) : (
+      )}
+
+      {view.kind === "set" && (
+        <form onSubmit={handleSet} className="card max-w-sm space-y-4">
+          <label className="block text-lg font-semibold">Set your family&rsquo;s parent PIN</label>
+          <p className="text-sm text-ink-700">
+            4 digits. You&rsquo;ll use it to open this page and to approve putting games on the
+            internet. For safety this only works right after signing in — if it complains, sign
+            in again first.
+          </p>
+          {pinInput(pin, setPin, "New PIN", true)}
+          {pinInput(pin2, setPin2, "Same PIN again")}
+          {error && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-danger-600">{error}</p>
+              {error.includes("sign in again") && (
+                // reauth: a plain signIn() bounces straight back with the SAME
+                // old cookie (SSO short-circuit) and this error never clears.
+                <button type="button" onClick={() => signIn({ reauth: true })} className="btn-primary w-full">
+                  Sign in again
+                </button>
+              )}
+            </div>
+          )}
+          <button
+            disabled={pin.length !== 4 || pin2.length !== 4}
+            className="btn-primary w-full disabled:opacity-40"
+          >
+            Save PIN
+          </button>
+        </form>
+      )}
+
+      {view.kind === "alerts" && (
         <section className="space-y-3">
-          <h2 className="text-xl font-semibold">Safety alerts ({alerts.length})</h2>
-          {alerts.length === 0 && <p className="text-ink-500">No alerts yet. 🎉</p>}
-          {alerts.map((a) => (
+          <h2 className="text-xl font-semibold">Safety alerts ({view.alerts.length})</h2>
+          {view.alerts.length === 0 && <p className="text-ink-500">No alerts yet. 🎉</p>}
+          {view.alerts.map((a) => (
             <article
               key={a.id}
               className={`card border-l-4 ${accent[a.severity] ?? "border-brand-300"}`}

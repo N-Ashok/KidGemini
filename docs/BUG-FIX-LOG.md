@@ -101,6 +101,95 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
   Pin: `scripts/e2e-preview-pane.mjs` "old game during update" section.
 - **Related:** entry above (round collision); docs/PRD-PREVIEW-PANE.md.
 
+### 2026-07-11 — Publish kept re-asking the PIN: platform's 403 masqueraded as parent_required
+
+- **Symptom (what the user saw):** "Ask a grown-up 🧑‍🚀 … A grown-up needs to
+  say OK" reappeared after every correct PIN — silently, no error text —
+  when publishing locally.
+- **Surface area:** `src/app/api/arcade/publish/route.ts` (+ `.env.example`).
+- **Root cause (two layers):** locally `ARIANTRA_API_BASE` was unset (and
+  undocumented), so the publish bridge defaulted to PRODUCTION
+  `studio.ariantra.com` with the local dev `AUTH_JWT_SECRET` as
+  `x-admin-secret`. The platform partner endpoint 403s on a secret mismatch —
+  and our route forwarded that status verbatim, where the UI treats ANY 403
+  as `parent_required` (PublishToArcade routes 403 → PIN step, silently).
+  Correct PIN → publish → prod 403 → PIN step, forever. The PIN/cookie were
+  fine; the misconfig was invisible.
+- **Fix:** `partner()` maps an upstream 403 (which can ONLY mean operator
+  misconfig — secret drift or wrong ARIANTRA_API_BASE) to **502** with an
+  actionable message, so it can never collide with our own 403
+  parent_required. `ARIANTRA_API_BASE` documented in `.env.example` with the
+  local-dev value (`http://localhost:3000`).
+- **Result (verified):** G.3c (gates pass + partner 403 → 502, error ≠
+  parent_required; fails on the old code); suite 245 green; typecheck clean.
+- **Impact:** local publish now fails LOUDLY with "check the setup" until
+  ARIANTRA_API_BASE is set — and works end-to-end once it is. Prod behavior
+  unchanged (secrets match there; 403 never occurs on a healthy box).
+- **Prevention:** class = "upstream status forwarded verbatim collides with a
+  local gate's status contract". Any proxied status that the client interprets
+  specially (401/403/409 here) must be either owned by this route or remapped.
+- **Related:** parent-cookie Secure bug (same date, below); platform
+  BUG_LOG #12; PRD-PARENT-AUTH-ALERT-SCOPING §8.
+
+### 2026-07-11 — PIN accepted but the gate re-prompted forever (parent cookie dropped on http)
+
+- **Symptom (what the user saw):** "after parent's PIN it again comes back to
+  parent's PIN — not moving beyond" (local dev). Entering the correct PIN
+  returned 200 with a parent-session cookie, then the very next request
+  behaved as if no PIN had ever been entered.
+- **Surface area:** `src/app/api/parent/verify-pin/route.ts`,
+  `src/app/api/parent/pin/route.ts`, `src/lib/parent-session.ts`.
+- **Root cause:** both PIN routes hardcoded `secure: true` on the
+  `kidgemini_parent` cookie. On `http://localhost:3001` the browser (Safari
+  always; per spec any non-secure context) refuses to STORE a Secure cookie —
+  so the mint succeeded, the Set-Cookie header went out, and the cookie
+  silently never existed. Every gate check (`getVerifiedParentAccount`) then
+  found nothing and re-prompted. The platform's SSO cookie already made
+  Secure configurable; the parent cookie didn't follow the convention.
+- **Fix:** new pure `parentSessionCookieAttrs(isProd = NODE_ENV==="production")`
+  in `parent-session.ts`, used by BOTH issuing routes — Secure in production
+  (unchanged), plain in dev; HttpOnly/SameSite=Strict/TTL identical either way.
+- **Result (verified):** parent-session.test.ts attrs case (prod true / dev
+  false, non-Secure attrs unweakened) + no-Secure assertions in both route
+  tests (fail on the old code); suite 244 green; typecheck clean.
+- **Impact:** local PIN flow completes — verify once, gate stays open for the
+  30-min parent session; production cookie flags unchanged.
+- **Prevention:** class = "cookie flags hardcoded for prod break every
+  non-https environment". Cookie attributes now live in ONE tested helper per
+  cookie; new cookies must define attrs the same way (see the platform's
+  `session-cookie.ts` as the sibling convention).
+- **Related:** platform BUG_LOG #12 (same local-testing sweep);
+  PRD-PARENT-AUTH-ALERT-SCOPING §8.
+
+### 2026-07-10 — "Sign in again" never cleared the stale-session error on PIN set
+
+- **Symptom (what the user saw):** setting the parent PIN kept showing "For
+  safety, sign in again first — then come straight back here" even after
+  clicking Sign in again and logging in.
+- **Surface area:** `src/app/parent/page.tsx`, `src/lib/useAriantraSession.tsx`
+  (kidgemini) + platform `src/lib/auth/arrival.ts`, `src/app/studio/page.tsx`.
+- **Root cause:** design collision with the BUG_LOG #10 SSO fix. The PIN
+  set/reset gate requires a session JWT with `iat` ≤ 5 min — but the platform
+  login page, on seeing a still-valid shared cookie, bounces straight back
+  WITHOUT re-authenticating (that bounce was itself the fix for the
+  kidgemini↔Studio login loop). "Sign in again" round-tripped in ~1s with the
+  SAME old cookie; the iat never refreshed; the gate refused forever.
+- **Fix:** `signIn({ reauth: true })` appends `reauth=1`;
+  `resolveStudioArrival` (pure, tested) never bounces when `reauth` is set —
+  it force-logs-out Studio (clearing the shared cookie, so abandoning re-auth
+  fails CLOSED) or stays on the login form; a real login re-mints a
+  fresh-iat cookie and the returnTo bounce brings the parent back.
+- **Result (verified):** platform `arrival.test.ts` A.5 (3 cases); both repos
+  typecheck; Game suite 243 green.
+- **Impact:** the PIN set flow completes after one real re-login; normal SSO
+  bounces (no `reauth`) are untouched, so BUG_LOG #10 stays fixed.
+- **Prevention:** class = **"two auth flows each correct alone, colliding at
+  an unmodeled interaction"** — the freshness gate assumed login always
+  re-mints; the SSO bounce assumed re-minting is never needed. A.5 pins the
+  interaction. When adding a gate on session PROPERTIES (not just validity),
+  check every path that's supposed to refresh those properties.
+- **Related:** platform BUG_LOG #10; PRD-PARENT-AUTH-ALERT-SCOPING §7.
+
 ### 2026-07-10 — Long speech lost: mic on, but only the last sentence arrived
 
 - **Symptom (what the user saw):** with the mic on, speaking a long request

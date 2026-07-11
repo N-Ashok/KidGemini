@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { SignJWT } from "jose";
-import { verifyAriantraSession, SESSION_COOKIE } from "./ariantra-session";
+import { verifyAriantraSession, isFreshSession, SESSION_COOKIE } from "./ariantra-session";
 
 const SECRET = "shared-sso-secret-long-enough-0123456789";
 const key = new TextEncoder().encode(SECRET);
@@ -25,7 +25,19 @@ async function mint(overrides: Record<string, unknown> = {}, opts: { secret?: Ui
 describe("verifyAriantraSession", () => {
   it("V.1 accepts a valid session and keys userId by email (history continuity)", async () => {
     const s = await verifyAriantraSession(await mint(), SECRET);
-    expect(s).toEqual({ userId: "user:kid@example.com", email: "kid@example.com", name: "Kid" });
+    expect(s).toMatchObject({ userId: "user:kid@example.com", email: "kid@example.com", name: "Kid" });
+    expect(typeof s?.issuedAt).toBe("number"); // freshness gate needs iat
+  });
+
+  it("V.8 exposes issuedAt so PIN set/reset can demand a FRESH login (re-auth gate)", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const fresh = await verifyAriantraSession(await mint(), SECRET);
+    expect(isFreshSession(fresh, Date.now())).toBe(true);
+    const stale = { ...fresh!, issuedAt: now - 6 * 60 };
+    expect(isFreshSession(stale, Date.now())).toBe(false);
+    // No iat at all → NOT fresh (fail closed).
+    expect(isFreshSession({}, Date.now())).toBe(false); // no iat at all
+    expect(isFreshSession(null, Date.now())).toBe(false);
   });
 
   it("V.2 falls back to name, then playerId, when email is absent", async () => {

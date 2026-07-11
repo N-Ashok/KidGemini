@@ -43,9 +43,16 @@ export function useSession(): { status: SessionStatus; data: SessionData | null 
   return state;
 }
 
-/** Send the user to the central Ariantra login; they come straight back. */
-export function signIn(): void {
-  window.location.assign(`${LOGIN_URL}?returnTo=${encodeURIComponent(window.location.href)}`);
+/** Send the user to the central Ariantra login; they come straight back.
+ *  reauth: force a REAL credential entry even if the shared cookie is still
+ *  valid — the login page's already-signed-in bounce would otherwise return
+ *  the same old cookie, and freshness-gated flows (parent PIN set/reset)
+ *  would refuse forever (BUG-FIX-LOG 2026-07-10). */
+export function signIn(opts?: { reauth?: boolean }): void {
+  const reauth = opts?.reauth ? "&reauth=1" : "";
+  window.location.assign(
+    `${LOGIN_URL}?returnTo=${encodeURIComponent(window.location.href)}${reauth}`,
+  );
 }
 
 /** Clear the shared cookie via our own first-party /api/logout (no CORS —
