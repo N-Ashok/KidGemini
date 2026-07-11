@@ -45,6 +45,62 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-11 — Updated game never reached the preview: verify rounds collide across games
+
+- **Symptom (what the user saw):** ask for a change to an existing game →
+  "Testing your game…" sat on the pane until the hard timeout, then the OLD
+  game was still there. The new version never showed up in the preview
+  (chat said it was done).
+- **Surface area:** `src/components/ArtifactFrame.tsx` (srcDoc memo + iframe
+  key), `src/components/usePreviewVerify.ts`, `src/lib/preview-pane.ts`.
+- **Root cause:** the srcDoc `useMemo` and the iframe `key` were pinned to
+  `state.round` alone. `round` restarts with every `PreviewVerifyController`
+  instance (one per game html), but the hook's React state persists across
+  instances — so when game v1 finished at round 1 (clean, no probe-click
+  reload) and v2's controller also began at round 1, the deps never changed:
+  the iframe kept v1's document, the probes had nothing instrumented to
+  report, and the cover hung until `ROUND_HARD_TIMEOUT`. Swaps only ever
+  worked when v1 happened to end on a bumped round (probe click / repair) —
+  an accidental parity condition.
+- **Fix:** doc identity is now `previewDocKey(generation, round)`
+  (`src/lib/preview-pane.ts`) — the hook bumps a generation counter per game
+  html (`usePreviewVerify.ts`), and `ArtifactFrame` keys both the srcDoc memo
+  and the iframe on the composite.
+- **Result (verified):** `scripts/e2e-preview-pane.mjs` (real browser, mocked
+  `/api/chat`): before — iframe srcdoc stayed `GameV1` forever after `done`;
+  after — `GameV2` swaps in ≤1s after `done`, verify runs, uncovers v2.
+  `preview-pane.test.ts` pins the key invariant.
+- **Impact:** every kid iterating on a game — the core loop. Updates now
+  reliably appear in the preview.
+- **Prevention:** class = **stale-memo/key collision across resetting
+  counters** (sibling of the closure-stale-state class). Pins:
+  `src/lib/preview-pane.test.ts` (`previewDocKey`) + e2e script check
+  "new game reached the iframe".
+- **Related:** PRD-SELF-HEALING-PREVIEW §8; same-day entry below (verify
+  restart on `originalRequest`); docs/PRD-PREVIEW-PANE.md.
+
+### 2026-07-11 — Sending a new ask re-covered (and re-verified) the unchanged old game
+
+- **Symptom (what the user saw):** the moment a kid asked for a new feature,
+  the still-open previous game vanished behind "Testing your game…" for the
+  whole generation — instead of staying playable.
+- **Surface area:** `src/components/usePreviewVerify.ts`.
+- **Root cause:** the controller effect's deps were `[html, originalRequest]`.
+  `originalRequest` is the latest child message, so a new ask disposed the
+  controller and started a full verify pass (cover + probes, potentially a
+  Gemini repair call) on html that hadn't changed.
+- **Fix:** effect deps are `[html]` only; `originalRequest` rides in a ref and
+  is read when html changes — so a repair prompt still carries the ask that
+  produced that html (`usePreviewVerify.ts`).
+- **Result (verified):** e2e checks "old game still in iframe" + "no verify
+  cover over old game" mid-generation, with the new "Making your update…"
+  strip visible.
+- **Impact:** kids keep playing the old game during every update; no wasted
+  verify/repair passes (repair calls cost a Gemini request each).
+- **Prevention:** class = **effect over-triggering on a rode-along dep**.
+  Pin: `scripts/e2e-preview-pane.mjs` "old game during update" section.
+- **Related:** entry above (round collision); docs/PRD-PREVIEW-PANE.md.
+
 ### 2026-07-10 — Long speech lost: mic on, but only the last sentence arrived
 
 - **Symptom (what the user saw):** with the mic on, speaking a long request

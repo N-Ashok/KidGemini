@@ -48,6 +48,20 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   (code pane scrolls), download/copy; on mobile the panel is fullscreen with a
   "← Chat" back button, and any game message shows a "🎮 Open game" chip to
   reopen a closed preview
+- **Full-screen preview** (2026-07-11, `docs/PRD-PREVIEW-PANE.md`): a ⤢ button
+  in the pane header (desktop; Esc to exit) expands the 440px column to fill
+  the screen — a CSS-only wrapper toggle (`panelShellClass`,
+  `src/lib/preview-pane.ts`), so the running game, tab, and device choice
+  survive expand/collapse untouched. Disabled while the verify cover is up
+- **Old game stays playable during updates** (2026-07-11,
+  `docs/PRD-PREVIEW-PANE.md`): while a new feature generates (send OR
+  regenerate), the previous game keeps running in the pane under a
+  "Making your update… you can keep playing this one! ✨" strip; the new
+  version swaps in only on the stream's `done` (policy: `nextArtifact`,
+  `src/lib/preview-pane.ts`; safety retract still blanks immediately).
+  Shipped with two bug fixes (BUG-FIX-LOG 2026-07-11): verify no longer
+  restarts on a new ask, and updated games reliably reach the iframe
+  (`previewDocKey` round-collision fix)
 - **Device preview** (2026-07-10): Fit · Laptop · Tablet · Phone pills in the
   preview bar simulate real viewports (1366×768 / 820×1180 / 390×844,
   `src/lib/device-preview.ts`) — the device box keeps its true CSS-pixel size

@@ -17,6 +17,7 @@ import { PublishToArcade } from "./PublishToArcade";
 import { GAME_CONSOLE_SOURCE, injectConsoleCapture } from "@/lib/game-console";
 import { DEVICE_PRESETS, deviceById, fitScale } from "@/lib/device-preview";
 import { injectPreviewInstrumentation } from "@/lib/preview-verify";
+import { keyToPanelAction, UPDATING_LINE } from "@/lib/preview-pane";
 import { usePreviewVerify } from "./usePreviewVerify";
 import type { GameConsoleMessage } from "@/types/game-console.types";
 import type { PreviewDeviceId } from "@/types/device-preview.types";
@@ -29,6 +30,10 @@ interface ArtifactFrameProps {
   /** The kid's ask that produced this game — repair prompts carry it (§7). */
   originalRequest?: string;
   onClose: () => void;
+  /** Desktop full-screen toggle (PRD-PREVIEW-PANE) — owned by the container,
+      which restyles the panel wrapper; this component only shows the button. */
+  expanded?: boolean;
+  onToggleExpand?: () => void;
 }
 
 type Tab = "preview" | "code" | "console";
@@ -47,7 +52,7 @@ const CHECK_LABELS: Record<VerifyCheckId, string> = {
   start: "The Start button works",
 };
 
-export function ArtifactFrame({ html, busy, originalRequest, onClose }: ArtifactFrameProps) {
+export function ArtifactFrame({ html, busy, originalRequest, onClose, expanded, onToggleExpand }: ArtifactFrameProps) {
   const [tab, setTab] = useState<Tab>("preview");
   const [copied, setCopied] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -70,17 +75,29 @@ export function ArtifactFrame({ html, busy, originalRequest, onClose }: Artifact
   const [panelSize, setPanelSize] = useState({ w: 0, h: 0 });
   useEffect(() => setDevice("fit"), [html]); // new game → verify at panel size
 
-  const { state, iframeRef, onIframeLoad } = usePreviewVerify(html ?? "", originalRequest ?? "");
-  // Pinned per round: probesEnabled flips false on every finish, and letting
-  // srcDoc change without a round bump would reload (flash) a game we decided
-  // NOT to reload. A new round = new document; anything else stays put.
+  // Esc leaves full screen (games often use Esc for pause — but the collapsed
+  // panel keeps the game running, so worst case is a harmless un-expand).
+  useEffect(() => {
+    if (!onToggleExpand) return;
+    function onKey(e: KeyboardEvent) {
+      if (keyToPanelAction(e.key, expanded ?? false) === "collapse") onToggleExpand!();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded, onToggleExpand]);
+
+  const { state, iframeRef, onIframeLoad, docKey } = usePreviewVerify(html ?? "", originalRequest ?? "");
+  // Pinned per docKey (generation + round): probesEnabled flips false on every
+  // finish, and letting srcDoc change without a docKey bump would reload
+  // (flash) a game we decided NOT to reload. A new docKey = new document;
+  // anything else stays put.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const srcDoc = useMemo(
     () =>
       state.probesEnabled
         ? injectPreviewInstrumentation(state.currentHtml)
         : injectConsoleCapture(state.currentHtml),
-    [state.round],
+    [docKey],
   );
   const covered = state.phase !== "done";
 
@@ -178,16 +195,35 @@ export function ArtifactFrame({ html, busy, originalRequest, onClose }: Artifact
             onClick={() => downloadCode(state.currentHtml, "html", "game.html")}
             className="rounded-lg px-2 py-1 text-sm text-neutral-600 hover:bg-neutral-100"
             aria-label="Download game"
+            title="Download game"
           >
-            ⬇<span className="hidden md:inline"> Download</span>
+            {/* Text labels only in full screen — the 440px panel header can't
+                fit them plus the expand toggle (✕ fell off the edge). */}
+            ⬇<span className={expanded ? "hidden md:inline" : "hidden"}> Download</span>
           </button>
           <button
             onClick={copy}
             className="rounded-lg px-2 py-1 text-sm text-neutral-600 hover:bg-neutral-100"
             aria-label="Copy HTML"
+            title="Copy HTML"
           >
-            {copied ? "✓" : "⧉"}<span className="hidden md:inline">{copied ? " Copied" : " Copy"}</span>
+            {copied ? "✓" : "⧉"}<span className={expanded ? "hidden md:inline" : "hidden"}>{copied ? " Copied" : " Copy"}</span>
           </button>
+          {/* Full-screen toggle — md+ only (mobile is already full screen).
+              Disabled while the verify cover is up, same reason as the device
+              switcher: the probes must measure the game at a stable size. */}
+          {onToggleExpand && (
+            <button
+              onClick={onToggleExpand}
+              disabled={covered}
+              className="hidden rounded-lg px-2 py-1 text-neutral-600 hover:bg-neutral-100 disabled:opacity-40 md:block"
+              aria-label={expanded ? "Exit full screen" : "Full screen"}
+              aria-pressed={expanded}
+              title={expanded ? "Exit full screen (Esc)" : "Full screen"}
+            >
+              {expanded ? "⤡" : "⤢"}
+            </button>
+          )}
           <button
             onClick={onClose}
             className="rounded-lg px-2 py-1 text-neutral-600 hover:bg-neutral-100"
@@ -224,6 +260,16 @@ export function ArtifactFrame({ html, busy, originalRequest, onClose }: Artifact
           </div>
         )}
       </div>
+
+      {/* PRD-PREVIEW-PANE §2 — an update is streaming in the chat: the game on
+          screen is the PREVIOUS version, still fully playable. Say so, so it
+          reads as deliberate rather than stale. */}
+      {busy && tab === "preview" && (
+        <div className="border-b border-sky-100 bg-sky-50 px-4 py-1.5 text-sm text-sky-800">
+          <span className="mr-1 inline-block animate-bounce" aria-hidden>🛠️</span>
+          {UPDATING_LINE}
+        </div>
+      )}
 
       {/* §9.1 — repair exhausted: a question, never an apology + stack trace. */}
       {state.question && tab === "preview" && (
@@ -262,7 +308,7 @@ export function ArtifactFrame({ html, busy, originalRequest, onClose }: Artifact
                 }
               >
                 <iframe
-                  key={state.round} // bumps per verify round AND for the pristine reload after a probe-click clean
+                  key={docKey} // bumps per game generation AND per verify round (incl. the pristine reload after a probe-click clean)
                   ref={iframeRef}
                   title="AI-generated game"
                   sandbox="allow-scripts"

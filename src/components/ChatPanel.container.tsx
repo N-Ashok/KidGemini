@@ -13,6 +13,7 @@ import { LoginGate } from "./LoginGate";
 import { useTextToSpeech } from "./useTextToSpeech";
 import type { ChatMessage, Conversation } from "@/types/chat.types";
 import { loadChats, saveChats } from "@/lib/chat-store";
+import { nextArtifact, panelShellClass } from "@/lib/preview-pane";
 import { searchChats } from "@/lib/chat-search";
 import { pickSuggestions } from "@/lib/game-suggestions";
 import { shouldAutoRetry } from "@/lib/stream-recovery";
@@ -50,6 +51,10 @@ export function ChatPanelContainer() {
   const [activeId, setActiveId] = useState(convos[0]!.id);
   const [busy, setBusy] = useState(false);
   const [artifact, setArtifact] = useState<string | null>(null);
+  // Desktop full-screen preview (PRD-PREVIEW-PANE): a CSS-only wrapper toggle —
+  // the ArtifactFrame subtree (and its iframe) never remounts, so collapsing
+  // returns to exactly the prior view. Reset whenever the panel closes.
+  const [previewExpanded, setPreviewExpanded] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer; always visible on md+
   const [searchQuery, setSearchQuery] = useState(""); // sidebar chat search (title + message text)
   // Set when the server stops the guest: sign-in gate (token limit), rate-limit, or pay wall.
@@ -140,6 +145,7 @@ export function ChatPanelContainer() {
     setConvos((list) => [c, ...list]);
     setActiveId(c.id);
     setArtifact(null);
+    setPreviewExpanded(false);
     setSearchQuery("");
     setSidebarOpen(false);
   }
@@ -148,6 +154,7 @@ export function ChatPanelContainer() {
     tts.stop();
     setActiveId(id);
     setArtifact(null);
+    setPreviewExpanded(false);
     setSidebarOpen(false);
   }
 
@@ -253,13 +260,13 @@ export function ChatPanelContainer() {
             setReply(acc);
           } else if (ev.type === "done") {
             setReply(ev.text ?? acc, ev.artifactHtml ?? undefined);
-            if (ev.artifactHtml) setArtifact(ev.artifactHtml);
+            setArtifact((a) => nextArtifact({ type: "done", artifactHtml: ev.artifactHtml }, a));
             setBusy(false);
             finalized = true;
             console.log(`[chat] ✓ shown @${Date.now() - startedAt}ms artifact=${ev.artifactHtml ? "yes" : "no"}`);
           } else if (ev.type === "retract") {
             setReply(ev.text ?? KIND_FALLBACK);
-            setArtifact(null);
+            setArtifact((a) => nextArtifact({ type: "retract" }, a)); // safety: always blank
             finalized = true;
             console.warn(`[chat] retracted by safety monitor`);
           } else if (ev.type === "blocked") {
@@ -379,7 +386,9 @@ export function ChatPanelContainer() {
     const userText = msgs[idx]!.text;
     const history = msgs.slice(0, idx);
     const replyId = crypto.randomUUID();
-    setArtifact(null);
+    // Keep the old game on screen and playable until the redo lands
+    // (PRD-PREVIEW-PANE §2 — regenerate used to blank the panel here).
+    setArtifact((a) => nextArtifact({ type: "regenerate" }, a));
     anchorIdRef.current = msgs[idx]!.id; // re-pin the request being regenerated
     patchActive((c) => ({
       ...c,
@@ -468,14 +477,19 @@ export function ChatPanelContainer() {
           z-40 the nav floated over the panel's header and swallowed every tap
           on ← Chat / ✕ (BUG-FIX-LOG 2026-07-07: "can't come out"). */}
       {artifact && (
-        <div className="fixed inset-0 z-[110] bg-white md:static md:inset-auto md:z-auto md:w-[440px] md:border-l md:border-neutral-200">
+        <div className={panelShellClass(previewExpanded)}>
           <ArtifactFrame
             html={artifact}
             busy={busy}
             // The kid's latest ask — self-healing repair prompts carry it so a
             // fix never drifts from intent (PRD §7 / R.5).
             originalRequest={[...active.messages].reverse().find((m) => m.role === "child")?.text ?? ""}
-            onClose={() => setArtifact(null)}
+            onClose={() => {
+              setArtifact(null);
+              setPreviewExpanded(false);
+            }}
+            expanded={previewExpanded}
+            onToggleExpand={() => setPreviewExpanded((v) => !v)}
           />
         </div>
       )}

@@ -11,6 +11,7 @@ import {
   type VerifyControllerState,
 } from "@/lib/preview-verify-controller";
 import { PARENT_READY_SOURCE } from "@/lib/preview-verify";
+import { previewDocKey } from "@/lib/preview-pane";
 import { repairEnabled } from "@/lib/verify-policy";
 import { trackEvent } from "@/lib/analytics";
 import type { RepairResponse } from "@/types/preview-verify.types";
@@ -36,7 +37,24 @@ export function usePreviewVerify(html: string, originalRequest: string) {
   const controllerRef = useRef<PreviewVerifyController | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
+  // Verify restarts ONLY when the game itself changes. originalRequest rides
+  // along in a ref: with it in the effect deps, the kid's NEXT ask ("add a
+  // score") disposed the controller and re-covered the still-unchanged old
+  // game with "Testing your game…" for the whole generation (BUG-FIX-LOG
+  // 2026-07-11). The ref is read when html changes, so a repair prompt still
+  // carries the ask that produced THAT html.
+  const requestRef = useRef(originalRequest);
+  requestRef.current = originalRequest;
+
+  // Each game html gets its own generation: `round` restarts with every
+  // controller instance, so round alone COLLIDES across games (v1 can end at
+  // round 1 and v2 begins at round 1) — the srcDoc memo and iframe key then
+  // never change and the NEW game never reaches the preview (BUG-FIX-LOG
+  // 2026-07-11: "update never shows up"). docKey = generation + round.
+  const generationRef = useRef(0);
+
   useEffect(() => {
+    generationRef.current += 1;
     const controller = new PreviewVerifyController({
       fetchRepair: async (req) => {
         const res = await fetch("/api/repair", {
@@ -63,13 +81,14 @@ export function usePreviewVerify(html: string, originalRequest: string) {
     };
     window.addEventListener("message", onMessage);
     document.addEventListener("visibilitychange", onVisibility);
-    controller.start(html, originalRequest, document.hidden); // V.10 guard inside
+    controller.start(html, requestRef.current, document.hidden); // V.10 guard inside
     return () => {
       controller.dispose();
       window.removeEventListener("message", onMessage);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [html, originalRequest]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [html]);
 
   /** Ready handshake (§0 A2 race): the injected scripts buffer everything
    *  until this lands. `verify:false` on post-verify reloads keeps the probe
@@ -85,5 +104,5 @@ export function usePreviewVerify(html: string, originalRequest: string) {
     );
   }, []);
 
-  return { state, iframeRef, onIframeLoad };
+  return { state, iframeRef, onIframeLoad, docKey: previewDocKey(generationRef.current, state.round) };
 }

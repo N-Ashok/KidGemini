@@ -74,3 +74,10 @@ npm run typecheck            # tsc --noEmit
 | When to run | Test | What it pins | Bug-fix ref |
 |---|---|---|---|
 | `src/lib/game-suggestions.ts`, `src/components/ChatPanel.container.tsx` (chips) | **`src/lib/game-suggestions.test.ts`** (7 tests, passing) | Pool holds ≥500 unique non-empty game prompts; every entry starts a game ("Make me a … game"); `pickSuggestions` returns 4 distinct pool entries, is rand-injectable/deterministic, safe when count > pool | — (feature, not a bug fix) |
+
+## Preview pane: full-screen + old-game-during-update (2026-07-11)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/preview-pane.ts`, `src/components/ArtifactFrame.tsx`, `src/components/ChatPanel.container.tsx` (artifact swap), `src/components/usePreviewVerify.ts` | **`src/lib/preview-pane.test.ts`** (15 tests, passing) | Panel shell classes for split/full-screen incl. the z-[110]-above-nav pin; Esc collapses only when expanded; `nextArtifact` policy (done-with-html swaps, done-without/regenerate/send keep the OLD game, safety retract blanks); `previewDocKey` never collides across game generations | BUG-FIX-LOG 2026-07-11 ×2 (round collision; verify restart on new ask) |
+| Same files — anything touching the update/verify flow end-to-end | **`scripts/e2e-preview-pane.mjs`** (real browser; needs `npm run dev` + playwright-core, see script header) | Expand/collapse without iframe remount and back to the same width; old game visible + uncovered + updating strip while a change streams; the NEW game actually reaches the iframe after `done` (round-collision class) | BUG-FIX-LOG 2026-07-11 |
