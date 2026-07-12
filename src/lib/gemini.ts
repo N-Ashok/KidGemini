@@ -5,6 +5,8 @@ import "server-only";
 import { GoogleGenAI, HarmBlockThreshold, HarmCategory } from "@google/genai";
 import type { ChatMessage, ChatModel, ImageAttachment, StreamChunk } from "@/types/chat.types";
 import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
+import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection, type PromptTurnContext } from "./assets/prompt-catalog";
+import { catalogGates, type CatalogGates } from "./assets/catalog-gate";
 import { fallbackChain, isModelGone, shouldTryNextModel } from "./model-fallback";
 import { withRetry, withTimeout } from "./retry";
 
@@ -47,10 +49,18 @@ If the child asks for a game, respond with a single HTML document wrapped in a
 - Make movement smooth and forgiving — not too fast. Use requestAnimationFrame.
 - The game MUST be fully responsive and fill WHATEVER container it runs in —
   it is played inside a small preview panel (~400px wide), on phones, and on
-  desktops. html/body/the game area use width:100%/height:100% (no fixed pixel
-  sizes like 800px). If you use a <canvas>, size it from its container on load
-  AND on window resize (re-read clientWidth/clientHeight, scale positions
-  accordingly). Nothing may overflow horizontally at 380px wide.
+  desktops. html/body/the game area use width:100%/height:100dvh (NEVER 100vh,
+  and no fixed pixel sizes like 800px) — plain "vh" includes the area a mobile
+  browser's address bar can cover, so on-screen buttons pinned near the bottom
+  of a 100vh layout get hidden behind it when a child opens the game's own
+  link directly; "dvh" (dynamic viewport height) accounts for that. If you use
+  a <canvas>, size it from its container on load AND on window resize
+  (re-read clientWidth/clientHeight, scale positions accordingly). Nothing may
+  overflow horizontally at 380px wide.
+- Any on-screen control button pinned to the bottom of the screen needs a
+  little breathing room below it (e.g. padding-bottom using
+  max(12px, env(safe-area-inset-bottom))) so it's never flush against the
+  very edge, where it's easiest for a mobile browser's UI to obscure it.
 - Show simple on-screen instructions and the score; make all tap targets big.
   Render the score as an HTML element with id="score" (a real DOM element that
   updates as the player scores — not text drawn inside a canvas), so the
@@ -66,6 +76,22 @@ If the child asks for a game, respond with a single HTML document wrapped in a
   move available; difficulty ramps up — the first enemy starts slow and rare,
   and speed/spawn rate grow gradually with time or score.
 - Keep it wholesome; work fully offline unless a CDN library is allowed above.`;
+
+/** System instruction for a game-BUILD turn: the child-safety base plus
+ *  whichever asset catalogs this turn's gates unlock (PRD-3D-GAMES-AND-ASSETS
+ *  §9 — paid: both; free: keyword-invoked; 3D and audio independent). The
+ *  default is fully unlocked — that's the paid/tests shape; configFor passes
+ *  the real per-turn gates. Exported for the prompt-contract tests. */
+export function buildTurnSystemInstruction(
+  gates: CatalogGates = { three: true, audio: true },
+  context?: PromptTurnContext,
+): string {
+  const sections = [
+    ...(gates.three ? [THREE_PROMPT_SECTION, modelsPromptSection(undefined, context)] : []),
+    ...(gates.audio ? [audioPromptSection()] : []),
+  ].filter(Boolean);
+  return sections.length ? `${CHILD_SYSTEM_PROMPT}\n\n${sections.join("\n\n")}` : CHILD_SYSTEM_PROMPT;
+}
 
 function getClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -169,8 +195,15 @@ export class GeminiChatModel implements ChatModel {
   /** Fast chat config, or the builder overrides when this turn builds a game. */
   private configFor(input: { history: ChatMessage[]; message: string }) {
     if (!isGameBuildTurn(input.message, input.history)) return GEN_CONFIG;
-    console.log("[gemini] builder mode — thinking on, extended output");
-    return { ...GEN_CONFIG, ...builderGenOverrides(process.env) };
+    // paid: false until entitlement lands (TECH_DEBT #11) — then this becomes
+    // the real per-user entitlement and the paid tier goes always-on (§9).
+    const gates = catalogGates({ message: input.message, history: input.history, paid: false });
+    console.log(`[gemini] builder mode — thinking on, extended output, catalogs: 3d=${gates.three} audio=${gates.audio}`);
+    return {
+      ...GEN_CONFIG,
+      systemInstruction: buildTurnSystemInstruction(gates, { message: input.message, history: input.history }),
+      ...builderGenOverrides(process.env),
+    };
   }
 
   /** One-shot reply (used where streaming isn't needed). */

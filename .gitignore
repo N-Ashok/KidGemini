@@ -29,3 +29,6 @@ next-env.d.ts
 # deploy config — local SSH target for scripts/deploy-rsync.sh
 /scripts/deploy.env
 /.deploy-lock.sha
+
+# asset-host staging (scripts/vendor-*.mjs build output; the S3 upload is the artifact)
+/.assets-out

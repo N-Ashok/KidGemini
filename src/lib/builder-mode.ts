@@ -15,9 +15,13 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 24576; // full games run 10-20K tokens; 8K squ
 
 /** A turn pays for thinking when the child asks for a game outright, or is
  *  iterating on one already in the conversation ("make the player jump higher"
- *  never says "game" — the artifact in history is the signal). */
+ *  never says "game" — the artifact in history is the signal). A bare "3d …"
+ *  phrase also counts: the Game Stuff gallery teaches exactly "3d cars" as
+ *  the magic words (owner decision 2026-07-12), and on a game-builder product
+ *  that phrase IS a game ask. */
 export function isGameBuildTurn(message: string, history: ChatMessage[]): boolean {
   if (/\bgame\b/i.test(message)) return true;
+  if (/\b3d\b/i.test(message)) return true;
   return history.some((m) => Boolean(m.artifactHtml));
 }
 

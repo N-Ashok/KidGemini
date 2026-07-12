@@ -29,6 +29,13 @@ describe("isGameBuildTurn — which turns pay for thinking", () => {
     expect(isGameBuildTurn("what is 7 times 8?", [])).toBe(false);
     expect(isGameBuildTurn("tell me about dragons", [msg("child", "hi"), msg("assistant", "hello!")])).toBe(false);
   });
+
+  it("a bare '3d …' phrase is a game ask — the gallery teaches exactly these magic words (2026-07-12)", () => {
+    expect(isGameBuildTurn("3d cars", [])).toBe(true);
+    expect(isGameBuildTurn("3D dinos please!", [])).toBe(true);
+    // "3d" must be a whole token — no false trigger inside another word.
+    expect(isGameBuildTurn("i am in grade3d section", [])).toBe(false);
+  });
 });
 
 describe("builderGenOverrides — env-tunable, sane defaults", () => {

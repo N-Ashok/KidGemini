@@ -45,6 +45,148 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-12 — Model pipeline shipped white (textureless) Kenney models to the asset host
+
+- **Symptom (what the user saw):** in the gallery's first populated visual
+  pass, car/tree/coin turntables rendered as untextured white geometry;
+  console showed `THREE.GLTFLoader: Couldn't load texture
+  data:image/png;base64,ERR/`. Three broken GLBs were already uploaded and
+  verified (hash/headers were fine — the bytes were wrong at birth).
+- **Surface area:** `scripts/vendor-models.mjs`; the objects
+  `car.193376.glb`, `tree.61c4aa.glb`, `coin.87b951.glb` on the asset host
+  (now permanently unreferenced — append-only host, no delete).
+- **Root cause:** two stacked failures. (1) Kenney GLBs reference an
+  EXTERNAL `Textures/colormap.png` sitting beside them in the kit zip; the
+  pipeline extracted only the .glb, so the texture could never resolve.
+  (2) gltfpack's npm WASM build then embedded the unresolvable texture as a
+  literal `data:image/png;base64,ERR/` **instead of failing** — the
+  contract's sha/size/magic checks all passed because the file was
+  perfectly valid GLB carrying a broken texture. Class: **content-level
+  correctness is invisible to byte-level verification** — only a render
+  (visual pass / gallery dogfood) catches it.
+- **Fix:** pipeline extracts the kit's `Textures/` folder next to each GLB
+  and compresses with gltf-transform + meshoptimizer (`dedup → prune →
+  resample → meshopt high`), which resolves and EMBEDS the texture and
+  hard-fails on unresolvable resources (that error is what exposed the
+  truth). gltfpack devDependency removed. Animated dino trims to the three
+  clips a kid game uses (Run/Idle/Attack) to hold the 100 KB budget.
+- **Result (verified):** real-Chromium harness screenshot shows the car
+  fully textured and the dino animated (3 clips); all five models rebuilt
+  under budget (33/89/21/15/16 KB); verify verdict clean, zero console
+  errors.
+- **Impact:** no kid game ever referenced the broken files (caught before
+  UAT); the three orphaned objects stay on the host unreferenced, as the
+  append-only contract intends. Re-upload republishes under new hashes.
+- **Prevention:** the gallery IS the standing content-level smoke check
+  (PRD §9b — "if the gallery renders, the host works"); pipeline now
+  fails loudly on unresolvable resources instead of embedding garbage.
+- **Related:** PRD-3D-GAMES-AND-ASSETS §4.3/§9b; Phase C progress note.
+
+### 2026-07-12 — 100dvh mobile-sizing rule silently lost in the Phase-0 revert (regression rediscovered)
+
+- **Symptom (what the user saw):** none reported yet — caught in code review
+  while re-introducing 3D (Phase B): `CHILD_SYSTEM_PROMPT` was back to
+  `height:100%` with no dvh guidance, so newly generated games could again
+  pin on-screen buttons under a mobile browser's address bar when opened by
+  their own link (the exact 2026-07-08 bug).
+- **Surface area:** `src/lib/gemini.ts` (`CHILD_SYSTEM_PROMPT`).
+- **Root cause:** the 100dvh fix (BUG-FIX-LOG 2026-07-08) shipped inside the
+  same commit as the Three.js Phase-0 work (`aa2cd33`); reverting Phase 0
+  (`cf391d5`) took the unrelated bug fix down with it. Its regression test
+  lived in the also-reverted `gemini.test.ts`, so nothing failed. Class:
+  **a revert of a feature commit silently reverts the bug fixes riding in
+  it** — a fix sharing a commit with a revertable feature loses its
+  guardrail exactly when the guardrail is needed.
+- **Fix:** restored the 100dvh (NEVER 100vh) rule + the
+  `env(safe-area-inset-bottom)` breathing-room bullet in
+  `CHILD_SYSTEM_PROMPT` (`src/lib/gemini.ts`).
+- **Result (verified):** `src/lib/assets/prompt-catalog.test.ts`
+  ("100dvh mobile sizing" describe) pins both rules; full suite green
+  (392/392).
+- **Impact:** newly generated games size correctly on mobile again. Games
+  generated between the revert (2026-07-08) and today may still carry 100vh
+  in the preview, but the platform's publish-time `viewport-height-fix.ts`
+  (platform BUG_LOG #9) keeps published bundles corrected — exposure was
+  preview-only.
+- **Prevention:** the prompt pins now live in `prompt-catalog.test.ts`,
+  independent of any feature module; when reverting a feature commit, check
+  its BUG-FIX-LOG entries for unrelated fixes riding along.
+- **Related:** 2026-07-08 100dvh entry; commits `aa2cd33`, `cf391d5`.
+
+### 2026-07-12 — Asset-host CORS was conditional; a policy-propagation race poisoned the browser cache for a year
+
+- **Symptom (what the user saw):** the Phase A canary game
+  (`canary-3d.ariantra.com`) showed *FAIL — Failed to fetch dynamically
+  imported module: https://assets.ariantra.com/three.b4a9d4.js* on every
+  reload, while `npm run assets:check` was fully green.
+- **Surface area:** asset host serving config (CloudFront response headers
+  policy on the `*.ariantra.com` wildcard); `scripts/assets-contract-check.mjs`.
+- **Root cause:** the managed `SimpleCORS` response-headers policy emits
+  `Access-Control-Allow-Origin: *` **only when the request carries an
+  `Origin` header**. The first canary visit raced the policy's propagation:
+  the browser's module fetch received a header-less response and cached it
+  under `Cache-Control: max-age=31536000, immutable` (and pre-policy
+  responses carried no `Vary: Origin`), so every later load replayed the
+  poisoned entry without revalidating — a permanent client-side CORS failure.
+  The smoke check passed because it always sent an `Origin` header, so it
+  could never see the variant browsers can cache.
+- **Fix:** (1) infra — dropped the response headers policy entirely and added
+  a **CloudFront Function on viewer-response** (`ariantra-unconditional-cors`,
+  alongside the existing `ariantra-host-rewrite` on viewer-request) that
+  assigns `Access-Control-Allow-Origin: *` on EVERY response. (CloudFront
+  refuses CORS headers in a policy's custom-headers section, so a function is
+  the only unconditional mechanism; public CC0 files, PRD §10.4 amended.)
+  (2) `scripts/assets-contract-check.mjs` — each asset is now fetched a second
+  time WITHOUT an `Origin` header and the check fails if the CORS header is
+  absent, making conditional CORS a standing contract failure.
+- **Result (verified):** no-Origin `curl -I` on the engine URL shows
+  `access-control-allow-origin: *`; `npm run assets:check` green including
+  the new check; canary badge **PASS in a real headless Chromium** (the same
+  probe that reproduced the failure), QUIC on and off. A second real finding
+  from the same investigation: one HYD57 edge node served pre-policy config
+  long after the console said deployed — real-browser probing caught what
+  curl sampling could not.
+- **Impact:** only pre-fix visitors of the canary hold a poisoned cache entry
+  (one hard-reload clears it); no kid game referenced any asset yet — this is
+  exactly the failure class Phase A's canary gate exists to catch before
+  there are real dependents.
+- **Prevention:** the no-Origin smoke check (standing, runs post-deploy via
+  `deploy-rsync.sh`). **Class: conditional response headers on immutable,
+  forever-cached objects — any variance must be treated as a contract
+  violation, not a config nuance.**
+- **Related:** PRD-3D-GAMES-AND-ASSETS §10.2/§10.4/§12 Phase A; platform
+  BUG_LOG #6 (explicit cache policy) and #9 (standing `curl -I` smoke).
+
+### 2026-07-12 — Idea Button coach auto voice-over intrusive/low-quality — made silent, voice on request
+
+- **Symptom (what the user saw):** on the first game preview, the Idea Button
+  coach auto-played a robotic browser-TTS voice-over ("Hi! I'm your Idea
+  Button!…") with no way to opt in — owner UAT'd it as "very bad": startling
+  and low quality (default `speechSynthesis` voice, no voice selection).
+- **Surface area:** `src/components/IdeaMicTab.tsx` (coach overlay),
+  `src/lib/idea-coach.ts` (comments), `scripts/e2e-idea-coach.mjs`,
+  `docs/PRD-IDEA-BUTTON.md` §3b/§5/§6.
+- **Root cause:** design decision, not code defect — the PRD made voice the
+  onboarding ("voice IS the onboarding") and auto-spoke `COACH_LINE` in a
+  `useEffect` on first coach show. Default browser TTS quality made the
+  auto-play net-negative UX.
+- **Fix:** removed the auto-speak effect (`IdeaMicTab.tsx` coach section);
+  the silent bubble + demo animation are now the onboarding. Added a
+  **🔊 Hear it** button beside "OK, got it!" that speaks `COACH_LINE` on tap
+  and toggles to **⏹ Stop** while speaking (mirrors `MessageItem.tsx`
+  `ReadAloudControls`). Every dismissal path still cancels in-flight speech.
+- **Result (verified):** `scripts/e2e-idea-coach.mjs` — new pins: fresh
+  device shows the coach with `__spoken` empty; Hear it pushes the line;
+  Stop state visible while speaking; OK-during-speech increments `__cancels`;
+  reduced-motion stays silent with Hear it working. All prior pins
+  (dismissal persistence, tab-tap→listening, re-nudge-once) green.
+- **Impact:** first-run onboarding is quiet by default; pre-readers still get
+  the line read aloud, now on demand. Coach policy/storage unchanged.
+- **Prevention:** class = *auto-playing audio without user gesture*. The e2e
+  script now pins "no speech before a user tap" — any future auto-speak on
+  coach show fails scenario A/J.
+- **Related:** PRD-IDEA-BUTTON.md §3b (coach added 2026-07-12, same day).
+
 ### 2026-07-11 — PROD: "Oops! Something went wrong." during Gemini 503 spikes — no model fallback
 
 - **Symptom (what the user saw):** in production, chats died with "Oops!

@@ -144,7 +144,13 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   recorded); reuses `useSpeechInput`/`mic-errors` verbatim
   (`IdeaMicTab.tsx`, `IdeaBag.tsx`, `src/lib/idea-bag.ts`, `src/lib/idea-mic.ts`).
   Wake-word invocation deliberately rejected (always-on mic = parent-trust +
-  iOS reliability); revisit only with on-device keyword spotting / Gemini Live
+  iOS reliability); revisit only with on-device keyword spotting / Gemini Live.
+  **First-run coach** (same day): the very first playable preview dims and the
+  tab introduces itself — wiggle + glow, speech bubble read ALOUD by the buddy
+  voice (pre-readers), mini demo, "OK got it". Once per device; tapping the
+  tab during the intro goes straight to listening; ONE wiggle-only re-nudge
+  after 3 idea-less games, then silence forever (`src/lib/idea-coach.ts`,
+  policy truth-table tested + `scripts/e2e-idea-coach.mjs` browser pins)
 - **↔ Pull-to-resize preview** (2026-07-12): the 440px desktop panel now has a
   drag handle on its left border (min 360px, max 70vw, width remembered in
   localStorage; keyboard ←/→ on the separator). CSS-var driven (`--panel-w`) so
@@ -165,6 +171,64 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   iterating conversation). The newest game rides along even if it's older
   than the window, so "update my game" always has code to work from. The
   stored conversation/UI is untouched (`src/lib/history-trim.ts`)
+
+## 3D games (2026-07-12 — Phase B of PRD-3D-GAMES-AND-ASSETS)
+- The model MAY build genuinely 3D games (racing, flying, rolling-ball) with
+  Three.js primitives instead of flat canvas: it opts in by emitting
+  `<!--USES_THREE-->`, and the server splices in an import map pointing
+  `three` at the immutable engine bundle on the shared asset host
+  (`https://assets.ariantra.com/three.{hash}.js`, ~550 KB, cached a year
+  across ALL games on every kid device). String-concat injection only —
+  no file reads, no network on the box (`src/lib/assets/inject.ts`);
+  injection failure serves the raw game (the preview can never be lost)
+- The 3D prompt section (`src/lib/assets/prompt-catalog.ts`) teaches a
+  curated import list (lockstep-tested against the vendored bundle) and
+  enforces kid-hardware render budgets: `preserveDrawingBuffer: true` (the
+  self-healing pixel probe reads blank without it — PRD §10b R1, proven in
+  a real-browser harness), pixel ratio capped at 2, ambient + one
+  directional light only, no shadows/post-processing, low poly. Sent only
+  on game-BUILD turns (chit-chat pays zero extra tokens)
+- 2D stays the default; unmarked games pass through byte-identical
+- **Library models** (Phase C, filled to 20 in Phase F): games can name
+  curated CC0 models (`<!--USES_MODELS: car, dino-->`) and load them with
+  the injected `loadModel(name)` helper — fail-soft (null on any failure,
+  game keeps running), meshopt-compressed GLBs (≤ 100 KB each), first-load
+  transfer capped at 2 MB at inject time. The prompt's model catalog is
+  generated from the manifest, so names can never drift; it ends with
+  per-genre hints (racing, platformer, space, animals, castle, city,
+  forest, water, food) filtered to what's being taught. **50 models**:
+  vehicles (car, police, firetruck, taxi, ambulance, tractor), space
+  (rocket, spaceship, ufo, helicopter, alien), animals (dog, cat, fish,
+  bird, chicken, bat, dolphin, bee, shark, dino), places (tower,
+  skyscraper, house, bridge), nature (tree, pine, rock, mushroom),
+  items (coin, star, key, chest, heart, gem, bomb, spring, flag, barrel,
+  crate, sword, catapult), food (burger, ice_cream, donut, apple), plus
+  hero, robot, ghost, boat
+- **Retrieval-lite selection** (PRD §14, `src/lib/assets/model-select.ts`):
+  the library is unbounded but each build-turn prompt teaches ≤ 30 models,
+  picked by cheap regex — the iterated game's own USES_MODELS markers,
+  names the kid said, genre keyword matches, then a core set. Scales to
+  hundreds of models at flat prompt cost; libraries ≤ 30 skip selection
+- **Library audio** (Phase D): any game (2D or 3D) can name curated CC0
+  sounds (`<!--USES_AUDIO: coin_pickup, bg_loop_upbeat-->`) — 10 SFX + 2
+  music loops + a win jingle. Injected helpers: `playSound(name)` (Web-Audio
+  one-shot) and `playMusic(name)` (gapless loop via silence-trimmed
+  loopStart/loopEnd on an AudioBufferSourceNode — MP3's encoder gap never
+  reaches the kid's ears; PRD §10b R2). Fail-soft: a broken sound is a
+  silent one. Budgets at inject time: audio ≤ 500 KB/game, first load ≤ 2 MB
+- **Tiered catalog unlock** (Phase E, `src/lib/assets/catalog-gate.ts`):
+  catalogs ride only game-BUILD turns (chit-chat pays zero catalog tokens),
+  and on the free tier each unlocks by keyword — "3d" opens the 3D + model
+  catalog, "sound/music/song/sfx" opens the audio catalog — scanned across
+  the message, prior child messages, AND prior artifacts' `USES_*` markers
+  (iterating on a 3D game keeps 3D unlocked). No keyword → exactly today's
+  inline-content prompt; nothing is ever refused. Paid = both always-on,
+  one-line flip when entitlement (TECH_DEBT #11) lands
+- **"Game Stuff" gallery** (`/assets`, §9b): kid-facing cards for every
+  manifest asset — live 3D turntables rendered with the engine FROM the
+  asset host (permanent contract dogfood), playable sound cards,
+  trigger-phrase teaching with a read-aloud button per card, friendly
+  empty state, JSON-LD + sitemap
 
 ## Analytics (Mixpanel — 2026-07-06)
 - Privacy-hardened snippet in the root layout (`src/lib/mixpanel-snippet.ts`,

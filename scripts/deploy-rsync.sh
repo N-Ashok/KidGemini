@@ -85,4 +85,10 @@ if [ -n "$HEALTH_URL" ]; then
   if curl -fsS "$HEALTH_URL" >/dev/null; then echo "  ✓ healthy"; else echo "  ✗ health check failed" >&2; exit 1; fi
 fi
 
+# Standing asset-host contract smoke (PRD-3D-GAMES-AND-ASSETS §10.2/§11):
+# every manifest asset must serve 200 + immutable + CORS * with matching
+# bytes, on every deploy, forever. No creds needed (public GETs only).
+echo "→ [local] asset-host contract smoke"
+node "$SCRIPT_DIR/assets-contract-check.mjs"
+
 echo "✓ Deploy finished."

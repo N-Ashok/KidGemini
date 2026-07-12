@@ -103,6 +103,15 @@ export function Sidebar(props: SidebarProps) {
             <span aria-hidden>🔍</span> Search chats
           </button>
         )}
+        {/* "Game Stuff" gallery (PRD-3D-GAMES-AND-ASSETS §9b): the kid-facing
+            asset library — discovery drives usage; an invisible library never
+            gets asked for. */}
+        <a
+          href="/assets"
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 hover:bg-neutral-200/60"
+        >
+          <span aria-hidden>🧰</span> Game Stuff
+        </a>
         {/* No premium/upgrade tab here: plans are sold on ariantra.com, not in the
             kid UI (2026-07-11 pricing revamp). The upgrade route still exists for
             deep links. Guarded by sidebar-no-premium.test.ts. */}

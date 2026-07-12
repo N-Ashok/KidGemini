@@ -89,6 +89,7 @@ npm run typecheck            # tsc --noEmit
 | `src/lib/idea-bag.ts`, `src/components/IdeaBag.tsx`, `src/components/ChatPanel.container.tsx` (ideas state / handleMakeBetter / runStream onSuccess) | **`src/lib/idea-bag.test.ts`** (14) | Store CRUD + caps (50 bagged/convo drops oldest; 400 total prunes non-bagged first); `markSent` flips ONLY that convo's bagged ideas — the bag empties on `done` alone, a failed generation never eats ideas; bundle composition; persistence never-throws | — (feature) |
 | `src/lib/idea-mic.ts`, `src/components/IdeaMicTab.tsx` | **`src/lib/idea-mic.test.ts`** (16) | Full tab transition table: stray clicks only slide the tab out; ending a session is always the explicit ✅/🗑 (no toggle — kids double-tap); fatal mic errors stay visible with the friendly copy | — (feature) |
 | `src/lib/preview-pane.ts` (resize), `src/components/PanelResizeHandle.tsx` | **`src/lib/preview-pane.test.ts`** (23) | `clampPanelWidth` min 360 / max 70vw; width persistence round-trip + never-throw; collapsed shell class carries the `--panel-w` var + `md:relative` | — (feature) |
+| `src/lib/idea-coach.ts`, `IdeaMicTab.tsx` (coach/nudge), container coach wiring, globals.css `idea-coach-*` | **`src/lib/idea-coach.test.ts`** (12) + **`scripts/e2e-idea-coach.mjs`** (real browser; needs `npm run dev`) | Intro shows once ever (fail-open on garbage flags) with the voice-over; all three dismissal paths persist `seen`; tab-tap during the intro goes STRAIGHT to listening; wiggle-only re-nudge after 3 idea-less games, exactly once, never after any capture; reduced-motion static + voiced | — (feature) |
 
 ## Thinking UX + Gemini 503 fallback (2026-07-11)
 
@@ -96,3 +97,47 @@ npm run typecheck            # tsc --noEmit
 |---|---|---|---|
 | `src/lib/kid-thought.ts`, `src/app/api/chat/route.ts` (thinking events) | **`src/lib/kid-thought.test.ts`** (5) + route T.1/T.2 | Thought summaries pass to the kid ONLY as short clean prose (code/markdown/degenerate → dropped, fail closed); thinking events never leak into the reply text | — (feature; safety-relevant filter) |
 | `src/lib/gemini.ts` (replyStream), `src/lib/model-fallback.ts`, `src/lib/builder-mode.ts` | **`src/lib/model-fallback.test.ts`** + **`src/lib/gemini.fallback.test.ts`** (F.1–F.5) + builder-mode includeThoughts pin | 4-deep fallback chain: capacity errors (503/429) and retired ids (404) walk DOWN the chain, one attempt per fallback, primary never in its own chain; real defects throw at once and stop the walk; builder turns request thought summaries | BUG-FIX-LOG 2026-07-11 (503 fallback) |
+
+## Optional 3D via the asset host (2026-07-12, Phase B — re-introduced after the Phase-0 revert; PRD-3D-GAMES-AND-ASSETS)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/assets/inject.ts`, `src/lib/assets/manifest.json` | **`src/lib/assets/inject.test.ts`** (10) | Unmarked games pass through byte-identical; `USES_THREE` → import map maps `three` to the engine's immutable asset-host URL (no base64/data:, Phase-0 embed gone); marker stripped; head/html/prepend placement fallbacks; no-engine manifest throws (route serves raw); reference-ledger URLs reported; STRUCTURAL zero-I/O assertion on the module source (readFileSync-of-unshipped-file class) | BUG-FIX-LOG 2026-07-08 (ENOENT class) |
+| `src/lib/assets/prompt-catalog.ts`, `scripts/vendor-three.mjs` (export list), `src/lib/gemini.ts` (prompt) | **`src/lib/assets/prompt-catalog.test.ts`** (11) | 3D prompt teaches EXACTLY the names the vendored bundle exports (lockstep scrape of `THREE_EXPORTS`); `preserveDrawingBuffer: true` renderer rule (§10b R1 — pixel probe reads blank without it); §7 render budget (pixel-ratio cap 2, no shadows/post-processing, 2 lights, low poly); 100dvh + safe-area rules in the base prompt; build turns send base + 3D section | BUG-FIX-LOG 2026-07-12 (dvh regression) |
+| `src/app/api/chat/route.ts` (injection block) | **route P.1–P.3** in `src/app/api/chat/route.test.ts` | Injector throws → `done` still carries the RAW artifact (post-processing can never cost the child the game); success → injected html; no artifact → injector never called | BUG-FIX-LOG 2026-07-08 (lost done-event class) |
+
+## Library models + gallery (2026-07-12, Phase C — PRD-3D-GAMES-AND-ASSETS)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/assets/inject.ts` (models path) | **`src/lib/assets/inject.models.test.ts`** (8) | `USES_MODELS` → AR_ASSETS table with exactly the requested urls; loadModel helper injected once and wires setMeshoptDecoder; unknown names drop fail-soft into `result.dropped`; models WITHOUT `USES_THREE` still get the import map (the loader lives in the engine); first-load ≤ 2 MB enforced by dropping overflow assets; no-marker games byte-identical | — (feature; budget = Decision J) |
+| `src/lib/assets/prompt-catalog.ts` (models), `src/lib/gemini.ts` | **`prompt-catalog.test.ts`** models describes | Catalog names generated FROM the manifest (lockstep by construction); `USES_MODELS` syntax matches the injector's parser; background `.then` loading taught (async-loop class); null fail-soft taught; AnimationMixer taught; empty manifest → empty section (zero tokens); §14 cap: manifest models ≤ 25 | — |
+| `src/lib/assets/gallery.ts`, `src/app/assets/page.tsx` | **`src/lib/assets/gallery.test.ts`** (6) | Manifest → cards with kid-readable names; every model card teaches a trigger containing "3d" + the model name; engine never becomes a card; empty manifest → empty lists (page shows its no-blank-screen empty state); every card has an emoji fallback | — |
+
+## Library audio (2026-07-12, Phase D — PRD-3D-GAMES-AND-ASSETS)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/assets/inject.ts` (audio path) | **`src/lib/assets/inject.audio.test.ts`** (9) | `USES_AUDIO` → AR_ASSETS urls + playSound/playMusic helper injected once; audio-only games carry NO import map and NO loadModel (2D games get sound); playMusic is Web-Audio (decodeAudioData + loopStart) and never `new Audio(` (§10b R2 gapless class); unknown names drop fail-soft; per-game audio ≤ 500 KB AND first-load ≤ 2 MB enforced by drops; audio + 3D + models compose into one table | — (R2 = designed-in prevention) |
+| `src/lib/assets/prompt-catalog.ts` (audio) | **`prompt-catalog.test.ts`** audio describes | Audio catalog generated FROM the manifest; `USES_AUDIO` syntax matches the injector; playSound-on-events + playMusic-once (never in the loop) taught; hand-rolled Audio/AudioContext forbidden (the helper owns autoplay + looping); fail-soft taught; empty manifest → zero tokens | — |
+
+## Tiered catalog gates (2026-07-12, Phase E — PRD-3D-GAMES-AND-ASSETS §9)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/assets/catalog-gate.ts`, `src/lib/builder-mode.ts` | **`src/lib/assets/catalog-gate.test.ts`** (12) | The §9 decision tree: chit-chat → both catalogs locked on EVERY tier (zero catalog tokens); paid build turn → both unlocked with no keywords; free build turn → `\b3d\b` unlocks 3D only, `\b(sounds?\|music\|songs?\|sfx)\b` unlocks audio only, both independent; word-bounded (no "grade3d"/"musical" false fires); iteration turns keep the catalog via history scan of child messages AND prior artifacts' `USES_*` markers; plain 2D iteration stays locked | — |
+| `src/lib/gemini.ts` (`buildTurnSystemInstruction`) | **`prompt-catalog.test.ts`** gate describes | Both gates closed → byte-identical bare child prompt (free + no keyword ≡ today's product); 3D-only → no audio catalog; audio-only → no engine/3D section; default (no gates arg) = fully unlocked paid shape | — |
+
+## Model library fill-out + genre hints (2026-07-12, Phase F — PRD-3D-GAMES-AND-ASSETS)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/assets/prompt-catalog.ts` (GENRE_HINTS), manifest changes | **`prompt-catalog.test.ts`** genre-hint describes | Hints name ONLY models the manifest carries (a hint can never teach a missing model); a genre with no available models disappears; no hints block when nothing matches | — |
+| `scripts/vendor-models.mjs` (adding models), `src/lib/assets/gallery.ts` | **`gallery.test.ts`** emoji lockstep + plural | Every curated model name in vendor-models.mjs has its own gallery emoji (scraped, ≥ 20); uncountable names skip the bolted-on s ("3d police") | — |
+
+## Retrieval-lite model selection + 50-model library (2026-07-13 — PRD §14)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/assets/model-select.ts`, GENRES data, manifest growth | **`src/lib/assets/model-select.test.ts`** (10) | Libraries ≤ 30 skip selection (all models, today's behavior); genre keywords pick the subset (city ≠ sea); no match → core set only; explicit name mentions always included; the iterated game's `USES_MODELS` names ALWAYS kept (dropping one breaks the kid's own game); child-history keywords count; hard ≤ 30 per prompt whatever matches; only manifest names ever returned | — |
+| `src/lib/gemini.ts`, `prompt-catalog.ts` (context wiring) | **`prompt-catalog.test.ts`** scale-ceiling describes | Context-aware section over the committed manifest ≤ 30 names; manifest sanity ceiling 60 (forces a conscious decision at the next doubling) | — |

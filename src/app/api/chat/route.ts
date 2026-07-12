@@ -9,6 +9,7 @@
 import "@/lib/logger"; // tees all server console output to logs/app.log
 import { NextRequest, NextResponse } from "next/server";
 import { GeminiChatModel, extractArtifact } from "@/lib/gemini";
+import { injectAssets } from "@/lib/assets/inject";
 import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
 import { RulesClassifier } from "@/lib/safety.rules";
@@ -214,9 +215,29 @@ export async function POST(req: NextRequest) {
     console.log(`[api/chat] stream done @${ms()}ms chars=${full.length}`);
 
     const { text: cleaned, artifactHtml } = extractArtifact(full);
+    // 3D games get their engine import map here — an asset-host URL string
+    // spliced in, nothing read, nothing fetched (src/lib/assets/inject.ts).
+    // CONTRACT: post-processing can never cost the child the game (BUG-FIX-LOG
+    // 2026-07-08: Phase 0's injector read a file the deploy didn't ship →
+    // ENOENT → the done event was lost and the preview never opened). On ANY
+    // injection failure, fall back to the raw artifact: the preview opens, and
+    // a 3D game's import error lands in its Console tab, not a dead end.
+    let deliverableHtml: string | null = null;
+    if (artifactHtml) {
+      try {
+        const injected = injectAssets(artifactHtml);
+        if (injected.dropped?.length) {
+          console.warn(`[api/chat] asset names dropped fail-soft: ${injected.dropped.join(", ")}`);
+        }
+        deliverableHtml = injected.html;
+      } catch (err) {
+        console.error(`[api/chat] ✖ asset injection failed @${ms()}ms (serving raw artifact): ${(err as Error).message}`);
+        deliverableHtml = artifactHtml;
+      }
+    }
     // Send the FULL text (code block kept inline, Gemini-style) for the chat,
     // and the extracted HTML for the side panel preview.
-    send({ type: "done", text: full, artifactHtml: artifactHtml ?? null });
+    send({ type: "done", text: full, artifactHtml: deliverableHtml });
     recordUsage("chat", chatModelName, message, cleaned, false);
     console.log(`[api/chat] ✓ shown @${ms()}ms`);
   }, guestCookieHeader(setGuestCookie));

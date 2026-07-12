@@ -1,0 +1,373 @@
+{
+  "assets": [
+    {
+      "name": "three",
+      "type": "engine",
+      "url": "https://assets.ariantra.com/three.07fb80.js",
+      "bytes": 608606,
+      "license": "MIT",
+      "sourceUrl": "https://github.com/mrdoob/three.js",
+      "sha256": "07fb80a23e48c4449d89170497ac738ba4aa94e28a5cb9330f8ce4dfaf8b7666"
+    },
+    {
+      "name": "car",
+      "type": "model",
+      "url": "https://assets.ariantra.com/car.710895.glb",
+      "bytes": 34248,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/car-kit",
+      "sha256": "710895ce127d3605e98e633a952e3946093c2851d03dbefd75e31cb49dc2c9e1"
+    },
+    {
+      "name": "dino",
+      "type": "model",
+      "url": "https://assets.ariantra.com/dino.e10884.glb",
+      "bytes": 91552,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/cnlGH2UcDd",
+      "sha256": "e1088464b2b7854e68ae9cb76ee360f9113ae079c9540260e0f00edacbec56b7"
+    },
+    {
+      "name": "tree",
+      "type": "model",
+      "url": "https://assets.ariantra.com/tree.663ac6.glb",
+      "bytes": 21948,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "663ac6463f6674c01f3ada2eadb2bb88a968c82e6d6772c574c9a0cd383020d6"
+    },
+    {
+      "name": "coin",
+      "type": "model",
+      "url": "https://assets.ariantra.com/coin.46ec4e.glb",
+      "bytes": 15208,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "46ec4eb3051995723492a63b0e6389bb0d7431e71706cf019b3171c73fe34168"
+    },
+    {
+      "name": "rocket",
+      "type": "model",
+      "url": "https://assets.ariantra.com/rocket.3fd203.glb",
+      "bytes": 16732,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/9awwTQWYux",
+      "sha256": "3fd203181118a2b11eb1225068f8300c93ccdb482b122b845ca7e7c3e145b63f"
+    },
+    {
+      "name": "jump",
+      "type": "sfx",
+      "url": "https://assets.ariantra.com/jump.086d79.mp3",
+      "bytes": 6313,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/digital-audio",
+      "sha256": "086d79cbde50018bbec754286ad1815323a3754c74e5cd9e7f6920f994d28ffb"
+    },
+    {
+      "name": "coin_pickup",
+      "type": "sfx",
+      "url": "https://assets.ariantra.com/coin_pickup.affa86.mp3",
+      "bytes": 11015,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/digital-audio",
+      "sha256": "affa86181157cf3c538fa6d09e42a08cc71e61ebab30534a18d14355df767b7d"
+    },
+    {
+      "name": "hit",
+      "type": "sfx",
+      "url": "https://assets.ariantra.com/hit.8a79a3.mp3",
+      "bytes": 2865,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/impact-sounds",
+      "sha256": "8a79a377e6b8e5fd833be0f5627bab2f4544214cb7fef58fa0754a1c0335ad54"
+    },
+    {
+      "name": "explosion",
+      "type": "sfx",
+      "url": "https://assets.ariantra.com/explosion.d84e0a.mp3",
+      "bytes": 10075,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/sci-fi-sounds",
+      "sha256": "d84e0a7c150d585ffc5e2704d14e1e5f4603a78a5dbee5adb1ab31b491ca2b96"
+    },
+    {
+      "name": "click",
+      "type": "sfx",
+      "url": "https://assets.ariantra.com/click.ba0d40.mp3",
+      "bytes": 1924,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/interface-sounds",
+      "sha256": "ba0d4025fbd63f57076e142f811aac5f36bb8cab6f7cdf8626b408c4712582ba"
+    },
+    {
+      "name": "powerup",
+      "type": "sfx",
+      "url": "https://assets.ariantra.com/powerup.81fe19.mp3",
+      "bytes": 15090,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/digital-audio",
+      "sha256": "81fe19619ac0039baa8583a54a1d6cced5472520ece707b3c66eeb85ea8d1a98"
+    },
+    {
+      "name": "game_over",
+      "type": "sfx",
+      "url": "https://assets.ariantra.com/game_over.2866a9.mp3",
+      "bytes": 10075,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/digital-audio",
+      "sha256": "2866a927acf5a8ba2ed455af975d66bd480ecc759032f012b84bafb2bd372c96"
+    },
+    {
+      "name": "win",
+      "type": "sfx",
+      "url": "https://assets.ariantra.com/win.820154.mp3",
+      "bytes": 7253,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/digital-audio",
+      "sha256": "820154c70b81761bc93d366bca252a8bbb48160f45e5ab640771b85f9df73878"
+    },
+    {
+      "name": "laser",
+      "type": "sfx",
+      "url": "https://assets.ariantra.com/laser.24e908.mp3",
+      "bytes": 14150,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/digital-audio",
+      "sha256": "24e90849ecc0ab12041aa641ca711b0e1099849b6500da3e6452459b20b11f10"
+    },
+    {
+      "name": "whoosh",
+      "type": "sfx",
+      "url": "https://assets.ariantra.com/whoosh.f5810c.mp3",
+      "bytes": 15090,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/sci-fi-sounds",
+      "sha256": "f5810cade3d3c0119367f9603f4be16c5d982abb32cdc17373755f5100700f25"
+    },
+    {
+      "name": "bg_loop_upbeat",
+      "type": "music",
+      "url": "https://assets.ariantra.com/bg_loop_upbeat.ae85a2.mp3",
+      "bytes": 248625,
+      "license": "CC0",
+      "sourceUrl": "https://opengameart.org/content/loading-screen-loop",
+      "sha256": "ae85a2465800ecccf28e61089666a36b5e621022ba8cf218175e841de3e8afd6"
+    },
+    {
+      "name": "bg_loop_chill",
+      "type": "music",
+      "url": "https://assets.ariantra.com/bg_loop_chill.cde7b6.mp3",
+      "bytes": 233546,
+      "license": "CC0",
+      "sourceUrl": "https://opengameart.org/content/calm-loop",
+      "sha256": "cde7b6458ddcb5c9a7d71107b9c821dd20a371e92988060671bab6eca071d15b"
+    },
+    {
+      "name": "jingle_win",
+      "type": "music",
+      "url": "https://assets.ariantra.com/jingle_win.d4863c.mp3",
+      "bytes": 13523,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/music-jingles",
+      "sha256": "d4863c3e8fccbc00ff431551cb91a9bbf169263cd92d72c43f18c45f81b327fe"
+    },
+    {
+      "name": "dog",
+      "type": "model",
+      "url": "https://assets.ariantra.com/dog.7ea9cc.glb",
+      "bytes": 48528,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/1gXKv15ik8",
+      "sha256": "7ea9cc9000feee247f480e8541912c4d2774cd2099c7aa87c218809922487cd4"
+    },
+    {
+      "name": "cat",
+      "type": "model",
+      "url": "https://assets.ariantra.com/cat.83c223.glb",
+      "bytes": 47460,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/qKICY6xla2",
+      "sha256": "83c2233844bfbb55391046c49ccc73f7421ec44a7905b31c892ceb924b61b00e"
+    },
+    {
+      "name": "fish",
+      "type": "model",
+      "url": "https://assets.ariantra.com/fish.a0b863.glb",
+      "bytes": 46732,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/769fHo3eEB",
+      "sha256": "a0b86324572ee4dccd96c41d6a33e23cd6974a7d67099d2a91dc0ebc7dd1bea9"
+    },
+    {
+      "name": "boat",
+      "type": "model",
+      "url": "https://assets.ariantra.com/boat.9118c6.glb",
+      "bytes": 20020,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/BgSZXwmm7k",
+      "sha256": "9118c61e1222d24b5125316ed28ec2b8344db2ba4fadef640414077d5b3b1002"
+    },
+    {
+      "name": "robot",
+      "type": "model",
+      "url": "https://assets.ariantra.com/robot.293afa.glb",
+      "bytes": 97520,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/1gNo5ezvmr",
+      "sha256": "293afa0c1de2b1d49d35b075728429167243823bb71bdec6140782664c7582ca"
+    },
+    {
+      "name": "tower",
+      "type": "model",
+      "url": "https://assets.ariantra.com/tower.b66714.glb",
+      "bytes": 39892,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/iuMDwgTRMU",
+      "sha256": "b66714c2a23c5b2b9d8cb7dd51fbbd0f312fa3804e7823e38fe3b2c8e9f7eea5"
+    },
+    {
+      "name": "spaceship",
+      "type": "model",
+      "url": "https://assets.ariantra.com/spaceship.09141a.glb",
+      "bytes": 26520,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/uCeLfsdmNP",
+      "sha256": "09141a14d5c4d4489c2fcc4c0ac6be740f82feaf2c4084400166b392c9b5e6a8"
+    },
+    {
+      "name": "ufo",
+      "type": "model",
+      "url": "https://assets.ariantra.com/ufo.0a2cc9.glb",
+      "bytes": 17936,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/NgURFR5T9m",
+      "sha256": "0a2cc923944be4db5be27c256db89e644fdcf8fe5509779cfb1f1131cc9d4576"
+    },
+    {
+      "name": "helicopter",
+      "type": "model",
+      "url": "https://assets.ariantra.com/helicopter.38b1ea.glb",
+      "bytes": 19228,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/EQJ2MECUbx",
+      "sha256": "38b1ea2d8a9cf2e17bcc6c41b25ca7ed79a85decacd75a0affd61214d0fbaa84"
+    },
+    {
+      "name": "ghost",
+      "type": "model",
+      "url": "https://assets.ariantra.com/ghost.43e773.glb",
+      "bytes": 67740,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/Iip30bDHmu",
+      "sha256": "43e773300c83804831d2574932981a926625f21060fedf5f66255be7be97eda2"
+    },
+    {
+      "name": "police",
+      "type": "model",
+      "url": "https://assets.ariantra.com/police.4b030e.glb",
+      "bytes": 40844,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/car-kit",
+      "sha256": "4b030e80aaf878b4c45524ec0a64c5621c03195ec146470668e6e0b9f7c09997"
+    },
+    {
+      "name": "firetruck",
+      "type": "model",
+      "url": "https://assets.ariantra.com/firetruck.3a467c.glb",
+      "bytes": 43844,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/car-kit",
+      "sha256": "3a467c3b63421aeea770a07f080de380fb6147af950db989dc074b2cb00b1874"
+    },
+    {
+      "name": "star",
+      "type": "model",
+      "url": "https://assets.ariantra.com/star.9f50cb.glb",
+      "bytes": 14644,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "9f50cb3995f1f7d662d63e1b4f3c4bc89a484dd248c419ae62085457f6b28e06"
+    },
+    {
+      "name": "key",
+      "type": "model",
+      "url": "https://assets.ariantra.com/key.39cab5.glb",
+      "bytes": 15924,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "39cab5e167b43bdc022d07f10e687fa7b6f2e33aa89399904dbaac8e1217c982"
+    },
+    {
+      "name": "chest",
+      "type": "model",
+      "url": "https://assets.ariantra.com/chest.83c342.glb",
+      "bytes": 21960,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "83c3426acbfcb46cf7b85032646c01194ce4d8dcd66a6a7d3b3deb2cae4580ef"
+    },
+    {
+      "name": "skyscraper",
+      "type": "model",
+      "url": "https://assets.ariantra.com/skyscraper.b6fb82.glb",
+      "bytes": 30372,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-commercial",
+      "sha256": "b6fb82f22a21707f844e6f4e965eb06557ead47bcaa37b515f5a6af95110c87e"
+    },
+    {
+      "name": "house",
+      "type": "model",
+      "url": "https://assets.ariantra.com/house.1456ed.glb",
+      "bytes": 30752,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-suburban",
+      "sha256": "1456ed4e5a506daa446b61189b57ab921b5e676c5ff19a7f2060a5aaa2932cda"
+    },
+    {
+      "name": "pine",
+      "type": "model",
+      "url": "https://assets.ariantra.com/pine.ebbb08.glb",
+      "bytes": 17712,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "ebbb083eae37ab3b742be1a559c48d1e12874d9839ae73bca392c24d3af3ecc5"
+    },
+    {
+      "name": "rock",
+      "type": "model",
+      "url": "https://assets.ariantra.com/rock.0be2ac.glb",
+      "bytes": 4068,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "0be2aca044e78db78db278c73e70461a7f9999cfcf182122591d43e494461435"
+    },
+    {
+      "name": "alien",
+      "type": "model",
+      "url": "https://assets.ariantra.com/alien.07cd6e.glb",
+      "bytes": 36604,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/sUTLXji0aL",
+      "sha256": "07cd6eee0c2116685322e09068c37db09a38dd25de4d6a907aed714be55f3745"
+    },
+    {
+      "name": "bird",
+      "type": "model",
+      "url": "https://assets.ariantra.com/bird.601587.glb",
+      "bytes": 20452,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/gYYC0gYMnw",
+      "sha256": "601587b7e640374ae464c355b994fa8eff0f4ca9157e4b71eeb3093da82c3c71"
+    },
+    {
+      "name": "shark",
+      "type": "model",
+      "url": "https://assets.ariantra.com/shark.baf4ad.glb",
+      "bytes": 24324,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/AyHTK3zUSG",
+      "sha256": "baf4adb04d22ee59789b9b1ee02907273283f096f7c9269e524eeace10d0ea6e"
+    }
+  ]
+}

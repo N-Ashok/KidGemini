@@ -23,13 +23,20 @@ vi.mock("server-only", () => ({}));
 
 // Gemini — spy so we can assert it is NEVER called on blocked paths.
 const replyStreamMock = vi.fn();
+const extractArtifactMock = vi.fn((t: string): { text: string; artifactHtml?: string } => ({ text: t, artifactHtml: undefined }));
 vi.mock("@/lib/gemini", () => ({
   GeminiChatModel: class {
     replyStream(...args: unknown[]) {
       return replyStreamMock(...args);
     }
   },
-  extractArtifact: (t: string) => ({ text: t, artifactHtml: undefined }),
+  extractArtifact: (t: string) => extractArtifactMock(t),
+}));
+
+// Asset injection (3D engine import map) — toggled per test (P.1/P.2).
+const injectMock = vi.fn((html: string): { html: string; referencedUrls: string[] } => ({ html, referencedUrls: [] }));
+vi.mock("@/lib/assets/inject", () => ({
+  injectAssets: (html: string) => injectMock(html),
 }));
 
 // Input rules classifier — always allow (we're testing the gate, not safety).
@@ -98,6 +105,10 @@ async function* withThoughts(thoughts: string[], text: string) {
 beforeEach(() => {
   authMock.mockReset();
   replyStreamMock.mockReset();
+  extractArtifactMock.mockReset();
+  extractArtifactMock.mockImplementation((t: string) => ({ text: t, artifactHtml: undefined }));
+  injectMock.mockReset();
+  injectMock.mockImplementation((html: string) => ({ html, referencedUrls: [] }));
   usedByUser.mockReturnValue(0);
   usedByIp.mockReturnValue(0);
   usedByUserSince.mockReturnValue(0);
@@ -220,6 +231,49 @@ describe("POST /api/chat — signed-in users", () => {
     expect(res.status).toBe(402);
     expect((await res.json()).error).toBe("payment_required");
     expect(replyStreamMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/chat — asset injection can never cost the child the game (P-class, BUG-FIX-LOG 2026-07-08)", () => {
+  const RAW_GAME = "<!doctype html><html><head></head><body><!--USES_THREE-->game</body></html>";
+
+  beforeEach(() => {
+    authMock.mockResolvedValue(null);
+    replyStreamMock.mockReturnValue(one("```html" + RAW_GAME + "```"));
+    extractArtifactMock.mockImplementation(() => ({ text: "Here's your game! 🎮", artifactHtml: RAW_GAME }));
+  });
+
+  it("P.1 injector throws → 'done' still carries the RAW artifact (preview must open)", async () => {
+    injectMock.mockImplementation(() => {
+      throw new Error("manifest has no engine entry");
+    });
+
+    const res = await POST(makeReq({ message: "make me a 3d game", history: [] }));
+    const text = await res.text();
+
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+    expect(done.artifactHtml).toBe(RAW_GAME);
+  });
+
+  it("P.2 injection success → 'done' carries the injected html", async () => {
+    const INJECTED = RAW_GAME.replace("<!--USES_THREE-->", '<script type="importmap">{"imports":{"three":"https://assets.ariantra.com/three.b4a9d4.js"}}</script>');
+    injectMock.mockImplementation(() => ({ html: INJECTED, referencedUrls: ["https://assets.ariantra.com/three.b4a9d4.js"] }));
+
+    const res = await POST(makeReq({ message: "make me a 3d game", history: [] }));
+    const text = await res.text();
+
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+    expect(done.artifactHtml).toBe(INJECTED);
+    expect(injectMock).toHaveBeenCalledWith(RAW_GAME);
+  });
+
+  it("P.3 no artifact in the reply → injector is never called", async () => {
+    extractArtifactMock.mockImplementation((t: string) => ({ text: t, artifactHtml: undefined }));
+
+    const res = await POST(makeReq({ message: "hello", history: [] }));
+    await res.text();
+
+    expect(injectMock).not.toHaveBeenCalled();
   });
 });
 

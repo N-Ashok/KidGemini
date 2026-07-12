@@ -87,6 +87,11 @@ export function ArNav() {
         <a href={GAMES_URL} className="ar-tab">
           <span className="ar-tab-icon" aria-hidden="true">🎮</span>Arcade
         </a>
+        {/* "Game Stuff" gallery (PRD-3D-GAMES-AND-ASSETS §9b): discovery IS
+            the feature — an invisible library never gets asked for. */}
+        <a href="/assets" className={`ar-tab ${pathname === "/assets" ? "on" : ""}`}>
+          <span className="ar-tab-icon" aria-hidden="true">🧰</span>Toy Box
+        </a>
         <a href="/parent" className={`ar-tab ${pathname === "/parent" ? "on" : ""}`}>
           <span className="ar-tab-icon" aria-hidden="true">👪</span>Parent
         </a>

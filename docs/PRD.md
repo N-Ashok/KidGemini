@@ -114,9 +114,10 @@ fine-tuning an open model on children's speech (data is the bottleneck, not code
 - When the child asks for a game, the model returns self-contained HTML.
 - It renders in a **sandboxed `<iframe srcdoc>`** beside the chat (Claude-artifact style).
 - The same safety gate runs on generated code/markup.
-- **F5.3 — 3D games (engine + CC0 asset library):** planned/reverted-pending
-  re-introduction — full spec in **`PRD-3D-GAMES.md`** (Three.js vendoring,
-  asset gathering pipeline, generation-time injection, ceilings, rollout).
+- **F5.3 — 3D & audio games (engine + immutable asset host + CC0 library):**
+  planned — full spec in **`PRD-3D-GAMES-AND-ASSETS.md`** (asset host
+  contract, gathering pipeline, generation-time injection, tiering, UX,
+  budgets, rollout; supersedes the reverted-Phase-0 `PRD-3D-GAMES.md`).
 
 ### F6 — Text to speech (nice-to-have, v1.1)
 - Read answers aloud for early readers.
