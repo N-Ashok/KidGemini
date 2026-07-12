@@ -4,11 +4,12 @@
 // generation. The Flash-Lite output monitor was REMOVED — it retracted harmless games
 // (chess!) after they had streamed; games must never be blocked by the safety layer.
 // Input is still pre-checked with instant deterministic rules (blocks + parent alerts).
-// Response is NDJSON: {type:"delta"|"done"|"blocked"|"error", ...}. See CLAUDE.md § 3.
+// Response is NDJSON: {type:"thinking"|"delta"|"done"|"blocked"|"error", ...}. See CLAUDE.md § 3.
 
 import "@/lib/logger"; // tees all server console output to logs/app.log
 import { NextRequest, NextResponse } from "next/server";
 import { GeminiChatModel, extractArtifact } from "@/lib/gemini";
+import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
 import { RulesClassifier } from "@/lib/safety.rules";
 import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore } from "@/lib/db";
@@ -193,9 +194,17 @@ export async function POST(req: NextRequest) {
     let full = "";
     try {
       console.log(`[api/chat] streaming… @${ms()}ms`);
-      for await (const delta of chatModel.replyStream({ history, message, image })) {
-        full += delta;
-        send({ type: "delta", text: delta });
+      for await (const chunk of chatModel.replyStream({ history, message, image })) {
+        if (chunk.kind === "thought") {
+          // Thought summaries drive the kid-facing planning line during the
+          // silent thinking phase. kidThoughtLine fails closed (null = drop):
+          // never code, never markdown, never a wall of text (2026-07-11).
+          const line = kidThoughtLine(chunk.text);
+          if (line) send({ type: "thinking", text: line });
+          continue; // thoughts are never part of the answer
+        }
+        full += chunk.text;
+        send({ type: "delta", text: chunk.text });
       }
     } catch (err) {
       console.error(`[api/chat] ✖ stream error @${ms()}ms: ${(err as Error).message}`);

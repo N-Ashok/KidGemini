@@ -3,8 +3,9 @@
 
 import "server-only";
 import { GoogleGenAI, HarmBlockThreshold, HarmCategory } from "@google/genai";
-import type { ChatMessage, ChatModel, ImageAttachment } from "@/types/chat.types";
+import type { ChatMessage, ChatModel, ImageAttachment, StreamChunk } from "@/types/chat.types";
 import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
+import { fallbackChain, isModelGone, shouldTryNextModel } from "./model-fallback";
 import { withRetry, withTimeout } from "./retry";
 
 // A single generation shouldn't exceed this; beyond it we'd rather fail gracefully
@@ -31,6 +32,10 @@ Classic video-game action IS fine and welcome — space shooters, laser blasters
 sword-and-shield adventures, dodging dino attacks, water-balloon battles, tank
 games. Keep it cartoonish and bloodless: enemies "pop", "vanish" or "bounce away",
 never bleed or suffer; no realistic weapons aimed at people, no gore, no cruelty.
+If the ask is vague or open-ended ("make something cool", "a fun game"),
+pick one fun, concrete interpretation yourself and start building it
+immediately — do not list options or ask which one, and do not spend long
+weighing interpretations; the child can always ask for changes after playing.
 If the child asks for a game, respond with a single HTML document wrapped in a
 \`\`\`html code block. The game MUST be easy and fun for a young child to control:
 - Provide BOTH keyboard controls (Arrow keys / WASD) AND large on-screen buttons that work
@@ -151,6 +156,11 @@ export function buildChatContents(input: { history: ChatMessage[]; message: stri
 
 export class GeminiChatModel implements ChatModel {
   private model = process.env.GEMINI_CHAT_MODEL ?? "gemini-2.5-flash";
+  // 4-deep fallback chain (PRD-MODEL-FALLBACK, owner decision 2026-07-11):
+  // capacity refusals and retired model ids walk down the chain; anything
+  // else throws at once. Slightly older code quality for a few minutes >>
+  // "Oops! Something went wrong." for every kid.
+  private fallbacks = fallbackChain(this.model, process.env);
 
   private buildContents(input: { history: ChatMessage[]; message: string; image?: ImageAttachment }) {
     return buildChatContents(input);
@@ -216,25 +226,68 @@ export class GeminiChatModel implements ChatModel {
     }
   }
 
-  /** Streaming reply — yields text deltas as they're generated (Gemini-like). */
-  async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment }): AsyncGenerator<string> {
+  /** Streaming reply — yields answer deltas AND thought summaries as they're
+   *  generated. Thought parts (part.thought, includeThoughts in builder mode)
+   *  become the kid-facing planning line; they are NOT part of the answer. */
+  async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment }): AsyncGenerator<StreamChunk> {
     const ai = getClient();
-    let stream;
-    try {
-      stream = await withRetry(
+    // Primary keeps its normal retries; each fallback gets ONE attempt so a
+    // full incident walks the whole chain in ~a handful of tries, not 15
+    // (latency the kid feels). The chain covers BOTH failure shapes from the
+    // 2026-07-11 incident: refused at open, AND accepted-then-503-while-
+    // THINKING (stream error @433s in the pm2 log) — the latter falls through
+    // only while NO answer text has been sent (thoughts are ephemeral status
+    // lines, safe to restart; visible answer text is not).
+    const open = (model: string, retries: number) =>
+      withRetry(
         () => ai.models.generateContentStream({
-          model: this.model,
+          model,
           contents: this.buildContents(input),
           config: this.configFor(input),
         }),
-        { label: "gemini.chat.stream", retries: 2 },
+        { label: "gemini.chat.stream", retries },
       );
-    } catch (err) {
-      throw new GeminiError(`chat stream failed: ${(err as Error).message}`);
+    const chain = [this.model, ...this.fallbacks];
+    let answerStarted = false;
+    let lastErr: unknown = null;
+    for (let i = 0; i < chain.length; i++) {
+      const model = chain[i]!;
+      if (i > 0) {
+        console.warn(
+          `[gemini] ${isModelGone(lastErr) ? "model gone (CHECK CONFIG)" : "overloaded"} — falling back to ${model}`,
+        );
+      }
+      let stream;
+      try {
+        stream = await open(model, i === 0 ? 2 : 0);
+      } catch (err) {
+        lastErr = err;
+        if (!shouldTryNextModel(err)) throw new GeminiError(`chat stream failed: ${(err as Error).message}`);
+        continue;
+      }
+      try {
+        for await (const chunk of stream) {
+          // chunk.text would silently drop thought parts — walk the parts instead.
+          const parts = chunk.candidates?.[0]?.content?.parts ?? [];
+          for (const p of parts) {
+            if (!p.text) continue;
+            if (p.thought) {
+              yield { kind: "thought", text: p.text };
+            } else {
+              answerStarted = true;
+              yield { kind: "delta", text: p.text };
+            }
+          }
+        }
+        return; // finished cleanly
+      } catch (err) {
+        // Mid-stream death: only restartable while nothing user-visible went
+        // out — after that, surface it (the client auto-retry keeps partials).
+        if (answerStarted || !shouldTryNextModel(err)) throw err;
+        lastErr = err;
+        console.warn(`[gemini] ${model} died mid-thinking — trying the next model`);
+      }
     }
-    for await (const chunk of stream) {
-      const t = chunk.text;
-      if (t) yield t;
-    }
+    throw new GeminiError(`chat stream failed: ${(lastErr as Error).message}`);
   }
 }

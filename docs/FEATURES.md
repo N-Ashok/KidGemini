@@ -34,13 +34,29 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   (quota) — lost on reload until server-side history (TECH_DEBT #26)
 - **Builder mode** (2026-07-09, middle-path thinking): game-BUILD turns (message
   says "game", or the chat already has a game artifact) run with a bounded
-  thinking budget (2048) + extended output (24576 tokens) — the two config gaps
+  thinking budget + extended output (24576 tokens) — the two config gaps
   that made gemini.google.com's Flash write better game code than ours. Ordinary
-  chat keeps thinking 0 / instant first token. Env-tunable
+  chat keeps thinking 0 / instant first token. Budget lowered 2048 → 1024
+  (2026-07-11): vague asks burned the whole budget weighing interpretations
+  before any code streamed; paired with a commit-to-one-interpretation line in
+  `CHILD_SYSTEM_PROMPT` ("pick one fun, concrete interpretation … do not list
+  options"). Env-tunable
   (`GEMINI_BUILDER_THINKING_BUDGET`, `GEMINI_BUILDER_MAX_OUTPUT_TOKENS`);
   client stall guard is phase-aware (90s to first token, then 30s between
   tokens) so the silent thinking phase isn't treated as a dead stream
   (`src/lib/builder-mode.ts`)
+- **Live planning line** (2026-07-11): builder turns request thought summaries
+  (`includeThoughts`); the route filters each through `kidThoughtLine`
+  (`src/lib/kid-thought.ts` — fail-closed: no code, no markdown, ≤120 chars)
+  and streams `{type:"thinking"}` events; the chat shows the latest line in
+  place of the static "Thinking… 💭" so planning feels alive. Thoughts are
+  never part of the answer text
+- **Gemini model-fallback chain** (2026-07-11, BUG-FIX-LOG +
+  PRD-MODEL-FALLBACK): capacity errors (503 "high demand"/429) and retired
+  model ids walk `GEMINI_FALLBACK_MODELS` (owner chain: 3.5-flash →
+  3-flash-preview → 2.5-flash → 2.5-flash-lite, one attempt each) before
+  erroring; real defects throw at once. Kids get a game from a sibling model
+  instead of "Oops! Something went wrong." during spikes
 - **Starter chips** (2026-07-08): 4 random game prompts from a 500-strong pool
   (`src/lib/game-suggestions.ts`, 10 mechanics × 50 themes) — fresh picks every
   load and every new chat, so kids don't see the same four twice

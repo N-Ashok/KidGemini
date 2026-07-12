@@ -6,7 +6,11 @@
 
 import type { ChatMessage } from "@/types/chat.types";
 
-const DEFAULT_THINKING_BUDGET = 2048; // bounded: deeper plans, ~10-20s worst-case silence
+// 2048 → 1024 (owner decision 2026-07-11): vague asks burned the whole budget
+// weighing interpretations before any code streamed. Paired with the
+// commit-to-one-interpretation line in CHILD_SYSTEM_PROMPT; raise back via
+// GEMINI_BUILDER_THINKING_BUDGET if game quality visibly drops.
+const DEFAULT_THINKING_BUDGET = 1024; // bounded: ~5-10s worst-case silence
 const DEFAULT_MAX_OUTPUT_TOKENS = 24576; // full games run 10-20K tokens; 8K squeezed them
 
 /** A turn pays for thinking when the child asks for a game outright, or is
@@ -21,7 +25,13 @@ export function isGameBuildTurn(message: string, history: ChatMessage[]): boolea
  *  .env.example). Junk values fall back to defaults — never NaN into the API. */
 export function builderGenOverrides(env: Record<string, string | undefined>) {
   return {
-    thinkingConfig: { thinkingBudget: positiveInt(env.GEMINI_BUILDER_THINKING_BUDGET, DEFAULT_THINKING_BUDGET) },
+    thinkingConfig: {
+      thinkingBudget: positiveInt(env.GEMINI_BUILDER_THINKING_BUDGET, DEFAULT_THINKING_BUDGET),
+      // Thought summaries stream back as parts flagged `thought: true` — the
+      // route turns them into the kid-facing planning line (kid-thought.ts)
+      // so the thinking phase isn't a silent "Thinking…" stare (2026-07-11).
+      includeThoughts: true,
+    },
     maxOutputTokens: positiveInt(env.GEMINI_BUILDER_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS),
   };
 }

@@ -46,4 +46,12 @@ describe("CHILD_SYSTEM_PROMPT (safety instruction, monitor replacement)", () => 
   it("requires difficulty to ramp gently", () => {
     expect(CHILD_SYSTEM_PROMPT).toMatch(/starts? slow|first .* slow/i);
   });
+  it("commits to one interpretation on vague asks — no option-weighing burn (2026-07-11)", () => {
+    // \s+ between words: the prompt is a wrapped template literal and a
+    // re-wrap must not break this pin.
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/vague\s+or\s+open-ended/i);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/pick\s+one\s+fun,\s+concrete\s+interpretation/i);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/start\s+(building|coding)\s+(it\s+)?immediately/i);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/do\s+not\s+list\s+options\s+or\s+ask\s+which/i);
+  });
 });

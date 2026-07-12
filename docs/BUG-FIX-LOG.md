@@ -45,6 +45,39 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-11 — PROD: "Oops! Something went wrong." during Gemini 503 spikes — no model fallback
+
+- **Symptom (what the user saw):** in production, chats died with "Oops!
+  Something went wrong. Let's try again." — including popping into a chat the
+  parent was just reading (an in-flight request failing behind the scenes).
+  pm2 error log: repeated `gemini.chat.stream` retries then
+  `503 UNAVAILABLE "This model is currently experiencing high demand"`.
+- **Surface area:** `src/lib/gemini.ts` (`replyStream`), `.env.example`.
+- **Root cause:** Google-side capacity refusal on the primary model
+  (`gemini-3.5-flash` in prod). Our only resilience was `withRetry` ×2 against
+  the SAME overloaded pool — 503 spikes last hours, so retries just re-failed
+  and the route sent the generic error event.
+- **Fix:** overload-aware model fallback CHAIN (4 deep, owner decision same
+  day): when the stream fails to OPEN with a capacity error (503/UNAVAILABLE/
+  "high demand"/429) or a retired model id (404), walk `GEMINI_FALLBACK_MODELS`
+  (owner chain: 3-flash-preview → 2.5-flash → 2.5-flash-lite), one attempt
+  per fallback. Non-capacity errors throw immediately — no wasted call, and a
+  mid-chain real defect stops the walk. Same-day follow-up from live logs: the
+  incident's dominant shape was accepted-then-503-while-THINKING (@433s) — the
+  chain now also restarts on the next model when a stream dies BEFORE any
+  answer text (after answer text, the client auto-retry owns it — never
+  duplicate visible output). Policy in `src/lib/model-fallback.ts`.
+- **Result (verified):** `gemini.fallback.test.ts` F.1–F.7 +
+  `model-fallback.test.ts` (fail on the old code); suite 283 green; typecheck
+  clean.
+- **Impact:** during Gemini capacity spikes kids get a slightly-less-fancy
+  game instead of an error; error events now mean something is actually wrong.
+- **Prevention:** class = **single-provider-pool retry** (retrying into the
+  same overloaded resource). Any new model call site must route through a
+  fallback-aware opener or document why not.
+- **Related:** 503 incident 2026-07-11 (pm2 logs); builder-mode thinking
+  changes same day (docs/FEATURES.md).
+
 ### 2026-07-11 — Updated game never reached the preview: verify rounds collide across games
 
 - **Symptom (what the user saw):** ask for a change to an existing game →

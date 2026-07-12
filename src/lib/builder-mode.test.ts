@@ -32,10 +32,14 @@ describe("isGameBuildTurn — which turns pay for thinking", () => {
 });
 
 describe("builderGenOverrides — env-tunable, sane defaults", () => {
-  it("defaults: bounded thinking + large output headroom", () => {
+  it("defaults: bounded thinking (1024, owner decision 2026-07-11 — faster first code) + large output headroom", () => {
     const o = builderGenOverrides({});
-    expect(o.thinkingConfig.thinkingBudget).toBe(2048);
+    expect(o.thinkingConfig.thinkingBudget).toBe(1024);
     expect(o.maxOutputTokens).toBe(24576);
+  });
+
+  it("asks for thought summaries — the kid-facing planning line needs them (2026-07-11)", () => {
+    expect(builderGenOverrides({}).thinkingConfig.includeThoughts).toBe(true);
   });
 
   it("reads the env knobs when set", () => {
@@ -46,7 +50,7 @@ describe("builderGenOverrides — env-tunable, sane defaults", () => {
 
   it("falls back to defaults on junk env values (never NaN into the API)", () => {
     const o = builderGenOverrides({ GEMINI_BUILDER_THINKING_BUDGET: "lots", GEMINI_BUILDER_MAX_OUTPUT_TOKENS: "-5" });
-    expect(o.thinkingConfig.thinkingBudget).toBe(2048);
+    expect(o.thinkingConfig.thinkingBudget).toBe(1024);
     expect(o.maxOutputTokens).toBe(24576);
   });
 });
