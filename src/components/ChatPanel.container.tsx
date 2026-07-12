@@ -24,6 +24,14 @@ import {
   saveIdeas,
 } from "@/lib/idea-bag";
 import {
+  defaultCoachStore,
+  loadCoach,
+  saveCoach,
+  shouldRenudge,
+  shouldShowCoach,
+  type CoachStore,
+} from "@/lib/idea-coach";
+import {
   clampPanelWidth,
   loadPanelWidth,
   nextArtifact,
@@ -101,6 +109,9 @@ export function ChatPanelContainer() {
   const [ideas, setIdeas] = useState<IdeaRecord[]>([]);
   // Pull-to-resize preview width (null = the 440px default via the CSS var).
   const [panelWidth, setPanelWidth] = useState<number | null>(null);
+  // First-run coach state (docs/PRD-IDEA-BUTTON.md §coach): intro once, one
+  // wiggle-only re-nudge if the feature stays unused, then silence forever.
+  const [coachStore, setCoachStore] = useState<CoachStore>(defaultCoachStore());
 
   const hydratedFromStore = useRef(false);
   useEffect(() => {
@@ -112,6 +123,7 @@ export function ChatPanelContainer() {
       setActiveId(saved.activeId);
     }
     setIdeas(loadIdeas(window.localStorage));
+    setCoachStore(loadCoach(window.localStorage));
     const w = loadPanelWidth(window.localStorage);
     if (w) setPanelWidth(clampPanelWidth(w, window.innerWidth));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -122,7 +134,23 @@ export function ChatPanelContainer() {
   useEffect(() => {
     if (hydratedFromStore.current) saveIdeas(window.localStorage, ideas);
   }, [ideas]);
+  useEffect(() => {
+    if (hydratedFromStore.current) saveCoach(window.localStorage, coachStore);
+  }, [coachStore]);
   const baggedIdeas = useMemo(() => baggedFor(ideas, activeId), [ideas, activeId]);
+
+  // Count game-preview opens toward the re-nudge: each time the panel goes
+  // from closed to open post-intro while the feature is still unused.
+  const artifactWasOpenRef = useRef(false);
+  useEffect(() => {
+    const open = artifact !== null;
+    const justOpened = open && !artifactWasOpenRef.current;
+    artifactWasOpenRef.current = open;
+    if (!justOpened) return;
+    setCoachStore((s) =>
+      s.seen && !s.everCaptured && !s.renudged ? { ...s, gamesSinceCoach: s.gamesSinceCoach + 1 } : s,
+    );
+  }, [artifact]);
 
   const active = convos.find((c) => c.id === activeId) ?? convos[0]!;
   const recents = useMemo(
@@ -584,9 +612,19 @@ export function ChatPanelContainer() {
             expanded={previewExpanded}
             onToggleExpand={() => setPreviewExpanded((v) => !v)}
             ideas={baggedIdeas.map((i) => ({ id: i.id, text: i.text }))}
-            onCaptureIdea={(text) => setIdeas((list) => addIdea(list, activeId, text))}
+            onCaptureIdea={(text) => {
+              setIdeas((list) => addIdea(list, activeId, text));
+              // The feature has been used — the re-nudge is off forever.
+              setCoachStore((s) => (s.everCaptured ? s : { ...s, everCaptured: true }));
+            }}
             onDiscardIdea={(id) => setIdeas((list) => discardIdea(list, id))}
             onMakeBetter={handleMakeBetter}
+            // micSupported is enforced structurally: IdeaMicTab renders
+            // nothing (tab OR coach) when Web Speech is unavailable.
+            coach={shouldShowCoach({ seen: coachStore.seen, busy, micSupported: true })}
+            onCoachDone={() => setCoachStore((s) => ({ ...s, seen: true }))}
+            nudgeMic={shouldRenudge(coachStore)}
+            onNudgeShown={() => setCoachStore((s) => ({ ...s, renudged: true }))}
           />
         </div>
       )}

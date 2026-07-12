@@ -42,6 +42,12 @@ interface ArtifactFrameProps {
   onCaptureIdea?: (text: string) => void;
   onDiscardIdea?: (id: string) => void;
   onMakeBetter?: () => void;
+  /** First-run coach + one-time re-nudge (policy in the container; the tab
+      renders them, so covered/unsupported states are enforced structurally). */
+  coach?: boolean;
+  onCoachDone?: () => void;
+  nudgeMic?: boolean;
+  onNudgeShown?: () => void;
 }
 
 type Tab = "preview" | "code" | "console";
@@ -71,6 +77,10 @@ export function ArtifactFrame({
   onCaptureIdea,
   onDiscardIdea,
   onMakeBetter,
+  coach,
+  onCoachDone,
+  nudgeMic,
+  onNudgeShown,
 }: ArtifactFrameProps) {
   const [tab, setTab] = useState<Tab>("preview");
   const [copied, setCopied] = useState(false);
@@ -342,7 +352,15 @@ export function ArtifactFrame({
               on the preview edge — the ONLY capture path while the composer is
               hidden (full screen / mobile). Hidden during the verify cover so
               probes measure a clean game, and capture never fights the tester. */}
-          {!covered && onCaptureIdea && <IdeaMicTab onIdea={onCaptureIdea} />}
+          {!covered && onCaptureIdea && (
+            <IdeaMicTab
+              onIdea={onCaptureIdea}
+              coach={coach}
+              onCoachDone={onCoachDone}
+              nudge={nudgeMic}
+              onNudgeShown={onNudgeShown}
+            />
+          )}
           {!covered && ideas && onDiscardIdea && onMakeBetter && (
             <IdeaBag ideas={ideas} busy={busy} onDiscard={onDiscardIdea} onMakeBetter={onMakeBetter} />
           )}

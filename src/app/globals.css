@@ -77,3 +77,46 @@ body {
   50% { transform: scale(1.08); }
 }
 .mic-listening { animation: micPulse 1.2s ease-in-out infinite; }
+
+/* ── Idea Button first-run coach (docs/PRD-IDEA-BUTTON.md §coach) ──────────
+   The tab introduces itself once: wiggle + glow, bubble pop, demo typing,
+   💡 flight into the bag. Reduced motion: everything lands in its final
+   state instantly (the buddy VOICE carries the onboarding either way). */
+@keyframes ideaCoachWiggle {
+  0%, 100% { transform: translateX(0) rotate(0); }
+  15% { transform: translateX(0) rotate(-7deg); }
+  35% { transform: translateX(0) rotate(7deg); }
+  55% { transform: translateX(0) rotate(-5deg); }
+  75% { transform: translateX(0) rotate(3deg); }
+}
+.idea-coach-wiggle { animation: ideaCoachWiggle 1.4s ease-in-out 2; }
+@keyframes ideaCoachGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.0); }
+  50% { box-shadow: 0 0 0 12px rgba(245, 158, 11, 0.35), 0 0 40px 14px rgba(245, 158, 11, 0.25); }
+}
+.idea-coach-glow { animation: ideaCoachGlow 1.8s ease-in-out 3; }
+@keyframes ideaCoachPop {
+  0% { opacity: 0; transform: scale(0.6); }
+  70% { opacity: 1; transform: scale(1.05); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.idea-coach-pop { animation: ideaCoachPop 0.45s ease-out both; transform-origin: right 40%; }
+@keyframes ideaCoachType {
+  from { max-width: 0; }
+  to { max-width: 100%; }
+}
+.idea-coach-type {
+  display: inline-block; overflow: hidden; white-space: nowrap; vertical-align: bottom;
+  animation: ideaCoachType 1.6s steps(22) 1.2s both;
+}
+@keyframes ideaCoachFly {
+  0% { opacity: 0; transform: translate(0, 0) scale(1); }
+  15% { opacity: 1; transform: translate(0, 0) scale(1.2); }
+  100% { opacity: 0; transform: translate(-40vw, 30vh) scale(0.4); }
+}
+.idea-coach-fly { animation: ideaCoachFly 1.2s ease-in 3.2s both; }
+@media (prefers-reduced-motion: reduce) {
+  .idea-coach-wiggle, .idea-coach-glow, .idea-coach-fly { animation: none !important; }
+  .idea-coach-pop { animation: none !important; opacity: 1; }
+  .idea-coach-type { animation: none !important; max-width: 100%; }
+}

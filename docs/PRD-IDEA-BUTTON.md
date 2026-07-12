@@ -61,6 +61,35 @@ aggregate signals: bug-vs-wish ratio (generation-quality + repair-taxonomy
 gaps the probes can't see), ideas/session (engagement, Arcade ranking),
 discard rate (child-speech ASR accuracy), bag-vs-typed share (feature proof).
 
+## 3b. First-run coach ("meet the mic") — added 2026-07-12
+
+A pre-reader can't learn from a tooltip, so the tab introduces itself with a
+**silent bubble + demo animation** (`IdeaMicTab` coach overlay; policy in
+`src/lib/idea-coach.ts`; animations in globals.css `idea-coach-*`). Voice is
+**on request only** — the intro never auto-speaks (the 2026-07-12 auto
+voice-over was UAT'd as intrusive/low-quality and removed; see BUG-FIX-LOG):
+
+- **When (exactly three occasions, then never):**
+  1. First quiet playable preview on the device — after the verify cover
+     clears, never mid-generation (`shouldShowCoach`). ~8s: dim → tab slides
+     out + wiggle + glow → bubble pops showing `COACH_LINE` → mini demo
+     (pulsing dot, typewriter words, 💡 fly) → **🔊 Hear it** (reads the line
+     via `useTextToSpeech`, toggles to ⏹ Stop while speaking) / OK.
+  2. ONE wiggle-only re-nudge (no dim/bubble/voice) after
+     `RENUDGE_AFTER_GAMES` (3) idea-less preview opens (`shouldRenudge`).
+  3. Never again — not per game/chat/reload/full-screen.
+- **Dismissal never blocks the feature:** OK, tap-anywhere, or tapping the tab
+  itself — which dismisses AND goes straight to listening (no second click).
+  Every dismissal path also cancels an in-flight Hear-it read-aloud.
+- **Store:** `kidgemini:idea-coach:v1` `{ seen, gamesSinceCoach, everCaptured,
+  renudged }` — device-local; garbage → defaults (fail OPEN: replaying the
+  intro is harmless, losing it isn't). Capturing any idea sets `everCaptured`
+  and kills all future nudges.
+- **Gates:** mic unsupported → no tab → no coach (never advertise what can't
+  work); `covered` enforced structurally (tab renders only under `!covered`).
+- **Reduced motion:** no wiggle/typewriter/fly — static bubble; Hear it still
+  works (still no auto voice).
+
 ## 4. Scale ceilings
 
 localStorage shared with chats; idea records are short strings — negligible
@@ -72,8 +101,15 @@ sync (then records move server-side). ₹0 running cost (Web Speech, no audio).
 - `src/lib/idea-bag.test.ts` — store CRUD, caps/prune, bundle composition,
   persistence never-throw, markSent-on-success-only semantics
 - `src/lib/idea-mic.test.ts` — full tab state-machine transition table
+- `src/lib/idea-coach.test.ts` — shouldShowCoach/shouldRenudge truth tables,
+  store round-trip, fail-open defaults, never-throw
 - `src/lib/preview-pane.test.ts` — resize clamp, width persistence, shell-class
   regressions
+- `scripts/e2e-idea-coach.mjs` — real-browser pins: intro once and SILENT
+  (no auto voice-over), 🔊 Hear it speaks the line / ⏹ Stop while speaking,
+  dismissal cancels an in-flight read-aloud, all three dismissal paths
+  persist, tab-tap goes straight to listening, re-nudge exactly once,
+  reduced-motion static + silent with Hear it working
 - Manual UAT script: §6
 
 ## 6. UAT script (localhost — secure context so the mic works)
@@ -92,3 +128,10 @@ U10. ⤢ full screen → tab + chip present and working; Esc returns
 U11. Drag panel edge → clamped resize; reload → width remembered; mobile unaffected
 U12. Mobile: tab mid-edge, bar at bottom; ✨ flips to the chat screen
 U13. While busy: capture still works; ✨ disabled until done
+U14. Fresh device (clear localStorage): first playable preview → dim + tab
+     wiggle + bubble, NO voice; 🔊 Hear it reads the line (⏹ Stop while
+     speaking); OK dismisses (and silences); reload → gone
+U15. Fresh device again: tap the TAB during the intro → coach gone AND
+     listening starts immediately (one tap, not two)
+U16. Seed `kidgemini:idea-coach:v1` with seen+3 games unused → open a game →
+     tab wiggles once (no dim/bubble); never wiggles again after
