@@ -2,7 +2,18 @@
 // Esc-to-collapse, and the artifact-swap table that keeps the OLD game playable
 // while an update generates.
 import { describe, expect, it } from "vitest";
-import { keyToPanelAction, nextArtifact, panelShellClass, previewDocKey, UPDATING_LINE } from "./preview-pane";
+import {
+  clampPanelWidth,
+  keyToPanelAction,
+  loadPanelWidth,
+  nextArtifact,
+  PANEL_DEFAULT_W,
+  PANEL_MIN_W,
+  panelShellClass,
+  previewDocKey,
+  savePanelWidth,
+  UPDATING_LINE,
+} from "./preview-pane";
 
 describe("previewDocKey — a NEW game must never reuse an old game's doc key", () => {
   it("differs across generations even when rounds collide (v1 ends at round 1, v2 starts at round 1)", () => {
@@ -14,18 +25,20 @@ describe("previewDocKey — a NEW game must never reuse an old game's doc key", 
 });
 
 describe("panelShellClass", () => {
-  it("collapsed: mobile overlay + desktop 440px column", () => {
+  it("collapsed: mobile overlay + desktop column driven by the resize var (440px default)", () => {
     const cls = panelShellClass(false);
     expect(cls).toContain("fixed inset-0");
     expect(cls).toContain("md:static");
-    expect(cls).toContain("md:w-[440px]");
+    expect(cls).toContain("md:w-[var(--panel-w,440px)]");
+    // The resize handle is absolutely positioned against the panel on md+.
+    expect(cls).toContain("md:relative");
   });
 
   it("expanded: full-screen at every breakpoint (no md: column overrides)", () => {
     const cls = panelShellClass(true);
     expect(cls).toContain("fixed inset-0");
     expect(cls).not.toContain("md:static");
-    expect(cls).not.toContain("md:w-[440px]");
+    expect(cls).not.toContain("md:w-");
   });
 
   it("both states sit ABOVE the brand nav (z-100) — BUG-FIX-LOG 2026-07-07 'can't come out'", () => {
@@ -70,6 +83,59 @@ describe("nextArtifact — old game stays playable until the new one is done", (
   it("no current game stays empty on keep-style events", () => {
     expect(nextArtifact({ type: "regenerate" }, null)).toBeNull();
     expect(nextArtifact({ type: "done" }, null)).toBeNull();
+  });
+});
+
+describe("clampPanelWidth — pull-to-resize stays usable at every screen size", () => {
+  it("passes through a reasonable width, rounded", () => {
+    expect(clampPanelWidth(500.6, 1440)).toBe(501);
+  });
+  it("never narrower than PANEL_MIN_W (header buttons fell off below this)", () => {
+    expect(clampPanelWidth(100, 1440)).toBe(PANEL_MIN_W);
+    expect(clampPanelWidth(-50, 1440)).toBe(PANEL_MIN_W);
+  });
+  it("never wider than 70% of the viewport (chat must stay usable)", () => {
+    expect(clampPanelWidth(2000, 1440)).toBe(Math.round(1440 * 0.7));
+  });
+  it("a small viewport keeps the minimum even when 70vw is below it", () => {
+    expect(clampPanelWidth(1000, 400)).toBe(PANEL_MIN_W);
+  });
+  it("default width is itself valid on a laptop viewport", () => {
+    expect(clampPanelWidth(PANEL_DEFAULT_W, 1280)).toBe(PANEL_DEFAULT_W);
+  });
+});
+
+describe("panel width persistence — same never-throw contract as chat-store", () => {
+  function fakeStorage(init: Record<string, string> = {}): Storage {
+    const map = new Map(Object.entries(init));
+    return {
+      get length() {
+        return map.size;
+      },
+      clear: () => map.clear(),
+      getItem: (k: string) => map.get(k) ?? null,
+      key: (i: number) => [...map.keys()][i] ?? null,
+      removeItem: (k: string) => void map.delete(k),
+      setItem: (k: string, v: string) => void map.set(k, v),
+    };
+  }
+
+  it("round-trips a saved width", () => {
+    const s = fakeStorage();
+    savePanelWidth(s, 612);
+    expect(loadPanelWidth(s)).toBe(612);
+  });
+  it("returns null for absent or garbage values", () => {
+    expect(loadPanelWidth(fakeStorage())).toBeNull();
+    expect(loadPanelWidth(fakeStorage({ "kidgemini:panel-w:v1": "banana" }))).toBeNull();
+    expect(loadPanelWidth(fakeStorage({ "kidgemini:panel-w:v1": "-20" }))).toBeNull();
+  });
+  it("save never throws (quota / private mode)", () => {
+    const s = fakeStorage();
+    s.setItem = () => {
+      throw new Error("QuotaExceededError");
+    };
+    expect(() => savePanelWidth(s, 500)).not.toThrow();
   });
 });
 

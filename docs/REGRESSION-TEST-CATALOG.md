@@ -81,3 +81,18 @@ npm run typecheck            # tsc --noEmit
 |---|---|---|---|
 | `src/lib/preview-pane.ts`, `src/components/ArtifactFrame.tsx`, `src/components/ChatPanel.container.tsx` (artifact swap), `src/components/usePreviewVerify.ts` | **`src/lib/preview-pane.test.ts`** (15 tests, passing) | Panel shell classes for split/full-screen incl. the z-[110]-above-nav pin; Esc collapses only when expanded; `nextArtifact` policy (done-with-html swaps, done-without/regenerate/send keep the OLD game, safety retract blanks); `previewDocKey` never collides across game generations | BUG-FIX-LOG 2026-07-11 ×2 (round collision; verify restart on new ask) |
 | Same files — anything touching the update/verify flow end-to-end | **`scripts/e2e-preview-pane.mjs`** (real browser; needs `npm run dev` + playwright-core, see script header) | Expand/collapse without iframe remount and back to the same width; old game visible + uncovered + updating strip while a change streams; the NEW game actually reaches the iframe after `done` (round-collision class) | BUG-FIX-LOG 2026-07-11 |
+
+## Idea Button + pull-to-resize (2026-07-12, docs/PRD-IDEA-BUTTON.md)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/idea-bag.ts`, `src/components/IdeaBag.tsx`, `src/components/ChatPanel.container.tsx` (ideas state / handleMakeBetter / runStream onSuccess) | **`src/lib/idea-bag.test.ts`** (14) | Store CRUD + caps (50 bagged/convo drops oldest; 400 total prunes non-bagged first); `markSent` flips ONLY that convo's bagged ideas — the bag empties on `done` alone, a failed generation never eats ideas; bundle composition; persistence never-throws | — (feature) |
+| `src/lib/idea-mic.ts`, `src/components/IdeaMicTab.tsx` | **`src/lib/idea-mic.test.ts`** (16) | Full tab transition table: stray clicks only slide the tab out; ending a session is always the explicit ✅/🗑 (no toggle — kids double-tap); fatal mic errors stay visible with the friendly copy | — (feature) |
+| `src/lib/preview-pane.ts` (resize), `src/components/PanelResizeHandle.tsx` | **`src/lib/preview-pane.test.ts`** (23) | `clampPanelWidth` min 360 / max 70vw; width persistence round-trip + never-throw; collapsed shell class carries the `--panel-w` var + `md:relative` | — (feature) |
+
+## Thinking UX + Gemini 503 fallback (2026-07-11)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/kid-thought.ts`, `src/app/api/chat/route.ts` (thinking events) | **`src/lib/kid-thought.test.ts`** (5) + route T.1/T.2 | Thought summaries pass to the kid ONLY as short clean prose (code/markdown/degenerate → dropped, fail closed); thinking events never leak into the reply text | — (feature; safety-relevant filter) |
+| `src/lib/gemini.ts` (replyStream), `src/lib/model-fallback.ts`, `src/lib/builder-mode.ts` | **`src/lib/model-fallback.test.ts`** + **`src/lib/gemini.fallback.test.ts`** (F.1–F.5) + builder-mode includeThoughts pin | 4-deep fallback chain: capacity errors (503/429) and retired ids (404) walk DOWN the chain, one attempt per fallback, primary never in its own chain; real defects throw at once and stop the walk; builder turns request thought summaries | BUG-FIX-LOG 2026-07-11 (503 fallback) |

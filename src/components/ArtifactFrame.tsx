@@ -19,6 +19,8 @@ import { DEVICE_PRESETS, deviceById, fitScale } from "@/lib/device-preview";
 import { injectPreviewInstrumentation } from "@/lib/preview-verify";
 import { keyToPanelAction, UPDATING_LINE } from "@/lib/preview-pane";
 import { usePreviewVerify } from "./usePreviewVerify";
+import { IdeaMicTab } from "./IdeaMicTab";
+import { IdeaBag, type BagIdea } from "./IdeaBag";
 import type { GameConsoleMessage } from "@/types/game-console.types";
 import type { PreviewDeviceId } from "@/types/device-preview.types";
 import type { VerifyCheckId } from "@/types/preview-verify.types";
@@ -34,6 +36,12 @@ interface ArtifactFrameProps {
       which restyles the panel wrapper; this component only shows the button. */
   expanded?: boolean;
   onToggleExpand?: () => void;
+  /** Idea Button (docs/PRD-IDEA-BUTTON.md) — all owned by the container; the
+      frame only hosts the overlay surfaces. Absent props = feature hidden. */
+  ideas?: BagIdea[];
+  onCaptureIdea?: (text: string) => void;
+  onDiscardIdea?: (id: string) => void;
+  onMakeBetter?: () => void;
 }
 
 type Tab = "preview" | "code" | "console";
@@ -52,7 +60,18 @@ const CHECK_LABELS: Record<VerifyCheckId, string> = {
   start: "The Start button works",
 };
 
-export function ArtifactFrame({ html, busy, originalRequest, onClose, expanded, onToggleExpand }: ArtifactFrameProps) {
+export function ArtifactFrame({
+  html,
+  busy,
+  originalRequest,
+  onClose,
+  expanded,
+  onToggleExpand,
+  ideas,
+  onCaptureIdea,
+  onDiscardIdea,
+  onMakeBetter,
+}: ArtifactFrameProps) {
   const [tab, setTab] = useState<Tab>("preview");
   const [copied, setCopied] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -319,6 +338,14 @@ export function ArtifactFrame({ html, busy, originalRequest, onClose, expanded, 
               </div>
             );
           })()}
+          {/* Idea Button overlays (docs/PRD-IDEA-BUTTON.md): the mic tab docks
+              on the preview edge — the ONLY capture path while the composer is
+              hidden (full screen / mobile). Hidden during the verify cover so
+              probes measure a clean game, and capture never fights the tester. */}
+          {!covered && onCaptureIdea && <IdeaMicTab onIdea={onCaptureIdea} />}
+          {!covered && ideas && onDiscardIdea && onMakeBetter && (
+            <IdeaBag ideas={ideas} busy={busy} onDiscard={onDiscardIdea} onMakeBetter={onMakeBetter} />
+          )}
           {/* §8.1 — the cover card. The iframe is RENDERED AND PAINTING under
               this opaque layer (display:none would stop rAF and make healthy
               games look dead); the kid sees the checklist, not the probes. */}

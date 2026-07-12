@@ -10,6 +10,9 @@ export interface ChatMessage {
   artifactHtml?: string;
   /** Name of a file the child attached to this message (shown as a chip). */
   attachmentName?: string;
+  /** True when this child message is a bundled Idea Bag send (🎒 label in the
+   *  bubble) — spoken thoughts captured during play, docs/PRD-IDEA-BUTTON.md. */
+  fromIdeaBag?: boolean;
   createdAt: number;
 }
 
@@ -25,6 +28,14 @@ export interface Conversation {
 export interface ImageAttachment {
   mimeType: "image/jpeg" | "image/png" | "image/webp";
   data: string;
+}
+
+/** One streamed piece of a model reply: answer text, or a thought summary
+ *  (builder turns, includeThoughts) that feeds the kid-facing planning line —
+ *  thoughts are never part of the answer. */
+export interface StreamChunk {
+  kind: "delta" | "thought";
+  text: string;
 }
 
 /** Any conversational model is a ChatModel (swappable / mockable). */

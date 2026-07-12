@@ -35,7 +35,43 @@ export function nextArtifact(ev: PreviewPaneEvent, current: string | null): stri
 export function panelShellClass(expanded: boolean): string {
   return expanded
     ? "fixed inset-0 z-[110] bg-white"
-    : "fixed inset-0 z-[110] bg-white md:static md:inset-auto md:z-auto md:w-[440px] md:border-l md:border-neutral-200";
+    : "fixed inset-0 z-[110] bg-white md:static md:inset-auto md:z-auto md:relative md:w-[var(--panel-w,440px)] md:border-l md:border-neutral-200";
+}
+
+// ---- Pull-to-resize (docs/PRD-IDEA-BUTTON.md §resizable pane) --------------
+// The collapsed panel width is a CSS var (--panel-w) so the drag handle can
+// resize without remounting the subtree (same CSS-only principle as expand).
+
+/** Below this the header buttons fall off the edge (see the Download/Copy
+ *  label comment in ArtifactFrame) — never let the drag go narrower. */
+export const PANEL_MIN_W = 360;
+/** The chat must stay usable — the panel never takes more than 70% of the
+ *  viewport (full screen is what ⤢ is for). */
+export const PANEL_MAX_VW = 0.7;
+export const PANEL_DEFAULT_W = 440;
+
+export function clampPanelWidth(px: number, viewportW: number): number {
+  const max = Math.max(PANEL_MIN_W, Math.round(viewportW * PANEL_MAX_VW));
+  return Math.min(Math.max(Math.round(px), PANEL_MIN_W), max);
+}
+
+const WIDTH_KEY = "kidgemini:panel-w:v1";
+
+export function savePanelWidth(storage: Storage, width: number): void {
+  try {
+    storage.setItem(WIDTH_KEY, String(Math.round(width)));
+  } catch {
+    /* quota/private mode — resize still works this session */
+  }
+}
+
+export function loadPanelWidth(storage: Storage): number | null {
+  try {
+    const n = Number(storage.getItem(WIDTH_KEY));
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Esc collapses an expanded panel; everything else is left alone. */

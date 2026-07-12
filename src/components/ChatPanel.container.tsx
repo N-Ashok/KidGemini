@@ -12,8 +12,26 @@ import { MessageItem } from "./MessageItem";
 import { LoginGate } from "./LoginGate";
 import { useTextToSpeech } from "./useTextToSpeech";
 import type { ChatMessage, Conversation } from "@/types/chat.types";
+import type { IdeaRecord } from "@/types/idea-bag.types";
 import { loadChats, saveChats } from "@/lib/chat-store";
-import { nextArtifact, panelShellClass } from "@/lib/preview-pane";
+import {
+  addIdea,
+  baggedFor,
+  composeIdeaBundle,
+  discardIdea,
+  loadIdeas,
+  markSent,
+  saveIdeas,
+} from "@/lib/idea-bag";
+import {
+  clampPanelWidth,
+  loadPanelWidth,
+  nextArtifact,
+  PANEL_DEFAULT_W,
+  panelShellClass,
+  savePanelWidth,
+} from "@/lib/preview-pane";
+import { PanelResizeHandle } from "./PanelResizeHandle";
 import { searchChats } from "@/lib/chat-search";
 import { pickSuggestions } from "@/lib/game-suggestions";
 import { shouldAutoRetry } from "@/lib/stream-recovery";
@@ -50,6 +68,10 @@ export function ChatPanelContainer() {
   const [convos, setConvos] = useState<Conversation[]>([newConversation()]);
   const [activeId, setActiveId] = useState(convos[0]!.id);
   const [busy, setBusy] = useState(false);
+  // Latest kid-safe thought summary from the model's thinking phase — shown in
+  // place of the static "Thinking…" so planning feels alive (2026-07-11).
+  // Server-filtered (kid-thought.ts); reset at every stream start.
+  const [thinkingLine, setThinkingLine] = useState<string | null>(null);
   const [artifact, setArtifact] = useState<string | null>(null);
   // Desktop full-screen preview (PRD-PREVIEW-PANE): a CSS-only wrapper toggle —
   // the ArtifactFrame subtree (and its iframe) never remounts, so collapsing
@@ -74,6 +96,12 @@ export function ChatPanelContainer() {
   // The ref makes restore one-shot: without it, StrictMode's double effect
   // pass re-reads storage AFTER the save effect has already written the fresh
   // greeting convo, clobbering the restore.
+  // Idea Bag (docs/PRD-IDEA-BUTTON.md): spoken thoughts captured over the
+  // preview. Same one-shot-hydrate + persist-on-change contract as chats.
+  const [ideas, setIdeas] = useState<IdeaRecord[]>([]);
+  // Pull-to-resize preview width (null = the 440px default via the CSS var).
+  const [panelWidth, setPanelWidth] = useState<number | null>(null);
+
   const hydratedFromStore = useRef(false);
   useEffect(() => {
     if (hydratedFromStore.current) return;
@@ -83,11 +111,18 @@ export function ChatPanelContainer() {
       setConvos(saved.convos);
       setActiveId(saved.activeId);
     }
+    setIdeas(loadIdeas(window.localStorage));
+    const w = loadPanelWidth(window.localStorage);
+    if (w) setPanelWidth(clampPanelWidth(w, window.innerWidth));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     if (hydratedFromStore.current) saveChats(window.localStorage, convos, activeId);
   }, [convos, activeId]);
+  useEffect(() => {
+    if (hydratedFromStore.current) saveIdeas(window.localStorage, ideas);
+  }, [ideas]);
+  const baggedIdeas = useMemo(() => baggedFor(ideas, activeId), [ideas, activeId]);
 
   const active = convos.find((c) => c.id === activeId) ?? convos[0]!;
   const recents = useMemo(
@@ -181,6 +216,9 @@ export function ChatPanelContainer() {
     replyId: string,
     attempt = 0,
     image?: { mimeType: string; data: string },
+    // Fired ONLY on the `done` event — the Idea Bag empties through this, so a
+    // dropped/blocked/errored stream can never eat a kid's ideas.
+    onSuccess?: () => void,
   ) {
     const setReply = (t: string, artifactHtml?: string) =>
       patchActive((c) => ({
@@ -207,6 +245,7 @@ export function ChatPanelContainer() {
     let willRetry = false;
     let acc = "";
     setBusy(true);
+    setThinkingLine(null);
     console.log(`[chat] ▶ sending: "${text.slice(0, 60)}"`);
 
     try {
@@ -254,7 +293,9 @@ export function ChatPanelContainer() {
           buffer = buffer.slice(nl + 1);
           if (!line) continue;
           const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null };
-          if (ev.type === "delta") {
+          if (ev.type === "thinking") {
+            if (ev.text) setThinkingLine(ev.text);
+          } else if (ev.type === "delta") {
             if (!firstTokenAt) { firstTokenAt = Date.now(); console.log(`[chat] first token @${firstTokenAt - startedAt}ms`); }
             acc += ev.text ?? "";
             setReply(acc);
@@ -263,6 +304,7 @@ export function ChatPanelContainer() {
             setArtifact((a) => nextArtifact({ type: "done", artifactHtml: ev.artifactHtml }, a));
             setBusy(false);
             finalized = true;
+            onSuccess?.();
             console.log(`[chat] ✓ shown @${Date.now() - startedAt}ms artifact=${ev.artifactHtml ? "yes" : "no"}`);
           } else if (ev.type === "retract") {
             setReply(ev.text ?? KIND_FALLBACK);
@@ -333,11 +375,15 @@ export function ChatPanelContainer() {
         setBusy(false);
         return;
       }
-      await runStream(text, history, replyId, attempt + 1, image);
+      await runStream(text, history, replyId, attempt + 1, image, onSuccess);
     }
   }
 
-  async function handleSend(text: string, attachment?: Attachment) {
+  async function handleSend(
+    text: string,
+    attachment?: Attachment,
+    opts?: { fromIdeaBag?: boolean; onSuccess?: (childId: string) => void },
+  ) {
     const history = active.messages;
     const replyId = crypto.randomUUID();
     const displayText = text || (attachment ? "" : "");
@@ -364,11 +410,37 @@ export function ChatPanelContainer() {
       title: c.title === "New chat" ? (text || attachment?.name || "New chat").slice(0, 40) : c.title,
       messages: [
         ...c.messages,
-        { id: childId, role: "child", text: displayText, attachmentName: attachment?.name, createdAt: Date.now() },
+        {
+          id: childId,
+          role: "child",
+          text: displayText,
+          attachmentName: attachment?.name,
+          ...(opts?.fromIdeaBag ? { fromIdeaBag: true } : {}),
+          createdAt: Date.now(),
+        },
         { id: replyId, role: "assistant", text: "", createdAt: Date.now() },
       ],
     }));
-    await runStream(apiMessage, history, replyId, 0, image);
+    await runStream(apiMessage, history, replyId, 0, image, opts?.onSuccess && (() => opts.onSuccess!(childId)));
+  }
+
+  // ✨ Make my game better! — the whole bag becomes ONE visible chat message
+  // (no hidden side-channel); ideas flip to `sent` only when the generation
+  // finishes, so failures keep every thought safely bagged.
+  async function handleMakeBetter() {
+    if (busy) return;
+    const bagged = baggedFor(ideas, activeId);
+    const bundle = composeIdeaBundle(bagged.map((i) => i.text));
+    if (!bundle) return;
+    const convoId = activeId;
+    setPreviewExpanded(false); // watch the send land in chat (desktop split view)
+    // Mobile: the panel covers the whole screen — flip to the chat so the kid
+    // SEES the bundle post; the updated game re-opens the panel via `done`.
+    if (window.matchMedia("(max-width: 767px)").matches) setArtifact(null);
+    await handleSend(bundle, undefined, {
+      fromIdeaBag: true,
+      onSuccess: (childId) => setIdeas((list) => markSent(list, convoId, childId)),
+    });
   }
 
   function handleStop() {
@@ -453,7 +525,9 @@ export function ChatPanelContainer() {
               </div>
             ))}
             {busy && active.messages[active.messages.length - 1]?.text === "" && (
-              <p className="animate-pulse text-neutral-400">Thinking… 💭</p>
+              <p className="animate-pulse text-neutral-400">
+                {thinkingLine ? <>💭 <span className="italic">{thinkingLine}</span></> : "Thinking… 💭"}
+              </p>
             )}
             {active.messages.length === 1 && (
               <div className="flex flex-wrap gap-2 pt-2">
@@ -477,7 +551,26 @@ export function ChatPanelContainer() {
           z-40 the nav floated over the panel's header and swallowed every tap
           on ← Chat / ✕ (BUG-FIX-LOG 2026-07-07: "can't come out"). */}
       {artifact && (
-        <div className={panelShellClass(previewExpanded)}>
+        <div
+          className={panelShellClass(previewExpanded)}
+          // Pull-to-resize drives the CSS var so the subtree (and the running
+          // game's iframe) never remounts — same principle as expand.
+          style={
+            panelWidth && !previewExpanded
+              ? ({ "--panel-w": `${panelWidth}px` } as React.CSSProperties)
+              : undefined
+          }
+        >
+          {!previewExpanded && (
+            <PanelResizeHandle
+              width={panelWidth ?? PANEL_DEFAULT_W}
+              onResize={setPanelWidth}
+              onCommit={(w) => {
+                setPanelWidth(w);
+                savePanelWidth(window.localStorage, w);
+              }}
+            />
+          )}
           <ArtifactFrame
             html={artifact}
             busy={busy}
@@ -490,6 +583,10 @@ export function ChatPanelContainer() {
             }}
             expanded={previewExpanded}
             onToggleExpand={() => setPreviewExpanded((v) => !v)}
+            ideas={baggedIdeas.map((i) => ({ id: i.id, text: i.text }))}
+            onCaptureIdea={(text) => setIdeas((list) => addIdea(list, activeId, text))}
+            onDiscardIdea={(id) => setIdeas((list) => discardIdea(list, id))}
+            onMakeBetter={handleMakeBetter}
           />
         </div>
       )}

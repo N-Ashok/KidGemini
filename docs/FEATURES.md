@@ -130,6 +130,26 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   that's already online" — same address, new version. Typing a name that
   matches their own game also flips to update (`mine` check). Fail-closed:
   ownership verified server-side on both the list and the publish
+- **🎤 Idea Button + 🎒 Idea Bag** (2026-07-12, docs/PRD-IDEA-BUTTON.md): an
+  edge-docked mic tab over the game preview — the only capture path while the
+  composer is hidden (⤢ full screen / mobile game screen). Click slides it out,
+  second click listens (stray clicks near game controls are harmless; the tab
+  drags up/down the edge); the game keeps running and keeps the keyboard.
+  Spoken thoughts collect in the Idea Bag (chip + badge, bottom-left) —
+  capture never triggers a generation. The bag panel reads ideas aloud (🔊,
+  pre-readers) and "✨ Make my game better!" bundles ALL ideas into ONE visible
+  chat message (🎒-labeled bubble) through the normal /api/chat loop; ideas
+  flip to `sent` only on a successful `done` — failures keep them bagged.
+  Text-only records in localStorage (`kidgemini:ideas:v1`, audio never
+  recorded); reuses `useSpeechInput`/`mic-errors` verbatim
+  (`IdeaMicTab.tsx`, `IdeaBag.tsx`, `src/lib/idea-bag.ts`, `src/lib/idea-mic.ts`).
+  Wake-word invocation deliberately rejected (always-on mic = parent-trust +
+  iOS reliability); revisit only with on-device keyword spotting / Gemini Live
+- **↔ Pull-to-resize preview** (2026-07-12): the 440px desktop panel now has a
+  drag handle on its left border (min 360px, max 70vw, width remembered in
+  localStorage; keyboard ←/→ on the separator). CSS-var driven (`--panel-w`) so
+  the running game's iframe never remounts (`PanelResizeHandle.tsx`,
+  `clampPanelWidth` in `src/lib/preview-pane.ts`)
 - Guest trial: chat free up to 10K tokens per device per rolling 2-day window
   (per-IP backstop at 2× so cookie-clearing doesn't reset it) → then a blocking "Please sign in to continue
   using KidGemini" wall → Ariantra SSO (Google or username/password)

@@ -29,6 +29,11 @@ export function MessageItem(props: MessageItemProps) {
   if (m.role === "child") {
     return (
       <div className="flex flex-col items-end gap-1">
+        {/* No hidden side-channel: an Idea Bag send is a visible, labeled chat
+            message — the kid (and a parent later) sees exactly what was asked. */}
+        {m.fromIdeaBag && (
+          <span className="px-2 text-xs font-bold text-neutral-400">🎒 From your Idea Bag</span>
+        )}
         {m.attachmentName && (
           <span className="flex items-center gap-1.5 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-sm text-neutral-600">
             <span aria-hidden>📎</span> {m.attachmentName}
