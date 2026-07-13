@@ -45,9 +45,18 @@ never dead-end prod (`src/lib/model-fallback.ts`).
    503 minutes later while THINKING — pm2 log @433s, 2026-07-11). If NO
    answer text has been sent, the chain restarts on the next model
    transparently (thoughts are ephemeral status lines, safe to restart).
-   → FALL BACK. *(shipped)* After answer text started, the error surfaces
-   and the client auto-retry owns it (never silently duplicate output);
-   routing THAT retry to the fallback stays proposed (Phase 3).
+   → FALL BACK. *(shipped)* After answer text started (2026-07-13 incident,
+   owner decision): the partial code is only a "system is working" signal —
+   the chain STILL walks to the next model, and a `restart` stream event is
+   emitted right before that model's first output so the client wipes the
+   partial chat bubble alone and relays the fresh thoughts + code. The
+   accumulator resets server-side too (done/usage never carry wiped text).
+   → FALL BACK + RESTART EVENT. *(shipped)*
+4b. **Transient 5xx that isn't a clean 503** (500 INTERNAL, 502, 504) and
+   network-level drops (`fetch failed`, `ECONNRESET`, `socket hang up`,
+   `terminated`) — same transient class the retry layer recognizes; the
+   chain must agree (2026-07-13, split-brain taxonomy fix). → FALL BACK.
+   *(shipped)*
 5. **First-token timeout** (thinking stall, no 503) — treat like capacity:
    one fallback attempt inside the server's timeout budget. → FALL BACK.
 6. **Safety block / content refusal** — NEVER. Fail closed; a block is a

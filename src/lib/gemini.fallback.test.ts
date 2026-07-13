@@ -115,15 +115,150 @@ describe("GeminiChatModel — 4-deep fallback chain", () => {
     expect(generateContentStream).toHaveBeenCalledTimes(2);
   });
 
-  it("F.7 a stream that dies AFTER answer text started surfaces the error — never silently duplicate output", async () => {
+  it("F.7 a stream that dies MID-ANSWER walks to the next model, emitting a restart before its first output (owner decision 2026-07-13: partial is just a working signal — wipe and relay fresh)", async () => {
     async function* diesMidAnswer() {
       yield { candidates: [{ content: { parts: [{ text: "<html>partial" }] } }] };
       throw overloadErr();
     }
-    generateContentStream.mockResolvedValueOnce(diesMidAnswer());
+    generateContentStream
+      .mockResolvedValueOnce(diesMidAnswer())
+      .mockResolvedValueOnce(fakeStream("Fresh full game"));
 
-    await expect(collect(new GeminiChatModel())).rejects.toThrow(/UNAVAILABLE/);
-    expect(generateContentStream).toHaveBeenCalledTimes(1); // client auto-retry owns this case
+    const out = await collect(new GeminiChatModel());
+
+    expect(out).toEqual([
+      { kind: "delta", text: "<html>partial" },
+      { kind: "restart", text: "" },
+      { kind: "delta", text: "Fresh full game" },
+    ]);
+    expect(generateContentStream).toHaveBeenCalledTimes(2);
+  });
+
+  it("F.8 a mid-answer REAL defect still surfaces — restart never masks a bug", async () => {
+    async function* diesMidAnswerBad() {
+      yield { candidates: [{ content: { parts: [{ text: "<html>partial" }] } }] };
+      throw new Error("400 INVALID_ARGUMENT: bad request");
+    }
+    generateContentStream.mockResolvedValueOnce(diesMidAnswerBad());
+
+    await expect(collect(new GeminiChatModel())).rejects.toThrow(/INVALID_ARGUMENT/);
+    expect(generateContentStream).toHaveBeenCalledTimes(1);
+  });
+
+  it("F.9 consecutive mid-answer deaths keep walking — one restart per model that produced output", async () => {
+    async function* diesMidAnswer(text: string) {
+      yield { candidates: [{ content: { parts: [{ text }] } }] };
+      throw overloadErr();
+    }
+    generateContentStream
+      .mockResolvedValueOnce(diesMidAnswer("<html>partial-1"))
+      .mockResolvedValueOnce(diesMidAnswer("<html>partial-2"))
+      .mockResolvedValueOnce(fakeStream("Third time's the charm"));
+
+    const out = await collect(new GeminiChatModel());
+
+    expect(out).toEqual([
+      { kind: "delta", text: "<html>partial-1" },
+      { kind: "restart", text: "" },
+      { kind: "delta", text: "<html>partial-2" },
+      { kind: "restart", text: "" },
+      { kind: "delta", text: "Third time's the charm" },
+    ]);
+    expect(generateContentStream).toHaveBeenCalledTimes(3);
+  });
+
+  it("F.10 a model that goes SILENT (no chunks at all) is abandoned after the stall-switch window — kid never waits minutes", async () => {
+    process.env.GEMINI_STALL_SWITCH_MS = "30"; // 30ms window for the test
+    try {
+      async function* hangsForever() {
+        yield { candidates: [{ content: { parts: [{ text: "Planning…", thought: true }] } }] };
+        await new Promise(() => {}); // wedged: no chunks, no error, forever
+      }
+      generateContentStream
+        .mockResolvedValueOnce(hangsForever())
+        .mockResolvedValueOnce(fakeStream("Rescued by the next model!"));
+
+      const out = await collect(new GeminiChatModel());
+
+      expect(out.at(-1)).toEqual({ kind: "delta", text: "Rescued by the next model!" });
+      expect(generateContentStream).toHaveBeenCalledTimes(2);
+    } finally {
+      delete process.env.GEMINI_STALL_SWITCH_MS;
+    }
+  });
+
+  it("F.11 a silent model that had already streamed ANSWER text restarts cleanly on the next model", async () => {
+    process.env.GEMINI_STALL_SWITCH_MS = "30";
+    try {
+      async function* answersThenWedges() {
+        yield { candidates: [{ content: { parts: [{ text: "<html>partial" }] } }] };
+        await new Promise(() => {});
+      }
+      generateContentStream
+        .mockResolvedValueOnce(answersThenWedges())
+        .mockResolvedValueOnce(fakeStream("Fresh full game"));
+
+      const out = await collect(new GeminiChatModel());
+
+      expect(out).toEqual([
+        { kind: "delta", text: "<html>partial" },
+        { kind: "restart", text: "" },
+        { kind: "delta", text: "Fresh full game" },
+      ]);
+    } finally {
+      delete process.env.GEMINI_STALL_SWITCH_MS;
+    }
+  });
+
+  it("F.12 hedging is a RACE: the slow model keeps running and wins if it answers first — no restart, hedge abandoned", async () => {
+    process.env.GEMINI_STALL_SWITCH_MS = "30";
+    try {
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      async function* slowButAlive() {
+        yield { candidates: [{ content: { parts: [{ text: "Planning…", thought: true }] } }] };
+        await sleep(60); // silent past the 30ms window → hedge fires
+        yield { candidates: [{ content: { parts: [{ text: "Original model wins!" }] } }] };
+      }
+      async function* hedgeNeverAnswers() {
+        await new Promise(() => {}); // the hedge opens but never produces
+        yield undefined as never;
+      }
+      generateContentStream
+        .mockResolvedValueOnce(slowButAlive())
+        .mockResolvedValueOnce(hedgeNeverAnswers());
+
+      const out = await collect(new GeminiChatModel());
+
+      expect(out).toEqual([
+        { kind: "thought", text: "Planning…" },
+        { kind: "delta", text: "Original model wins!" },
+      ]);
+      expect(generateContentStream).toHaveBeenCalledTimes(2); // hedge was opened…
+      expect(out.some((c) => c.kind === "restart")).toBe(false); // …but never won
+    } finally {
+      delete process.env.GEMINI_STALL_SWITCH_MS;
+    }
+  });
+
+  it("F.13 at most ONE hedge per turn: both racers silent → the slot is abandoned for the next chain model", async () => {
+    process.env.GEMINI_STALL_SWITCH_MS = "30";
+    try {
+      async function* wedged() {
+        yield { candidates: [{ content: { parts: [{ text: "hmm", thought: true }] } }] };
+        await new Promise(() => {});
+      }
+      generateContentStream
+        .mockResolvedValueOnce(wedged()) // primary — silent
+        .mockResolvedValueOnce(wedged()) // hedge (chain[1]) — also silent
+        .mockResolvedValueOnce(fakeStream("Third model delivers")); // outer walk continues
+
+      const out = await collect(new GeminiChatModel());
+
+      expect(out.at(-1)).toEqual({ kind: "delta", text: "Third model delivers" });
+      expect(generateContentStream).toHaveBeenCalledTimes(3);
+    } finally {
+      delete process.env.GEMINI_STALL_SWITCH_MS;
+    }
   });
 
   it("F.5 a real defect mid-chain stops the walk — fallback never masks a bug", async () => {

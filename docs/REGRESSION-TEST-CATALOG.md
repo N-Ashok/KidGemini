@@ -96,7 +96,7 @@ npm run typecheck            # tsc --noEmit
 | When to run | Test | What it pins | Bug-fix ref |
 |---|---|---|---|
 | `src/lib/kid-thought.ts`, `src/app/api/chat/route.ts` (thinking events) | **`src/lib/kid-thought.test.ts`** (5) + route T.1/T.2 | Thought summaries pass to the kid ONLY as short clean prose (code/markdown/degenerate → dropped, fail closed); thinking events never leak into the reply text | — (feature; safety-relevant filter) |
-| `src/lib/gemini.ts` (replyStream), `src/lib/model-fallback.ts`, `src/lib/builder-mode.ts` | **`src/lib/model-fallback.test.ts`** + **`src/lib/gemini.fallback.test.ts`** (F.1–F.5) + builder-mode includeThoughts pin | 4-deep fallback chain: capacity errors (503/429) and retired ids (404) walk DOWN the chain, one attempt per fallback, primary never in its own chain; real defects throw at once and stop the walk; builder turns request thought summaries | BUG-FIX-LOG 2026-07-11 (503 fallback) |
+| `src/lib/gemini.ts` (replyStream), `src/lib/model-fallback.ts`, `src/lib/builder-mode.ts` | **`src/lib/model-fallback.test.ts`** + **`src/lib/gemini.fallback.test.ts`** (F.1–F.9) + **route R.1** + builder-mode includeThoughts pin | 4-deep fallback chain: capacity errors (503/429), retired ids (404), transient 5xx (500 INTERNAL/502/504) and network drops walk DOWN the chain, one attempt per fallback, primary never in its own chain; a MID-ANSWER death keeps walking and emits one `restart` chunk before the next model's first output (client wipes the partial chat bubble; route resets the accumulator so done/usage never carry wiped text); real defects throw at once and stop the walk; builder turns request thought summaries | BUG-FIX-LOG 2026-07-11 (503 fallback), 2026-07-13 (transient taxonomy + mid-answer restart) |
 
 ## Optional 3D via the asset host (2026-07-12, Phase B — re-introduced after the Phase-0 revert; PRD-3D-GAMES-AND-ASSETS)
 
@@ -141,3 +141,22 @@ npm run typecheck            # tsc --noEmit
 |---|---|---|---|
 | `src/lib/assets/model-select.ts`, GENRES data, manifest growth | **`src/lib/assets/model-select.test.ts`** (10) | Libraries ≤ 30 skip selection (all models, today's behavior); genre keywords pick the subset (city ≠ sea); no match → core set only; explicit name mentions always included; the iterated game's `USES_MODELS` names ALWAYS kept (dropping one breaks the kid's own game); child-history keywords count; hard ≤ 30 per prompt whatever matches; only manifest names ever returned | — |
 | `src/lib/gemini.ts`, `prompt-catalog.ts` (context wiring) | **`prompt-catalog.test.ts`** scale-ceiling describes | Context-aware section over the committed manifest ≤ 30 names; manifest sanity ceiling 60 (forces a conscious decision at the next doubling) | — |
+
+## Server-side chat history (2026-07-13, TECH_DEBT #26)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/db.ts` (SqliteChatHistoryStore), `src/app/api/chats/**`, `src/lib/chat-sync.ts`, `src/lib/chat-history.ts` | **`db.chat-history.test.ts`** (H.1–H.6) + **`chats.route.test.ts`** (C.1–C.7) + **`chat-sync.test.ts`** | Ownership fail-closed at SQL (foreign id: 404 on read, ignored on write); guest keyed by device cookie; composite (updatedAt,id) cursor never skips same-ms rows; bulk migration idempotent + skips malformed rows; sidebar merge dedupes local vs server entries | — (feature) |
+| `src/lib/chat-store.ts` | **`chat-store.test.ts`** | No arbitrary convo cap; real quota trims oldest-first and never the active chat | BUG-FIX-LOG 2026-07-13 (silent 20-cap eviction) |
+
+## Resumable generations (2026-07-13, TECH_DEBT #23)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/db.ts` (SqliteTurnResultStore), `src/app/api/chat/route.ts` (turn bookkeeping), `src/app/api/chat/result/route.ts`, `src/lib/turn-resume.ts`, `ChatPanel.container.tsx` (retry path) | **`db.turn-results.test.ts`** (T.1–T.5) + **route RT.1–RT.3** + **`turn-resume.test.ts`** | start→running / done-with-full-reply / error lifecycle; ownership fail-closed; 24h TTL sweep; no bookkeeping without a replyId (old clients); client polls `running` patiently, applies `done` without re-generating, re-generates only on error/404/budget | — (feature; cost + heavy-load resilience) |
+
+## Hedged generation + tab-close recovery (2026-07-13)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/gemini.ts` (hedge race/watchdog), `src/lib/wait-line.ts`, `src/lib/pending-turn.ts`, container bootstrap recovery | **`gemini.fallback.test.ts`** F.10–F.13 + **`wait-line.test.ts`** | Silent model → hedge race (slow model may still win, no restart); first answer token commits, loser abandoned; ONE hedge per turn, both-silent walks the chain; wait line escalates and never freezes; pending-turn bookmark round-trips, 24h TTL, corrupt-safe | — (feature; kid-wait ceiling) |

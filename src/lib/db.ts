@@ -14,6 +14,9 @@ import type {
 import type { IpLimitRecord, RateLimitStatus, RateLimitStore } from "@/types/rate-limit.types";
 import type { ParentAuthRecord, ParentAuthStore } from "@/types/parent-auth.types";
 import type { PaymentRecord, PaymentStore } from "@/types/billing.types";
+import type { ChatHistoryStore, ConvoSummary } from "@/types/chat-history.types";
+import type { TurnResult, TurnResultStore } from "@/types/turn-result.types";
+import type { Conversation } from "@/types/chat.types";
 import { evaluate } from "./rate-limit";
 
 let db: Database.Database | null = null;
@@ -88,6 +91,34 @@ function getDb(): Database.Database {
       eventId TEXT PRIMARY KEY,
       createdAt INTEGER NOT NULL
     );
+    -- Server-side chat history (TECH_DEBT #26, shipped 2026-07-13): full
+    -- conversations (messages JSON incl. generated game HTML) keyed by the
+    -- same identity as usage_events (user:<email> or guest:<cookie-uuid>).
+    -- localStorage becomes a cache; this is the durable store.
+    CREATE TABLE IF NOT EXISTS conversations (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      title TEXT NOT NULL,
+      messages TEXT NOT NULL,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_convos_user ON conversations(userId, updatedAt DESC);
+    -- Resumable generations (TECH_DEBT #23, shipped 2026-07-13): each turn's
+    -- finished reply keyed by the client's replyId. A disconnected client
+    -- (screen lock, stall-guard abort under heavy load) polls
+    -- /api/chat/result and collects this instead of re-generating (paid).
+    -- 24h TTL, purged on the next start().
+    CREATE TABLE IF NOT EXISTS turn_results (
+      replyId TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      status TEXT NOT NULL,
+      text TEXT,
+      artifactHtml TEXT,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_turn_results_updated ON turn_results(updatedAt);
     -- Per-family parent PIN (PRD-PARENT-AUTH-ALERT-SCOPING §8). Keyed by the
     -- SSO userId — kidgemini has no local accounts table; identity is the JWT.
     CREATE TABLE IF NOT EXISTS parent_auth (
@@ -422,5 +453,108 @@ export class SqliteRateLimitStore implements RateLimitStore {
          windowStart = @windowStart, count = @count, blockedUntil = @blockedUntil, strikes = @strikes`,
     ).run(record);
     return status;
+  }
+}
+
+/** Server-side chat history (TECH_DEBT #26). Ownership is fail-closed at the
+ *  SQL layer: reads filter by userId, and an upsert only updates a row whose
+ *  userId matches — a colliding id from another identity is silently ignored. */
+export class SqliteChatHistoryStore implements ChatHistoryStore {
+  upsert(userId: string, convo: Conversation, now: number): void {
+    getDb()
+      .prepare(
+        `INSERT INTO conversations (id, userId, title, messages, createdAt, updatedAt)
+         VALUES (@id, @userId, @title, @messages, @now, @now)
+         ON CONFLICT(id) DO UPDATE SET
+           title = excluded.title, messages = excluded.messages, updatedAt = excluded.updatedAt
+         WHERE conversations.userId = excluded.userId`,
+      )
+      .run({ id: convo.id, userId, title: convo.title, messages: JSON.stringify(convo.messages), now });
+  }
+
+  bulkUpsert(userId: string, convos: Conversation[], now: number): number {
+    // Stamp in list order so the FIRST convo (newest in the client's
+    // newest-first list) gets the freshest updatedAt and keeps its rank.
+    let n = 0;
+    for (const c of convos) {
+      this.upsert(userId, c, now - n);
+      n += 1;
+    }
+    return n;
+  }
+
+  list(userId: string, limit: number, before?: { updatedAt: number; id: string }): ConvoSummary[] {
+    const rows = (
+      before === undefined
+        ? getDb()
+            .prepare(`SELECT id, title, updatedAt FROM conversations WHERE userId = ? ORDER BY updatedAt DESC, id LIMIT ?`)
+            .all(userId, limit)
+        : getDb()
+            .prepare(
+              // Composite cursor: strictly older, OR same-ms rows after the
+              // prior page's last id (ORDER BY ... id ASC ties the order).
+              `SELECT id, title, updatedAt FROM conversations
+               WHERE userId = @userId AND (updatedAt < @u OR (updatedAt = @u AND id > @i))
+               ORDER BY updatedAt DESC, id LIMIT @limit`,
+            )
+            .all({ userId, u: before.updatedAt, i: before.id, limit })
+    ) as ConvoSummary[];
+    return rows;
+  }
+
+  get(userId: string, id: string): Conversation | null {
+    const row = getDb()
+      .prepare(`SELECT id, title, messages FROM conversations WHERE id = ? AND userId = ?`)
+      .get(id, userId) as { id: string; title: string; messages: string } | undefined;
+    if (!row) return null;
+    try {
+      return { id: row.id, title: row.title, messages: JSON.parse(row.messages) };
+    } catch {
+      return null; // corrupt row — treat as missing, never throw into a route
+    }
+  }
+}
+
+/** Resumable generations (TECH_DEBT #23): each turn's finished reply, keyed
+ *  by the client-generated replyId, so a disconnected client (screen lock,
+ *  stall-guard abort under heavy load) collects the finished result instead
+ *  of paying for a re-generation. Rows expire after 24h (purged on start).
+ *  Ownership fail-closed: reads and writes are keyed by (replyId, userId). */
+export class SqliteTurnResultStore implements TurnResultStore {
+  start(replyId: string, userId: string, now: number): void {
+    const db = getDb();
+    db.prepare(`DELETE FROM turn_results WHERE updatedAt < ?`).run(now - 24 * 60 * 60 * 1000);
+    db.prepare(
+      `INSERT INTO turn_results (replyId, userId, status, text, artifactHtml, createdAt, updatedAt)
+       VALUES (@replyId, @userId, 'running', NULL, NULL, @now, @now)
+       ON CONFLICT(replyId) DO UPDATE SET status = 'running', text = NULL, artifactHtml = NULL, updatedAt = @now
+       WHERE turn_results.userId = @userId`,
+    ).run({ replyId, userId, now });
+  }
+
+  complete(replyId: string, userId: string, text: string, artifactHtml: string | null, now: number): void {
+    getDb()
+      .prepare(
+        `UPDATE turn_results SET status = 'done', text = @text, artifactHtml = @artifactHtml, updatedAt = @now
+         WHERE replyId = @replyId AND userId = @userId`,
+      )
+      .run({ replyId, userId, text, artifactHtml, now });
+  }
+
+  fail(replyId: string, userId: string, now: number): void {
+    getDb()
+      .prepare(
+        `UPDATE turn_results SET status = 'error', updatedAt = @now
+         WHERE replyId = @replyId AND userId = @userId`,
+      )
+      .run({ replyId, userId, now });
+  }
+
+  get(userId: string, replyId: string): TurnResult | null {
+    const row = getDb()
+      .prepare(`SELECT status, text, artifactHtml FROM turn_results WHERE replyId = ? AND userId = ?`)
+      .get(replyId, userId) as { status: TurnResult["status"]; text: string | null; artifactHtml: string | null } | undefined;
+    if (!row) return null;
+    return { status: row.status, text: row.text ?? undefined, artifactHtml: row.artifactHtml };
   }
 }

@@ -4,6 +4,39 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 
 ## Chat (home `/`)
 - Gemini-powered kids chat: text + voice (TTS playback, regenerate last answer)
+- **Server-side chat history** (2026-07-13, TECH_DEBT #26 shipped): every
+  conversation (messages + generated game HTML) persists in SQLite keyed by
+  the account (signed-in) or the guest device cookie — chats survive cleared
+  localStorage and follow a signed-in kid across devices. The sidebar Recents
+  is an infinite list: first 30 from the server, more load on scroll ("Older
+  chats…"); opening a server-only chat fetches its messages on demand.
+  localStorage is now just the warm cache (its quota trims oldest-first,
+  never the active chat). One-time migration uploads a device's pre-existing
+  chats on the first visit after the update. Ownership fail-closed at the SQL
+  layer (`/api/chats*`, `SqliteChatHistoryStore`); write-through happens once
+  per finished turn, never per streamed token
+- **Resumable generations** (2026-07-13, TECH_DEBT #23 shipped): the server
+  keeps each turn's finished reply in `turn_results` (24h TTL) keyed by the
+  client's replyId — a dropped or stalled stream POLLS `/api/chat/result`
+  (4s ticks, up to 4 minutes while the server says `running`) and applies the
+  finished reply for free instead of paying for a re-generation. Also the
+  heavy-load tactic: a slow-but-alive model gets minutes of patience instead
+  of a 30s kill-and-rebill re-entering the same overloaded pool. Re-generation
+  only on genuine server error / unknown turn
+- **Hedged generation + escalating wait UX** (2026-07-13): a model that goes
+  fully silent for 30s (no chunks, not even thoughts) gets a HEDGE — the next
+  fallback-chain model races it in parallel; the first answer token wins and
+  the loser is abandoned unconsumed (at most one hedge per turn — no
+  thundering herd when Google is overloaded). If the loser had streamed a
+  partial, the `restart` event wipes it. Meanwhile the kid's "Thinking…" line
+  escalates honestly by elapsed time (`wait-line.ts`: 🧱 → "calling in a
+  faster helper 🤖⚡" → 🔧 → 🦖) — never a frozen spinner. Env knob:
+  `GEMINI_STALL_SWITCH_MS`
+- **Tab-close recovery** (2026-07-13): the device bookmarks its in-flight turn
+  (`pending-turn.ts`); if the tab closes mid-generation, the next app load
+  collects the server-finished reply from `turn_results` into the waiting
+  bubble and syncs it into durable history — the reply is part of the chat
+  whenever the kid comes back (24h window, matching the server TTL)
 - **Live dictation** (2026-07-10): while the mic is on, words appear in the
   composer AS the kid speaks (interim results stream in, then firm up when
   the recognizer finalizes them — `composeDictation`/`splitSpeechResults` in

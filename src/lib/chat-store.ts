@@ -6,13 +6,29 @@
 import type { Conversation } from "@/types/chat.types";
 
 const KEY = "kidgemini:chats:v1";
-const MAX_CONVOS = 20;
 
+/**
+ * Persist every conversation — NO arbitrary cap (BUG-FIX-LOG 2026-07-13: the
+ * old hard 20-convo cap silently deleted older chats with no way to reach
+ * them). The only limit is the browser's real localStorage quota: when a
+ * write is refused, drop the OLDEST conversations (list is newest-first, so
+ * trim from the tail) until it fits — halving each attempt keeps the retries
+ * logarithmic even though each one re-serializes. The ACTIVE conversation is
+ * always kept, wherever it sits in the list.
+ */
 export function saveChats(storage: Storage, convos: Conversation[], activeId: string): void {
-  try {
-    storage.setItem(KEY, JSON.stringify({ convos: convos.slice(0, MAX_CONVOS), activeId }));
-  } catch {
-    /* quota/private mode — chat keeps working, just not persisted */
+  for (let n = convos.length; n >= 1; n = Math.floor(n / 2)) {
+    let keep = convos.slice(0, n);
+    if (!keep.some((c) => c.id === activeId)) {
+      const active = convos.find((c) => c.id === activeId);
+      if (active) keep = [...keep.slice(0, Math.max(0, n - 1)), active];
+    }
+    try {
+      storage.setItem(KEY, JSON.stringify({ convos: keep, activeId }));
+      return;
+    } catch {
+      /* quota/private mode — try fewer; a 1-convo failure means no persistence */
+    }
   }
 }
 

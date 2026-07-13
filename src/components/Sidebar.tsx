@@ -22,10 +22,14 @@ interface SidebarProps {
   onClose: () => void;
   onNewChat: () => void;
   onSelect: (id: string) => void;
+  /** True while the server has older chats beyond the loaded index. */
+  hasMore?: boolean;
+  /** Scrolling near the bottom of Recents asks the container for the next page. */
+  onEndReached?: () => void;
 }
 
 export function Sidebar(props: SidebarProps) {
-  const { recents, activeId, isOpen, searchQuery, onSearchChange, onClose, onNewChat, onSelect } = props;
+  const { recents, activeId, isOpen, searchQuery, onSearchChange, onClose, onNewChat, onSelect, hasMore, onEndReached } = props;
   const [isSearching, setIsSearching] = useState(false);
   function closeSearch() {
     onSearchChange("");
@@ -124,7 +128,14 @@ export function Sidebar(props: SidebarProps) {
         {/* /admin is OPERATOR tooling (ADMIN_SECRET) — not linked in kid UI. */}
       </nav>
 
-      <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-3">
+      <div
+        className="mt-4 min-h-0 flex-1 overflow-y-auto px-3"
+        onScroll={(e) => {
+          // Infinite Recents: nearing the bottom pulls the next server page.
+          const el = e.currentTarget;
+          if (hasMore && el.scrollHeight - el.scrollTop - el.clientHeight < 120) onEndReached?.();
+        }}
+      >
         <p className="px-3 pb-1 pt-2 text-xs font-medium uppercase tracking-wide text-neutral-400">
           {searchQuery.trim()
             ? `Recent — ${recents.length} ${recents.length === 1 ? "match" : "matches"}`
@@ -153,6 +164,16 @@ export function Sidebar(props: SidebarProps) {
               </button>
             </li>
           ))}
+          {hasMore && (
+            <li>
+              <button
+                onClick={() => onEndReached?.()}
+                className="w-full rounded-lg px-3 py-2 text-left text-xs text-neutral-400 hover:bg-neutral-200/60"
+              >
+                ⌄ Older chats…
+              </button>
+            </li>
+          )}
         </ul>
       </div>
 

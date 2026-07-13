@@ -1,6 +1,6 @@
 // Pins the 4-model fallback chain policy (PRD-MODEL-FALLBACK §2/§3).
 import { describe, expect, it } from "vitest";
-import { fallbackChain, isModelGone, isOverloaded, MAX_FALLBACKS, shouldTryNextModel } from "./model-fallback";
+import { fallbackChain, isModelGone, isOverloaded, isTransient, MAX_FALLBACKS, shouldTryNextModel } from "./model-fallback";
 
 describe("fallbackChain", () => {
   it("default chain is the owner-specified ladder (2026-07-11): 3-flash-preview → 2.5-flash → 2.5-flash-lite", () => {
@@ -48,5 +48,30 @@ describe("chain policy — what moves down the chain vs throws", () => {
     expect(shouldTryNextModel(err("400 INVALID_ARGUMENT: bad request"))).toBe(false);
     expect(shouldTryNextModel(err("403 PERMISSION_DENIED: API key invalid"))).toBe(false);
     expect(shouldTryNextModel(err("blocked by safety settings"))).toBe(false);
+  });
+
+  // Regression 2026-07-13: production "Oops! Something went wrong." with NO
+  // fallback — Google returned a transient 5xx that wasn't 503, so
+  // shouldTryNextModel said throw. The retry layer already treated
+  // 500/502/504/network drops as transient; the chain must agree.
+  it("transient 5xx (500 INTERNAL/502/504) → next model, matching the retry layer", () => {
+    expect(shouldTryNextModel(err('got status: INTERNAL. {"code":500,"message":"An internal error has occurred."}'))).toBe(true);
+    expect(shouldTryNextModel(err("502 Bad Gateway"))).toBe(true);
+    expect(shouldTryNextModel(err("504 Gateway Timeout"))).toBe(true);
+    expect(isTransient(err("500 Internal Server Error"))).toBe(true);
+  });
+
+  it("network-level drops (fetch failed/ECONNRESET/socket hang up/terminated) → next model", () => {
+    expect(shouldTryNextModel(err("fetch failed"))).toBe(true);
+    expect(shouldTryNextModel(err("read ECONNRESET"))).toBe(true);
+    expect(shouldTryNextModel(err("socket hang up"))).toBe(true);
+    expect(shouldTryNextModel(err("terminated"))).toBe(true);
+    expect(shouldTryNextModel(err("Client network socket disconnected before secure TLS connection was established"))).toBe(true);
+  });
+
+  it("transient detection stays out of caller-defect messages", () => {
+    expect(isTransient(err("400 INVALID_ARGUMENT: bad request"))).toBe(false);
+    expect(isTransient(err("403 PERMISSION_DENIED: API key invalid"))).toBe(false);
+    expect(isTransient(err("blocked by safety settings"))).toBe(false);
   });
 });

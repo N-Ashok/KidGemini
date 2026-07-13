@@ -58,9 +58,25 @@ const usedByUser = vi.fn((..._a: unknown[]): number => 0); // device tally (gues
 const usedByIp = vi.fn((..._a: unknown[]): number => 0); // guest tokens across an IP (windowed)
 const usedByUserSince = vi.fn((): number => 0); // signed-in daily tally
 const rateHit = vi.fn((): { state: string; mustPay?: boolean; until?: number } => ({ state: "ok" }));
+// Turn-result capture (resumable generations): what the route persisted.
+const turnCalls: Array<{ op: string; replyId: string; userId: string; text?: string; artifactHtml?: string | null }> = [];
 vi.mock("@/lib/db", () => ({
   SqliteAlertStore: class {
     record() {}
+  },
+  SqliteTurnResultStore: class {
+    start(replyId: string, userId: string) {
+      turnCalls.push({ op: "start", replyId, userId });
+    }
+    complete(replyId: string, userId: string, text: string, artifactHtml: string | null) {
+      turnCalls.push({ op: "complete", replyId, userId, text, artifactHtml });
+    }
+    fail(replyId: string, userId: string) {
+      turnCalls.push({ op: "fail", replyId, userId });
+    }
+    get() {
+      return null;
+    }
   },
   SqliteUsageStore: class {
     record() {}
@@ -302,5 +318,61 @@ describe("POST /api/chat — thought summaries → kid-facing thinking events (2
 
     expect(text).not.toContain('"type":"thinking"');
     expect(text).toContain('"type":"done"');
+  });
+});
+
+describe("POST /api/chat — mid-answer model restart (2026-07-13)", () => {
+  it("R.1 a restart chunk relays as a restart event and resets the accumulator — done carries only the final model's answer", async () => {
+    authMock.mockResolvedValue(null);
+    async function* restarting() {
+      yield { kind: "delta", text: "<html>partial" };
+      yield { kind: "restart", text: "" };
+      yield { kind: "delta", text: "Fresh game" };
+    }
+    replyStreamMock.mockReturnValue(restarting());
+
+    const res = await POST(makeReq({ message: "make me a game", history: [] }));
+    const lines = (await res.text()).trim().split("\n").map((l) => JSON.parse(l));
+
+    expect(lines.some((e) => e.type === "restart")).toBe(true);
+    const done = lines.find((e) => e.type === "done");
+    expect(done.text).toBe("Fresh game"); // the wiped partial never reaches done/usage
+  });
+});
+
+describe("POST /api/chat — resumable turns (2026-07-13)", () => {
+  it("RT.1 persists start + the finished result under the client's replyId", async () => {
+    turnCalls.length = 0;
+    authMock.mockResolvedValue({ userId: "user:kid@x.com" });
+    replyStreamMock.mockReturnValue(one("Done game"));
+
+    const res = await POST(makeReq({ message: "make me a game", history: [], replyId: "reply-1" }));
+    await res.text(); // drain the stream so the producer finishes
+
+    expect(turnCalls[0]).toMatchObject({ op: "start", replyId: "reply-1", userId: "user:kid@x.com" });
+    expect(turnCalls.at(-1)).toMatchObject({ op: "complete", replyId: "reply-1", text: "Done game" });
+  });
+
+  it("RT.2 a stream error marks the turn failed (client falls back to re-generating)", async () => {
+    turnCalls.length = 0;
+    authMock.mockResolvedValue({ userId: "user:kid@x.com" });
+    // eslint-disable-next-line require-yield
+    replyStreamMock.mockReturnValue((async function* (): AsyncGenerator<never> { throw new Error("boom"); })());
+
+    const res = await POST(makeReq({ message: "hello", history: [], replyId: "reply-2" }));
+    await res.text();
+
+    expect(turnCalls.map((c) => c.op)).toEqual(["start", "fail"]);
+  });
+
+  it("RT.3 without a replyId there is no turn bookkeeping (old clients unaffected)", async () => {
+    turnCalls.length = 0;
+    authMock.mockResolvedValue(null);
+    replyStreamMock.mockReturnValue(one("Hello!"));
+
+    const res = await POST(makeReq({ message: "hello", history: [] }));
+    await res.text();
+
+    expect(turnCalls).toEqual([]);
   });
 });

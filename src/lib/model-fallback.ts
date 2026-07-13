@@ -44,9 +44,22 @@ export function isModelGone(err: unknown): boolean {
   return /\b404\b|NOT_FOUND|is not found|not supported/i.test((err as Error)?.message ?? "");
 }
 
-/** Chain policy: capacity problems and retired models move DOWN the chain;
- *  everything else (safety, auth, 400s) throws immediately — fallback must
- *  never mask a real defect or dodge a safety verdict. */
+/** Transient infrastructure failure that is NOT a clean 503: Google 5xx
+ *  INTERNAL errors and network-level drops (fetch failed, reset sockets).
+ *  The retry layer (retry.ts isRetryable) already treats these as transient;
+ *  the chain must agree — 2026-07-13 production incident: a non-503 transient
+ *  threw straight to "Oops! Something went wrong." without touching the
+ *  fallback chain. */
+export function isTransient(err: unknown): boolean {
+  return /\b(500|502|504)\b|\bINTERNAL\b|fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE|socket hang up|socket disconnected|network|\bterminated\b|deadline/i.test(
+    (err as Error)?.message ?? "",
+  );
+}
+
+/** Chain policy: capacity problems, retired models, and transient
+ *  infra/network failures move DOWN the chain; everything else (safety, auth,
+ *  400s) throws immediately — fallback must never mask a real defect or dodge
+ *  a safety verdict. */
 export function shouldTryNextModel(err: unknown): boolean {
-  return isOverloaded(err) || isModelGone(err);
+  return isOverloaded(err) || isModelGone(err) || isTransient(err);
 }

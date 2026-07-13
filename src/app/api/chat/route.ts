@@ -13,7 +13,7 @@ import { injectAssets } from "@/lib/assets/inject";
 import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
 import { RulesClassifier } from "@/lib/safety.rules";
-import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore } from "@/lib/db";
+import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore, SqliteTurnResultStore } from "@/lib/db";
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
@@ -29,6 +29,7 @@ const chatModel = new GeminiChatModel();
 const alerts = new SqliteAlertStore();
 const usage = new SqliteUsageStore();
 const rateLimit = new SqliteRateLimitStore();
+const turnResults = new SqliteTurnResultStore();
 
 const KIND_REDIRECT =
   "Let's talk about something else! How about a fun fact, a story, or a game? 🌟";
@@ -37,12 +38,28 @@ const estTokens = (t: string) => Math.ceil(t.length / 4);
 
 export async function POST(req: NextRequest) {
   const geo = resolveGeo(req);
-  let body: { message?: string; history?: ChatMessage[]; image?: unknown };
+  let body: { message?: string; history?: ChatMessage[]; image?: unknown; replyId?: unknown };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+
+  // Resumable generations (TECH_DEBT #23): when the client names its reply
+  // message id, the finished result is ALSO kept server-side so a
+  // disconnected client can collect it instead of re-generating. Every
+  // turn-result write is fail-open — a bookkeeping hiccup never breaks chat.
+  const replyId =
+    typeof body.replyId === "string" && body.replyId.length > 0 && body.replyId.length <= 100
+      ? body.replyId
+      : null;
+  const trackTurn = (op: () => void) => {
+    try {
+      op();
+    } catch (err) {
+      console.warn(`[api/chat] turn-result write failed (ignored): ${(err as Error).message}`);
+    }
+  };
 
   const message = (body.message ?? "").trim();
   // Trim what the MODEL sees (stale game versions stripped + sliding window,
@@ -193,6 +210,7 @@ export async function POST(req: NextRequest) {
   // retracted after they stream (chess-block class, BUG-FIX-LOG 2026-07-09).
   return ndjson(async (send) => {
     let full = "";
+    if (replyId) trackTurn(() => turnResults.start(replyId, userId, Date.now()));
     try {
       console.log(`[api/chat] streaming… @${ms()}ms`);
       for await (const chunk of chatModel.replyStream({ history, message, image })) {
@@ -204,11 +222,21 @@ export async function POST(req: NextRequest) {
           if (line) send({ type: "thinking", text: line });
           continue; // thoughts are never part of the answer
         }
+        if (chunk.kind === "restart") {
+          // A model died mid-answer and a fallback is producing a FRESH reply
+          // (2026-07-13): drop the partial here too, so done/usage only ever
+          // carry the answer the kid actually keeps.
+          full = "";
+          send({ type: "restart" });
+          console.warn(`[api/chat] ↻ mid-answer model restart @${ms()}ms — partial wiped`);
+          continue;
+        }
         full += chunk.text;
         send({ type: "delta", text: chunk.text });
       }
     } catch (err) {
       console.error(`[api/chat] ✖ stream error @${ms()}ms: ${(err as Error).message}`);
+      if (replyId) trackTurn(() => turnResults.fail(replyId, userId, Date.now()));
       send({ type: "error", text: "Oops! Something went wrong. Let's try again." });
       return;
     }
@@ -238,6 +266,9 @@ export async function POST(req: NextRequest) {
     // Send the FULL text (code block kept inline, Gemini-style) for the chat,
     // and the extracted HTML for the side panel preview.
     send({ type: "done", text: full, artifactHtml: deliverableHtml });
+    // Keep the finished result server-side even if nobody is listening — a
+    // disconnected client polls /api/chat/result instead of re-generating.
+    if (replyId) trackTurn(() => turnResults.complete(replyId, userId, full, deliverableHtml, Date.now()));
     recordUsage("chat", chatModelName, message, cleaned, false);
     console.log(`[api/chat] ✓ shown @${ms()}ms`);
   }, guestCookieHeader(setGuestCookie));

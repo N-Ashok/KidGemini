@@ -41,8 +41,13 @@ import {
 } from "@/lib/preview-pane";
 import { PanelResizeHandle } from "./PanelResizeHandle";
 import { searchChats } from "@/lib/chat-search";
+import { appendPage, mergeRecents, SYNC_FLAG } from "@/lib/chat-sync";
+import type { ConvoSummary } from "@/types/chat-history.types";
 import { pickSuggestions } from "@/lib/game-suggestions";
 import { shouldAutoRetry } from "@/lib/stream-recovery";
+import { pollTurnResult } from "@/lib/turn-resume";
+import { savePendingTurn, clearPendingTurn, loadPendingTurn } from "@/lib/pending-turn";
+import { waitLine } from "@/lib/wait-line";
 import { useWakeLock } from "./useWakeLock";
 
 const KIND_FALLBACK = "Let's talk about something else! How about a game? 🌟";
@@ -80,6 +85,17 @@ export function ChatPanelContainer() {
   // place of the static "Thinking…" so planning feels alive (2026-07-11).
   // Server-filtered (kid-thought.ts); reset at every stream start.
   const [thinkingLine, setThinkingLine] = useState<string | null>(null);
+  // Escalating wait status (owner decision 2026-07-13): while busy with no
+  // model thought to show, the line rotates by elapsed time (wait-line.ts) —
+  // never a frozen "Thinking…" for minutes.
+  const busyStartRef = useRef(0);
+  const [, setWaitTick] = useState(0);
+  useEffect(() => {
+    if (!busy) return;
+    busyStartRef.current = Date.now();
+    const t = window.setInterval(() => setWaitTick((x) => x + 1), 5_000);
+    return () => window.clearInterval(t);
+  }, [busy]);
   const [artifact, setArtifact] = useState<string | null>(null);
   // Desktop full-screen preview (PRD-PREVIEW-PANE): a CSS-only wrapper toggle —
   // the ArtifactFrame subtree (and its iframe) never remounts, so collapsing
@@ -87,6 +103,15 @@ export function ChatPanelContainer() {
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer; always visible on md+
   const [searchQuery, setSearchQuery] = useState(""); // sidebar chat search (title + message text)
+  // Server-side history (TECH_DEBT #26): the paginated Recents index from
+  // /api/chats. Chats live durably on the server keyed by account/guest
+  // cookie; localStorage is just the warm cache. remoteIndex holds summaries
+  // only — a chat's messages are fetched when the kid opens it.
+  const [remoteIndex, setRemoteIndex] = useState<ConvoSummary[]>([]);
+  const [remoteHasMore, setRemoteHasMore] = useState(false);
+  const remoteIndexRef = useRef<ConvoSummary[]>([]);
+  remoteIndexRef.current = remoteIndex;
+  const remoteLoadingRef = useRef(false);
   // Set when the server stops the guest: sign-in gate (token limit), rate-limit, or pay wall.
   const [gate, setGate] = useState<{ text: string; upgrade: boolean } | null>(null);
   // Starter chips: a fresh random four per load AND per chat switch. Picked in
@@ -131,6 +156,124 @@ export function ChatPanelContainer() {
   useEffect(() => {
     if (hydratedFromStore.current) saveChats(window.localStorage, convos, activeId);
   }, [convos, activeId]);
+
+  /** Fetch the next page of the server Recents index (30/page). Reentrant-safe. */
+  async function loadMoreRemote(reset = false) {
+    if (remoteLoadingRef.current) return;
+    remoteLoadingRef.current = true;
+    try {
+      const cursor = !reset ? remoteIndexRef.current.at(-1) : undefined;
+      const qs = cursor ? `?before=${cursor.updatedAt}&beforeId=${encodeURIComponent(cursor.id)}` : "";
+      const res = await fetch(`/api/chats${qs}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const { chats } = (await res.json()) as { chats: ConvoSummary[] };
+      setRemoteHasMore(chats.length >= 30);
+      setRemoteIndex((prev) => (reset ? chats : appendPage(prev, chats)));
+    } catch {
+      /* offline — the local cache still works; next scroll retries */
+    } finally {
+      remoteLoadingRef.current = false;
+    }
+  }
+
+  // Server-history bootstrap, once per mount: (1) one-time migration of the
+  // device's pre-existing chats to the account/guest identity, then (2) the
+  // first page of the server index. Signed-out→signed-in transitions remount
+  // the app via the sign-in round trip, so this also covers "first sign-in".
+  const syncedRef = useRef(false);
+  useEffect(() => {
+    if (syncedRef.current) return;
+    syncedRef.current = true;
+    const bootstrap = async () => {
+      // Tab-close recovery: an in-flight turn from a previous visit? Collect
+      // its finished reply from the server into the waiting bubble — the
+      // reply belongs in the chat whenever the kid comes back (owner
+      // decision 2026-07-13). Quick poll only; `running` turns are stale by
+      // now (the stream died with the tab) so one miss is final.
+      try {
+        const pending = loadPendingTurn(window.localStorage);
+        if (pending) {
+          clearPendingTurn(window.localStorage);
+          const resumed = await pollTurnResult(pending.replyId, { maxMs: 6_000, intervalMs: 2_000 });
+          if (resumed) {
+            console.log(`[chat] ↻ recovered a finished reply from a previous visit`);
+            setConvos((list) => {
+              const next = list.map((c) =>
+                c.id !== pending.convoId
+                  ? c
+                  : {
+                      ...c,
+                      messages: c.messages.map((m) =>
+                        m.id === pending.replyId
+                          ? { ...m, text: resumed.text, artifactHtml: resumed.artifactHtml ?? undefined }
+                          : m,
+                      ),
+                    },
+              );
+              const convo = next.find((c) => c.id === pending.convoId);
+              if (convo) {
+                // Fire-and-forget: the recovered turn is now part of durable history too.
+                void fetch(`/api/chats/${encodeURIComponent(convo.id)}`, {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ convo }),
+                }).catch(() => {});
+              }
+              return next;
+            });
+          }
+        }
+      } catch {
+        /* recovery is best-effort — never block the app load */
+      }
+      try {
+        const saved = loadChats(window.localStorage);
+        if (saved?.convos.length && !window.localStorage.getItem(SYNC_FLAG)) {
+          const res = await fetch("/api/chats", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ convos: saved.convos }),
+          });
+          // 401 = brand-new visitor with no identity yet — retry after their
+          // first message mints the guest cookie (flag stays unset).
+          if (res.ok) window.localStorage.setItem(SYNC_FLAG, "1");
+        }
+      } catch {
+        /* offline migration attempt — flag stays unset, retried next visit */
+      }
+      await loadMoreRemote(true);
+    };
+    void bootstrap();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot bootstrap
+  }, []);
+
+  // Write-through: when a turn finishes (busy true→false), persist the active
+  // conversation server-side. Not per-delta — a game streams ~200KB and we
+  // don't want a PUT per token. Fire-and-forget: a failed sync costs nothing
+  // (localStorage still has it; the next finished turn re-syncs the whole convo).
+  const prevBusyRef = useRef(false);
+  useEffect(() => {
+    const wasBusy = prevBusyRef.current;
+    prevBusyRef.current = busy;
+    if (!wasBusy || busy) return; // only on the finished-turn transition
+    const c = convos.find((x) => x.id === activeId);
+    if (!c || c.messages.length < 2) return; // greeting-only chat — nothing to keep
+    fetch(`/api/chats/${encodeURIComponent(c.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ convo: c }),
+    })
+      .then((res) => {
+        if (!res.ok) return;
+        setRemoteIndex((prev) => [
+          { id: c.id, title: c.title, updatedAt: Date.now() },
+          ...prev.filter((r) => r.id !== c.id),
+        ]);
+      })
+      .catch(() => {
+        /* offline — local cache covers it until the next turn */
+      });
+  }, [busy, convos, activeId]);
   useEffect(() => {
     if (hydratedFromStore.current) saveIdeas(window.localStorage, ideas);
   }, [ideas]);
@@ -153,9 +296,16 @@ export function ChatPanelContainer() {
   }, [artifact]);
 
   const active = convos.find((c) => c.id === activeId) ?? convos[0]!;
+  // Sidebar list = local chats (full-text searched) + server-only chats not on
+  // this device (title-searched; their messages load when opened).
   const recents = useMemo(
-    () => searchChats(convos, searchQuery).map((c) => ({ id: c.id, title: c.title })),
-    [convos, searchQuery],
+    () =>
+      mergeRecents(
+        searchChats(convos, searchQuery).map((c) => ({ id: c.id, title: c.title })),
+        remoteIndex,
+        searchQuery,
+      ),
+    [convos, searchQuery, remoteIndex],
   );
 
   // Scroll model = Gemini's "anchor to the prompt" (2026-07-09, replaces
@@ -215,10 +365,26 @@ export function ChatPanelContainer() {
 
   function handleSelect(id: string) {
     tts.stop();
-    setActiveId(id);
     setArtifact(null);
     setPreviewExpanded(false);
     setSidebarOpen(false);
+    if (convos.some((c) => c.id === id)) {
+      setActiveId(id);
+      return;
+    }
+    // Server-only chat (older than this device's cache): fetch its messages,
+    // then open it. On failure the kid simply stays on the current chat.
+    void (async () => {
+      try {
+        const res = await fetch(`/api/chats/${encodeURIComponent(id)}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const { convo } = (await res.json()) as { convo: Conversation };
+        setConvos((list) => (list.some((c) => c.id === convo.id) ? list : [...list, convo]));
+        setActiveId(convo.id);
+      } catch {
+        /* offline — server-only chats need a connection */
+      }
+    })();
   }
 
   /** Resolves immediately if the page is visible, else on the next return to
@@ -274,13 +440,19 @@ export function ChatPanelContainer() {
     let acc = "";
     setBusy(true);
     setThinkingLine(null);
+    // Tab-close recovery bookmark: if the kid leaves entirely mid-generation,
+    // the next app load finds this and collects the finished reply from the
+    // server (turn_results) into the waiting bubble. Cleared on a normal finish.
+    if (attempt === 0) savePendingTurn(window.localStorage, { replyId, convoId: activeId, startedAt: Date.now() });
     console.log(`[chat] ▶ sending: "${text.slice(0, 60)}"`);
 
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, history, ...(image ? { image } : {}) }),
+        // replyId: the server keeps this turn's finished result under it, so a
+        // dropped/stalled stream can be RESUMED (polled) instead of re-generated.
+        body: JSON.stringify({ message: text, history, replyId, ...(image ? { image } : {}) }),
         signal: controller.signal,
       });
       // Fail loud, never hang: a non-streaming response (401 auth gate, 4xx/5xx, or a body-less
@@ -327,6 +499,16 @@ export function ChatPanelContainer() {
             if (!firstTokenAt) { firstTokenAt = Date.now(); console.log(`[chat] first token @${firstTokenAt - startedAt}ms`); }
             acc += ev.text ?? "";
             setReply(acc);
+          } else if (ev.type === "restart") {
+            // A model died mid-answer and a fallback is answering FRESH
+            // (2026-07-13): the partial code was only a "working" signal —
+            // wipe the chat bubble alone (preview/other UI untouched) and
+            // relay the new model's thoughts + code from scratch.
+            acc = "";
+            firstTokenAt = 0; // new model thinks first — back to the generous first-token stall budget
+            setReply("");
+            setThinkingLine(null);
+            console.warn(`[chat] ↻ fallback model restart @${Date.now() - startedAt}ms — partial reply cleared`);
           } else if (ev.type === "done") {
             setReply(ev.text ?? acc, ev.artifactHtml ?? undefined);
             setArtifact((a) => nextArtifact({ type: "done", artifactHtml: ev.artifactHtml }, a));
@@ -391,6 +573,10 @@ export function ChatPanelContainer() {
     } finally {
       clearTimeout(stall);
       abortRef.current = null;
+      // A finalized turn (or a manual stop) has nothing left to recover.
+      // Exhausted retries deliberately KEEP the bookmark — a later reload can
+      // still collect the reply the server finished on its own.
+      if (finalized || manualStopRef.current) clearPendingTurn(window.localStorage);
       if (!willRetry) setBusy(false); // stay "busy" across a retry — no flicker, Stop still works
       console.log(`[chat] finished; total ${Date.now() - startedAt}ms${willRetry ? " (retrying)" : ""}`);
     }
@@ -401,6 +587,25 @@ export function ChatPanelContainer() {
       if (manualStopRef.current) {
         setReply(acc || "⏹ Stopped.");
         setBusy(false);
+        return;
+      }
+      // Resume before re-generating (TECH_DEBT #23 shipped): the server kept
+      // generating while we were detached — under heavy load the reply is
+      // usually FINISHED (or still cooking: `running` gets minutes of free
+      // patience). Only a genuine server-side failure re-generates (paid).
+      const resumed = await pollTurnResult(replyId);
+      if (manualStopRef.current) {
+        setReply(acc || "⏹ Stopped.");
+        setBusy(false);
+        return;
+      }
+      if (resumed) {
+        console.log(`[chat] ↻ resumed the finished reply from the server (no re-generation)`);
+        setReply(resumed.text, resumed.artifactHtml ?? undefined);
+        setArtifact((a) => nextArtifact({ type: "done", artifactHtml: resumed.artifactHtml }, a));
+        clearPendingTurn(window.localStorage);
+        setBusy(false);
+        onSuccess?.();
         return;
       }
       await runStream(text, history, replyId, attempt + 1, image, onSuccess);
@@ -513,6 +718,8 @@ export function ChatPanelContainer() {
         onClose={() => setSidebarOpen(false)}
         onNewChat={handleNewChat}
         onSelect={handleSelect}
+        hasMore={remoteHasMore}
+        onEndReached={() => void loadMoreRemote()}
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
@@ -554,7 +761,10 @@ export function ChatPanelContainer() {
             ))}
             {busy && active.messages[active.messages.length - 1]?.text === "" && (
               <p className="animate-pulse text-neutral-400">
-                {thinkingLine ? <>💭 <span className="italic">{thinkingLine}</span></> : "Thinking… 💭"}
+                {(() => {
+                  const line = thinkingLine ?? waitLine(Date.now() - busyStartRef.current);
+                  return line ? <>💭 <span className="italic">{line}</span></> : "Thinking… 💭";
+                })()}
               </p>
             )}
             {active.messages.length === 1 && (

@@ -45,6 +45,93 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-13 — Chats beyond the 20th silently vanished from Recents
+
+- **Symptom (what the user saw):** once a kid had more than 20 conversations,
+  older ones disappeared from the sidebar's Recents with no way to reach
+  them — they weren't hidden, they were gone.
+- **Surface area:** `src/lib/chat-store.ts` (`saveChats`); sidebar was
+  innocent (it already renders an unbounded, scrollable list).
+- **Root cause:** `saveChats` hard-truncated to `MAX_CONVOS = 20` on every
+  write — a quota safety margin implemented as silent data deletion. Class:
+  **resource guard that destroys data instead of degrading**.
+- **Fix:** cap removed. Every conversation persists; only a REAL localStorage
+  quota refusal trims, oldest-first (list is newest-first, trim the tail),
+  halving per retry, and the active conversation is always kept.
+- **Result (verified):** `chat-store.test.ts` — 40 convos round-trip intact;
+  simulated 1MB quota trims the tail but keeps the head; an active convo at
+  the tail survives trimming. Suite 472/472 green.
+- **Impact:** kids keep every chat until the browser genuinely runs out of
+  room (game-heavy chats ~200KB can still hit the ~5MB quota at ~25 chats —
+  the durable fix is server-side history, TECH_DEBT #26).
+- **Prevention:** the "persists EVERY conversation" test pins the no-cap
+  contract; the quota tests pin graceful oldest-first degradation.
+- **Related:** TECH_DEBT #25 (rename/delete), #26 (server-side history —
+  the real ceiling fix), BUG-FIX-LOG 2026-07-07 (chats lost on navigation).
+
+### 2026-07-13 — Mid-ANSWER model death ended the turn instead of walking the chain
+
+- **Symptom (what the user saw):** prod log 07:41–07:42: primary died
+  mid-thinking → chain correctly fell back to `gemini-3-flash-preview` → that
+  model started streaming the game code, then Google 503'd it mid-answer →
+  "Oops! Something went wrong." with 3 unused fallbacks remaining.
+- **Surface area:** `src/lib/gemini.ts` (replyStream), `src/app/api/chat/route.ts`,
+  `src/components/ChatPanel.container.tsx`, `src/types/chat.types.ts` (StreamChunk).
+- **Root cause:** deliberate guard — once visible answer text streamed, a
+  mid-stream death surfaced instead of falling back (restarting silently would
+  stitch two different answers). Correct instinct, wrong remedy: the partial
+  code is meaningless to the kid (owner decision 2026-07-13 — it's a "system
+  is working" signal), so ending the turn threw away 3 working fallbacks.
+- **Fix:** mid-answer transient deaths now keep walking the chain; a new
+  `restart` stream chunk is emitted immediately before the next model's first
+  output. The route resets its accumulator (done/usage never carry wiped
+  text) and relays `{type:"restart"}`; the client wipes the chat bubble ALONE
+  (resets acc/reply/thinking line and the first-token stall budget — preview
+  and other UI untouched) and relays the fresh thoughts + code. Real defects
+  (4xx/safety) still throw immediately.
+- **Result (verified):** `gemini.fallback.test.ts` F.7 (rewritten to the new
+  contract), F.8 (defect still surfaces), F.9 (consecutive restarts);
+  `route.test.ts` R.1 (accumulator reset). Suite 470/470 green.
+- **Impact:** a kid's game-build turn now survives Google killing the stream
+  at ANY phase — open, thinking, or mid-answer — as long as one chain model
+  can finish. The kid sees the partial vanish and a fresh answer stream in.
+- **Prevention:** F.7/F.9 pin the restart contract; R.1 pins the wiped
+  accumulator. Class: **resilience guard scoped wider than the invariant it
+  protects** (the invariant was "never stitch two answers", not "never retry").
+- **Related:** companion entry below (transient taxonomy, same date);
+  2026-07-11 (503 fallback chain); PRD-MODEL-FALLBACK §3.4.
+
+### 2026-07-13 — Non-503 transient errors skipped the fallback chain → kid saw "Oops"
+
+- **Symptom (what the user saw):** production chat replied "Oops! Something
+  went wrong. Let's try again." even though the 4-model fallback chain
+  (PRD-MODEL-FALLBACK) exists precisely to absorb Gemini incidents.
+- **Surface area:** `src/lib/model-fallback.ts` (`shouldTryNextModel`),
+  consumed by `gemini.ts` `replyStream`; `/api/chat` error path.
+- **Root cause:** the chain's move-down predicate only matched capacity
+  refusals (503/UNAVAILABLE/429) and retired models (404). Google transient
+  failures that surface as **500 INTERNAL / 502 / 504** or as network-level
+  drops (`fetch failed`, `ECONNRESET`, `socket hang up`, `terminated`) fell
+  into the "real defect" bucket and threw straight to the Oops line — even
+  though the RETRY layer (`retry.ts isRetryable`) already classified
+  500/502/504 as transient. The two layers disagreed on what "transient"
+  means. Class: **split-brain error taxonomy across resilience layers**.
+- **Fix:** added `isTransient()` to `model-fallback.ts` (5xx INTERNAL +
+  network drop signatures, aligned with `retry.ts`) and included it in
+  `shouldTryNextModel`. Safety/auth/400s still throw immediately.
+- **Result (verified):** `model-fallback.test.ts` — 3 new tests fail before
+  the fix, pass after; full suite 467/467 green.
+- **Impact:** any Google 5xx or connection drop now walks the fallback chain
+  (primary keeps its retries, each fallback gets one attempt) instead of
+  ending the kid's turn. Mid-stream failures after visible answer text still
+  surface, by design.
+- **Prevention:** regression tests pin 500/502/504 + network shapes as
+  chain-walking; the "stays out of caller-defect messages" test pins the
+  fail-closed side. When touching either error taxonomy, keep `retry.ts
+  isRetryable` and `model-fallback.ts isTransient` in agreement.
+- **Related:** PRD-MODEL-FALLBACK §3 (chain policy); 2026-07-11 incident
+  entry (503 mid-thinking fallback).
+
 ### 2026-07-12 — Model pipeline shipped white (textureless) Kenney models to the asset host
 
 - **Symptom (what the user saw):** in the gallery's first populated visual

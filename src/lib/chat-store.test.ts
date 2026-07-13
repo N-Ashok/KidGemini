@@ -30,12 +30,49 @@ describe("chat-store — chats survive navigation", () => {
     expect(loaded.activeId).toBe("b");
   });
 
-  it("caps stored conversations (newest-first list keeps its head)", () => {
+  // BUG-FIX-LOG 2026-07-13: the old hard 20-convo cap silently DELETED older
+  // chats with no way to reach them. Only real storage quota may trim now.
+  it("persists EVERY conversation — no arbitrary cap", () => {
     const s = fakeStorage();
     const many = Array.from({ length: 40 }, (_, i) => convo(`c${i}`));
     saveChats(s, many as never, "c0");
-    expect(loadChats(s)!.convos.length).toBeLessThanOrEqual(20);
+    expect(loadChats(s)!.convos.length).toBe(40);
     expect(loadChats(s)!.convos[0]!.id).toBe("c0");
+  });
+
+  it("on quota pressure drops the OLDEST conversations until it fits", () => {
+    const s = fakeStorage();
+    // ~200KB per convo; cap the store at ~1MB → only a handful fit.
+    const limited = {
+      ...s,
+      setItem: (k: string, v: string) => {
+        if (v.length > 1_000_000) throw new Error("QuotaExceededError");
+        s.setItem(k, v);
+      },
+    } as Storage;
+    const many = Array.from({ length: 40 }, (_, i) => convo(`c${i}`, true));
+    saveChats(limited, many as never, "c0");
+    const loaded = loadChats(s)!;
+    expect(loaded.convos.length).toBeGreaterThan(0);
+    expect(loaded.convos.length).toBeLessThan(40);
+    // Newest-first head survives; the tail (oldest) was trimmed.
+    expect(loaded.convos[0]!.id).toBe("c0");
+  });
+
+  it("the ACTIVE conversation survives quota trimming even from the tail", () => {
+    const s = fakeStorage();
+    const limited = {
+      ...s,
+      setItem: (k: string, v: string) => {
+        if (v.length > 1_000_000) throw new Error("QuotaExceededError");
+        s.setItem(k, v);
+      },
+    } as Storage;
+    const many = Array.from({ length: 40 }, (_, i) => convo(`c${i}`, true));
+    saveChats(limited, many as never, "c39"); // active is the OLDEST
+    const loaded = loadChats(s)!;
+    expect(loaded.convos.some((c) => c.id === "c39")).toBe(true);
+    expect(loaded.activeId).toBe("c39");
   });
 
   it("degrades to null on corrupt data or quota errors (never throws)", () => {

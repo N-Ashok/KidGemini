@@ -30,11 +30,13 @@ export interface ImageAttachment {
   data: string;
 }
 
-/** One streamed piece of a model reply: answer text, or a thought summary
+/** One streamed piece of a model reply: answer text, a thought summary
  *  (builder turns, includeThoughts) that feeds the kid-facing planning line —
- *  thoughts are never part of the answer. */
+ *  thoughts are never part of the answer — or a `restart`: the previous
+ *  model died mid-answer and a fallback is now producing a FRESH reply, so
+ *  everything streamed before it must be wiped (owner decision 2026-07-13). */
 export interface StreamChunk {
-  kind: "delta" | "thought";
+  kind: "delta" | "thought" | "restart";
   text: string;
 }
 

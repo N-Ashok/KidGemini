@@ -14,6 +14,23 @@ import { withRetry, withTimeout } from "./retry";
 // than leave a child staring at "Thinking…".
 const CHAT_TIMEOUT_MS = 30_000;
 
+// Hedged generation (owner decision 2026-07-13): a model that emits NO chunks
+// at all — not even thought summaries — for this long gets a HEDGE: the next
+// chain model starts IN PARALLEL (the slow one is not killed), and whichever
+// produces the first answer token wins; the loser is abandoned unconsumed.
+// At most ONE hedge per turn (no thundering herd — matters most exactly when
+// Google is overloaded). Healthy builder turns stream thought summaries well
+// inside this window. Env override: GEMINI_STALL_SWITCH_MS.
+const STALL_SWITCH_MS = 30_000;
+
+/** Internal marker: every live stream went silent past the watchdog window. */
+class StallSwitchError extends Error {
+  constructor(model: string, ms: number) {
+    super(`stall-switch: ${model} produced no chunks for ${ms}ms`);
+    this.name = "StallSwitchError";
+  }
+}
+
 // Exported so tests can pin the child-safety instruction (it replaced the
 // Flash-Lite output monitor — see docs/BUG-FIX-LOG.md 2026-07-09).
 export const CHILD_SYSTEM_PROMPT = `You are a friendly, encouraging assistant for a child aged between 7 and 14.
@@ -266,11 +283,12 @@ export class GeminiChatModel implements ChatModel {
     const ai = getClient();
     // Primary keeps its normal retries; each fallback gets ONE attempt so a
     // full incident walks the whole chain in ~a handful of tries, not 15
-    // (latency the kid feels). The chain covers BOTH failure shapes from the
-    // 2026-07-11 incident: refused at open, AND accepted-then-503-while-
-    // THINKING (stream error @433s in the pm2 log) — the latter falls through
-    // only while NO answer text has been sent (thoughts are ephemeral status
-    // lines, safe to restart; visible answer text is not).
+    // (latency the kid feels). The chain covers EVERY transient failure shape:
+    // refused at open, died-while-THINKING, and (2026-07-13 incident) died
+    // MID-ANSWER — the partial code is only a "system is working" signal
+    // (owner decision), so a mid-answer death moves to the next model and a
+    // `restart` chunk is emitted right before that model's first output, so
+    // the client wipes the partial chat bubble and relays fresh.
     const open = (model: string, retries: number) =>
       withRetry(
         () => ai.models.generateContentStream({
@@ -282,6 +300,13 @@ export class GeminiChatModel implements ChatModel {
       );
     const chain = [this.model, ...this.fallbacks];
     let answerStarted = false;
+    // Set when a model died after visible answer text; the NEXT model that
+    // actually produces output is prefixed with one `restart` chunk. Survives
+    // models that fail at open (no output → nothing new to wipe).
+    let pendingRestart = false;
+    // At most ONE hedge per TURN (not per chain slot) — no thundering herd
+    // exactly when Google is overloaded.
+    let hedged = false;
     let lastErr: unknown = null;
     for (let i = 0; i < chain.length; i++) {
       const model = chain[i]!;
@@ -298,27 +323,133 @@ export class GeminiChatModel implements ChatModel {
         if (!shouldTryNextModel(err)) throw new GeminiError(`chat stream failed: ${(err as Error).message}`);
         continue;
       }
+      // Hedged pump: consume this model, and if EVERY live stream goes silent
+      // past the window, race the next chain model in parallel. First answer
+      // token commits the winner; the loser is abandoned unconsumed.
+      const stallMs = Number(process.env.GEMINI_STALL_SWITCH_MS) || STALL_SWITCH_MS;
+      interface Src {
+        model: string;
+        it: AsyncIterator<unknown>;
+        pending?: Promise<{ src: Src; res?: IteratorResult<unknown>; err?: unknown }>;
+      }
+      let srcs: Src[] = [{ model, it: stream[Symbol.asyncIterator]() }];
+      /** Which source produced the answer tokens yielded so far (restart bookkeeping). */
+      let answerSrc: Src | null = null;
+      const abandon = (s: Src) => void s.it.return?.(undefined as never); // fire-and-forget
       try {
-        for await (const chunk of stream) {
+        pump: while (true) {
+          for (const s of srcs) {
+            if (!s.pending) {
+              s.pending = s.it.next().then(
+                (res) => ({ src: s, res: res as IteratorResult<unknown> }),
+                (err) => ({ src: s, err }),
+              );
+            }
+          }
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const won = await Promise.race<{ src?: Src; res?: IteratorResult<unknown>; err?: unknown; timeout?: true }>([
+            ...srcs.map((s) => s.pending!),
+            new Promise<{ timeout: true }>((resolve) => {
+              timer = setTimeout(() => resolve({ timeout: true }), stallMs);
+            }),
+          ]).finally(() => clearTimeout(timer));
+
+          if (won.timeout) {
+            const hedgeModel = chain[i + 1];
+            if (!hedged && hedgeModel) {
+              hedged = true;
+              console.warn(`[gemini] ${srcs.map((s) => s.model).join("+")} silent ${stallMs}ms — hedging with ${hedgeModel} (race, first answer wins)`);
+              try {
+                const hedgeStream = await open(hedgeModel, 0);
+                srcs.push({ model: hedgeModel, it: hedgeStream[Symbol.asyncIterator]() });
+              } catch (err) {
+                // Hedge refused to open — keep waiting on the original; a real
+                // defect still surfaces rather than being masked.
+                if (!shouldTryNextModel(err)) throw err;
+                console.warn(`[gemini] hedge ${hedgeModel} refused to open — staying with ${model}`);
+              }
+              continue;
+            }
+            // Already hedged (or nothing left to hedge with) and STILL silent:
+            // give up on this slot and let the outer chain walk continue.
+            throw new StallSwitchError(srcs.map((s) => s.model).join("+"), stallMs);
+          }
+
+          const src = won.src!;
+          src.pending = undefined;
+          if (won.err) {
+            // One racer died. With another racer alive, just drop the dead one;
+            // alone, apply the normal chain policy in the outer catch.
+            if (srcs.length > 1 && shouldTryNextModel(won.err)) {
+              console.warn(`[gemini] hedge racer ${src.model} died — continuing with the other`);
+              srcs = srcs.filter((s) => s !== src);
+              continue;
+            }
+            throw won.err;
+          }
+          if (won.res!.done) {
+            if (srcs.length > 1 && src !== answerSrc) {
+              // An uncommitted racer ended without ever answering — drop it.
+              srcs = srcs.filter((s) => s !== src);
+              continue;
+            }
+            return; // the (sole/committed) stream finished cleanly
+          }
+
+          const chunk = won.res!.value as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };
           // chunk.text would silently drop thought parts — walk the parts instead.
           const parts = chunk.candidates?.[0]?.content?.parts ?? [];
           for (const p of parts) {
             if (!p.text) continue;
             if (p.thought) {
+              // Thoughts from either racer feed the kid's planning line. A
+              // pending restart flushes here too (the new model has started
+              // responding → wipe the stale partial) — but never while a race
+              // is undecided: the wipe must wait for a committed winner.
+              if (pendingRestart && srcs.length === 1) {
+                pendingRestart = false;
+                answerStarted = false;
+                yield { kind: "restart", text: "" };
+              }
               yield { kind: "thought", text: p.text };
-            } else {
-              answerStarted = true;
-              yield { kind: "delta", text: p.text };
+              continue;
             }
+            // First ANSWER token commits this source and settles the race.
+            if (srcs.length > 1) {
+              for (const s of srcs) if (s !== src) abandon(s);
+              srcs = [src];
+              console.warn(`[gemini] race won by ${src.model}`);
+            }
+            if (answerStarted && answerSrc !== src) {
+              // A different model had already streamed answer text (pre-hedge
+              // partial): wipe it rather than stitching two answers.
+              pendingRestart = true;
+            }
+            if (pendingRestart) {
+              pendingRestart = false;
+              answerStarted = false;
+              yield { kind: "restart", text: "" };
+            }
+            answerStarted = true;
+            answerSrc = src;
+            yield { kind: "delta", text: p.text };
           }
         }
-        return; // finished cleanly
       } catch (err) {
-        // Mid-stream death: only restartable while nothing user-visible went
-        // out — after that, surface it (the client auto-retry keeps partials).
-        if (answerStarted || !shouldTryNextModel(err)) throw err;
+        // Mid-stream death: real defects surface; transient failures AND
+        // silence past the hedge window walk the chain. If answer text
+        // already went out, flag a restart so the next producing model wipes
+        // it clean instead of stitching two answers.
+        const stalled = err instanceof StallSwitchError;
+        for (const s of srcs) abandon(s);
+        if (!stalled && !shouldTryNextModel(err)) throw err;
         lastErr = err;
-        console.warn(`[gemini] ${model} died mid-thinking — trying the next model`);
+        if (answerStarted) {
+          pendingRestart = true;
+          console.warn(`[gemini] ${model} ${stalled ? "went silent" : "died"} mid-answer — restarting fresh on the next model`);
+        } else {
+          console.warn(`[gemini] ${model} ${stalled ? "went silent" : "died"} mid-thinking — trying the next model`);
+        }
       }
     }
     throw new GeminiError(`chat stream failed: ${(lastErr as Error).message}`);
