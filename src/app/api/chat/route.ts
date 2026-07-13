@@ -172,7 +172,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const chatModelName = process.env.GEMINI_CHAT_MODEL ?? "gemini-2.5-flash";
+  const chatModelName = process.env.GEMINI_CHAT_MODEL ?? "gemini-3-flash-preview";
 
   const t0 = Date.now();
   const ms = () => Date.now() - t0;
@@ -242,7 +242,7 @@ export async function POST(req: NextRequest) {
     }
     console.log(`[api/chat] stream done @${ms()}ms chars=${full.length}`);
 
-    const { text: cleaned, artifactHtml } = extractArtifact(full);
+    const { artifactHtml } = extractArtifact(full);
     // 3D games get their engine import map here — an asset-host URL string
     // spliced in, nothing read, nothing fetched (src/lib/assets/inject.ts).
     // CONTRACT: post-processing can never cost the child the game (BUG-FIX-LOG
@@ -269,7 +269,10 @@ export async function POST(req: NextRequest) {
     // Keep the finished result server-side even if nobody is listening — a
     // disconnected client polls /api/chat/result instead of re-generating.
     if (replyId) trackTurn(() => turnResults.complete(replyId, userId, full, deliverableHtml, Date.now()));
-    recordUsage("chat", chatModelName, message, cleaned, false);
+    // Meter the FULL reply (BUG-FIX-LOG 2026-07-13): `cleaned` strips the
+    // game code block — 90%+ of a build turn's billed output — so the cost
+    // dashboard undercounted ~75x. Google bills for `full`; so do we.
+    recordUsage("chat", chatModelName, message, full, false);
     console.log(`[api/chat] ✓ shown @${ms()}ms`);
   }, guestCookieHeader(setGuestCookie));
 }

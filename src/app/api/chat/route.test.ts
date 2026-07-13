@@ -58,6 +58,8 @@ const usedByUser = vi.fn((..._a: unknown[]): number => 0); // device tally (gues
 const usedByIp = vi.fn((..._a: unknown[]): number => 0); // guest tokens across an IP (windowed)
 const usedByUserSince = vi.fn((): number => 0); // signed-in daily tally
 const rateHit = vi.fn((): { state: string; mustPay?: boolean; until?: number } => ({ state: "ok" }));
+// Usage rows the route recorded (cost metering).
+const usageRows: Array<{ outputText?: string; outputTokens?: number }> = [];
 // Turn-result capture (resumable generations): what the route persisted.
 const turnCalls: Array<{ op: string; replyId: string; userId: string; text?: string; artifactHtml?: string | null }> = [];
 vi.mock("@/lib/db", () => ({
@@ -79,7 +81,9 @@ vi.mock("@/lib/db", () => ({
     }
   },
   SqliteUsageStore: class {
-    record() {}
+    record(row: { outputText?: string; outputTokens?: number }) {
+      usageRows.push(row);
+    }
     tokensUsedByUser(...a: unknown[]) {
       return usedByUser(...a);
     }
@@ -374,5 +378,22 @@ describe("POST /api/chat — resumable turns (2026-07-13)", () => {
     await res.text();
 
     expect(turnCalls).toEqual([]);
+  });
+});
+
+describe("POST /api/chat — cost metering (2026-07-13)", () => {
+  it("M.1 usage records the FULL reply including the game code block — never the stripped text", async () => {
+    usageRows.length = 0;
+    authMock.mockResolvedValue({ userId: "user:kid@x.com" });
+    const gameReply = "Here's your game!\n```html\n<html>" + "x".repeat(4000) + "</html>\n```";
+    replyStreamMock.mockReturnValue(one(gameReply));
+    // extractArtifact strips the code block for display purposes:
+    extractArtifactMock.mockImplementation(() => ({ text: "Here's your game!", artifactHtml: "<html>…</html>" }));
+
+    const res = await POST(makeReq({ message: "make me a game", history: [] }));
+    await res.text();
+
+    expect(usageRows).toHaveLength(1);
+    expect(usageRows[0]!.outputText).toBe(gameReply); // full billed output, not the ~4-token stripped text
   });
 });

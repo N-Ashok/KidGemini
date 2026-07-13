@@ -4,15 +4,16 @@
 // Latency guard: the primary keeps its normal retries, but each fallback gets
 // ONE attempt — a full incident walks 5 models in ~5 tries, not 15.
 
-/** Ordered fallback pool, best-first (owner-specified chain 2026-07-11:
- *  3.5-flash primary → 3-flash-preview → 2.5-flash → 2.5-flash-lite).
- *  "gemini-3-flash-preview" is the Dec-2025 preview id that 3.5-flash
- *  replaced — still serving, no announced shutdown. A retired id costs one
- *  fast 404 and the chain moves on (isModelGone), so this list may outlive
- *  Google's lineup. */
+/** Ordered fallback pool (owner-specified 2026-07-13, cost-aware reorder:
+ *  3-flash-preview primary → 2.5-flash → 3.5-flash → 2.5-flash-lite).
+ *  Rationale: 3-flash-preview is Gemini-3-class game code at $0.5/$3 per M
+ *  vs 3.5-flash's $1.5/$9 (the ₹530/day peaks); the cheap sibling rescues
+ *  first, the premium model is the deep fallback, lite is last resort.
+ *  A retired id costs one fast 404 and the chain moves on (isModelGone),
+ *  so this list may outlive Google's lineup. */
 const DEFAULT_CHAIN = [
-  "gemini-3-flash-preview",
   "gemini-2.5-flash",
+  "gemini-3.5-flash",
   "gemini-2.5-flash-lite",
 ];
 

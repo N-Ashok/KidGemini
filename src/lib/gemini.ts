@@ -198,7 +198,7 @@ export function buildChatContents(input: { history: ChatMessage[]; message: stri
 }
 
 export class GeminiChatModel implements ChatModel {
-  private model = process.env.GEMINI_CHAT_MODEL ?? "gemini-2.5-flash";
+  private model = process.env.GEMINI_CHAT_MODEL ?? "gemini-3-flash-preview";
   // 4-deep fallback chain (PRD-MODEL-FALLBACK, owner decision 2026-07-11):
   // capacity refusals and retired model ids walk down the chain; anything
   // else throws at once. Slightly older code quality for a few minutes >>

@@ -50,7 +50,7 @@ beforeEach(() => {
   generateContentStream.mockReset();
   process.env.GEMINI_API_KEY = "test-key";
   // Prod shape: a primary OUTSIDE the default chain → all 4 fallbacks apply.
-  process.env.GEMINI_CHAT_MODEL = "gemini-3.5-flash";
+  process.env.GEMINI_CHAT_MODEL = "gemini-3-flash-preview";
 });
 
 describe("GeminiChatModel — 4-deep fallback chain", () => {
@@ -74,14 +74,14 @@ describe("GeminiChatModel — 4-deep fallback chain", () => {
     expect(generateContentStream).toHaveBeenCalledTimes(1);
   });
 
-  it("F.3 walks the WHOLE owner-specified chain before giving up (2026-07-11)", async () => {
+  it("F.3 walks the WHOLE owner-specified chain before giving up (cost-aware order 2026-07-13)", async () => {
     generateContentStream.mockRejectedValue(overloadErr());
 
     await expect(collect(new GeminiChatModel())).rejects.toThrow(/chat stream failed/);
     expect(calledModels()).toEqual([
-      "gemini-3.5-flash",
       "gemini-3-flash-preview",
       "gemini-2.5-flash",
+      "gemini-3.5-flash",
       "gemini-2.5-flash-lite",
     ]);
   });

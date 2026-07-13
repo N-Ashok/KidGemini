@@ -45,6 +45,61 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-13 — Usage metering excluded the game code — ~75x output undercount
+
+- **Symptom (what the user saw):** Google AI Studio showed ~550–600k output
+  tokens/day (₹300/day) while `usage_events` recorded ~4k/day — the app's
+  own metering said usage was negligible during a genuinely expensive spike.
+- **Surface area:** `src/app/api/chat/route.ts` (`recordUsage` call);
+  every historical `outputTokens`/`outputText` row.
+- **Root cause:** the route recorded `cleaned` — the reply with the ```html
+  code block STRIPPED for display — instead of `full`. A build turn's game
+  code is 90%+ of its billed output, so the dominant cost driver was
+  invisible to the dashboard AND to the guest token gate. Compounding
+  factors (still open, see Prevention): system prompt + history + thinking
+  tokens are not estimated, and failed/abandoned streams record nothing.
+- **Fix:** meter `full` (what Google actually bills for the reply).
+- **Result (verified):** route test M.1 — a 4KB game reply records its full
+  text, not the stripped ~4 tokens. Suite 514/514.
+- **Impact:** future dashboards and the guest 10K-token trial now count real
+  output (guests burn their trial ~faster — that is the correct behavior).
+  Historical rows remain undercounted — audit past spend in the Google
+  console, not the local table.
+- **Prevention:** M.1 pins full-output metering. Follow-up worth building:
+  record Gemini's exact `usageMetadata` (prompt/output/thinking counts,
+  including failed attempts) instead of chars÷4 estimates — then the
+  dashboard matches the invoice by construction.
+- **Related:** companion entry below ($0 pricing for unlisted models, same
+  investigation); success-rate dips in AI Studio line up with the 07-11/07-13
+  503 incidents — the failed-attempt cost those days is fixed by the
+  resume/hedge/restart work (this date, FEATURES.md).
+
+### 2026-07-13 — Cost dashboard silently reported $0 for the primary model
+
+- **Symptom (what the user saw):** 3 days of heavy real Gemini billing while
+  the recorded `costUsd` for every call was 0 — the spend was invisible in
+  admin/usage until the Google invoice arrived.
+- **Surface area:** `src/lib/pricing.config.ts` (`MODEL_PRICING`,
+  `estimateCostUsd`), every `usage_events.costUsd` row written since the
+  primary moved to `gemini-3.5-flash`.
+- **Root cause:** `MODEL_PRICING` only listed the 2.5-flash models; the
+  primary (`gemini-3.5-flash`) and first fallback (`gemini-3-flash-preview`)
+  were never added when the chain changed, and `estimateCostUsd` returned
+  **0 for unknown models** — a fail-open default that hid the miss. Class:
+  **silent-zero default masking real spend** (cousin of fail-open safety).
+- **Fix:** all four chain models priced; unknown models now estimate at the
+  flash-tier fallback rate instead of $0 (over-estimates surface and get
+  corrected; zeros hide).
+- **Result (verified):** `pricing.config.test.ts` — chain-coverage test fails
+  before the fix, passes after; unknown model > $0. Suite 513/513.
+- **Impact:** cost dashboards work again going forward. Historical rows keep
+  their baked-in $0 — analyze past spend by TOKENS, not the usd column.
+- **Prevention:** the chain-coverage test pins that every model in the
+  fallback ladder has a price; changing `GEMINI_CHAT_MODEL` or the chain
+  without pricing it now fails CI.
+- **Related:** PRD-MODEL-FALLBACK (the chain change that introduced the
+  unpriced models).
+
 ### 2026-07-13 — Chats beyond the 20th silently vanished from Recents
 
 - **Symptom (what the user saw):** once a kid had more than 20 conversations,

@@ -90,12 +90,15 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   and streams `{type:"thinking"}` events; the chat shows the latest line in
   place of the static "Thinking… 💭" so planning feels alive. Thoughts are
   never part of the answer text
-- **Gemini model-fallback chain** (2026-07-11, BUG-FIX-LOG +
-  PRD-MODEL-FALLBACK): capacity errors (503 "high demand"/429) and retired
-  model ids walk `GEMINI_FALLBACK_MODELS` (owner chain: 3.5-flash →
-  3-flash-preview → 2.5-flash → 2.5-flash-lite, one attempt each) before
-  erroring; real defects throw at once. Kids get a game from a sibling model
-  instead of "Oops! Something went wrong." during spikes
+- **Gemini model-fallback chain** (2026-07-11; cost-aware reorder 2026-07-13,
+  BUG-FIX-LOG + PRD-MODEL-FALLBACK): capacity errors (503 "high demand"/429),
+  transient 5xx/network drops, and retired model ids walk
+  `GEMINI_FALLBACK_MODELS` (owner chain: 3-flash-preview primary →
+  2.5-flash → 3.5-flash → 2.5-flash-lite, one attempt each) before erroring;
+  real defects throw at once. 3-flash-preview is Gemini-3-class game code at
+  $0.5/$3 per M vs 3.5-flash's $1.5/$9 — the premium model is the deep
+  fallback, not the default. Kids get a game from a sibling model instead of
+  "Oops! Something went wrong." during spikes
 - **Starter chips** (2026-07-08): 4 random game prompts from a 500-strong pool
   (`src/lib/game-suggestions.ts`, 10 mechanics × 50 themes) — fresh picks every
   load and every new chat, so kids don't see the same four twice
