@@ -2,6 +2,12 @@
 
 What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`.
 
+## Parent area (`/parent`, PIN-gated)
+- **Family profile signpost** (2026-07-13): a card linking to the Studio's
+  Creator Profile deep link (`studio.ariantra.com/studio?profile=1`) — the
+  ONE place parent/child details are collected (encrypted platform-side).
+  KidGemini deliberately hosts no second form; SSO makes the hop seamless
+
 ## Chat (home `/`)
 - Gemini-powered kids chat: text + voice (TTS playback, regenerate last answer)
 - **Server-side chat history** (2026-07-13, TECH_DEBT #26 shipped): every

@@ -9,6 +9,14 @@ import { useCallback, useEffect, useState } from "react";
 import { signIn, useSession } from "@/lib/useAriantraSession";
 import type { ParentAlert } from "@/types/alert.types";
 
+// Family-profile signpost (owner decision 2026-07-13): the profile form lives
+// in ONE place — the Studio's Creator Profile card — and this page only links
+// to it (?profile=1 opens the card directly; SSO means no re-login).
+const DEV = process.env.NODE_ENV !== "production";
+const FAMILY_PROFILE_URL = DEV
+  ? "http://localhost:3000/studio?profile=1"
+  : "https://studio.ariantra.com/studio?profile=1";
+
 type View =
   | { kind: "loading" }
   | { kind: "verify" }
@@ -196,6 +204,19 @@ export default function ParentPage() {
 
       {view.kind === "alerts" && (
         <section className="space-y-3">
+          <article className="card flex flex-wrap items-center justify-between gap-4 border-l-4 border-brand-300">
+            <div>
+              <h2 className="text-lg font-semibold">👨‍👩‍👧 Your family profile</h2>
+              <p className="mt-1 text-sm text-ink-700">
+                Add a parent&rsquo;s contact details (stored encrypted, never shown to anyone) so we
+                can reach you about your child&rsquo;s games — it&rsquo;s also needed before a game
+                can be published.
+              </p>
+            </div>
+            <a href={FAMILY_PROFILE_URL} className="btn-primary whitespace-nowrap">
+              Open family profile →
+            </a>
+          </article>
           <h2 className="text-xl font-semibold">Safety alerts ({view.alerts.length})</h2>
           {view.alerts.length === 0 && <p className="text-ink-500">No alerts yet. 🎉</p>}
           {view.alerts.map((a) => (
