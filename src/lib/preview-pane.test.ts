@@ -7,6 +7,8 @@ import {
   keyToPanelAction,
   loadPanelWidth,
   nextArtifact,
+  nextExpandOnCoveredChange,
+  nextExpandOnManualToggle,
   PANEL_DEFAULT_W,
   PANEL_MIN_W,
   panelShellClass,
@@ -136,6 +138,46 @@ describe("panel width persistence — same never-throw contract as chat-store", 
       throw new Error("QuotaExceededError");
     };
     expect(() => savePanelWidth(s, 500)).not.toThrow();
+  });
+});
+
+describe("nextExpandOnCoveredChange — auto-expand while loading, even on laptop (2026-07-14)", () => {
+  it("a fresh game starting to load (covered=true) expands from collapsed, marked as auto", () => {
+    const next = nextExpandOnCoveredChange(true, { expanded: false, wasAutoExpanded: false });
+    expect(next).toEqual({ expanded: true, wasAutoExpanded: true });
+  });
+
+  it("finishing (covered=false) after an AUTO expand reverts to collapsed", () => {
+    const next = nextExpandOnCoveredChange(false, { expanded: true, wasAutoExpanded: true });
+    expect(next).toEqual({ expanded: false, wasAutoExpanded: false });
+  });
+
+  it("already expanded when loading starts is left alone — not re-marked as auto", () => {
+    const state = { expanded: true, wasAutoExpanded: false };
+    expect(nextExpandOnCoveredChange(true, state)).toBe(state); // same reference: no-op
+  });
+
+  it("finishing after a MANUAL expand (not auto) stays expanded — the user's choice always wins", () => {
+    const state = { expanded: true, wasAutoExpanded: false };
+    expect(nextExpandOnCoveredChange(false, state)).toBe(state);
+  });
+
+  it("finishing while already collapsed and never auto-expanded is a no-op", () => {
+    const state = { expanded: false, wasAutoExpanded: false };
+    expect(nextExpandOnCoveredChange(false, state)).toBe(state);
+  });
+});
+
+describe("nextExpandOnManualToggle — a deliberate click always wins over auto-expand bookkeeping", () => {
+  it("toggles expanded and clears the auto-expand flag", () => {
+    expect(nextExpandOnManualToggle({ expanded: false, wasAutoExpanded: true })).toEqual({
+      expanded: true,
+      wasAutoExpanded: false,
+    });
+    expect(nextExpandOnManualToggle({ expanded: true, wasAutoExpanded: false })).toEqual({
+      expanded: false,
+      wasAutoExpanded: false,
+    });
   });
 });
 

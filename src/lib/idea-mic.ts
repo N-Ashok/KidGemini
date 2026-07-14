@@ -1,7 +1,8 @@
-// Mic tab state machine (docs/PRD-IDEA-BUTTON.md). The tab half-tucks into the
-// preview's edge so it can never fight the game's own controls: a stray click
-// only slides it out; only a second deliberate click starts listening; ending
-// a session is always the explicit ✅/🗑 choice (kids double-tap — a toggle
+// Mic tab state machine (docs/PRD-IDEA-BUTTON.md). "Tucked" is the resting
+// state — docked near the top of the preview edge, fully visible, out of the
+// way of a game's own controls (usually bottom/center). A stray click only
+// slides it out; only a second deliberate click starts listening; ending a
+// session is always the explicit ✅/🗑 choice (kids double-tap — a toggle
 // would eat half their sentences). Framework-free so it's unit-testable.
 
 export type MicTabState = "tucked" | "out" | "listening";
@@ -18,6 +19,11 @@ export function nextMicTabState(state: MicTabState, event: MicTabEvent): MicTabS
     case "tabClick":
       return state === "tucked" ? "out" : state === "out" ? "listening" : "listening";
     case "got":
+      // Stay listening (2026-07-14): a kid with several ideas shouldn't have
+      // to re-tap the tab between each one. Only reachable from "listening"
+      // via the UI (the ✅ button only renders there); other states fall
+      // back to "tucked" as a safe no-op.
+      return state === "listening" ? "listening" : "tucked";
     case "never":
       return "tucked";
     case "dismiss":

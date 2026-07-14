@@ -13,8 +13,11 @@ Today a kid must abandon the game to say anything; most just give up.
 ## 2. Solution (what shipped)
 
 1. **🎤 Edge-docked mic tab** (`IdeaMicTab.tsx`) over the preview
-   (`ArtifactFrame`). Half-tucked into the right edge so it can never cover a
-   game's own controls; drag up/down to reposition. First click slides it out,
+   (`ArtifactFrame`). Docked near the TOP of the right edge, fully visible
+   with a persistent "Idea" label (2026-07-14: a half-tucked, hover-only-tooltip
+   version was effectively invisible on touch devices — kids never found it) —
+   drag up/down to reposition if a game's own HUD needs that corner instead.
+   First click slides it out,
    second click listens — a stray click is harmless (state machine in
    `src/lib/idea-mic.ts`, fully unit-tested). The game keeps running and keeps
    keyboard focus. Live interim words + pulsing red dot (pre-reader trust

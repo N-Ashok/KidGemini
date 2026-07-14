@@ -3,7 +3,7 @@
 // and drives the sidebar, message list (markdown + read-aloud), composer, and artifact panel.
 // Naming: `.container.tsx` = data-fetching component (CLAUDE.md § 5).
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { signIn, useSession } from "@/lib/useAriantraSession";
 import { Sidebar } from "./Sidebar";
 import { Composer, type Attachment } from "./Composer";
@@ -33,8 +33,11 @@ import {
 } from "@/lib/idea-coach";
 import {
   clampPanelWidth,
+  type ExpandState,
   loadPanelWidth,
   nextArtifact,
+  nextExpandOnCoveredChange,
+  nextExpandOnManualToggle,
   PANEL_DEFAULT_W,
   panelShellClass,
   savePanelWidth,
@@ -47,6 +50,7 @@ import { pickSuggestions } from "@/lib/game-suggestions";
 import { shouldAutoRetry } from "@/lib/stream-recovery";
 import { pollTurnResult } from "@/lib/turn-resume";
 import { savePendingTurn, clearPendingTurn, loadPendingTurn } from "@/lib/pending-turn";
+import { savePendingMessage, loadPendingMessage, clearPendingMessage } from "@/lib/pending-message";
 import { waitLine } from "@/lib/wait-line";
 import { useWakeLock } from "./useWakeLock";
 
@@ -100,7 +104,14 @@ export function ChatPanelContainer() {
   // Desktop full-screen preview (PRD-PREVIEW-PANE): a CSS-only wrapper toggle —
   // the ArtifactFrame subtree (and its iframe) never remounts, so collapsing
   // returns to exactly the prior view. Reset whenever the panel closes.
-  const [previewExpanded, setPreviewExpanded] = useState(false);
+  // Also auto-expands while a fresh game is loading/testing/repairing, even
+  // on a laptop-width window (2026-07-14, src/lib/preview-pane.ts) — decision
+  // logic is pure/tested there, this is just the glue.
+  const [expandState, setExpandState] = useState<ExpandState>({ expanded: false, wasAutoExpanded: false });
+  const previewExpanded = expandState.expanded;
+  const handleCoveredChange = useCallback((covered: boolean) => {
+    setExpandState((s) => nextExpandOnCoveredChange(covered, s));
+  }, []);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer; always visible on md+
   const [searchQuery, setSearchQuery] = useState(""); // sidebar chat search (title + message text)
   // Server-side history (TECH_DEBT #26): the paginated Recents index from
@@ -156,6 +167,32 @@ export function ChatPanelContainer() {
   useEffect(() => {
     if (hydratedFromStore.current) saveChats(window.localStorage, convos, activeId);
   }, [convos, activeId]);
+
+  // Auth-interruption recovery (BUG-FIX-LOG 2026-07-14): a sign-in wall mid-turn
+  // saved the kid's message (see the 401/`gate` handling in runStream below);
+  // once signed back in, resend it once instead of leaving it lost. A brief
+  // note makes the auto-resend visible rather than a silent surprise. Only
+  // latches once a matching pending message is actually found+consumed, so an
+  // early check racing activeId's restore (unlikely — that's a synchronous
+  // localStorage read, this is behind an async session fetch) still gets a
+  // second chance on the next activeId change instead of giving up for good.
+  const resumedPendingMessageRef = useRef(false);
+  useEffect(() => {
+    if (authStatus !== "authenticated" || resumedPendingMessageRef.current) return;
+    const pending = loadPendingMessage(window.localStorage);
+    if (!pending || pending.convoId !== activeId) return;
+    resumedPendingMessageRef.current = true;
+    clearPendingMessage(window.localStorage);
+    patchActive((c) => ({
+      ...c,
+      messages: [
+        ...c.messages,
+        { id: crypto.randomUUID(), role: "assistant", text: "Welcome back! Sending your message now…", createdAt: Date.now() },
+      ],
+    }));
+    void handleSend(pending.text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authStatus, activeId]);
 
   /** Fetch the next page of the server Recents index (30/page). Reentrant-safe. */
   async function loadMoreRemote(reset = false) {
@@ -358,7 +395,7 @@ export function ChatPanelContainer() {
     setConvos((list) => [c, ...list]);
     setActiveId(c.id);
     setArtifact(null);
-    setPreviewExpanded(false);
+    setExpandState({ expanded: false, wasAutoExpanded: false });
     setSearchQuery("");
     setSidebarOpen(false);
   }
@@ -366,7 +403,7 @@ export function ChatPanelContainer() {
   function handleSelect(id: string) {
     tts.stop();
     setArtifact(null);
-    setPreviewExpanded(false);
+    setExpandState({ expanded: false, wasAutoExpanded: false });
     setSidebarOpen(false);
     if (convos.some((c) => c.id === id)) {
       setActiveId(id);
@@ -464,6 +501,11 @@ export function ChatPanelContainer() {
         if (res.status === 401) {
           setReply(body.message ?? "Please sign in to continue using KidGemini ✨");
           setGate({ text: body.message ?? "Please sign in to continue using KidGemini ✨", upgrade: false });
+          // Auth interruption (BUG-FIX-LOG 2026-07-14): remember what the kid
+          // was sending so it can auto-resend after sign-in instead of being
+          // silently lost (retyping after the platform redirect read as "the
+          // chat died"). Text-only — scoped to the common case.
+          if (!image) savePendingMessage(window.localStorage, { text, convoId: activeId, savedAt: Date.now() });
         } else if (res.status === 402) {
           setReply(body.message ?? "Upgrade to keep chatting! ⭐");
           setGate({ text: body.message ?? "Upgrade to keep chatting! ⭐", upgrade: true });
@@ -527,7 +569,10 @@ export function ChatPanelContainer() {
             console.warn(`[chat] blocked by safety monitor`);
           } else if (ev.type === "gate") {
             setReply(ev.text ?? "Sign in to keep chatting. ✨");
-            setGate({ text: ev.text ?? "Sign in with Google to keep chatting!", upgrade: false });
+            setGate({ text: ev.text ?? "Sign in to keep chatting!", upgrade: false });
+            // Same auto-resend recovery as the top-level 401 above — this is
+            // the mid-stream flavor of the same sign-in wall.
+            if (!image) savePendingMessage(window.localStorage, { text, convoId: activeId, savedAt: Date.now() });
             finalized = true;
             console.warn(`[chat] gated — sign-in required`);
           } else if (ev.type === "rate_limited") {
@@ -666,7 +711,7 @@ export function ChatPanelContainer() {
     const bundle = composeIdeaBundle(bagged.map((i) => i.text));
     if (!bundle) return;
     const convoId = activeId;
-    setPreviewExpanded(false); // watch the send land in chat (desktop split view)
+    setExpandState({ expanded: false, wasAutoExpanded: false }); // watch the send land in chat (desktop split view)
     // Mobile: the panel covers the whole screen — flip to the chat so the kid
     // SEES the bundle post; the updated game re-opens the panel via `done`.
     if (window.matchMedia("(max-width: 767px)").matches) setArtifact(null);
@@ -817,10 +862,11 @@ export function ChatPanelContainer() {
             originalRequest={[...active.messages].reverse().find((m) => m.role === "child")?.text ?? ""}
             onClose={() => {
               setArtifact(null);
-              setPreviewExpanded(false);
+              setExpandState({ expanded: false, wasAutoExpanded: false });
             }}
             expanded={previewExpanded}
-            onToggleExpand={() => setPreviewExpanded((v) => !v)}
+            onToggleExpand={() => setExpandState(nextExpandOnManualToggle)}
+            onCoveredChange={handleCoveredChange}
             ideas={baggedIdeas.map((i) => ({ id: i.id, text: i.text }))}
             onCaptureIdea={(text) => {
               setIdeas((list) => addIdea(list, activeId, text));

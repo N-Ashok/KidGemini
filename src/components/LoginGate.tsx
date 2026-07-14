@@ -32,7 +32,7 @@ export function LoginGate({ message, onSignIn, showUpgrade = false }: LoginGateP
                      bg-white px-4 py-3 text-sm font-medium text-neutral-700 hover:bg-neutral-50
                      ${showUpgrade ? "mt-3" : "mt-5"}`}
         >
-          <span aria-hidden>🔆</span> Sign in with Google
+          <span aria-hidden>🔆</span> Sign in to continue
         </button>
       </div>
     </div>

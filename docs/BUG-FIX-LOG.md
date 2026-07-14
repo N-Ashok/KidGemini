@@ -45,6 +45,52 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-14 — Sign-in wall mid-turn silently dropped the kid's message ("the chat died")
+
+- **Symptom (what the user saw):** during game development, hitting the
+  sign-in wall (Google-only copy, separately fixed below) felt like "the chat
+  died" — after signing in and returning, the message that triggered the wall
+  was gone; the kid had to retype it, making the whole detour feel much slower
+  than a real retry.
+- **Surface area:** `src/components/ChatPanel.container.tsx` (`runStream`'s
+  401/`gate` handling), new `src/lib/pending-message.ts`.
+- **Root cause (silent-drop class):** both sign-in-wall paths — the top-level
+  HTTP 401 (guest already over limit) and the mid-stream `{type:"gate"}` event
+  (this message's tokens pushed the guest over) — set `finalized = true`,
+  which the existing `pending-turn.ts` mechanism (built for tab-close/server-
+  generation recovery, keyed by `replyId`) then clears. Neither path ever
+  captured the raw message text — there was nothing TO resume, since a 401
+  fires before Gemini is ever called. The kid's typed message was simply gone.
+- **Fix:** new `src/lib/pending-message.ts` (`savePendingMessage`/
+  `loadPendingMessage`/`clearPendingMessage`, localStorage-backed so it
+  survives the full-page redirect to the platform's `/login` and back, 10-min
+  TTL — resuming a keystroke, not a generation). Both sign-in-wall branches in
+  `runStream` now save the text (skipped when an image is attached — scoped to
+  the common case). Once `useSession()` reports `authenticated`, a new effect
+  in the container checks for a matching pending message (same `convoId`),
+  posts a brief "Welcome back! Sending your message now…" note so the
+  auto-resend is visible rather than a silent surprise, then calls
+  `handleSend` with the recovered text — once per mount (ref-latched only
+  after an actual match, so an early check racing `activeId`'s restore gets a
+  second chance on the next change instead of giving up for good).
+- **Result (verified):** `src/lib/pending-message.test.ts` (new, 9 tests):
+  round-trip, TTL boundary (valid just under 10 min, expired just past),
+  never-throws (quota/private mode), malformed/missing-field JSON treated as
+  absent. Full suite: 573/573 passing. `tsc --noEmit` clean.
+- **Impact:** a sign-in interruption mid-conversation now recovers the kid's
+  message automatically instead of losing it; rate-limit and paywall
+  interruptions are deliberately NOT auto-resumed (resubmitting immediately
+  would just hit the same wall).
+- **Prevention:** the 9 new tests pin the save/load/clear/TTL contract;
+  registered in `docs/REGRESSION-TEST-CATALOG.md`. Class note: any future
+  "the user must come back later to finish this" flow (payment, verification,
+  another redirect) should ask whether the interrupted input needs the same
+  short-TTL local recovery treatment, not just the already-established
+  server-side turn-recovery one.
+- **Related:** `docs/BUG-FIX-LOG.md` 2026-07-13 (`pending-turn.ts`'s tab-close
+  recovery — the other half of interruption handling, for an already-running
+  generation rather than a message that never got sent).
+
 ### 2026-07-14 — Unfenced game code reached the chat bubble raw — garbled text with a stray "code / Download / Copy" widget mid-content
 
 - **Symptom (what the user saw):** in production, after asking for an

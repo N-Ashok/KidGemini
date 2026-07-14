@@ -1,6 +1,10 @@
 "use client";
 // The Idea Button (docs/PRD-IDEA-BUTTON.md): an edge-docked mic tab over the
 // game preview so a kid who can't type can speak thoughts WHILE playing.
+// Docked near the TOP of the preview edge, fully visible with a persistent
+// "Idea" label (2026-07-14: half-tucked + hover-only tooltip was effectively
+// invisible on touch devices) — still draggable if a game's own HUD needs
+// that corner instead.
 // Capture ≠ send: ✅ hands the transcript to the container's Idea Bag — no
 // network, no generation, back to the game in seconds. Presentational; the
 // tab state machine lives in lib/idea-mic.ts, speech in useSpeechInput.
@@ -37,9 +41,10 @@ export function IdeaMicTab({ onIdea, coach, onCoachDone, nudge, onNudgeShown }: 
   const [tab, setTab] = useState<MicTabState>("tucked");
   // Committed (finalized) speech for the CURRENT capture; interim rides on top.
   const [draft, setDraft] = useState("");
-  // Vertical position of the tab along the preview edge (% of height) — games
-  // put controls in corners, so the kid can drag the tab out of the way.
-  const [topPct, setTopPct] = useState(42);
+  // Vertical position of the tab along the preview edge (% of height) — docked
+  // near the top by default (visible, out of the way of bottom/center HUD
+  // controls) but still draggable if a game puts something there instead.
+  const [topPct, setTopPct] = useState(8);
   const dragRef = useRef<{ startY: number; startPct: number; moved: boolean } | null>(null);
 
   const {
@@ -124,14 +129,29 @@ export function IdeaMicTab({ onIdea, coach, onCoachDone, nudge, onNudgeShown }: 
     setTab(next);
   }
 
-  function finish(kind: "got" | "never") {
+  function finish(kind: "got" | "done" | "never") {
     const text = display.trim();
-    // The interim already rode along in `display` — kill the session without
-    // committing it (same reason as the composer's send-while-dictating).
+    if (kind === "got") {
+      // "Next idea" (2026-07-14, relabeled from "Got it!" — that name was
+      // misleading once it stopped closing anything): commit and keep
+      // listening, so a kid with several ideas doesn't have to re-tap the
+      // tab between each one. Only the LOCAL draft resets; the mic session
+      // itself keeps running uninterrupted, so the next idea starts from a
+      // clean slate without a stop+restart (that race is exactly what the
+      // repeat-mic fix elsewhere guards against — no reason to reintroduce
+      // it here).
+      if (text) onIdea(text);
+      setDraft("");
+      setTab(nextMicTabState(tab, "got"));
+      return;
+    }
+    // "Done" (commit the last idea, then close) and "Never mind" (discard
+    // without committing, then close) both end the session — the explicit
+    // way back to tucked now that "Next idea" no longer does that.
+    if (kind === "done" && text) onIdea(text);
     discardAndStop();
     setDraft("");
-    if (kind === "got" && text) onIdea(text);
-    setTab(nextMicTabState(tab, kind));
+    setTab(nextMicTabState(tab, "never"));
   }
 
   // Drag the tab up/down the edge with pointer events; a real click stays put.
@@ -171,13 +191,15 @@ export function IdeaMicTab({ onIdea, coach, onCoachDone, nudge, onNudgeShown }: 
         aria-pressed={listening}
         title="Tell me your idea!"
         style={{ top: `${topPct}%` }}
-        className={`absolute right-0 flex min-h-[44px] touch-none items-center gap-1 rounded-l-kid border-2 border-r-0 border-white py-2 pl-3 pr-2 text-xl shadow-lg transition-transform ${
+        className={`absolute right-0 flex min-h-[44px] touch-none items-center gap-1.5 rounded-l-kid border-2 border-r-0 border-white py-2 pl-3 pr-2 text-xl shadow-lg transition-transform ${
           coachActive || nudging ? "z-40 idea-coach-wiggle idea-coach-glow" : "z-20"
-        } ${listening ? "mic-listening bg-danger-500 text-white" : "bg-brand-500 text-white"} ${
-          tab === "tucked" && !coachActive && !nudging ? "translate-x-[45%]" : "translate-x-0"
-        }`}
+        } ${listening ? "mic-listening bg-danger-500 text-white" : "bg-brand-500 text-white"}`}
       >
         🎤
+        {/* Always-visible label (BUG-FIX-LOG 2026-07-14: a hover-only title
+            never reached kids on touch devices — this makes the tab
+            discoverable without needing a tap to find out what it does). */}
+        {!listening && <span className="text-xs font-bold">Idea</span>}
         {listening && <span className="text-[10px] font-extrabold">ON</span>}
       </button>
 
@@ -258,35 +280,58 @@ export function IdeaMicTab({ onIdea, coach, onCoachDone, nudge, onNudgeShown }: 
             <span className="mic-listening inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-danger-500 text-sm text-white" aria-hidden>
               🎤
             </span>
-            {idle ? "All done? Tap ✅ Got it!" : "I'm listening! Tell me your idea — you can keep playing!"}
+            {idle ? "All done? Tap ➡️ Next idea, or ✕ Done" : "I'm listening! Tell me your idea — you can keep playing!"}
           </p>
-          <p
-            aria-live="polite"
-            className="mt-2 min-h-[2.5rem] rounded-xl bg-brand-50 px-3 py-2 text-sm leading-snug text-neutral-800"
-          >
-            {draft}
-            {interim && <span className="text-neutral-400"> {interim}</span>}
-            {!display.trim() && <span className="text-neutral-400">…</span>}
-          </p>
+          {/* Editable (2026-07-14): a kid can tap in and fix a minor spelling
+              mistake with the keyboard instead of re-saying the whole idea.
+              Bound to `draft` only — new speech still appends onto whatever's
+              here, edited or not. `interim` (live, not-yet-final recognition)
+              shows as a non-editable trailing hint since it's about to be
+              overwritten by the recognizer anyway. */}
+          <textarea
+            aria-label="Your idea — tap to fix a typo"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="…"
+            rows={2}
+            className="mt-2 w-full resize-none rounded-xl bg-brand-50 px-3 py-2 text-sm leading-snug text-neutral-800 outline-none placeholder:text-neutral-400 focus:ring-2 focus:ring-brand-500"
+          />
+          {interim && (
+            <p aria-live="polite" className="mt-1 px-1 text-xs text-neutral-400">
+              {interim}
+            </p>
+          )}
           <div className="mt-2 flex gap-2">
+            {/* Next idea (2026-07-14, renamed from "Got it!" — that name was
+                misleading once it stopped closing anything): commits and
+                keeps listening. "Done" is the explicit close — commits
+                whatever's here (if anything) THEN tucks away, so ending the
+                session no longer requires discarding through Never mind. */}
             <button
               type="button"
               onClick={() => finish("got")}
               disabled={!display.trim()}
-              className={`rounded-full bg-safe-500 px-4 py-2 text-sm font-extrabold text-white shadow-sm disabled:opacity-40 ${
+              className={`flex-1 rounded-full bg-safe-500 px-4 py-2 text-sm font-extrabold text-white shadow-sm disabled:opacity-40 ${
                 idle && display.trim() ? "animate-pulse" : ""
               }`}
             >
-              ✅ Got it!
+              ➡️ Next idea
             </button>
             <button
               type="button"
-              onClick={() => finish("never")}
-              className="rounded-full bg-neutral-100 px-4 py-2 text-sm font-bold text-neutral-700 hover:bg-neutral-200"
+              onClick={() => finish("done")}
+              className="flex-1 rounded-full bg-brand-500 px-4 py-2 text-sm font-extrabold text-white shadow-sm hover:bg-brand-600"
             >
-              🗑️ Never mind
+              ✕ Done
             </button>
           </div>
+          <button
+            type="button"
+            onClick={() => finish("never")}
+            className="mt-1.5 w-full rounded-full px-4 py-1.5 text-xs font-bold text-neutral-500 hover:bg-neutral-100"
+          >
+            🗑️ Never mind
+          </button>
         </div>
       )}
     </>

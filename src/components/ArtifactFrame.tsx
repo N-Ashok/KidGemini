@@ -36,6 +36,10 @@ interface ArtifactFrameProps {
       which restyles the panel wrapper; this component only shows the button. */
   expanded?: boolean;
   onToggleExpand?: () => void;
+  /** Fires whenever the verify cover appears/clears (a fresh game starts
+      testing/repairing, or finishes) — lets the container auto-expand to
+      full screen while loading, on any viewport width (2026-07-14). */
+  onCoveredChange?: (covered: boolean) => void;
   /** Idea Button (docs/PRD-IDEA-BUTTON.md) — all owned by the container; the
       frame only hosts the overlay surfaces. Absent props = feature hidden. */
   ideas?: BagIdea[];
@@ -73,6 +77,7 @@ export function ArtifactFrame({
   onClose,
   expanded,
   onToggleExpand,
+  onCoveredChange,
   ideas,
   onCaptureIdea,
   onDiscardIdea,
@@ -129,6 +134,11 @@ export function ArtifactFrame({
     [docKey],
   );
   const covered = state.phase !== "done";
+
+  useEffect(() => {
+    onCoveredChange?.(covered);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [covered]);
 
   // Track the panel's size while a device frame is shown (scale-to-fit).
   useEffect(() => {
@@ -220,39 +230,43 @@ export function ArtifactFrame({
               🚀 <span className="hidden sm:inline">Arcade</span>
             </button>
           )}
-          <button
-            onClick={() => downloadCode(state.currentHtml, "html", "game.html")}
-            className="rounded-lg px-2 py-1 text-sm text-neutral-600 hover:bg-neutral-100"
-            aria-label="Download game"
-            title="Download game"
-          >
-            {/* Text labels only in full screen — the 440px panel header can't
-                fit them plus the expand toggle (✕ fell off the edge). */}
-            ⬇<span className={expanded ? "hidden md:inline" : "hidden"}> Download</span>
-          </button>
-          <button
-            onClick={copy}
-            className="rounded-lg px-2 py-1 text-sm text-neutral-600 hover:bg-neutral-100"
-            aria-label="Copy HTML"
-            title="Copy HTML"
-          >
-            {copied ? "✓" : "⧉"}<span className={expanded ? "hidden md:inline" : "hidden"}>{copied ? " Copied" : " Copy"}</span>
-          </button>
-          {/* Full-screen toggle — md+ only (mobile is already full screen).
-              Disabled while the verify cover is up, same reason as the device
-              switcher: the probes must measure the game at a stable size. */}
+          {/* Full-screen toggle — the main view control for this panel, so it
+              gets the prominent treatment (labeled pill, not a bare glyph).
+              md+ only (mobile is already full screen). Disabled while the
+              verify cover is up, same reason as the device switcher: the
+              probes must measure the game at a stable size. */}
           {onToggleExpand && (
             <button
               onClick={onToggleExpand}
               disabled={covered}
-              className="hidden rounded-lg px-2 py-1 text-neutral-600 hover:bg-neutral-100 disabled:opacity-40 md:block"
+              className="btn-ghost hidden !min-h-0 gap-1.5 !px-3 !py-1.5 text-sm font-semibold disabled:opacity-40 md:inline-flex"
               aria-label={expanded ? "Exit full screen" : "Full screen"}
               aria-pressed={expanded}
               title={expanded ? "Exit full screen (Esc)" : "Full screen"}
             >
-              {expanded ? "⤡" : "⤢"}
+              {expanded ? "⤡" : "⤢"} {expanded ? "Exit Full Screen" : "Full Screen"}
             </button>
           )}
+          {/* Download/Copy: useful to a grown-up, not the primary action for a
+              kid looking at their game — kept functional but visually minor
+              (icon-only at every breakpoint) so they never compete with
+              Full Screen above. */}
+          <button
+            onClick={() => downloadCode(state.currentHtml, "html", "game.html")}
+            className="rounded-lg px-2 py-1 text-sm text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+            aria-label="Download game"
+            title="Download game"
+          >
+            ⬇
+          </button>
+          <button
+            onClick={copy}
+            className="rounded-lg px-2 py-1 text-sm text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+            aria-label="Copy HTML"
+            title="Copy HTML"
+          >
+            {copied ? "✓" : "⧉"}
+          </button>
           <button
             onClick={onClose}
             className="rounded-lg px-2 py-1 text-neutral-600 hover:bg-neutral-100"

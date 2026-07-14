@@ -207,7 +207,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
               onClick={() => signIn()}
               className="w-full rounded-2xl bg-orange-500 py-3.5 text-base font-extrabold text-white shadow-lg shadow-orange-500/30"
             >
-              Sign in with Google →
+              Sign in →
             </button>
           </>
         )}
