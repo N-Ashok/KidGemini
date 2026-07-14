@@ -5,16 +5,64 @@
 // PIN-gated; reads /api/usage.
 
 import { useState } from "react";
-import type { UsageEvent, UsageSummary } from "@/types/usage.types";
+import type { PeriodTotals, RepeatUser, UniqueCounts, UsageEvent, UsageSummary } from "@/types/usage.types";
+
+type PeriodWithInr = PeriodTotals & { costInr: number };
+type PeriodKey = "today" | "thisWeek" | "thisMonth" | "thisYear" | "allTime";
 
 interface UsageResponse {
   days: number;
+  inrPerUsd: number;
+  periods: Record<PeriodKey, PeriodWithInr>;
+  uniques: Record<PeriodKey, UniqueCounts>;
+  repeatUsers: RepeatUser[];
   summary: UsageSummary;
   events?: UsageEvent[];
 }
 
+const PERIOD_LABELS: Record<PeriodKey, string> = {
+  today: "Today",
+  thisWeek: "This week",
+  thisMonth: "This month",
+  thisYear: "This year",
+  allTime: "All time",
+};
+
+/** Best estimate of distinct people: accounts + the smaller of the two guest
+ *  signals (cookie count inflates on cookie clears; device count deflates on
+ *  shared wifi + same browser — the min is the sturdier guess). */
+function estUnique(u: UniqueCounts): number {
+  return u.signedInUsers + Math.min(u.guestBrowsers, u.guestDevices);
+}
+
+/** Coarse "Chrome · Windows" label from a raw User-Agent (display only). */
+function deviceLabel(ua: string | null | undefined): string {
+  if (!ua) return "—";
+  const browser =
+    /Edg\//.test(ua) ? "Edge" :
+    /OPR\//.test(ua) ? "Opera" :
+    /Chrome\//.test(ua) ? "Chrome" :
+    /Safari\//.test(ua) ? "Safari" :
+    /Firefox\//.test(ua) ? "Firefox" : "Other";
+  const os =
+    /Windows/.test(ua) ? "Windows" :
+    /iPhone|iPad|iPod/.test(ua) ? "iOS" :
+    /Android/.test(ua) ? "Android" :
+    /Mac OS X/.test(ua) ? "macOS" :
+    /Linux/.test(ua) ? "Linux" : "?";
+  return `${browser} · ${os}`;
+}
+
 function usd(n: number): string {
   return `$${n.toFixed(4)}`;
+}
+
+function inr(n: number): string {
+  return `₹${n.toFixed(2)}`;
+}
+
+function tok(n: number): string {
+  return n.toLocaleString();
 }
 
 export default function AdminPage() {
@@ -80,26 +128,75 @@ export default function AdminPage() {
         </form>
       </div>
 
-      {/* Headline metrics */}
-      <section className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <Stat label="Requests" value={String(s.eventCount)} />
-        <Stat label="Prompt tokens" value={s.totalPromptTokens.toLocaleString()} />
-        <Stat label="Output tokens" value={s.totalOutputTokens.toLocaleString()} />
-        <Stat label="Est. cost" value={usd(s.totalCostUsd)} />
+      {/* Rollups — today first (IST day), then week/month/year/all-time.
+          All 4 billed token types; ₹ primary, $ secondary. */}
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-5">
+        <PeriodCard label="Today" p={data.periods.today} highlight />
+        <PeriodCard label="This week" p={data.periods.thisWeek} />
+        <PeriodCard label="This month" p={data.periods.thisMonth} />
+        <PeriodCard label="This year" p={data.periods.thisYear} />
+        <PeriodCard label="All time" p={data.periods.allTime} />
       </section>
+      <p className="text-sm text-ink-500">
+        ₹ at {inr(data.inrPerUsd)}/USD (set USD_INR_RATE to update). Prompt includes cached;
+        thinking bills at the output rate.
+      </p>
+
+      {/* Unique visitors — accounts vs guest cookies vs guest devices */}
+      <Panel title="Unique visitors">
+        <Table
+          head={["Period", "Signed-in accounts", "Guest browsers (cookies)", "Guest devices (IP + browser)", "Est. unique people"]}
+          rows={(Object.keys(PERIOD_LABELS) as PeriodKey[]).map((k) => [
+            PERIOD_LABELS[k],
+            tok(data.uniques[k].signedInUsers),
+            tok(data.uniques[k].guestBrowsers),
+            tok(data.uniques[k].guestDevices),
+            tok(estUnique(data.uniques[k])),
+          ])}
+        />
+        <p className="mt-3 text-sm text-ink-500">
+          Guests can&apos;t be counted exactly: clearing cookies makes one browser look new
+          (inflates &ldquo;browsers&rdquo;), while shared wifi with the same browser type merges kids
+          (deflates &ldquo;devices&rdquo;). The estimate takes accounts + the smaller guest signal.
+          A guest who later signs in is counted once in each column, so don&apos;t sum them.
+        </p>
+      </Panel>
+
+      {/* Returning users — accounts and guest cookies seen on 2+ IST days */}
+      <Panel title="Returning users (active on 2+ days, all time)">
+        <Table
+          head={["User", "Type", "Days active", "Requests", "First seen", "Last seen"]}
+          rows={data.repeatUsers.map((r) => [
+            r.userLabel ?? r.userId,
+            r.userId.startsWith("user:") ? "Account" : "Guest",
+            String(r.activeDays),
+            String(r.eventCount),
+            new Date(r.firstSeen).toLocaleDateString(),
+            new Date(r.lastSeen).toLocaleDateString(),
+          ])}
+        />
+        <p className="mt-3 text-sm text-ink-500">
+          Several visits on the same day count as one active day — this list is about coming
+          back, not volume. A guest who clears cookies (or switches browsers) starts over as
+          a new guest, so guest streaks are an undercount.
+        </p>
+      </Panel>
 
       {/* Per-day — how much each day, and who spent the most that day */}
       <Panel title="By day (newest first · top spender)">
         <Table
-          head={["Day", "Requests", "Prompt tok", "Output tok", "Cost", "Top spender", "Their tokens"]}
+          head={["Day", "Requests", "Prompt tok", "Output tok", "Thinking tok", "Cached tok", "Cost ₹", "Cost $", "Top spender", "Their tokens"]}
           rows={s.byDay.map((d) => [
             d.day,
             String(d.eventCount),
-            d.promptTokens.toLocaleString(),
-            d.outputTokens.toLocaleString(),
+            tok(d.promptTokens),
+            tok(d.outputTokens),
+            tok(d.thoughtTokens),
+            tok(d.cachedTokens),
+            inr(d.costUsd * data.inrPerUsd),
             usd(d.costUsd),
             d.topUser ? (d.topUser.userLabel ?? d.topUser.userId) : "—",
-            d.topUser ? d.topUser.tokens.toLocaleString() : "—",
+            d.topUser ? tok(d.topUser.tokens) : "—",
           ])}
         />
       </Panel>
@@ -107,12 +204,15 @@ export default function AdminPage() {
       {/* Per-user — who uses more / less */}
       <Panel title="By user (most → least cost)">
         <Table
-          head={["User", "Requests", "Prompt tok", "Output tok", "Cost"]}
+          head={["User", "Requests", "Prompt tok", "Output tok", "Thinking tok", "Cached tok", "Cost ₹", "Cost $"]}
           rows={s.byUser.map((u) => [
             u.userLabel ?? u.userId,
             String(u.eventCount),
-            u.promptTokens.toLocaleString(),
-            u.outputTokens.toLocaleString(),
+            tok(u.promptTokens),
+            tok(u.outputTokens),
+            tok(u.thoughtTokens),
+            tok(u.cachedTokens),
+            inr(u.costUsd * data.inrPerUsd),
             usd(u.costUsd),
           ])}
         />
@@ -135,14 +235,15 @@ export default function AdminPage() {
       {/* Raw request/output log */}
       <Panel title="Request log (request → output)">
         <Table
-          head={["When", "User", "IP", "Model", "Kind", "Tok (in/out)", "Blocked", "Request", "Output"]}
+          head={["When", "User", "IP", "Device", "Model", "Kind", "Tok (in/out/think/cache)", "Blocked", "Request", "Output"]}
           rows={(data.events ?? []).map((ev) => [
             new Date(ev.createdAt).toLocaleString(),
             ev.userLabel ?? ev.userId,
             ev.geo.ip ?? "—",
+            deviceLabel(ev.userAgent),
             ev.model,
             ev.kind,
-            `${ev.promptTokens}/${ev.outputTokens}`,
+            `${ev.billedPromptTokens ?? ev.promptTokens}/${ev.billedOutputTokens ?? ev.outputTokens}/${ev.thoughtTokens ?? 0}/${ev.cachedTokens ?? 0}`,
             ev.blocked ? "yes" : "no",
             truncate(ev.requestText),
             truncate(ev.outputText),
@@ -157,11 +258,29 @@ function truncate(t: string, n = 80): string {
   return t.length > n ? `${t.slice(0, n)}…` : t;
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+/** One rollup window: requests, all 4 billed token types, ₹ primary + $ secondary. */
+function PeriodCard({ label, p, highlight }: { label: string; p: PeriodWithInr; highlight?: boolean }) {
   return (
-    <div className="card">
-      <p className="text-sm text-ink-500">{label}</p>
-      <p className="mt-1 text-2xl font-bold text-ink-900">{value}</p>
+    <div className={`card ${highlight ? "border-2 border-brand-100" : ""}`}>
+      <p className="text-sm font-semibold text-ink-500">{label}</p>
+      <p className="mt-1 text-2xl font-bold text-ink-900">{inr(p.costInr)}</p>
+      <p className="text-xs text-ink-500">{usd(p.costUsd)} · {p.eventCount} requests</p>
+      <dl className="mt-3 space-y-1 text-sm text-ink-700">
+        <Row k="Prompt" v={tok(p.promptTokens)} />
+        <Row k="Output" v={tok(p.outputTokens)} />
+        <Row k="Thinking" v={tok(p.thoughtTokens)} />
+        <Row k="Cached" v={tok(p.cachedTokens)} />
+        <Row k="Total" v={tok(p.promptTokens + p.outputTokens + p.thoughtTokens)} />
+      </dl>
+    </div>
+  );
+}
+
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex justify-between gap-2">
+      <dt className="text-ink-500">{k}</dt>
+      <dd className="font-semibold">{v}</dd>
     </div>
   );
 }

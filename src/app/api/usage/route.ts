@@ -7,6 +7,9 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { SqliteUsageStore } from "@/lib/db";
+import { periodStartsIst } from "@/lib/period";
+import { inrPerUsd } from "@/lib/pricing.config";
+import type { PeriodTotals } from "@/types/usage.types";
 
 export const runtime = "nodejs";
 
@@ -39,7 +42,33 @@ export async function POST(req: NextRequest) {
   const days = Number(body.days ?? 30);
   const since = Date.now() - (Number.isFinite(days) && days > 0 ? days : 30) * DAY_MS;
 
+  // Rollup cards: IST calendar periods (the operator's day, not UTC) + all
+  // time. ₹ derives from stored USD at the current USD_INR_RATE at read time.
+  const rate = inrPerUsd();
+  const starts = periodStartsIst(Date.now());
+  const withInr = (t: PeriodTotals) => ({ ...t, costInr: t.costUsd * rate });
+  const periods = {
+    today: withInr(usage.totalsSince(starts.today)),
+    thisWeek: withInr(usage.totalsSince(starts.week)),
+    thisMonth: withInr(usage.totalsSince(starts.month)),
+    thisYear: withInr(usage.totalsSince(starts.year)),
+    allTime: withInr(usage.totalsSince(0)),
+  };
+  // Distinct visitors per window: accounts + guest cookies + guest (ip, UA)
+  // devices — three imperfect signals shown side by side (see UniqueCounts).
+  const uniques = {
+    today: usage.uniquesSince(starts.today),
+    thisWeek: usage.uniquesSince(starts.week),
+    thisMonth: usage.uniquesSince(starts.month),
+    thisYear: usage.uniquesSince(starts.year),
+    allTime: usage.uniquesSince(0),
+  };
+
+  // All-time on purpose: "who keeps coming back" is a retention question,
+  // not a window question (the per-day table already covers the window).
+  const repeatUsers = usage.repeatUsersSince(0);
+
   const summary = usage.summarizeSince(since);
   const events = body.detail === true ? usage.listSince(since) : undefined;
-  return NextResponse.json({ days, summary, events });
+  return NextResponse.json({ days, inrPerUsd: rate, periods, uniques, repeatUsers, summary, events });
 }

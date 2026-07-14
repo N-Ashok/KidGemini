@@ -7,6 +7,9 @@ import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import type { AlertStore, ParentAlert } from "@/types/alert.types";
 import type {
+  PeriodTotals,
+  RepeatUser,
+  UniqueCounts,
   UsageEvent,
   UsageStore,
   UsageSummary,
@@ -49,6 +52,11 @@ function getDb(): Database.Database {
       kind TEXT NOT NULL,
       promptTokens INTEGER NOT NULL,
       outputTokens INTEGER NOT NULL,
+      billedPromptTokens INTEGER NOT NULL DEFAULT 0,
+      billedOutputTokens INTEGER NOT NULL DEFAULT 0,
+      thoughtTokens INTEGER NOT NULL DEFAULT 0,
+      cachedTokens INTEGER NOT NULL DEFAULT 0,
+      userAgent TEXT,
       costUsd REAL NOT NULL,
       ip TEXT, country TEXT, region TEXT, city TEXT,
       requestText TEXT NOT NULL,
@@ -119,6 +127,7 @@ function getDb(): Database.Database {
       updatedAt INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_turn_results_updated ON turn_results(updatedAt);
+    -- (billed* / thought / cached columns migrated below for pre-2026-07-14 DBs)
     -- Per-family parent PIN (PRD-PARENT-AUTH-ALERT-SCOPING §8). Keyed by the
     -- SSO userId — kidgemini has no local accounts table; identity is the JWT.
     CREATE TABLE IF NOT EXISTS parent_auth (
@@ -130,6 +139,22 @@ function getDb(): Database.Database {
       lastLockoutAt INTEGER
     );
   `);
+  // Migration (2026-07-14): real billed token counts. Pre-existing DBs lack
+  // the columns — add them, then backfill billed=estimate so history keeps
+  // counting in the rollups (its cost was estimated from those numbers anyway).
+  const usageCols = db.prepare(`PRAGMA table_info(usage_events)`).all() as Array<{ name: string }>;
+  if (!usageCols.some((c) => c.name === "billedPromptTokens")) {
+    db.exec(`
+      ALTER TABLE usage_events ADD COLUMN billedPromptTokens INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE usage_events ADD COLUMN billedOutputTokens INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE usage_events ADD COLUMN thoughtTokens INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE usage_events ADD COLUMN cachedTokens INTEGER NOT NULL DEFAULT 0;
+      UPDATE usage_events SET billedPromptTokens = promptTokens, billedOutputTokens = outputTokens;
+    `);
+  }
+  if (!usageCols.some((c) => c.name === "userAgent")) {
+    db.exec(`ALTER TABLE usage_events ADD COLUMN userAgent TEXT;`);
+  }
   return db;
 }
 
@@ -159,14 +184,27 @@ export class SqliteAlertStore implements AlertStore {
 
 export class SqliteUsageStore implements UsageStore {
   record(input: Omit<UsageEvent, "id" | "createdAt">): UsageEvent {
-    const event: UsageEvent = { ...input, id: newId(), createdAt: Date.now() };
+    const event: UsageEvent = {
+      ...input,
+      // Real billed counts when the caller has them; otherwise mirror the
+      // estimates so every row still lands in the billed rollups.
+      billedPromptTokens: input.billedPromptTokens ?? input.promptTokens,
+      billedOutputTokens: input.billedOutputTokens ?? input.outputTokens,
+      thoughtTokens: input.thoughtTokens ?? 0,
+      cachedTokens: input.cachedTokens ?? 0,
+      userAgent: input.userAgent ?? null,
+      id: newId(),
+      createdAt: Date.now(),
+    };
     getDb()
       .prepare(
         `INSERT INTO usage_events
          (id, createdAt, userId, userLabel, model, kind, promptTokens, outputTokens,
-          costUsd, ip, country, region, city, requestText, outputText, blocked)
+          billedPromptTokens, billedOutputTokens, thoughtTokens, cachedTokens,
+          userAgent, costUsd, ip, country, region, city, requestText, outputText, blocked)
          VALUES (@id, @createdAt, @userId, @userLabel, @model, @kind, @promptTokens,
-          @outputTokens, @costUsd, @ip, @country, @region, @city, @requestText,
+          @outputTokens, @billedPromptTokens, @billedOutputTokens, @thoughtTokens,
+          @cachedTokens, @userAgent, @costUsd, @ip, @country, @region, @city, @requestText,
           @outputText, @blocked)`,
       )
       .run({
@@ -228,6 +266,11 @@ export class SqliteUsageStore implements UsageStore {
       kind: r.kind as UsageEvent["kind"],
       promptTokens: r.promptTokens as number,
       outputTokens: r.outputTokens as number,
+      billedPromptTokens: (r.billedPromptTokens as number) ?? 0,
+      billedOutputTokens: (r.billedOutputTokens as number) ?? 0,
+      thoughtTokens: (r.thoughtTokens as number) ?? 0,
+      cachedTokens: (r.cachedTokens as number) ?? 0,
+      userAgent: (r.userAgent as string) ?? null,
       costUsd: r.costUsd as number,
       geo: {
         ip: (r.ip as string) ?? null,
@@ -241,11 +284,70 @@ export class SqliteUsageStore implements UsageStore {
     }));
   }
 
+  totalsSince(sinceMs: number): PeriodTotals {
+    const row = getDb()
+      .prepare(
+        `SELECT COUNT(*) AS eventCount,
+           COALESCE(SUM(billedPromptTokens), 0) AS promptTokens,
+           COALESCE(SUM(billedOutputTokens), 0) AS outputTokens,
+           COALESCE(SUM(thoughtTokens), 0) AS thoughtTokens,
+           COALESCE(SUM(cachedTokens), 0) AS cachedTokens,
+           COALESCE(SUM(costUsd), 0) AS costUsd
+         FROM usage_events WHERE createdAt >= ?`,
+      )
+      .get(sinceMs) as PeriodTotals;
+    return row;
+  }
+
+  uniquesSince(sinceMs: number): UniqueCounts {
+    const db = getDb();
+    const one = (sql: string) =>
+      (db.prepare(sql).get(sinceMs) as { n: number }).n;
+    return {
+      signedInUsers: one(
+        `SELECT COUNT(DISTINCT userId) AS n FROM usage_events
+         WHERE createdAt >= ? AND userId LIKE 'user:%'`,
+      ),
+      guestBrowsers: one(
+        `SELECT COUNT(DISTINCT userId) AS n FROM usage_events
+         WHERE createdAt >= ? AND userId NOT LIKE 'user:%'`,
+      ),
+      // Same machine behind a re-minted cookie collapses to one (ip, UA) pair.
+      guestDevices: one(
+        `SELECT COUNT(DISTINCT COALESCE(ip,'') || '|' || COALESCE(userAgent,'')) AS n
+         FROM usage_events WHERE createdAt >= ? AND userId NOT LIKE 'user:%'`,
+      ),
+    };
+  }
+
+  repeatUsersSince(sinceMs: number): RepeatUser[] {
+    // '+330 minutes' shifts epoch-ms into IST wall-clock before taking the
+    // date — day boundaries match the dashboard's IST rollups, not UTC.
+    return getDb()
+      .prepare(
+        `SELECT userId,
+           MAX(userLabel) AS userLabel,
+           COUNT(DISTINCT date(createdAt / 1000, 'unixepoch', '+330 minutes')) AS activeDays,
+           COUNT(*) AS eventCount,
+           MIN(createdAt) AS firstSeen,
+           MAX(createdAt) AS lastSeen
+         FROM usage_events WHERE createdAt >= ?
+         GROUP BY userId
+         HAVING activeDays >= 2
+         ORDER BY activeDays DESC, lastSeen DESC`,
+      )
+      .all(sinceMs) as RepeatUser[];
+  }
+
+  // Summary token numbers are the BILLED counts (what Google charges for) —
+  // the estimate columns exist only to keep the guest/daily gates stable.
   summarizeSince(sinceMs: number): UsageSummary {
     const events = this.listSince(sinceMs);
     const summary: UsageSummary = {
       totalPromptTokens: 0,
       totalOutputTokens: 0,
+      totalThoughtTokens: 0,
+      totalCachedTokens: 0,
       totalCostUsd: 0,
       eventCount: events.length,
       byDay: [],
@@ -259,8 +361,14 @@ export class SqliteUsageStore implements UsageStore {
     const dayUsers = new Map<string, Map<string, { userLabel: string | null; tokens: number }>>();
 
     for (const e of events) {
-      summary.totalPromptTokens += e.promptTokens;
-      summary.totalOutputTokens += e.outputTokens;
+      const prompt = e.billedPromptTokens ?? e.promptTokens;
+      const output = e.billedOutputTokens ?? e.outputTokens;
+      const thoughts = e.thoughtTokens ?? 0;
+      const cached = e.cachedTokens ?? 0;
+      summary.totalPromptTokens += prompt;
+      summary.totalOutputTokens += output;
+      summary.totalThoughtTokens += thoughts;
+      summary.totalCachedTokens += cached;
       summary.totalCostUsd += e.costUsd;
 
       const u = users.get(e.userId) ?? {
@@ -268,11 +376,15 @@ export class SqliteUsageStore implements UsageStore {
         userLabel: e.userLabel,
         promptTokens: 0,
         outputTokens: 0,
+        thoughtTokens: 0,
+        cachedTokens: 0,
         costUsd: 0,
         eventCount: 0,
       };
-      u.promptTokens += e.promptTokens;
-      u.outputTokens += e.outputTokens;
+      u.promptTokens += prompt;
+      u.outputTokens += output;
+      u.thoughtTokens += thoughts;
+      u.cachedTokens += cached;
       u.costUsd += e.costUsd;
       u.eventCount += 1;
       users.set(e.userId, u);
@@ -290,15 +402,20 @@ export class SqliteUsageStore implements UsageStore {
       locs.set(key, l);
 
       const day = new Date(e.createdAt).toISOString().slice(0, 10);
-      const d = days.get(day) ?? { day, promptTokens: 0, outputTokens: 0, costUsd: 0, eventCount: 0, topUser: null };
-      d.promptTokens += e.promptTokens;
-      d.outputTokens += e.outputTokens;
+      const d = days.get(day) ?? {
+        day, promptTokens: 0, outputTokens: 0, thoughtTokens: 0, cachedTokens: 0,
+        costUsd: 0, eventCount: 0, topUser: null,
+      };
+      d.promptTokens += prompt;
+      d.outputTokens += output;
+      d.thoughtTokens += thoughts;
+      d.cachedTokens += cached;
       d.costUsd += e.costUsd;
       d.eventCount += 1;
       days.set(day, d);
       const du = dayUsers.get(day) ?? new Map();
       const rec = du.get(e.userId) ?? { userLabel: e.userLabel, tokens: 0 };
-      rec.tokens += e.promptTokens + e.outputTokens;
+      rec.tokens += prompt + output;
       du.set(e.userId, rec);
       dayUsers.set(day, du);
     }

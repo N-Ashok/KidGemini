@@ -122,6 +122,24 @@ async function* withThoughts(thoughts: string[], text: string) {
   yield { kind: "delta", text };
 }
 
+/** Parses markdown with the SAME stack src/components/Markdown.tsx renders
+ *  with (react-markdown → remark-gfm), so a test can assert on how many
+ *  distinct `code` mdast nodes a chat message would actually produce — the
+ *  repro tool for BUG-FIX-LOG 2026-07-14's "stray code widget" corruption. */
+async function codeNodes(markdown: string): Promise<Array<{ lang: string | null; value: string }>> {
+  const { unified } = await import("unified");
+  const { default: remarkParse } = await import("remark-parse");
+  const { default: remarkGfm } = await import("remark-gfm");
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(markdown);
+  const out: Array<{ lang: string | null; value: string }> = [];
+  const walk = (node: { type: string; lang?: string; value?: string; children?: unknown[] }) => {
+    if (node.type === "code") out.push({ lang: node.lang ?? null, value: node.value ?? "" });
+    if (node.children) for (const c of node.children) walk(c as typeof node);
+  };
+  walk(tree as never);
+  return out;
+}
+
 beforeEach(() => {
   authMock.mockReset();
   replyStreamMock.mockReset();
@@ -294,6 +312,86 @@ describe("POST /api/chat — asset injection can never cost the child the game (
     await res.text();
 
     expect(injectMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/chat — unfenced/malformed game code doesn't corrupt the chat bubble (BUG-FIX-LOG 2026-07-14)", () => {
+  const PROSE = "Here's your updated game!";
+  const ARTIFACT = "<!doctype html><html><body>UPDATED GAME</body></html>";
+
+  it("F.1 unfenced reply (wasFenced: false) is re-fenced before it reaches the chat bubble", async () => {
+    authMock.mockResolvedValue(null);
+    const rawUnfenced = `${PROSE}\n${ARTIFACT}`; // what the model actually streamed — no fence at all
+    replyStreamMock.mockReturnValue(one(rawUnfenced));
+    extractArtifactMock.mockImplementation(() => ({ text: PROSE, artifactHtml: ARTIFACT, wasFenced: false }));
+
+    const res = await POST(makeReq({ message: "make it faster", history: [] }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(done.text).not.toBe(rawUnfenced); // the raw text must never reach the client verbatim
+    expect(done.text).toContain("```html");
+    expect(done.text).toMatch(/```html\n<!doctype html>.*UPDATED GAME.*```/s);
+  });
+
+  it("F.2 a cleanly fenced reply (wasFenced: true) is sent unchanged, including trailing prose", async () => {
+    authMock.mockResolvedValue(null);
+    const cleanReply = `Here you go!\n\`\`\`html\n${ARTIFACT}\n\`\`\`\nEnjoy!`;
+    replyStreamMock.mockReturnValue(one(cleanReply));
+    extractArtifactMock.mockImplementation(() => ({
+      text: "Here you go!\n\nEnjoy!",
+      artifactHtml: ARTIFACT,
+      wasFenced: true,
+    }));
+
+    const res = await POST(makeReq({ message: "make me a game", history: [] }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    // Untouched byte-for-byte — including "Enjoy!" landing AFTER the code block.
+    expect(done.text).toBe(cleanReply);
+  });
+
+  it("F.3 the re-fenced display text parses as ONE clean html code block (repro of the production corruption)", async () => {
+    authMock.mockResolvedValue(null);
+    // Representative reduction of the reported production bug: indented,
+    // blank-line-separated CSS is exactly what makes CommonMark chop RAW
+    // (unfenced) text into multiple stray "indented code block" nodes, each
+    // rendering its own spurious "code / Download / Copy" widget.
+    const indentedCss = [
+      "<style>",
+      "    #score-container {",
+      "        position: fixed; top: 10px;",
+      "    }",
+      "",
+      "    .dist-tag {",
+      "        color: white;",
+      "    }",
+      "</style>",
+    ].join("\n");
+    const artifact = `<!doctype html><html><head>${indentedCss}</head><body>game</body></html>`;
+    const rawUnfenced = `Here's the update!\n${artifact}`;
+    replyStreamMock.mockReturnValue(one(rawUnfenced));
+    extractArtifactMock.mockImplementation(() => ({
+      text: "Here's the update!",
+      artifactHtml: artifact,
+      wasFenced: false,
+    }));
+
+    const res = await POST(makeReq({ message: "make it faster", history: [] }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    // Before the fix: parsing the raw unfenced text directly (what used to be
+    // sent to the client) produces stray code nodes with no language — the
+    // historical bug shape.
+    const brokenNodes = await codeNodes(rawUnfenced);
+    expect(brokenNodes.some((n) => n.lang === null)).toBe(true);
+
+    // After the fix: `done.text` parses as exactly ONE code node, fenced as html.
+    const fixedNodes = await codeNodes(done.text);
+    expect(fixedNodes).toHaveLength(1);
+    expect(fixedNodes[0]!.lang).toBe("html");
   });
 });
 

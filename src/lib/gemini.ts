@@ -3,7 +3,7 @@
 
 import "server-only";
 import { GoogleGenAI, HarmBlockThreshold, HarmCategory } from "@google/genai";
-import type { ChatMessage, ChatModel, ImageAttachment, StreamChunk } from "@/types/chat.types";
+import type { ChatMessage, ChatModel, ImageAttachment, StreamChunk, TokenUsage } from "@/types/chat.types";
 import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
 import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection, type PromptTurnContext } from "./assets/prompt-catalog";
 import { catalogGates, type CatalogGates } from "./assets/catalog-gate";
@@ -22,6 +22,30 @@ const CHAT_TIMEOUT_MS = 30_000;
 // Google is overloaded). Healthy builder turns stream thought summaries well
 // inside this window. Env override: GEMINI_STALL_SWITCH_MS.
 const STALL_SWITCH_MS = 30_000;
+
+/** Gemini usageMetadata fields we bill on (all optional in the SDK). */
+interface GenUsageMetadata {
+  promptTokenCount?: number;
+  candidatesTokenCount?: number;
+  thoughtsTokenCount?: number;
+  cachedContentTokenCount?: number;
+}
+
+/** Final stream chunk carrying the real billed token counts and the model
+ *  that actually served the reply (fallback/hedge can differ from primary). */
+function usageChunk(u: GenUsageMetadata, model?: string): StreamChunk {
+  return {
+    kind: "usage",
+    text: "",
+    ...(model ? { model } : {}),
+    usage: {
+      promptTokens: u.promptTokenCount ?? 0,
+      outputTokens: u.candidatesTokenCount ?? 0,
+      thoughtTokens: u.thoughtsTokenCount ?? 0,
+      cachedTokens: u.cachedContentTokenCount ?? 0,
+    },
+  };
+}
 
 /** Internal marker: every live stream went silent past the watchdog window. */
 class StallSwitchError extends Error {
@@ -129,13 +153,17 @@ export class GeminiError extends Error {
  *  1. a properly closed ```html … ``` block,
  *  2. an opened ```html … that got cut off (no closing fence),
  *  3. no fence at all but a real <!doctype html> / <html> document in the text.
+ * `wasFenced` tells the caller which: only cases 2/3 leave raw, unfenced HTML/CSS/JS
+ * in the ORIGINAL text — a caller that displays the original text as markdown
+ * (api/chat/route.ts) must re-fence it before rendering, or the raw code's own
+ * indentation gets misparsed as CommonMark indented code blocks (BUG-FIX-LOG 2026-07-14).
  */
-export function extractArtifact(text: string): { text: string; artifactHtml?: string } {
+export function extractArtifact(text: string): { text: string; artifactHtml?: string; wasFenced?: boolean } {
   const done = "Here's your game! 🎮";
 
   const closed = text.match(/```html\s*([\s\S]*?)```/i);
   if (closed) {
-    return { text: text.replace(closed[0], "").trim() || done, artifactHtml: closed[1]?.trim() };
+    return { text: text.replace(closed[0], "").trim() || done, artifactHtml: closed[1]?.trim(), wasFenced: true };
   }
 
   const openOnly = text.match(/```html\s*([\s\S]*)$/i);
@@ -143,6 +171,7 @@ export function extractArtifact(text: string): { text: string; artifactHtml?: st
     return {
       text: text.slice(0, openOnly.index).trim() || done,
       artifactHtml: (openOnly[1] ?? "").trim(),
+      wasFenced: false,
     };
   }
 
@@ -151,6 +180,7 @@ export function extractArtifact(text: string): { text: string; artifactHtml?: st
     return {
       text: text.slice(0, docIdx).trim() || done,
       artifactHtml: text.slice(docIdx).replace(/```\s*$/, "").trim(),
+      wasFenced: false,
     };
   }
 
@@ -251,7 +281,7 @@ export class GeminiChatModel implements ChatModel {
    * system prompt (minimal-patch contract) and tighter output headroom:
    * a patch is ~8 lines, and output tokens dominate repair latency (§7.1).
    */
-  async repair(input: { systemPrompt: string; prompt: string }): Promise<string> {
+  async repair(input: { systemPrompt: string; prompt: string }): Promise<{ text: string; usage?: TokenUsage }> {
     const ai = getClient();
     try {
       const res = await withRetry(
@@ -270,7 +300,8 @@ export class GeminiChatModel implements ChatModel {
         ),
         { label: "gemini.repair", retries: 1 },
       );
-      return res.text ?? "";
+      const um = (res as { usageMetadata?: GenUsageMetadata }).usageMetadata;
+      return { text: res.text ?? "", usage: um ? usageChunk(um).usage : undefined };
     } catch (err) {
       throw new GeminiError(`repair generation failed: ${(err as Error).message}`);
     }
@@ -331,6 +362,8 @@ export class GeminiChatModel implements ChatModel {
         model: string;
         it: AsyncIterator<unknown>;
         pending?: Promise<{ src: Src; res?: IteratorResult<unknown>; err?: unknown }>;
+        /** Latest usageMetadata seen on this source (cumulative; last wins). */
+        usage?: GenUsageMetadata;
       }
       let srcs: Src[] = [{ model, it: stream[Symbol.asyncIterator]() }];
       /** Which source produced the answer tokens yielded so far (restart bookkeeping). */
@@ -393,10 +426,17 @@ export class GeminiChatModel implements ChatModel {
               srcs = srcs.filter((s) => s !== src);
               continue;
             }
+            // Surface the REAL billed token counts (usageMetadata) so the cost
+            // dashboard records what Google charges, not a char/4 estimate.
+            if (src.usage) yield usageChunk(src.usage, src.model);
             return; // the (sole/committed) stream finished cleanly
           }
 
-          const chunk = won.res!.value as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };
+          const chunk = won.res!.value as {
+            candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
+            usageMetadata?: GenUsageMetadata;
+          };
+          if (chunk.usageMetadata) src.usage = chunk.usageMetadata;
           // chunk.text would silently drop thought parts — walk the parts instead.
           const parts = chunk.candidates?.[0]?.content?.parts ?? [];
           for (const p of parts) {

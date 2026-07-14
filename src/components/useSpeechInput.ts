@@ -23,6 +23,15 @@
 // unbroken monologue could lose all but the last sentence. Interim results
 // are now tracked (splitSpeechResults) and the pending tail is committed
 // whenever the session ends (silence timeout, hard cap, or the kid's stop).
+//
+// Repeat-mic fix (BUG-FIX-LOG 2026-07-14): "I want" was arriving as "I want
+// I want I want" (short phrase) or 30-40x on a longer monologue. Root cause:
+// onresult trusted the browser's own `event.resultIndex` to know what's new
+// since the last event; on some browsers/webviews that index doesn't advance
+// reliably, so every newly-finalized segment replayed the WHOLE session's
+// finals again. Fixed by self-tracking how many finals we've already
+// committed (`committedFinalsRef`, reset at every rec.start()) instead of
+// trusting resultIndex — see speech-transcript.ts for the slicing logic.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isFatalMicError, micErrorMessage } from "@/lib/mic-errors";
@@ -75,6 +84,11 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Recognized-but-not-final speech; flushed on session end so it's never lost.
   const interimRef = useRef("");
+  // How many finalized segments THIS session has already been committed to
+  // onTranscript — self-tracked because the browser's own resultIndex can't
+  // be trusted (see speech-transcript.ts, 2026-07-14 repeat-mic bug). Reset
+  // to 0 at every rec.start() — a fresh session gets a fresh results list.
+  const committedFinalsRef = useRef(0);
 
   // Latest callback without retriggering the setup effect.
   const onTranscriptRef = useRef(onTranscript);
@@ -89,7 +103,11 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
     rec.continuous = true; // don't end the session at the first pause in speech
     rec.interimResults = true; // see interim-flush note above — finals alone lose long speech
     rec.onresult = (e) => {
-      const { freshFinalText, interimText } = splitSpeechResults(e.results, e.resultIndex);
+      const { freshFinalText, interimText, finalCount } = splitSpeechResults(
+        e.results,
+        committedFinalsRef.current,
+      );
+      committedFinalsRef.current = finalCount;
       // Committed as-is: Web Speech emits no punctuation, and heuristics only
       // punctuated pause boundaries (owner decision 2026-07-10: none at all
       // beats inconsistent — revisit with a server STT if UAT demands it).
@@ -115,6 +133,7 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
       }
       restartTimerRef.current = setTimeout(() => {
         if (!wantListeningRef.current) return;
+        committedFinalsRef.current = 0; // fresh session ⇒ fresh results list
         try { rec.start(); } catch { /* already started */ }
       }, RESTART_DELAY_MS);
     };
@@ -140,6 +159,7 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
     if (!rec) return;
     setError(null);
     wantListeningRef.current = true;
+    committedFinalsRef.current = 0; // fresh session ⇒ fresh results list
     try { rec.start(); setIsListening(true); } catch { /* already started */ }
   }, []);
 

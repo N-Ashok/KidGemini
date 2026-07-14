@@ -30,14 +30,30 @@ export interface ImageAttachment {
   data: string;
 }
 
+/** Gemini's real billed token counts for one call (usageMetadata). `prompt`
+ *  INCLUDES `cached` — Gemini reports cache hits as a subset of the prompt. */
+export interface TokenUsage {
+  promptTokens: number;
+  outputTokens: number;
+  thoughtTokens: number;
+  cachedTokens: number;
+}
+
 /** One streamed piece of a model reply: answer text, a thought summary
  *  (builder turns, includeThoughts) that feeds the kid-facing planning line —
- *  thoughts are never part of the answer — or a `restart`: the previous
+ *  thoughts are never part of the answer — a `restart`: the previous
  *  model died mid-answer and a fallback is now producing a FRESH reply, so
- *  everything streamed before it must be wiped (owner decision 2026-07-13). */
+ *  everything streamed before it must be wiped (owner decision 2026-07-13) —
+ *  or a final `usage` chunk carrying the real billed token counts (2026-07-14). */
 export interface StreamChunk {
-  kind: "delta" | "thought" | "restart";
+  kind: "delta" | "thought" | "restart" | "usage";
   text: string;
+  /** Present on kind:"usage" only. */
+  usage?: TokenUsage;
+  /** kind:"usage" only: the model that ACTUALLY served the reply — under the
+   *  fallback chain / hedge race this can differ from the configured primary,
+   *  and each model bills at its own rate. */
+  model?: string;
 }
 
 /** Any conversational model is a ChatModel (swappable / mockable). */

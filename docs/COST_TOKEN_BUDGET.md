@@ -80,11 +80,18 @@ now over-estimate at the top flash rate, never $0).
 
 ## Next instrumentation step (before any further optimization)
 
-Record Gemini's exact `usageMetadata` (prompt / output / thinking /
-`cachedContentTokenCount`) into `usage_events` instead of the chars÷4
-estimate, including failed attempts (kind `chat-failed`). One day of data
-answers: is caching hitting (decides #4)? what do failures really cost?
-Dashboard then matches the invoice by construction.
+✅ SHIPPED 2026-07-14 (partially): Gemini's exact `usageMetadata` (prompt /
+output / thinking / `cachedContentTokenCount`) now lands in `usage_events`
+as `billedPromptTokens` / `billedOutputTokens` / `thoughtTokens` /
+`cachedTokens`. The old `promptTokens`/`outputTokens` columns stay chars÷4
+estimates ON PURPOSE — the guest/daily gates are tuned to them; switching
+them to real counts (which include the big system prompt) would silently
+slash the guest trial severalfold. Cost is now priced from the 4 real types
+(cached at the cached-input rate, thinking at the output rate). The admin
+dashboard adds today/week/month/year/all-time rollups (IST calendar) and ₹
+(via `USD_INR_RATE`). Rows before 2026-07-14 have billed=estimate backfill.
+STILL OPEN: failed attempts (kind `chat-failed`) are not recorded — a stream
+that dies before `usageMetadata` still costs money we don't meter.
 
 ## Monitoring runbook
 

@@ -226,7 +226,12 @@ describe("catalog scale ceilings (PRD §14, amended 2026-07-13: retrieval-lite)"
   });
 
   it("the committed manifest stays under a sanity ceiling (revisit selection priorities at the next doubling)", () => {
+    // Bumped 60 → 120 (2026-07-14): the catalog doubled 50 → 100 (city models,
+    // race-track pieces, dragons). Selection priorities WERE revisited as part
+    // of this bump — see model-select.ts GENRES, extended the same day to
+    // route every new model through a genre trigger, not just name-literal
+    // matching. Next doubling (~200) should get the same treatment.
     const models = realManifest.assets.filter((a) => a.type === "model");
-    expect(models.length).toBeLessThanOrEqual(60);
+    expect(models.length).toBeLessThanOrEqual(120);
   });
 });

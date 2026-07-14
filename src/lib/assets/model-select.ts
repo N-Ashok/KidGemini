@@ -23,13 +23,20 @@ export interface GenreDef {
 export const GENRES: readonly GenreDef[] = [
   {
     label: "racing / driving",
-    trigger: /\b(rac(e|ing|er)|driv(e|ing)|cars?|trucks?|police|taxis?|tractors?|ambulances?|chase)\b/i,
-    models: ["car", "police", "firetruck", "taxi", "ambulance", "tractor", "coin"],
+    trigger: /\b(rac(e|ing|er)|driv(e|ing)|cars?|trucks?|police|taxis?|tractors?|ambulances?|chase|track|go-?karts?)\b/i,
+    models: [
+      "car", "police", "firetruck", "taxi", "ambulance", "tractor", "coin",
+      "garbage_truck", "pickup_truck", "gokart",
+      "race_track_straight", "race_track_curve", "finish_line", "checkered_flag", "grandstand", "pit_garage",
+    ],
   },
   {
     label: "platformer / collecting",
     trigger: /\b(platform(er)?|jump(ing|er)?|collect(ing)?|coins?|maze|runner?|obstacles?)\b/i,
-    models: ["hero", "coin", "star", "key", "chest", "heart", "gem", "spring", "crate", "barrel", "bomb", "flag", "tree", "mushroom"],
+    models: [
+      "hero", "coin", "star", "key", "chest", "heart", "gem", "spring", "crate", "barrel", "bomb", "flag", "tree", "mushroom",
+      "lock", "lever", "saw", "signpost", "ladder",
+    ],
   },
   {
     label: "space / flying",
@@ -43,28 +50,42 @@ export const GENRES: readonly GenreDef[] = [
   },
   {
     label: "castle / adventure",
-    trigger: /\b(castles?|knights?|swords?|adventure|quest|dragons?|ghosts?|spooky|hallowe+n|monsters?|bats?|dungeons?|catapults?|hero(es)?)\b/i,
-    models: ["hero", "tower", "key", "chest", "sword", "catapult", "bridge", "ghost", "bat", "dino", "robot", "gem"],
+    trigger: /\b(castles?|knights?|swords?|adventure|quest|dragons?|ghosts?|spooky|hallowe+n|monsters?|bats?|dungeons?|catapults?|hero(es)?|siege)\b/i,
+    models: [
+      "hero", "tower", "key", "chest", "sword", "catapult", "bridge", "ghost", "bat", "dino", "robot", "gem",
+      "ballista", "trebuchet", "battering_ram", "castle_gate", "drawbridge", "siege_tower", "castle_door",
+      "dragon", "dragon_evolved",
+    ],
   },
   {
     label: "city",
-    trigger: /\b(city|cities|town|buildings?|skyscrapers?|streets?|traffic)\b/i,
-    models: ["skyscraper", "house", "car", "police", "firetruck", "helicopter"],
+    trigger: /\b(city|cities|town|buildings?|skyscrapers?|streets?|traffic|apartments?|shops?|offices?)\b/i,
+    models: [
+      "skyscraper", "house", "car", "police", "firetruck", "helicopter",
+      "office_building", "apartment", "shop", "driveway", "planter", "garbage_truck",
+    ],
   },
   {
     label: "forest / nature",
-    trigger: /\b(forests?|jungle|nature|trees?|camping|mushrooms?|woods)\b/i,
-    models: ["pine", "tree", "rock", "bird", "mushroom", "dog"],
+    trigger: /\b(forests?|jungle|nature|trees?|camping|mushrooms?|woods|desert)\b/i,
+    models: [
+      "pine", "tree", "rock", "bird", "mushroom", "dog",
+      "cactus", "campfire", "canoe", "tent", "palm_tree", "statue", "toadstool",
+    ],
   },
   {
     label: "water / sailing",
-    trigger: /\b(water|ocean|seas?|boats?|ships?|sail(ing)?|sharks?|swim(ming)?|under\s?water|pirates?|fish(ing)?|dolphins?)\b/i,
-    models: ["boat", "fish", "shark", "dolphin", "chest"],
+    trigger: /\b(water|ocean|seas?|boats?|ships?|sail(ing)?|sharks?|swim(ming)?|under\s?water|pirates?|fish(ing)?|dolphins?|canoes?)\b/i,
+    models: ["boat", "fish", "shark", "dolphin", "chest", "canoe"],
   },
   {
     label: "food / cooking",
     trigger: /\b(foods?|cook(ing)?|kitchen|restaurants?|burgers?|pizzas?|ice\s?creams?|donuts?|apples?|eat(ing)?|hungry|snacks?)\b/i,
-    models: ["burger", "ice_cream", "donut", "apple", "chicken"],
+    models: [
+      "burger", "ice_cream", "donut", "apple", "chicken",
+      "pizza", "hotdog", "banana", "watermelon", "cake", "cupcake", "taco", "carrot",
+      "strawberry", "sandwich", "corn", "sushi", "egg", "muffin", "cherries",
+    ],
   },
 ];
 

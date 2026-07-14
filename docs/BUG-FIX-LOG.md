@@ -45,6 +45,177 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-14 — Unfenced game code reached the chat bubble raw — garbled text with a stray "code / Download / Copy" widget mid-content
+
+- **Symptom (what the user saw):** in production, after asking for an
+  improvement to a previewed game, the chat window showed the game's full raw
+  HTML/CSS/JS as garbled plain text, with a stray "code ⬇ Download ⧉ Copy"
+  toolbar rendered in the *middle* of the CSS — not one clean code block.
+- **Surface area:** `src/app/api/chat/route.ts` (the `"done"` event's `text`
+  field), `src/lib/gemini.ts` (`extractArtifact`), `src/components/Markdown.tsx`
+  (`CodeBlock`, unchanged but implicated).
+- **Root cause (rendering-contract class, not a data bug):** `route.ts` always
+  sent the model's raw reply text (`full`) to the client for chat-bubble
+  display ("Gemini style: full text shown in chat"). `extractArtifact` already
+  tolerates the model failing to close (or ever open) a ` ```html ``` ` fence —
+  it has 3 cases and correctly extracts `artifactHtml` for the preview panel in
+  all 3 — but cases 2/3 (no clean fence) left `full` itself unfenced. The chat
+  bubble renders `full` through `react-markdown` + `remark-gfm`
+  (`Markdown.tsx`), which applies full CommonMark parsing to it. Reproduced
+  directly: the reported game's CSS/JS was 4+-space indented with blank lines
+  between rule groups — CommonMark treats that as one or more **indented code
+  blocks** (no language), and `CodeBlock`'s `isBlock = Boolean(lang) ||
+  code.includes("\n")` renders *any* multi-line `code` node with the full
+  toolbar — hence the spurious "code" (generic label, no `lang`) widget
+  scattered wherever CommonMark started a new indented chunk. Production logs
+  (`pm2 logs kidgemini`) confirm this instance runs frequent
+  `died mid-answer — restarting fresh on the next model` fallbacks and at
+  least one hedge race — exactly the kind of turn where a long "improve this
+  game" generation can end without a closed fence.
+- **Fix:** `extractArtifact` (`src/lib/gemini.ts`) now returns a `wasFenced`
+  flag alongside `text`/`artifactHtml`, so the caller knows whether the
+  original reply already had one clean, closed fence (case 1) versus a
+  fallback (cases 2/3). `route.ts` builds a `displayText`: when
+  `artifactHtml` is present and `wasFenced` is falsy, it re-fences the
+  artifact (`prose + "\n\n```html\n" + artifactHtml + "\n```"`) before sending
+  it as the `"done"` event's `text` and before persisting it via
+  `turnResults.complete`; the already-working case (a clean fence, including
+  any trailing prose after it) is untouched byte-for-byte. `recordUsage(...,
+  full, ...)` still meters the true raw `full` — billing is unaffected
+  (BUG-FIX-LOG 2026-07-13's "meter the FULL reply" contract holds).
+- **Result (verified):** `src/lib/gemini.extract-artifact.test.ts` (new, 4
+  tests) pins `wasFenced` for all 3 extraction cases + the no-artifact case.
+  `src/app/api/chat/route.test.ts` gained 3 tests (F.1-F.3): F.1 confirms an
+  unfenced reply is re-fenced before reaching the client; F.2 confirms a
+  cleanly-fenced reply (with trailing prose) is sent unchanged; F.3 re-parses
+  both the raw text and the fixed `displayText` with the actual
+  `remark-parse`/`remark-gfm` stack `Markdown.tsx` uses and asserts the raw
+  text produces a language-less "stray" code node (the historical bug shape)
+  while the fixed text produces exactly one `html`-tagged code node. All 3 new
+  route tests fail against the pre-fix code (confirmed) and pass after. Full
+  suite: 558/558 passing. `tsc --noEmit` clean.
+- **Impact:** every chat reply that builds/edits a game now always displays as
+  one clean, collapsible code card, regardless of whether the model's fence
+  was well-formed, truncated, or missing — no user-visible or behavior change
+  for the already-working case.
+- **Prevention:** the class is "a fallback-tolerant extractor's fallback path
+  wasn't propagated to every consumer that assumed the strict/common case" —
+  the 4 new `extractArtifact` tests plus the 3 new route tests pin this;
+  registered in `docs/REGRESSION-TEST-CATALOG.md`. Future callers of
+  `extractArtifact` that display `text` as markdown must check `wasFenced`
+  before doing so.
+- **Related:** 2026-07-13 (mid-answer model restart mechanic — the same
+  instability that produces truncated fences); 2026-07-13 (usage metering
+  "meter the FULL reply" — this fix does not touch that contract).
+
+### 2026-07-14 — 3D model catalog doubled 50→100; publish gate caught 2 real gaps (owner request: city models, race tracks, dragons)
+
+- **Symptom:** `node scripts/vendor-models.mjs --upload` uploaded and verified
+  all 50 new models on the live CDN (assets.ariantra.com) and wrote all 100
+  manifest entries — then the contract-test gate (stage 5) failed twice and
+  the script exited non-zero, leaving the working tree in a "assets are live,
+  local repo doesn't pass its own tests yet" state.
+- **Surface area:** `scripts/vendor-models.mjs` (50 new curated entries: city
+  models from two new kits — city-kit-commercial, city-kit-suburban — plus
+  racing-kit for track pieces, plus two Quaternius dragons via poly.pizza);
+  `src/lib/assets/gallery.ts` (emoji map); `src/lib/assets/model-select.ts`
+  (GENRES); `src/lib/assets/prompt-catalog.test.ts` (sanity ceiling).
+- **Root cause (two independent gate failures, both by design — not bugs in
+  the gate):**
+  1. `gallery.test.ts`'s emoji-lockstep test: every curated model needs its
+     own gallery-card emoji or it silently falls back to 🧸. The 50 new names
+     had no entries in `gallery.ts`'s `EMOJI` map — first failure was
+     `garbage_truck`, but all 50 were missing.
+  2. `prompt-catalog.test.ts`'s sanity ceiling: manifest models must stay
+     ≤ 60, "revisit selection priorities at the next doubling" — by design,
+     since the catalog exactly doubled (50→100), this is that doubling.
+- **Fix:**
+  1. Added all 50 emoji to `gallery.ts` (e.g. `dragon: "🐉"`, `pizza: "🍕"`,
+     `race_track_straight: "🛣️"`).
+  2. Actually revisited selection priorities (not just bumped the number):
+     extended `model-select.ts`'s `GENRES` so every new model routes through
+     a genre trigger — race-track pieces + go-kart/pickup/garbage truck join
+     "racing / driving"; siege weapons + both dragons join "castle /
+     adventure" (whose trigger already matched `dragons?`, but the model list
+     didn't carry any dragon names until now); city buildings join "city";
+     the 15 new food items join "food / cooking"; nature props join "forest
+     / nature". Bumped the ceiling 60 → 120 in `prompt-catalog.test.ts`, with
+     a comment pointing at this entry so the "was it revisited?" question is
+     answerable at the next doubling.
+- **Two dragons sourced, one swapped mid-build:** the first "Dragon Evolved"
+  candidate (poly.pizza/m/LlwD0QNUPj) came in at 119 KB even after
+  `simplify(0.5)` — confirmed `simplify()` no-ops on this project's
+  skinned/rigged meshes (same class as the Shiba Inu/Husky/horse rejections
+  in `vendor-models.mjs`'s curation comments), and animation trimming barely
+  moved the size either (mesh-dominated, not clip-dominated). Swapped to a
+  second Quaternius dragon (poly.pizza/m/3rUm1cN3yp, smaller mesh, same
+  animation set) — fits fully un-simplified at 74 KB.
+- **Result (verified):** `npx vitest run src/lib/assets/` — 8 files, 112/112
+  passing. `node scripts/assets-contract-check.mjs` — all 100 models 200,
+  immutable, CORS, hash-match on the live CDN. `tsc --noEmit` clean on every
+  changed file.
+- **Impact:** 100 CC0 3D models now live in the kid-facing catalog and
+  correctly wired into retrieval-lite prompt selection; every model has a
+  gallery emoji; no change to per-prompt token cost (`PROMPT_MODEL_CAP`
+  stays 30 — this was a catalog-size ceiling, not a per-prompt one).
+- **Prevention:** both gates already existed and did their job — this entry
+  is the record that they were addressed, not routed around. Next doubling
+  (~200 models) should get the same treatment: emoji for every new name,
+  genre wiring (not just name-literal fallback matching), ceiling bump with
+  a dated comment.
+- **Related:** 2026-07-13 (retrieval-lite selection built, PROMPT_MODEL_CAP
+  raised 25→30); 2026-07-12 (Phase F fill-out to 20 models, same curation
+  discipline — reject over-budget rigged models rather than force-fit them).
+
+### 2026-07-14 — Mic dictation repeated words 3x on a short phrase, 30-40x on a long one
+
+- **Symptom (what the user saw):** speaking "I want" into the mic (Composer
+  and the preview-pane Idea Button both affected) produced "I want I want I
+  want" in the text box; longer monologues repeated words up to 30-40x, with
+  earlier words repeating the most.
+- **Surface area:** `src/lib/speech-transcript.ts` (`splitSpeechResults`),
+  `src/components/useSpeechInput.ts` (`onresult`, `start`, the `onend`
+  auto-restart) — shared by both mic surfaces (`Composer.tsx`,
+  `IdeaMicTab.tsx`), which is why the user saw it in both the chat box and the
+  preview pane.
+- **Root cause — count-mismatch class:** `onresult` sliced "what's new" by
+  the browser's own `event.resultIndex`. That field is a browser *claim*
+  about which results changed since the last event; on some browsers/
+  webviews it doesn't reliably advance. When it stayed at (or returned to) a
+  low value, every newly-finalized segment made `freshFinalText` recompute
+  from the START of the session's finals instead of just the new one, and the
+  caller re-appended that growing blob into the text box on every final —
+  each additional final segment compounded the repeat (matches both the
+  short-phrase 3x and the long-monologue 30-40x reports: the count tracks how
+  many final segments the session produced). The code trusted a value it
+  never verified, the same class already called out in `CLAUDE.md` §9.2
+  ("count mismatch").
+- **Fix:** stopped trusting `event.resultIndex` entirely. `splitSpeechResults`
+  now takes `alreadyCommitted` (a count) instead of a browser-supplied index,
+  slices the FINALS-only array by that count, and returns `finalCount` so the
+  caller can self-track. `useSpeechInput` added `committedFinalsRef`, updated
+  from `finalCount` on every `onresult`, and reset to 0 at every fresh
+  `rec.start()` (both the explicit `start()` and the silent `onend`
+  auto-restart) — a new session gets a fresh browser results list, so our own
+  counter must reset in step.
+- **Result (verified):** `speech-transcript.test.ts` — 2 new regression tests
+  reproduce the exact bug shape (a browser whose resultIndex never advances,
+  across both a growing session and repeated identical events) and FAIL
+  against the pre-fix code (confirmed via `git stash` — old code produced
+  `["I want", "I want", "I want"]` on the repeated-event test) and PASS
+  against the fix. Full file: 18/18 passing. `tsc --noEmit` clean for both
+  changed files.
+- **Impact:** both mic entry points (main composer, preview-pane Idea Button)
+  now emit each spoken word/phrase exactly once, regardless of how a given
+  browser reports `resultIndex`. No API or data-shape change.
+- **Prevention:** the 2 new regression tests in `speech-transcript.test.ts`
+  pin this; registered in `docs/REGRESSION-TEST-CATALOG.md`. Class note for
+  future browser-API integrations: never slice/dedupe by a value the API
+  hands you without a fallback — self-track state you can verify instead.
+- **Related:** 2026-07-10 (interim-flush entry, same file/hook, established
+  the `splitSpeechResults` pure-function split this fix builds on); `CLAUDE.md`
+  §9.2 count-mismatch class.
+
 ### 2026-07-13 — Usage metering excluded the game code — ~75x output undercount
 
 - **Symptom (what the user saw):** Google AI Studio showed ~550–600k output

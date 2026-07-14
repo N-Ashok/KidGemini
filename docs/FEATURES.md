@@ -307,11 +307,27 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 
 ## Limits & admin
 - Per-IP rate limiting with daily windows + 3-strike escalation
-- Usage/cost tracking per user/model (tokens, USD) — admin dashboard (`/admin`):
-  daily totals + top spender per day, per-user and per-location breakdowns, raw
-  log. OPERATOR-ONLY since 2026-07-10: gated by `ADMIN_SECRET` (POST body,
-  timing-safe compare, 503 when unset — never open), independent of the parent
-  PIN, and no longer linked from the kid UI
+- Usage/cost tracking per user/model — admin dashboard (`/admin`):
+  today / this-week / this-month / this-year / all-time rollup cards (IST
+  calendar, Monday weeks), all 4 billed token types (prompt / output /
+  thinking / cached — real Gemini `usageMetadata` since 2026-07-14, not
+  chars÷4), cost in ₹ (env `USD_INR_RATE`) + USD, daily totals + top spender
+  per day, per-user and per-location breakdowns, raw log. OPERATOR-ONLY since
+  2026-07-10: gated by `ADMIN_SECRET` (POST body, timing-safe compare, 503
+  when unset — never open), independent of the parent PIN, and no longer
+  linked from the kid UI. NOTE: the gate tallies still use the estimate
+  columns by design (docs/COST_TOKEN_BUDGET.md)
+- Unique-visitor panel (2026-07-14): per period, distinct signed-in accounts ·
+  guest cookies (browsers) · guest IP+user-agent pairs (devices) · an
+  estimated-people total (accounts + min of the two guest signals — cookie
+  clears inflate browsers, shared wifi deflates devices). The raw User-Agent
+  header is recorded per usage event (privacy.html "Technical usage data" row;
+  no fingerprinting) and shown as a coarse "Chrome · Windows" Device column in
+  the request log
+- Returning-users list (2026-07-14): accounts AND guest cookies active on 2+
+  distinct IST days (all time), with days active / requests / first / last
+  seen — same-day repeats count once; guest streaks undercount across cookie
+  clears
 
 ## Billing (`/upgrade`)
 - Razorpay one-time payments: plan cards, order creation, checkout

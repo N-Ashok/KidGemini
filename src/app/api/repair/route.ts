@@ -72,18 +72,33 @@ export async function POST(req: NextRequest) {
   console.log(`[api/repair] ▶ code=${failureCode} userId=${userId} htmlChars=${html.length}`);
 
   let reply: string;
+  let realUsage: { promptTokens: number; outputTokens: number; thoughtTokens: number; cachedTokens: number } | undefined;
   try {
-    reply = await chatModel.repair({ systemPrompt: REPAIR_SYSTEM_PROMPT, prompt });
+    const r = await chatModel.repair({ systemPrompt: REPAIR_SYSTEM_PROMPT, prompt });
+    reply = r.text;
+    realUsage = r.usage;
   } catch (err) {
     console.error(`[api/repair] ✖ gemini failed @${Date.now() - t0}ms: ${(err as Error).message}`);
     return NextResponse.json({ error: "repair_failed" } satisfies RepairResponse, { status: 502 });
   }
 
   // Recorded but gate-exempt (kind:"repair" is excluded from the tallies).
+  // promptTokens/outputTokens stay estimates (gate semantics); billed* carry
+  // the real usageMetadata counts and drive the cost estimate when present.
   usage.record({
     userId, userLabel, model, kind: "repair",
+    userAgent: req.headers.get("user-agent"),
     promptTokens: estTokens(prompt), outputTokens: estTokens(reply),
-    costUsd: estimateCostUsd(model, estTokens(prompt), estTokens(reply)),
+    billedPromptTokens: realUsage?.promptTokens,
+    billedOutputTokens: realUsage?.outputTokens,
+    thoughtTokens: realUsage?.thoughtTokens,
+    cachedTokens: realUsage?.cachedTokens,
+    costUsd: estimateCostUsd(model, {
+      prompt: realUsage?.promptTokens ?? estTokens(prompt),
+      output: realUsage?.outputTokens ?? estTokens(reply),
+      thoughts: realUsage?.thoughtTokens,
+      cached: realUsage?.cachedTokens,
+    }),
     geo, requestText: `repair:${failureCode}`, outputText: reply.slice(0, 4_000), blocked: false,
   });
 

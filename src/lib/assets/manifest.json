@@ -368,6 +368,663 @@
       "license": "CC0",
       "sourceUrl": "https://poly.pizza/m/AyHTK3zUSG",
       "sha256": "baf4adb04d22ee59789b9b1ee02907273283f096f7c9269e524eeace10d0ea6e"
+    },
+    {
+      "name": "hero",
+      "type": "model",
+      "url": "https://assets.ariantra.com/hero.f5b4d5.glb",
+      "bytes": 64824,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "f5b4d5883e7e56584fd50706b17696365b2e63679e673000ef0b8751db324702"
+    },
+    {
+      "name": "heart",
+      "type": "model",
+      "url": "https://assets.ariantra.com/heart.396b8a.glb",
+      "bytes": 14540,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "396b8a2333f5ed0fa4ee4ae801b7154080a07ed1e7255a3ade5ac1a5864000aa"
+    },
+    {
+      "name": "gem",
+      "type": "model",
+      "url": "https://assets.ariantra.com/gem.0a31f5.glb",
+      "bytes": 14016,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "0a31f5466c20477caef502049649cdf1df202b0f4f03b06cf58c0c0264fd60f2"
+    },
+    {
+      "name": "bomb",
+      "type": "model",
+      "url": "https://assets.ariantra.com/bomb.e41ae8.glb",
+      "bytes": 16720,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "e41ae8492793a84e8d85aa7c65b2895d0a755ffdb13a068cc29148b44e005d8d"
+    },
+    {
+      "name": "spring",
+      "type": "model",
+      "url": "https://assets.ariantra.com/spring.cba06a.glb",
+      "bytes": 23796,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "cba06a2bdd9e5f55285aa740b4ca166e19ac09885c82281b8c62f393ff69620b"
+    },
+    {
+      "name": "flag",
+      "type": "model",
+      "url": "https://assets.ariantra.com/flag.6578fa.glb",
+      "bytes": 15468,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "6578fa58bfd35a92a1d0ec9d17953519db3d0543180f81d3b5f3264fe257eb80"
+    },
+    {
+      "name": "mushroom",
+      "type": "model",
+      "url": "https://assets.ariantra.com/mushroom.b331bb.glb",
+      "bytes": 16204,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "b331bbc06e076296f5141f60c4b8a9fd7ee623328c8dc2fb8a68f69756baf134"
+    },
+    {
+      "name": "barrel",
+      "type": "model",
+      "url": "https://assets.ariantra.com/barrel.82359d.glb",
+      "bytes": 16128,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "82359d1f16e3098dab0a93746e382c37bca4594e65bf7443bfbf4000d307db07"
+    },
+    {
+      "name": "crate",
+      "type": "model",
+      "url": "https://assets.ariantra.com/crate.9e3793.glb",
+      "bytes": 15780,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "9e37933bb096d256b1a575ce1523ba1b7a7e7d3fa7fa494d22adae868bc2d3b3"
+    },
+    {
+      "name": "taxi",
+      "type": "model",
+      "url": "https://assets.ariantra.com/taxi.e637f5.glb",
+      "bytes": 36328,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/car-kit",
+      "sha256": "e637f58ebffc027dec10cadc7294cd6f2e76a3e7fc19fb13478ae4fcbb3403d0"
+    },
+    {
+      "name": "ambulance",
+      "type": "model",
+      "url": "https://assets.ariantra.com/ambulance.1d6cd6.glb",
+      "bytes": 43504,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/car-kit",
+      "sha256": "1d6cd6243d3332a38a07baf8ee6732f74b7c8e064c4b65440832ecf829e1d047"
+    },
+    {
+      "name": "tractor",
+      "type": "model",
+      "url": "https://assets.ariantra.com/tractor.c3b20b.glb",
+      "bytes": 51176,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/car-kit",
+      "sha256": "c3b20b5f36ea14560c07504d030d3ebcf8900d6d1b352ec634c84e465ede1d43"
+    },
+    {
+      "name": "catapult",
+      "type": "model",
+      "url": "https://assets.ariantra.com/catapult.860923.glb",
+      "bytes": 31544,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/castle-kit",
+      "sha256": "8609237d08a1ff6e0b05cf198bc204d119df4d4de6137d1aa0d92ff9a2969197"
+    },
+    {
+      "name": "bridge",
+      "type": "model",
+      "url": "https://assets.ariantra.com/bridge.888fbe.glb",
+      "bytes": 12540,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/castle-kit",
+      "sha256": "888fbe36fbabe18d0edec5c2e6a4d5660d31720f5e382017b4b58ff88e796469"
+    },
+    {
+      "name": "burger",
+      "type": "model",
+      "url": "https://assets.ariantra.com/burger.cd07c3.glb",
+      "bytes": 25792,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "cd07c35b7345f2fbcdaeb502855ca8ddd7b1998d1e73c497d8454091a1baea92"
+    },
+    {
+      "name": "ice_cream",
+      "type": "model",
+      "url": "https://assets.ariantra.com/ice_cream.e50948.glb",
+      "bytes": 16264,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "e50948f0677b80781fdd2f3ee069eb4d29d146b79eb326bd6606468964bcd227"
+    },
+    {
+      "name": "donut",
+      "type": "model",
+      "url": "https://assets.ariantra.com/donut.6383da.glb",
+      "bytes": 16992,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "6383da961a84523656ad834501d865902b05d7b5f5ef049aea6ee0c879ea983b"
+    },
+    {
+      "name": "apple",
+      "type": "model",
+      "url": "https://assets.ariantra.com/apple.11540f.glb",
+      "bytes": 15872,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "11540f330b47a5ec2e0729519c956f207f3c1c3bcfbbcfed8a38a2fde1132a48"
+    },
+    {
+      "name": "chicken",
+      "type": "model",
+      "url": "https://assets.ariantra.com/chicken.b7d3d1.glb",
+      "bytes": 37672,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/ineV9pU5VL",
+      "sha256": "b7d3d18f10be25e897b68150f70392797b5d5e28bfd85c50b828bade49f64747"
+    },
+    {
+      "name": "bat",
+      "type": "model",
+      "url": "https://assets.ariantra.com/bat.bbb9a7.glb",
+      "bytes": 73424,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/hNO9XvjlKa",
+      "sha256": "bbb9a7192f418521567483e46b72639f8b3fe4a23efa138525efff63fe18c47d"
+    },
+    {
+      "name": "dolphin",
+      "type": "model",
+      "url": "https://assets.ariantra.com/dolphin.548d8b.glb",
+      "bytes": 22720,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/3LzFgI3GLO",
+      "sha256": "548d8b217e8ab99e109716e6c6cdb0f29bae047b7856e28340ea5272d0164d11"
+    },
+    {
+      "name": "bee",
+      "type": "model",
+      "url": "https://assets.ariantra.com/bee.71f7af.glb",
+      "bytes": 51748,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/42djT5zJnx",
+      "sha256": "71f7afff5af2fdd3546afcac1c1c713475c63c7ad023692869403a0ab0931cfd"
+    },
+    {
+      "name": "sword",
+      "type": "model",
+      "url": "https://assets.ariantra.com/sword.f363aa.glb",
+      "bytes": 16244,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/9lLmH8Et4K",
+      "sha256": "f363aa3a05f90f1729e1a34335edc8724702c13b3a8cbd3158e947b067fd623d"
+    },
+    {
+      "name": "garbage_truck",
+      "type": "model",
+      "url": "https://assets.ariantra.com/garbage_truck.4810c2.glb",
+      "bytes": 50548,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/car-kit",
+      "sha256": "4810c27d9f4271af91f7cc936a29ba6676cff682669c5af599b1b0a1600e1c1e"
+    },
+    {
+      "name": "pickup_truck",
+      "type": "model",
+      "url": "https://assets.ariantra.com/pickup_truck.1b37d2.glb",
+      "bytes": 37972,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/car-kit",
+      "sha256": "1b37d2678dd8b00d8e82973df03001db771b09ce1ed58d13caa0c96ff4b027f6"
+    },
+    {
+      "name": "gokart",
+      "type": "model",
+      "url": "https://assets.ariantra.com/gokart.4f5f31.glb",
+      "bytes": 55520,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/car-kit",
+      "sha256": "4f5f31053732d13152caa9c982b6673356276080abc17174cab9a2351b57dce5"
+    },
+    {
+      "name": "ballista",
+      "type": "model",
+      "url": "https://assets.ariantra.com/ballista.b3c48a.glb",
+      "bytes": 24900,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/castle-kit",
+      "sha256": "b3c48a59a4c318bee76a5fd9e6d552df85a7f3afb5fc125eb791a0f1bd63ee47"
+    },
+    {
+      "name": "trebuchet",
+      "type": "model",
+      "url": "https://assets.ariantra.com/trebuchet.e6eb9f.glb",
+      "bytes": 40668,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/castle-kit",
+      "sha256": "e6eb9fdb86d6ad5191c421849d9e5d1e899cd2966d356886b36dcd541f8ed9ec"
+    },
+    {
+      "name": "battering_ram",
+      "type": "model",
+      "url": "https://assets.ariantra.com/battering_ram.4f0ce0.glb",
+      "bytes": 37544,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/castle-kit",
+      "sha256": "4f0ce046c6fdaef6df6189d83a6359d9acc7cc5762adea01ac427f9c66f352c6"
+    },
+    {
+      "name": "castle_gate",
+      "type": "model",
+      "url": "https://assets.ariantra.com/castle_gate.87f1b9.glb",
+      "bytes": 12244,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/castle-kit",
+      "sha256": "87f1b91badcc9433353e759a71dce0eceff97282d5e31d3e0a60743d7c52f991"
+    },
+    {
+      "name": "drawbridge",
+      "type": "model",
+      "url": "https://assets.ariantra.com/drawbridge.cf5ee8.glb",
+      "bytes": 10752,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/castle-kit",
+      "sha256": "cf5ee8efd871bf6f11e9dc31c2df9522830ac7ce3f613ce0fbc44e242fddf608"
+    },
+    {
+      "name": "siege_tower",
+      "type": "model",
+      "url": "https://assets.ariantra.com/siege_tower.a4c504.glb",
+      "bytes": 38124,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/castle-kit",
+      "sha256": "a4c504d29f1711df64c3a8a6b26f2eb81d0bc6411340ae5d52569cf6ff387834"
+    },
+    {
+      "name": "castle_door",
+      "type": "model",
+      "url": "https://assets.ariantra.com/castle_door.60a80b.glb",
+      "bytes": 12760,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/castle-kit",
+      "sha256": "60a80bc98797051a8b08cf449ed09a0166bc25d0bfc2d82b2d52b01c5058f344"
+    },
+    {
+      "name": "lock",
+      "type": "model",
+      "url": "https://assets.ariantra.com/lock.760a53.glb",
+      "bytes": 15092,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "760a53c18431d41079874ab5accf907428de3c1f9edbc53e124d0385dbfeb4c2"
+    },
+    {
+      "name": "lever",
+      "type": "model",
+      "url": "https://assets.ariantra.com/lever.75e6f5.glb",
+      "bytes": 20576,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "75e6f5fea9b7d370eb5a7938f09cd5e073087156b48376cbad42b6ac0d8583e0"
+    },
+    {
+      "name": "saw",
+      "type": "model",
+      "url": "https://assets.ariantra.com/saw.1f5471.glb",
+      "bytes": 16080,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "1f54711471d69ef434b25fbb1cfaf735b8db7705428c6513062f1c8aaa41e4c6"
+    },
+    {
+      "name": "signpost",
+      "type": "model",
+      "url": "https://assets.ariantra.com/signpost.a86bfb.glb",
+      "bytes": 14996,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "a86bfb1f64dc5b38950e043627763992fd167943a5f5267bbdbfbf8cff6c2b45"
+    },
+    {
+      "name": "ladder",
+      "type": "model",
+      "url": "https://assets.ariantra.com/ladder.9bc16e.glb",
+      "bytes": 14548,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/platformer-kit",
+      "sha256": "9bc16eb39b98c2e31ac6af4aef16077b16d785c782187a1038aeb598e2bc13bb"
+    },
+    {
+      "name": "pizza",
+      "type": "model",
+      "url": "https://assets.ariantra.com/pizza.7fe50e.glb",
+      "bytes": 40936,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "7fe50ecaf82a877c088664dccecd30f2196d86c61392d246e6501e17ba6bad4b"
+    },
+    {
+      "name": "hotdog",
+      "type": "model",
+      "url": "https://assets.ariantra.com/hotdog.ea7d6e.glb",
+      "bytes": 20984,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "ea7d6e04f0b540bed80b31009bc8e14351ff00ea962b92f180d1eced8c692701"
+    },
+    {
+      "name": "banana",
+      "type": "model",
+      "url": "https://assets.ariantra.com/banana.e70f3c.glb",
+      "bytes": 15564,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "e70f3c9d7ce3b0ec46f0b9a45df30d4c10c6477560f700ae172571b57ab34dd3"
+    },
+    {
+      "name": "watermelon",
+      "type": "model",
+      "url": "https://assets.ariantra.com/watermelon.d01cd5.glb",
+      "bytes": 39148,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "d01cd5378ec417acf3c8d3442f3dd7792ea4e7d069eff07585950eb9b77cb8e1"
+    },
+    {
+      "name": "cake",
+      "type": "model",
+      "url": "https://assets.ariantra.com/cake.02c20a.glb",
+      "bytes": 34448,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "02c20a26cbd1a2628987b22c6e71a13d9a75cba9c8f0cefe118521c5c1a852c7"
+    },
+    {
+      "name": "cupcake",
+      "type": "model",
+      "url": "https://assets.ariantra.com/cupcake.4738e1.glb",
+      "bytes": 19736,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "4738e172140a2e6578b132bed8e83f071dbf3033fcc8a7e0cc6eb636ff602947"
+    },
+    {
+      "name": "taco",
+      "type": "model",
+      "url": "https://assets.ariantra.com/taco.4a6b27.glb",
+      "bytes": 16264,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "4a6b272327d54183009a0108beae408a9d60f19ecb67847ec6ef385aa2aabcb5"
+    },
+    {
+      "name": "carrot",
+      "type": "model",
+      "url": "https://assets.ariantra.com/carrot.f88545.glb",
+      "bytes": 16060,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "f88545ef8d49b0080c551050930a8d8b3ac4c5f52697915c799f94c55e29f349"
+    },
+    {
+      "name": "strawberry",
+      "type": "model",
+      "url": "https://assets.ariantra.com/strawberry.fd613c.glb",
+      "bytes": 16192,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "fd613cc5cae06c1dded1586706a907a771d0aa23ee59cdfe6bdfecbd3e58dcbc"
+    },
+    {
+      "name": "sandwich",
+      "type": "model",
+      "url": "https://assets.ariantra.com/sandwich.26a880.glb",
+      "bytes": 18204,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "26a8806f76c1f221b5b214f0752faf76c6228713f863aa57cd7dd9488a91b348"
+    },
+    {
+      "name": "corn",
+      "type": "model",
+      "url": "https://assets.ariantra.com/corn.5d3aea.glb",
+      "bytes": 15932,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "5d3aea535949e60c3fa76a0fbc195d76ef01fadb48093f73ac7da34134dd9ed0"
+    },
+    {
+      "name": "sushi",
+      "type": "model",
+      "url": "https://assets.ariantra.com/sushi.a9c803.glb",
+      "bytes": 14072,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "a9c803a69715452f34e58701082fc467ba46902e14187f0113622101eef45c24"
+    },
+    {
+      "name": "egg",
+      "type": "model",
+      "url": "https://assets.ariantra.com/egg.65b7a1.glb",
+      "bytes": 14172,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "65b7a19276a5f294dece5dd5bfb0cb9098e24e8d6d2be8d4f769598828eb6ec8"
+    },
+    {
+      "name": "muffin",
+      "type": "model",
+      "url": "https://assets.ariantra.com/muffin.5e5859.glb",
+      "bytes": 15020,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "5e585910f08d34e72d295077a22ba9d8f6db4969f3f6519ff8f475f1f891155e"
+    },
+    {
+      "name": "cherries",
+      "type": "model",
+      "url": "https://assets.ariantra.com/cherries.0d4575.glb",
+      "bytes": 15620,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/food-kit",
+      "sha256": "0d4575daf50e626d99e75bc608f1c525430a2651dbe674dd1eba909e33cd51b3"
+    },
+    {
+      "name": "cactus",
+      "type": "model",
+      "url": "https://assets.ariantra.com/cactus.83c0b8.glb",
+      "bytes": 3496,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "83c0b86ff2707d929c647b8bb020e68980404c1429f53e6ca6686e6e751ad4d3"
+    },
+    {
+      "name": "campfire",
+      "type": "model",
+      "url": "https://assets.ariantra.com/campfire.356b6f.glb",
+      "bytes": 4296,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "356b6f1877006d5edf95064b09fae5d69955ad991c4a509637762ff6592ea002"
+    },
+    {
+      "name": "canoe",
+      "type": "model",
+      "url": "https://assets.ariantra.com/canoe.915e89.glb",
+      "bytes": 5520,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "915e89cbc9ff61946c023f251764532f6b393325ca92771b6574b19acbcf91a6"
+    },
+    {
+      "name": "tent",
+      "type": "model",
+      "url": "https://assets.ariantra.com/tent.677a6a.glb",
+      "bytes": 6792,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "677a6a5bbc90449f408359faa2d7326cb26add8dc0acb1e9585c883e51c0f8e0"
+    },
+    {
+      "name": "palm_tree",
+      "type": "model",
+      "url": "https://assets.ariantra.com/palm_tree.f247b6.glb",
+      "bytes": 5056,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "f247b66b36b3c7f38a9311e505bfe407ab78bcd318c453d1ce01e9e4e3d7ab18"
+    },
+    {
+      "name": "statue",
+      "type": "model",
+      "url": "https://assets.ariantra.com/statue.c684c5.glb",
+      "bytes": 6128,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "c684c550ef54459a5245d146261a35a524edd250a15ea31fae7747076e8d59f5"
+    },
+    {
+      "name": "toadstool",
+      "type": "model",
+      "url": "https://assets.ariantra.com/toadstool.ab3df1.glb",
+      "bytes": 3736,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "ab3df1395204b6136c3a2c9603db28a8ad20456f11ff8c42dc381813a2e8a2c5"
+    },
+    {
+      "name": "office_building",
+      "type": "model",
+      "url": "https://assets.ariantra.com/office_building.9cfd9b.glb",
+      "bytes": 33500,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-commercial",
+      "sha256": "9cfd9bf9e5d582ebaf6f022dc132d1263a0cd0f3e9229a0dafceb09c1b122c8b"
+    },
+    {
+      "name": "shop",
+      "type": "model",
+      "url": "https://assets.ariantra.com/shop.a6a12e.glb",
+      "bytes": 15528,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-commercial",
+      "sha256": "a6a12ea5e02d5c9798ec143c1dcee36161b5a36890cfb60a8c880a64bc438790"
+    },
+    {
+      "name": "apartment",
+      "type": "model",
+      "url": "https://assets.ariantra.com/apartment.58eb52.glb",
+      "bytes": 30532,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-suburban",
+      "sha256": "58eb52f909ebccf4b1f0cd12c46479daa0b5ab9018546746fb55bec78779c8da"
+    },
+    {
+      "name": "driveway",
+      "type": "model",
+      "url": "https://assets.ariantra.com/driveway.8425ae.glb",
+      "bytes": 14564,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-suburban",
+      "sha256": "8425ae75170035b947f83bc0bbd5f32e07ab9145437050b999bd3dfce35123c6"
+    },
+    {
+      "name": "planter",
+      "type": "model",
+      "url": "https://assets.ariantra.com/planter.628c6b.glb",
+      "bytes": 17788,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-suburban",
+      "sha256": "628c6bbaaefe87868110557d8cc20271a16e8491e20e235928a41037f3e0727c"
+    },
+    {
+      "name": "race_track_straight",
+      "type": "model",
+      "url": "https://assets.ariantra.com/race_track_straight.cdb68f.glb",
+      "bytes": 4192,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/racing-kit",
+      "sha256": "cdb68f05d76f95cad3d39606befe6cac4dcdb986adff563585bc9ae78526f072"
+    },
+    {
+      "name": "race_track_curve",
+      "type": "model",
+      "url": "https://assets.ariantra.com/race_track_curve.c73685.glb",
+      "bytes": 7712,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/racing-kit",
+      "sha256": "c73685f6a653e159d023eef44db01a0cf1d66394e9682ac549da2b1d599f1c47"
+    },
+    {
+      "name": "finish_line",
+      "type": "model",
+      "url": "https://assets.ariantra.com/finish_line.a6a676.glb",
+      "bytes": 5920,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/racing-kit",
+      "sha256": "a6a676713345229488f2bcb99f589e9d583354fc2281afa68b0e8527f21fdfe4"
+    },
+    {
+      "name": "checkered_flag",
+      "type": "model",
+      "url": "https://assets.ariantra.com/checkered_flag.783fa7.glb",
+      "bytes": 8612,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/racing-kit",
+      "sha256": "783fa7dcd860aa39f22445fcf826088d5f0f80216aa7251daf4afff3b7c361f7"
+    },
+    {
+      "name": "grandstand",
+      "type": "model",
+      "url": "https://assets.ariantra.com/grandstand.7b7e77.glb",
+      "bytes": 6468,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/racing-kit",
+      "sha256": "7b7e7736dc2d0ff3dee8838c92373a5210866c9319881746746f93fd97e405d3"
+    },
+    {
+      "name": "pit_garage",
+      "type": "model",
+      "url": "https://assets.ariantra.com/pit_garage.7d1312.glb",
+      "bytes": 10696,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/racing-kit",
+      "sha256": "7d131293d8189b436b66cc232159d60557888f36201360cd26d2b835c56c447f"
+    },
+    {
+      "name": "dragon",
+      "type": "model",
+      "url": "https://assets.ariantra.com/dragon.3a407f.glb",
+      "bytes": 95584,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/VBvzjFIYws",
+      "sha256": "3a407f49236929f5eee395d499bb82f5800bcd88db8ee64cc57523d38abfa500"
+    },
+    {
+      "name": "dragon_evolved",
+      "type": "model",
+      "url": "https://assets.ariantra.com/dragon_evolved.22db94.glb",
+      "bytes": 76104,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/3rUm1cN3yp",
+      "sha256": "22db943ea21dbf7aa711e2ddd38061fed06e49c6c9b334b13601f2bff0042cb9"
     }
   ]
 }

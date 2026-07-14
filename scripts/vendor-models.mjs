@@ -299,6 +299,94 @@ const MODELS = [
     source: { kind: 'url', url: 'https://static.poly.pizza/65837148-8c3c-42d5-9ce7-c55f9295cc7e.glb' },
     sourceUrl: 'https://poly.pizza/m/9lLmH8Et4K',
   },
+
+  // ── Fill to 100 (2026-07-14, owner request): 50 more. All Kenney entries ride
+  // kits already vetted above (car-kit, castle-kit, platformer-kit, food-kit,
+  // nature-kit — zips already cached, zero new downloads needed for those).
+  // Two new kits added this batch: city-kit-commercial/city-kit-suburban
+  // (CC0-checked via kenney.nl page, per §4.4) for city models, and racing-kit
+  // (CC0-checked via kenney.nl page) for race-track pieces — both fetched at
+  // curation time 2026-07-14. Dragons are poly.pizza/Quaternius, same pattern
+  // as every other creature above; CC0 confirmed on both model pages.
+  // Every entry below was size-probed through this exact transform before
+  // being pinned (dry run, no --upload) — see BUG-FIX-LOG equivalent note in
+  // this repo's asset-curation history.
+  { name: 'garbage_truck', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/car-kit/1a312ec241-1775131960/kenney_car-kit.zip', innerPath: 'Models/GLB format/garbage-truck.glb' }, sourceUrl: 'https://kenney.nl/assets/car-kit' },
+  { name: 'pickup_truck', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/car-kit/1a312ec241-1775131960/kenney_car-kit.zip', innerPath: 'Models/GLB format/truck.glb' }, sourceUrl: 'https://kenney.nl/assets/car-kit' },
+  { name: 'gokart', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/car-kit/1a312ec241-1775131960/kenney_car-kit.zip', innerPath: 'Models/GLB format/kart-oobi.glb' }, sourceUrl: 'https://kenney.nl/assets/car-kit' },
+
+  { name: 'ballista', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/castle-kit/a395102d20-1711543616/kenney_castle-kit.zip', innerPath: 'Models/GLB format/siege-ballista.glb' }, sourceUrl: 'https://kenney.nl/assets/castle-kit' },
+  { name: 'trebuchet', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/castle-kit/a395102d20-1711543616/kenney_castle-kit.zip', innerPath: 'Models/GLB format/siege-trebuchet.glb' }, sourceUrl: 'https://kenney.nl/assets/castle-kit' },
+  { name: 'battering_ram', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/castle-kit/a395102d20-1711543616/kenney_castle-kit.zip', innerPath: 'Models/GLB format/siege-ram.glb' }, sourceUrl: 'https://kenney.nl/assets/castle-kit' },
+  { name: 'castle_gate', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/castle-kit/a395102d20-1711543616/kenney_castle-kit.zip', innerPath: 'Models/GLB format/gate.glb' }, sourceUrl: 'https://kenney.nl/assets/castle-kit' },
+  { name: 'drawbridge', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/castle-kit/a395102d20-1711543616/kenney_castle-kit.zip', innerPath: 'Models/GLB format/bridge-draw.glb' }, sourceUrl: 'https://kenney.nl/assets/castle-kit' },
+  { name: 'siege_tower', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/castle-kit/a395102d20-1711543616/kenney_castle-kit.zip', innerPath: 'Models/GLB format/siege-tower.glb' }, sourceUrl: 'https://kenney.nl/assets/castle-kit' },
+  { name: 'castle_door', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/castle-kit/a395102d20-1711543616/kenney_castle-kit.zip', innerPath: 'Models/GLB format/door.glb' }, sourceUrl: 'https://kenney.nl/assets/castle-kit' },
+
+  { name: 'lock', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/platformer-kit/1585cf62b4-1775122253/kenney_platformer-kit.zip', innerPath: 'Models/GLB format/lock.glb' }, sourceUrl: 'https://kenney.nl/assets/platformer-kit' },
+  { name: 'lever', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/platformer-kit/1585cf62b4-1775122253/kenney_platformer-kit.zip', innerPath: 'Models/GLB format/lever.glb' }, sourceUrl: 'https://kenney.nl/assets/platformer-kit' },
+  { name: 'saw', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/platformer-kit/1585cf62b4-1775122253/kenney_platformer-kit.zip', innerPath: 'Models/GLB format/saw.glb' }, sourceUrl: 'https://kenney.nl/assets/platformer-kit' },
+  { name: 'signpost', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/platformer-kit/1585cf62b4-1775122253/kenney_platformer-kit.zip', innerPath: 'Models/GLB format/sign.glb' }, sourceUrl: 'https://kenney.nl/assets/platformer-kit' },
+  { name: 'ladder', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/platformer-kit/1585cf62b4-1775122253/kenney_platformer-kit.zip', innerPath: 'Models/GLB format/ladder.glb' }, sourceUrl: 'https://kenney.nl/assets/platformer-kit' },
+
+  { name: 'pizza', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip', innerPath: 'Models/GLB format/pizza.glb' }, sourceUrl: 'https://kenney.nl/assets/food-kit' },
+  { name: 'hotdog', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip', innerPath: 'Models/GLB format/hot-dog.glb' }, sourceUrl: 'https://kenney.nl/assets/food-kit' },
+  { name: 'banana', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip', innerPath: 'Models/GLB format/banana.glb' }, sourceUrl: 'https://kenney.nl/assets/food-kit' },
+  { name: 'watermelon', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip', innerPath: 'Models/GLB format/watermelon.glb' }, sourceUrl: 'https://kenney.nl/assets/food-kit' },
+  { name: 'cake', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip', innerPath: 'Models/GLB format/cake.glb' }, sourceUrl: 'https://kenney.nl/assets/food-kit' },
+  { name: 'cupcake', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip', innerPath: 'Models/GLB format/cupcake.glb' }, sourceUrl: 'https://kenney.nl/assets/food-kit' },
+  { name: 'taco', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip', innerPath: 'Models/GLB format/taco.glb' }, sourceUrl: 'https://kenney.nl/assets/food-kit' },
+  { name: 'carrot', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip', innerPath: 'Models/GLB format/carrot.glb' }, sourceUrl: 'https://kenney.nl/assets/food-kit' },
+  { name: 'strawberry', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip', innerPath: 'Models/GLB format/strawberry.glb' }, sourceUrl: 'https://kenney.nl/assets/food-kit' },
+  { name: 'sandwich', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip', innerPath: 'Models/GLB format/sandwich.glb' }, sourceUrl: 'https://kenney.nl/assets/food-kit' },
+  { name: 'corn', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip', innerPath: 'Models/GLB format/corn.glb' }, sourceUrl: 'https://kenney.nl/assets/food-kit' },
+  { name: 'sushi', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip', innerPath: 'Models/GLB format/maki-salmon.glb' }, sourceUrl: 'https://kenney.nl/assets/food-kit' },
+  { name: 'egg', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip', innerPath: 'Models/GLB format/egg.glb' }, sourceUrl: 'https://kenney.nl/assets/food-kit' },
+  { name: 'muffin', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip', innerPath: 'Models/GLB format/muffin.glb' }, sourceUrl: 'https://kenney.nl/assets/food-kit' },
+  { name: 'cherries', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip', innerPath: 'Models/GLB format/cherries.glb' }, sourceUrl: 'https://kenney.nl/assets/food-kit' },
+
+  { name: 'cactus', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip', innerPath: 'Models/GLTF format/cactus_tall.glb' }, sourceUrl: 'https://kenney.nl/assets/nature-kit' },
+  { name: 'campfire', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip', innerPath: 'Models/GLTF format/campfire_logs.glb' }, sourceUrl: 'https://kenney.nl/assets/nature-kit' },
+  { name: 'canoe', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip', innerPath: 'Models/GLTF format/canoe.glb' }, sourceUrl: 'https://kenney.nl/assets/nature-kit' },
+  { name: 'tent', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip', innerPath: 'Models/GLTF format/tent_smallClosed.glb' }, sourceUrl: 'https://kenney.nl/assets/nature-kit' },
+  { name: 'palm_tree', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip', innerPath: 'Models/GLTF format/tree_palm.glb' }, sourceUrl: 'https://kenney.nl/assets/nature-kit' },
+  { name: 'statue', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip', innerPath: 'Models/GLTF format/statue_head.glb' }, sourceUrl: 'https://kenney.nl/assets/nature-kit' },
+  { name: 'toadstool', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip', innerPath: 'Models/GLTF format/mushroom_red.glb' }, sourceUrl: 'https://kenney.nl/assets/nature-kit' },
+
+  // City models (new kits this batch — CC0 confirmed on the kenney.nl asset page).
+  { name: 'office_building', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/city-kit-commercial/a742d900eb-1753115042/kenney_city-kit-commercial_2.1.zip', innerPath: 'Models/GLB format/building-e.glb' }, sourceUrl: 'https://kenney.nl/assets/city-kit-commercial' },
+  { name: 'shop', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/city-kit-commercial/a742d900eb-1753115042/kenney_city-kit-commercial_2.1.zip', innerPath: 'Models/GLB format/low-detail-building-a.glb' }, sourceUrl: 'https://kenney.nl/assets/city-kit-commercial' },
+  { name: 'apartment', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/city-kit-suburban/2c871b7af2-1745479373/kenney_city-kit-suburban_20.zip', innerPath: 'Models/GLB format/building-type-c.glb' }, sourceUrl: 'https://kenney.nl/assets/city-kit-suburban' },
+  { name: 'driveway', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/city-kit-suburban/2c871b7af2-1745479373/kenney_city-kit-suburban_20.zip', innerPath: 'Models/GLB format/driveway-long.glb' }, sourceUrl: 'https://kenney.nl/assets/city-kit-suburban' },
+  { name: 'planter', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/city-kit-suburban/2c871b7af2-1745479373/kenney_city-kit-suburban_20.zip', innerPath: 'Models/GLB format/planter.glb' }, sourceUrl: 'https://kenney.nl/assets/city-kit-suburban' },
+
+  // Race track pieces (new kit this batch — racing-kit, CC0 confirmed on the kenney.nl page).
+  { name: 'race_track_straight', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadStraight.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
+  { name: 'race_track_curve', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadCurved.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
+  { name: 'finish_line', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadStart.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
+  { name: 'checkered_flag', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/flagCheckers.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
+  { name: 'grandstand', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/grandStand.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
+  { name: 'pit_garage', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/pitsGarage.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
+
+  // Dragons (poly.pizza / Quaternius — CC0 confirmed on both model pages, 2026-07-14).
+  {
+    name: 'dragon',
+    // "Dragon" by Quaternius — fits fully un-trimmed (75 KB, all 5 clips kept).
+    source: { kind: 'url', url: 'https://static.poly.pizza/9714f533-5d2d-4cfd-b8f1-c8dfff64a672.glb' },
+    sourceUrl: 'https://poly.pizza/m/VBvzjFIYws',
+  },
+  {
+    name: 'dragon_evolved',
+    // "Dragon" by Quaternius (poly.pizza/m/3rUm1cN3yp — a second, distinct
+    // listing from the same author, smaller mesh than /m/LlwD0QNUPj "Dragon
+    // Evolved", which was REJECTED: 119 KB un-simplified, and simplify()
+    // no-ops on this project's skinned/rigged meshes (same class as the
+    // Shiba Inu/Husky/horse rejections above) — animation trimming barely
+    // moved it either (mesh-dominated, not clip-dominated). This variant
+    // fits fully un-simplified at 74 KB with all 8 clips kept.
+    source: { kind: 'url', url: 'https://static.poly.pizza/ae5b8510-1fa5-4d53-b943-a4f3b88fb629.glb' },
+    sourceUrl: 'https://poly.pizza/m/3rUm1cN3yp',
+  },
 ];
 
 await mkdir(outDir, { recursive: true });

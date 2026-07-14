@@ -19,7 +19,7 @@ import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
 import { GUEST_TOKEN_LIMIT, GUEST_COOKIE, GUEST_COOKIE_MAX_AGE_S, GUEST_WINDOW_MS, IP_GUEST_TOKEN_CAP, signedInDailyTokenLimit } from "@/lib/gate.config";
 import { validateImageAttachment } from "@/lib/image-attachment";
-import type { ChatMessage, ImageAttachment } from "@/types/chat.types";
+import type { ChatMessage, ImageAttachment, TokenUsage } from "@/types/chat.types";
 import type { SafetyVerdict } from "@/types/safety.types";
 
 export const runtime = "nodejs";
@@ -182,12 +182,28 @@ export async function POST(req: NextRequest) {
   // uploads) — count it so the guest gate can't be bypassed with picture spam.
   const IMAGE_PROMPT_TOKENS = 258;
 
-  function recordUsage(kind: "chat" | "safety", model: string, requestText: string, outputText: string, blocked: boolean) {
+  // promptTokens/outputTokens stay char-estimates — the guest/daily gates are
+  // tuned to them. `real` (Gemini usageMetadata, when the stream delivered it)
+  // fills the billed* columns and prices all 4 billed token types.
+  function recordUsage(
+    kind: "chat" | "safety", model: string, requestText: string, outputText: string,
+    blocked: boolean, real?: TokenUsage | null,
+  ) {
     const promptTokens = estTokens(requestText) + (image && kind === "chat" ? IMAGE_PROMPT_TOKENS : 0);
     const outputTokens = estTokens(outputText);
     usage.record({
       userId, userLabel, model, kind, promptTokens, outputTokens,
-      costUsd: estimateCostUsd(model, promptTokens, outputTokens),
+      userAgent: req.headers.get("user-agent"),
+      billedPromptTokens: real?.promptTokens,
+      billedOutputTokens: real?.outputTokens,
+      thoughtTokens: real?.thoughtTokens,
+      cachedTokens: real?.cachedTokens,
+      costUsd: estimateCostUsd(model, {
+        prompt: real?.promptTokens ?? promptTokens,
+        output: real?.outputTokens ?? outputTokens,
+        thoughts: real?.thoughtTokens,
+        cached: real?.cachedTokens,
+      }),
       geo, requestText, outputText, blocked,
     });
   }
@@ -210,6 +226,8 @@ export async function POST(req: NextRequest) {
   // retracted after they stream (chess-block class, BUG-FIX-LOG 2026-07-09).
   return ndjson(async (send) => {
     let full = "";
+    let streamUsage: TokenUsage | null = null;
+    let servedModel = chatModelName; // fallback/hedge can swap the model mid-turn
     if (replyId) trackTurn(() => turnResults.start(replyId, userId, Date.now()));
     try {
       console.log(`[api/chat] streaming… @${ms()}ms`);
@@ -231,6 +249,15 @@ export async function POST(req: NextRequest) {
           console.warn(`[api/chat] ↻ mid-answer model restart @${ms()}ms — partial wiped`);
           continue;
         }
+        if (chunk.kind === "usage") {
+          // Real billed token counts (usageMetadata) — recorded below so the
+          // cost dashboard shows what Google charges, not a char/4 estimate.
+          // The chunk also names the model that ACTUALLY answered (fallback /
+          // hedge race), so the cost uses that model's rate, not the primary's.
+          streamUsage = chunk.usage ?? null;
+          if (chunk.model) servedModel = chunk.model;
+          continue;
+        }
         full += chunk.text;
         send({ type: "delta", text: chunk.text });
       }
@@ -242,7 +269,7 @@ export async function POST(req: NextRequest) {
     }
     console.log(`[api/chat] stream done @${ms()}ms chars=${full.length}`);
 
-    const { artifactHtml } = extractArtifact(full);
+    const { text: prose, artifactHtml, wasFenced } = extractArtifact(full);
     // 3D games get their engine import map here — an asset-host URL string
     // spliced in, nothing read, nothing fetched (src/lib/assets/inject.ts).
     // CONTRACT: post-processing can never cost the child the game (BUG-FIX-LOG
@@ -264,15 +291,27 @@ export async function POST(req: NextRequest) {
       }
     }
     // Send the FULL text (code block kept inline, Gemini-style) for the chat,
-    // and the extracted HTML for the side panel preview.
-    send({ type: "done", text: full, artifactHtml: deliverableHtml });
+    // and the extracted HTML for the side panel preview. When the model didn't
+    // produce one clean ```html fence (truncated mid-fence, or no fence at all
+    // — extractArtifact's fallback cases), `full` still carries raw, unfenced
+    // HTML/CSS/JS: the markdown renderer would reinterpret its indentation as
+    // a series of CommonMark "indented code blocks," each spawning its own
+    // stray code-card widget in the chat bubble (BUG-FIX-LOG 2026-07-14,
+    // reproduced against the real remark/react-markdown stack). Re-fence it so
+    // the bubble always shows one clean, collapsible code block. The
+    // already-working case (a clean fence) is untouched byte-for-byte,
+    // including any trailing prose after the closing fence.
+    const displayText = artifactHtml && !wasFenced
+      ? `${prose}\n\n\`\`\`html\n${artifactHtml}\n\`\`\``.trim()
+      : full;
+    send({ type: "done", text: displayText, artifactHtml: deliverableHtml });
     // Keep the finished result server-side even if nobody is listening — a
     // disconnected client polls /api/chat/result instead of re-generating.
-    if (replyId) trackTurn(() => turnResults.complete(replyId, userId, full, deliverableHtml, Date.now()));
+    if (replyId) trackTurn(() => turnResults.complete(replyId, userId, displayText, deliverableHtml, Date.now()));
     // Meter the FULL reply (BUG-FIX-LOG 2026-07-13): `cleaned` strips the
     // game code block — 90%+ of a build turn's billed output — so the cost
     // dashboard undercounted ~75x. Google bills for `full`; so do we.
-    recordUsage("chat", chatModelName, message, full, false);
+    recordUsage("chat", servedModel, message, full, false, streamUsage);
     console.log(`[api/chat] ✓ shown @${ms()}ms`);
   }, guestCookieHeader(setGuestCookie));
 }
