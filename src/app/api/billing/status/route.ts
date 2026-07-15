@@ -4,6 +4,7 @@
 import { NextResponse } from "next/server";
 import { resolveUserId } from "@/lib/auth-identity";
 import { SqlitePaymentStore } from "@/lib/db";
+import { isEntitled } from "@/lib/entitlement";
 
 export const runtime = "nodejs";
 
@@ -14,10 +15,8 @@ export async function GET() {
   if (!userId) return NextResponse.json({ error: "auth_required" }, { status: 401 });
 
   const record = payments.latestForUser(userId);
-  const paid =
-    !!record && record.status === "paid" && (record.periodEndsAt ?? 0) > Date.now();
   return NextResponse.json({
-    paid,
+    paid: isEntitled(record),
     plan: record?.planKey ?? null,
     periodEndsAt: record?.periodEndsAt ?? null,
   });

@@ -7,6 +7,11 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   Creator Profile deep link (`studio.ariantra.com/studio?profile=1`) — the
   ONE place parent/child details are collected (encrypted platform-side).
   KidGemini deliberately hosts no second form; SSO makes the hop seamless
+- **🎮 Multiplayer on/off toggle** (2026-07-14, Phase 4 of
+  `../Ariantra-Platform/docs/PRD-MULTIPLAYER.md` — the first on/off toggle
+  built on this page): one switch per published game; off means friends can
+  no longer be invited into a live "Play together" session on that game.
+  Same PIN + family-ownership gate as approving a publish
 
 ## Chat (home `/`)
 - Gemini-powered kids chat: text + voice (TTS playback, regenerate last answer)
@@ -172,6 +177,20 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   that's already online" — same address, new version. Typing a name that
   matches their own game also flips to update (`mine` check). Fail-closed:
   ownership verified server-side on both the list and the publish
+- **🎮 Multiplayer generation + "Invite a friend to test"**
+  (2026-07-14, `../Ariantra-Platform/docs/PRD-MULTIPLAYER.md` Phase 4): asking
+  for a 2-player/co-op/versus game conditionally teaches the model
+  `Ariantra.broadcast()`/`onMessage()`/`onPlayers()` (never `host()`/`join()`
+  — the platform's injected lobby overlay owns those) plus the
+  `<!--USES_MULTIPLAYER-->` marker. A "🎮 Invite" button appears next to
+  🚀 Arcade ONLY on games carrying that marker, and creates a real friend
+  session before anything is published — no naming, no parent PIN, no `Game`
+  record; the link expires in 2 hours (`InviteToTest.tsx` + `/api/arcade/
+  test-link` → platform partner bridge's `createTestLink`, same shared-secret
+  pattern as publish). A grown-up can turn "Play together" off per published
+  game from the Parent area (🎮 Multiplayer card, `/api/parent/games` → the
+  partner bridge's `toggleMultiplayer`, same PIN + ownership-match gate as
+  publishing) — flipping it restamps the live game immediately
 - **🎤 Idea Button + 🎒 Idea Bag** (2026-07-12, docs/PRD-IDEA-BUTTON.md): an
   edge-docked mic tab over the game preview — the only capture path while the
   composer is hidden (⤢ full screen / mobile game screen). Click slides it out,

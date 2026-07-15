@@ -14,6 +14,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { downloadCode } from "./download";
 import { PublishToArcade } from "./PublishToArcade";
+import { InviteToTest } from "./InviteToTest";
+import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
 import { GAME_CONSOLE_SOURCE, injectConsoleCapture } from "@/lib/game-console";
 import { DEVICE_PRESETS, deviceById, fitScale } from "@/lib/device-preview";
 import { injectPreviewInstrumentation } from "@/lib/preview-verify";
@@ -90,6 +92,7 @@ export function ArtifactFrame({
   const [tab, setTab] = useState<Tab>("preview");
   const [copied, setCopied] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [inviting, setInviting] = useState(false);
   const [consoleMessages, setConsoleMessages] = useState<GameConsoleMessage[]>([]);
   // Console tab is debug-only now (PRD G1: a kid never sees a console tab).
   const [debug, setDebug] = useState(false);
@@ -219,6 +222,20 @@ export function ArtifactFrame({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {/* Invite a friend to test (PRD-MULTIPLAYER.md Phase 4) — ONLY for
+              games the model actually built multiplayer (MULTIPLAYER_MARKER);
+              on any other game this button would be a dead end (no friend
+              session to join). Sits before Arcade — testing comes before
+              publishing. */}
+          {!busy && state.currentHtml.includes(MULTIPLAYER_MARKER) && (
+            <button
+              onClick={() => setInviting(true)}
+              className="rounded-full border-2 border-orange-500 px-3 py-1.5 text-sm font-extrabold text-orange-600"
+              aria-label="Invite a friend to test"
+            >
+              🎮 <span className="hidden sm:inline">Invite</span>
+            </button>
+          )}
           {/* Publish lives HERE (not a bar under the game — that sat exactly on
               kids' on-screen controls). Compact pill, hidden while streaming. */}
           {!busy && (
@@ -445,6 +462,10 @@ export function ArtifactFrame({
 
       {publishing && (
         <PublishToArcade html={state.currentHtml} suggestedName={titleOf(state.currentHtml)} onClose={() => setPublishing(false)} />
+      )}
+
+      {inviting && (
+        <InviteToTest html={state.currentHtml} suggestedName={titleOf(state.currentHtml)} onClose={() => setInviting(false)} />
       )}
     </aside>
   );
