@@ -13,7 +13,7 @@ import { injectAssets } from "@/lib/assets/inject";
 import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
 import { RulesClassifier } from "@/lib/safety.rules";
-import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore, SqliteTurnResultStore } from "@/lib/db";
+import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore, SqliteTurnResultStore, SqliteScreenTimeStore } from "@/lib/db";
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
@@ -312,6 +312,21 @@ export async function POST(req: NextRequest) {
     // game code block — 90%+ of a build turn's billed output — so the cost
     // dashboard undercounted ~75x. Google bills for `full`; so do we.
     recordUsage("chat", servedModel, message, full, false, streamUsage);
+    // Screen-time cap (PRD-SCREEN-TIME-CAP-MVP Part B) — a completion always
+    // records its own ping (so a short session counts even before the first
+    // heartbeat tick), plus ScreenTimeHeartbeat.tsx pings independently while
+    // the tab stays open/visible (chatting or playing). Fail-open: bookkeeping
+    // must never break chat, same contract as trackTurn above.
+    if (signedIn) {
+      try {
+        const screenTime = new SqliteScreenTimeStore();
+        const now = Date.now();
+        screenTime.recordPing(userId, now);
+        screenTime.recomputeAndMaybeAlert(userId, userLabel, now);
+      } catch (err) {
+        console.warn(`[api/chat] screen-time tracking failed (ignored): ${(err as Error).message}`);
+      }
+    }
     console.log(`[api/chat] ✓ shown @${ms()}ms`);
   }, guestCookieHeader(setGuestCookie));
 }

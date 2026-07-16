@@ -42,8 +42,8 @@ export function panelShellClass(expanded: boolean): string {
 // The collapsed panel width is a CSS var (--panel-w) so the drag handle can
 // resize without remounting the subtree (same CSS-only principle as expand).
 
-/** Below this the header buttons fall off the edge (see the Download/Copy
- *  label comment in ArtifactFrame) — never let the drag go narrower. */
+/** Below this the header buttons fall off the edge — never let the drag go
+ *  narrower. */
 export const PANEL_MIN_W = 360;
 /** The chat must stay usable — the panel never takes more than 70% of the
  *  viewport (full screen is what ⤢ is for). */
@@ -93,30 +93,18 @@ export function previewDocKey(generation: number, round: number): string {
 /** Shown on the pane while an update streams — the old game on screen is deliberate. */
 export const UPDATING_LINE = "Making your update… you can keep playing this one! ✨";
 
-// ---- Auto-expand while loading (2026-07-14) --------------------------------
-// The verify cover (testing/repairing a fresh game) deserves full screen, not
-// a squeeze into the 440px side panel, on ANY viewport width — but a user's
-// own manual expand/collapse must always win over this bookkeeping.
+// ---- Expand / collapse (manual only, 2026-07-15) ---------------------------
+// A brief auto-expand-while-testing mechanism (2026-07-14) was tried and
+// removed — yanking the kid into full screen the instant a fresh game
+// started verifying broke the continuity of "I generated this, and here's
+// the game right where I was." The verify cover now shows inline in the
+// normal split view; expand/collapse is a deliberate kid action only.
 
 export interface ExpandState {
   expanded: boolean;
-  /** True only while the CURRENT expansion was caused by auto-expand-on-load —
-   *  the only case `nextExpandOnCoveredChange` is allowed to auto-collapse. */
-  wasAutoExpanded: boolean;
 }
 
-/** Fed the verify cover's visibility on every change (`covered`: a fresh game
- *  is testing/repairing). Expands on the way in if not already expanded;
- *  reverts on the way out ONLY if this mechanism was what expanded it. */
-export function nextExpandOnCoveredChange(covered: boolean, state: ExpandState): ExpandState {
-  if (covered) {
-    return state.expanded ? state : { expanded: true, wasAutoExpanded: true };
-  }
-  return state.wasAutoExpanded ? { expanded: false, wasAutoExpanded: false } : state;
-}
-
-/** A deliberate Expand/Collapse click — always wins, and is never later
- *  auto-reverted (clears wasAutoExpanded regardless of its prior value). */
+/** A deliberate Expand/Collapse click. */
 export function nextExpandOnManualToggle(state: ExpandState): ExpandState {
-  return { expanded: !state.expanded, wasAutoExpanded: false };
+  return { expanded: !state.expanded };
 }

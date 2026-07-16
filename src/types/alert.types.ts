@@ -5,7 +5,10 @@ import type { AlertSeverity, SafetyAction, SafetyCategory } from "./safety.types
 export interface ParentAlert {
   id: string;
   createdAt: number;
-  origin: "child" | "model";
+  /** "system" = a policy-derived alert (e.g. screen-time cap crossed) — not
+   *  a SafetyVerdict from the classifier, so `category` is always null and
+   *  `action` is always "allow" for this origin. */
+  origin: "child" | "model" | "system";
   category: SafetyCategory | null;
   severity: AlertSeverity;
   action: SafetyAction;

@@ -12,7 +12,6 @@
 // "kidgemini:debug" = "1" (grown-ups only — see docs).
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { downloadCode } from "./download";
 import { PublishToArcade } from "./PublishToArcade";
 import { InviteToTest } from "./InviteToTest";
 import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
@@ -38,10 +37,6 @@ interface ArtifactFrameProps {
       which restyles the panel wrapper; this component only shows the button. */
   expanded?: boolean;
   onToggleExpand?: () => void;
-  /** Fires whenever the verify cover appears/clears (a fresh game starts
-      testing/repairing, or finishes) — lets the container auto-expand to
-      full screen while loading, on any viewport width (2026-07-14). */
-  onCoveredChange?: (covered: boolean) => void;
   /** Idea Button (docs/PRD-IDEA-BUTTON.md) — all owned by the container; the
       frame only hosts the overlay surfaces. Absent props = feature hidden. */
   ideas?: BagIdea[];
@@ -79,7 +74,6 @@ export function ArtifactFrame({
   onClose,
   expanded,
   onToggleExpand,
-  onCoveredChange,
   ideas,
   onCaptureIdea,
   onDiscardIdea,
@@ -90,7 +84,6 @@ export function ArtifactFrame({
   onNudgeShown,
 }: ArtifactFrameProps) {
   const [tab, setTab] = useState<Tab>("preview");
-  const [copied, setCopied] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [consoleMessages, setConsoleMessages] = useState<GameConsoleMessage[]>([]);
@@ -138,11 +131,6 @@ export function ArtifactFrame({
   );
   const covered = state.phase !== "done";
 
-  useEffect(() => {
-    onCoveredChange?.(covered);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [covered]);
-
   // Track the panel's size while a device frame is shown (scale-to-fit).
   useEffect(() => {
     const el = previewBoxRef.current;
@@ -170,18 +158,6 @@ export function ArtifactFrame({
   if (!html) return null;
 
   const errorCount = consoleMessages.filter((m) => m.level === "error").length;
-
-  // Download/copy/publish all use the LIVE version — after a self-heal the
-  // repaired game is the game, not the broken original.
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(state.currentHtml);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard unavailable */
-    }
-  }
 
   const tabBtn = (t: Tab) =>
     `rounded-full px-3 py-1 text-sm font-medium ${
@@ -242,9 +218,9 @@ export function ArtifactFrame({
             <button
               onClick={() => setPublishing(true)}
               className="rounded-full bg-orange-500 px-3 py-1.5 text-sm font-extrabold text-white shadow shadow-orange-500/30"
-              aria-label="Put it in the Arcade"
+              aria-label="Publish"
             >
-              🚀 <span className="hidden sm:inline">Arcade</span>
+              🚀 <span className="hidden sm:inline">Publish</span>
             </button>
           )}
           {/* Full-screen toggle — the main view control for this panel, so it
@@ -264,26 +240,6 @@ export function ArtifactFrame({
               {expanded ? "⤡" : "⤢"} {expanded ? "Exit Full Screen" : "Full Screen"}
             </button>
           )}
-          {/* Download/Copy: useful to a grown-up, not the primary action for a
-              kid looking at their game — kept functional but visually minor
-              (icon-only at every breakpoint) so they never compete with
-              Full Screen above. */}
-          <button
-            onClick={() => downloadCode(state.currentHtml, "html", "game.html")}
-            className="rounded-lg px-2 py-1 text-sm text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
-            aria-label="Download game"
-            title="Download game"
-          >
-            ⬇
-          </button>
-          <button
-            onClick={copy}
-            className="rounded-lg px-2 py-1 text-sm text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
-            aria-label="Copy HTML"
-            title="Copy HTML"
-          >
-            {copied ? "✓" : "⧉"}
-          </button>
           <button
             onClick={onClose}
             className="rounded-lg px-2 py-1 text-neutral-600 hover:bg-neutral-100"
@@ -386,6 +342,7 @@ export function ArtifactFrame({
           {!covered && onCaptureIdea && (
             <IdeaMicTab
               onIdea={onCaptureIdea}
+              ideas={ideas}
               coach={coach}
               onCoachDone={onCoachDone}
               nudge={nudgeMic}

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ArNav } from "@/components/ArNav";
+import { ScreenTimeHeartbeat } from "@/components/ScreenTimeHeartbeat";
 import { MIXPANEL_SNIPPET } from "@/lib/mixpanel-snippet";
 
 // Ariantra brand kit (tokens + shared header CSS). Served from OUR public/ —
@@ -37,6 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: MIXPANEL_SNIPPET }} />
       </head>
       <body>
+        <ScreenTimeHeartbeat />
         <ArNav />
         {/* NO footer here: the chat (/) is a full-height APP screen, and a
             footer below it is a scroll trap — the message list swallows the

@@ -20,9 +20,16 @@ interface FamilyGame {
 // in ONE place — the Studio's Creator Profile card — and this page only links
 // to it (?profile=1 opens the card directly; SSO means no re-login).
 const DEV = process.env.NODE_ENV !== "production";
-const FAMILY_PROFILE_URL = DEV
-  ? "http://localhost:3000/studio?profile=1"
-  : "https://studio.ariantra.com/studio?profile=1";
+const STUDIO_BASE = DEV ? "http://localhost:3000" : "https://studio.ariantra.com";
+// 2026-07-15: carries profileReturnTo so Studio can bounce back here after
+// save/close instead of stranding the parent on the bare Studio dashboard.
+// Deliberately NOT named `returnTo` — that param already has an established,
+// different meaning on the Studio page (resolveStudioArrival: an already
+// signed-in visitor with ?returnTo= bounces immediately, before ever seeing
+// the page — reusing the name caused exactly that, the profile card never
+// rendered at all). safeReturnTo-validated the same way `returnTo` is.
+const KIDGEMINI_PARENT_URL = DEV ? "http://localhost:3001/parent" : "https://kidgemini.ariantra.com/parent";
+const FAMILY_PROFILE_URL = `${STUDIO_BASE}/studio?profile=1&profileReturnTo=${encodeURIComponent(KIDGEMINI_PARENT_URL)}`;
 
 type View =
   | { kind: "loading" }
@@ -39,6 +46,16 @@ export default function ParentPage() {
   // Multiplayer toggle (PRD-MULTIPLAYER.md Phase 4) — null = not fetched yet.
   const [games, setGames] = useState<FamilyGame[] | null>(null);
   const [togglingSlug, setTogglingSlug] = useState<string | null>(null);
+  // Daily screen-time cap (PRD-SCREEN-TIME-CAP-MVP Part B). null = not
+  // fetched yet — the card stays hidden until it loads (no blank flash).
+  const [screenTime, setScreenTime] = useState<{ dailyCapMinutes: number | null; todayActiveMinutes: number } | null>(null);
+  const [capInput, setCapInput] = useState("");
+  const [capSaving, setCapSaving] = useState(false);
+  const [capError, setCapError] = useState("");
+  // Explicit confirmation after Save (2026-07-15 UAT: a silent success left
+  // the parent with no idea it worked) — clears the moment they edit again,
+  // so it can never lie about an unsaved change.
+  const [capSaved, setCapSaved] = useState(false);
 
   const loadAlerts = useCallback(async (): Promise<boolean> => {
     const res = await fetch("/api/alerts");
@@ -80,6 +97,14 @@ export default function ParentPage() {
     }
   }, []);
 
+  const loadScreenTime = useCallback(async () => {
+    const res = await fetch("/api/parent/screen-time");
+    if (!res.ok) return;
+    const data = (await res.json()) as { dailyCapMinutes: number | null; todayActiveMinutes: number };
+    setScreenTime({ dailyCapMinutes: data.dailyCapMinutes, todayActiveMinutes: data.todayActiveMinutes });
+    setCapInput(data.dailyCapMinutes != null ? String(data.dailyCapMinutes) : "");
+  }, []);
+
   // Guests never see a PIN form (D3) — sign-up copy instead. A signed-in
   // parent with a live parent session (last 30 min) skips the PIN entirely.
   const session = useSession();
@@ -90,10 +115,37 @@ export default function ParentPage() {
       return;
     }
     void (async () => {
-      if (await loadAlerts()) void loadGames();
-      else setView({ kind: "verify" });
+      if (!(await loadAlerts())) { setView({ kind: "verify" }); return; }
+      void loadGames();
+      void loadScreenTime();
     })();
-  }, [session.status, loadAlerts, loadGames]);
+  }, [session.status, loadAlerts, loadGames, loadScreenTime]);
+
+  async function saveScreenTimeCap(e: React.FormEvent) {
+    e.preventDefault();
+    setCapError("");
+    setCapSaved(false);
+    setCapSaving(true);
+    try {
+      const dailyCapMinutes = capInput.trim() === "" ? null : Number(capInput);
+      const res = await fetch("/api/parent/screen-time", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dailyCapMinutes }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { dailyCapMinutes: number | null; todayActiveMinutes: number };
+        setScreenTime({ dailyCapMinutes: data.dailyCapMinutes, todayActiveMinutes: data.todayActiveMinutes });
+        setCapSaved(true);
+        return;
+      }
+      if (res.status === 401) { setView({ kind: "signed-out" }); return; }
+      const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+      setCapError(data.message ?? "That didn't work — try a number between 1 and 1440, or clear it.");
+    } finally {
+      setCapSaving(false);
+    }
+  }
 
   async function handleVerify(e: React.FormEvent) {
     e.preventDefault();
@@ -107,6 +159,7 @@ export default function ParentPage() {
     if (res.ok) {
       await loadAlerts();
       void loadGames();
+      void loadScreenTime();
       return;
     }
     const data = (await res.json().catch(() => ({}))) as {
@@ -143,6 +196,7 @@ export default function ParentPage() {
       setPin2("");
       await loadAlerts();
       void loadGames();
+      void loadScreenTime();
       return;
     }
     const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
@@ -299,6 +353,44 @@ export default function ParentPage() {
                   </li>
                 ))}
               </ul>
+            </article>
+          )}
+
+          {screenTime && (
+            <article className="card space-y-3 border-l-4 border-brand-300">
+              <div>
+                <h2 className="text-lg font-semibold">⏱️ Daily screen-time alert</h2>
+                <p className="mt-1 text-sm text-ink-700">
+                  We&rsquo;ll send you one alert here if they go over this many minutes today.
+                  Nothing is blocked — your child keeps playing.
+                </p>
+              </div>
+              <p className="text-sm text-ink-700">
+                Today: <span className="font-semibold text-ink-900">{screenTime.todayActiveMinutes} min</span>
+                {" · "}
+                Current cap:{" "}
+                <span className="font-semibold text-ink-900">
+                  {screenTime.dailyCapMinutes != null ? `${screenTime.dailyCapMinutes} min/day` : "not set"}
+                </span>
+              </p>
+              <form onSubmit={saveScreenTimeCap} className="flex flex-wrap items-center gap-3">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={1440}
+                  placeholder="No cap"
+                  value={capInput}
+                  onChange={(e) => { setCapInput(e.target.value); setCapSaved(false); }}
+                  className="w-28 rounded-kid border-2 border-brand-100 px-3 py-2 text-center font-semibold outline-none focus:border-brand-500"
+                />
+                <span className="text-sm text-ink-500">minutes / day</span>
+                <button disabled={capSaving} className="btn-primary disabled:opacity-40">
+                  {capSaving ? "Saving…" : "Save"}
+                </button>
+                {capSaved && <span className="text-sm font-semibold text-emerald-600">✓ Saved</span>}
+              </form>
+              {capError && <p className="text-sm font-medium text-danger-600">{capError}</p>}
             </article>
           )}
 

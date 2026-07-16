@@ -103,8 +103,14 @@ professional low-poly models from the toy box: ${names}.
    without the model.
 4. Models load at their own natural size — set \`m.scale\` and \`m.position\`
    so they fit your scene.
-5. Some models carry animations in \`m.animations\`; play one with
-   \`const mixer = new AnimationMixer(m); mixer.clipAction(m.animations[0]).play();\`
+5. Some models carry NAMED animations in \`m.animations\` — don't blindly play
+   \`m.animations[0]\`: it's often an idle pose, or even an attack, so picking
+   it for a "running" character makes it look like it's attacking instead of
+   running. Search by name for the action you actually want first:
+   \`const clip = m.animations.find(a => /run|walk/i.test(a.name))
+     || m.animations.find(a => /gallop|swim|fly|jump|attack/i.test(a.name))
+     || m.animations[0];
+   const mixer = new AnimationMixer(m); mixer.clipAction(clip).play();\`
    and call \`mixer.update(delta)\` in your loop (use a Clock for delta).${hints ? `
 6. Good fits by game idea (use the ones that match, skip the rest):
 ${hints}` : ""}`;
