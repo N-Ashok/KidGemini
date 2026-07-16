@@ -63,6 +63,17 @@ export function discardIdea(ideas: IdeaRecord[], id: string): IdeaRecord[] {
   return ideas.map((i) => (i.id === id ? { ...i, status: "discarded" as const } : i));
 }
 
+/** ✏️ Fix a typo on an already-bagged idea (2026-07-16) — editable directly in
+ *  the Idea Bag panel's list, no separate edit-mode step. An edit that empties
+ *  the text is a no-op, not a silent delete — 🗑 discard is the only deletion
+ *  path (same trim-or-noop rule as `addIdea`). Only `bagged` records are live
+ *  kid intent; `sent`/`discarded` are historical and not editable here. */
+export function updateIdeaText(ideas: IdeaRecord[], id: string, text: string): IdeaRecord[] {
+  const trimmed = text.trim();
+  if (!trimmed) return ideas;
+  return ideas.map((i) => (i.id === id && i.status === "bagged" ? { ...i, text: trimmed } : i));
+}
+
 /** On a SUCCESSFUL generation only: the whole bag of this game went out in
  *  chat message `messageId`. Failure paths never call this — ideas stay bagged. */
 export function markSent(ideas: IdeaRecord[], gameConvoId: string, messageId: string): IdeaRecord[] {

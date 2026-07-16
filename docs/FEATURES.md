@@ -138,7 +138,11 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   `src/lib/device-preview.ts`) — the device box keeps its true CSS-pixel size
   and scales DOWN to fit the panel (never up), restyling the SAME iframe so
   the running game never reloads. Disabled while the verify cover is up
-  (probes always measure at panel size); resets to Fit on each new game
+  (probes always measure at panel size); resets to Fit on each new game.
+  **Rotate toggle (2026-07-16):** a ⟳ button appears next to Tablet/Phone
+  (the only `orientable` presets — Laptop is already landscape, Fit has no
+  fixed shape) swapping width/height via the pure `orientedSize()` function;
+  resets to portrait on each new game alongside the Fit reset
 - **🩹 Self-healing preview** (2026-07-10, platform
   `docs/PRD-SELF-HEALING-PREVIEW.md`): every generated game is verified BEHIND
   an opaque cover card before the kid's first look — structured error trap
@@ -222,6 +226,18 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   shows a compact, scrollable preview of already-saved ideas so a kid
   mid-capture doesn't have to leave the bar to check what they've said —
   the full editable list still lives in the Idea Bag panel.
+  **Redesign + edit-in-place (2026-07-16):** the resting tab collapsed from a
+  wide labeled pill to a compact 44×44 circular icon, with the "Idea"/"On"
+  label moved to a small always-visible caption BELOW the button (dock-icon
+  style) instead of beside it — kept visible (not hover-only) so the original
+  2026-07-14 discoverability fix still holds. "✨ Make my game better!" is now
+  also reachable directly from the listening bar (same `handleMakeBetter`
+  bundle-send the Idea Bag panel's own button calls) — finishing a thought
+  and sending it no longer requires a separate trip through the 🎒 chip. The
+  Idea Bag panel itself shrank from a near-full-screen modal to a bottom
+  sheet (mobile) / 420px centered card (desktop) with its own corner ✕, and
+  every bagged idea is now directly editable (an always-on textarea per row,
+  commits on blur via `updateIdeaText`) — no separate edit-mode tap.
   **First-run coach** (same day): the very first playable preview dims and the
   tab introduces itself — wiggle + glow, speech bubble read ALOUD by the buddy
   voice (pre-readers), mini demo, "OK got it". Once per device; tapping the

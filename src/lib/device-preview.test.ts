@@ -3,7 +3,7 @@
 // and must never return a non-finite/zero value the CSS transform would
 // collapse on.
 import { describe, it, expect } from "vitest";
-import { DEVICE_PRESETS, deviceById, fitScale } from "./device-preview";
+import { DEVICE_PRESETS, deviceById, fitScale, orientedSize } from "./device-preview";
 
 describe("DEVICE_PRESETS", () => {
   it("offers exactly fit, laptop, tablet and phone — fit first (the default)", () => {
@@ -21,11 +21,18 @@ describe("DEVICE_PRESETS", () => {
     }
   });
 
-  it("phone is portrait, laptop is landscape (kids should see the real shape)", () => {
+  it("phone/tablet default to portrait and are orientable; laptop is fixed landscape, fit has no shape", () => {
     const phone = deviceById("phone");
+    const tablet = deviceById("tablet");
     const laptop = deviceById("laptop");
+    const fit = deviceById("fit");
     expect(phone.height!).toBeGreaterThan(phone.width!);
+    expect(tablet.height!).toBeGreaterThan(tablet.width!);
     expect(laptop.width!).toBeGreaterThan(laptop.height!);
+    expect(phone.orientable).toBe(true);
+    expect(tablet.orientable).toBe(true);
+    expect(laptop.orientable).toBe(false);
+    expect(fit.orientable).toBe(false);
   });
 
   it("every preset has a kid-facing label and a dimension hint", () => {
@@ -59,5 +66,22 @@ describe("fitScale", () => {
     // First paint: ResizeObserver hasn't reported yet — don't scale(0).
     expect(fitScale(0, 0, 1366, 768)).toBe(1);
     expect(fitScale(-5, 100, 1366, 768)).toBe(1);
+  });
+});
+
+describe("orientedSize", () => {
+  it("portrait is a passthrough of the preset's own native dims", () => {
+    expect(orientedSize(deviceById("phone"), "portrait")).toEqual({ width: 390, height: 844 });
+    expect(orientedSize(deviceById("tablet"), "portrait")).toEqual({ width: 820, height: 1180 });
+  });
+
+  it("landscape swaps width/height for an orientable preset", () => {
+    expect(orientedSize(deviceById("phone"), "landscape")).toEqual({ width: 844, height: 390 });
+    expect(orientedSize(deviceById("tablet"), "landscape")).toEqual({ width: 1180, height: 820 });
+  });
+
+  it("non-orientable presets ignore a landscape request", () => {
+    expect(orientedSize(deviceById("laptop"), "landscape")).toEqual({ width: 1366, height: 768 });
+    expect(orientedSize(deviceById("fit"), "landscape")).toEqual({ width: null, height: null });
   });
 });

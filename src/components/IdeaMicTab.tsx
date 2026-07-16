@@ -1,10 +1,17 @@
 "use client";
 // The Idea Button (docs/PRD-IDEA-BUTTON.md): an edge-docked mic tab over the
 // game preview so a kid who can't type can speak thoughts WHILE playing.
-// Docked near the TOP of the preview edge, fully visible with a persistent
-// "Idea" label (2026-07-14: half-tucked + hover-only tooltip was effectively
-// invisible on touch devices) — still draggable if a game's own HUD needs
-// that corner instead.
+// Docked near the TOP of the preview edge, still draggable if a game's own
+// HUD needs that corner instead.
+//
+// Compact redesign (2026-07-16): the original always-visible label sat
+// BESIDE the 🎤 emoji, which made the resting tab a wide pill — flagged as
+// "odd/ugly." The 2026-07-14 fix's actual point still holds (a hover-only
+// tooltip is invisible on touch — see that BUG-FIX-LOG entry) — so the label
+// isn't removed, just moved BELOW a compact 44×44 circular icon as a small
+// standalone caption, like an app-dock label: always visible (still
+// touch-discoverable), but no longer widens the tappable button itself.
+//
 // Capture ≠ send: ✅ hands the transcript to the container's Idea Bag — no
 // network, no generation, back to the game in seconds. Presentational; the
 // tab state machine lives in lib/idea-mic.ts, speech in useSpeechInput.
@@ -24,6 +31,13 @@ interface IdeaMicTabProps {
    *  listening, so a kid mid-capture can see what they've already said
    *  without leaving this bar to open the separate Idea Bag panel. */
   ideas?: BagIdea[];
+  /** ✨ Make my game better! (2026-07-16) — the SAME bundle-send the Idea Bag
+   *  panel's own button calls; offered here too so finishing a thought and
+   *  sending it don't require a separate trip through the bag chip. Absent
+   *  prop = hidden, matching the rest of this file's optional-prop pattern. */
+  onMakeBetter?: () => void;
+  /** A generation is already streaming — mirrors IdeaBag's own CTA disable. */
+  busy?: boolean;
   /** First-run coach (docs/PRD-IDEA-BUTTON.md §coach): the tab introduces
       itself with a silent bubble + animation; voice only on the 🔊 Hear it
       button. Policy lives in the container; mic support is enforced HERE
@@ -42,7 +56,7 @@ const NUDGE_MS = 5000;
 // The wiggle-only reminder runs two wiggle cycles (globals.css) then rests.
 const RENUDGE_ANIM_MS = 3000;
 
-export function IdeaMicTab({ onIdea, ideas, coach, onCoachDone, nudge, onNudgeShown }: IdeaMicTabProps) {
+export function IdeaMicTab({ onIdea, ideas, onMakeBetter, busy, coach, onCoachDone, nudge, onNudgeShown }: IdeaMicTabProps) {
   const [tab, setTab] = useState<MicTabState>("tucked");
   // Committed (finalized) speech for the CURRENT capture; interim rides on top.
   const [draft, setDraft] = useState("");
@@ -159,6 +173,19 @@ export function IdeaMicTab({ onIdea, ideas, coach, onCoachDone, nudge, onNudgeSh
     setTab(nextMicTabState(tab, "never"));
   }
 
+  // ✨ Make my game better! reached directly from mid-capture (2026-07-16):
+  // commit whatever's on screen (same as "Done"), close the session the same
+  // way, THEN hand off to the container's real send — no detour through the
+  // separate Idea Bag panel to find this button.
+  function handleMakeBetterFromMic() {
+    const text = display.trim();
+    if (text) onIdea(text);
+    discardAndStop();
+    setDraft("");
+    setTab(nextMicTabState(tab, "never"));
+    onMakeBetter?.();
+  }
+
   // Drag the tab up/down the edge with pointer events; a real click stays put.
   function onPointerDown(e: React.PointerEvent<HTMLButtonElement>) {
     dragRef.current = { startY: e.clientY, startPct: topPct, moved: false };
@@ -183,30 +210,45 @@ export function IdeaMicTab({ onIdea, ideas, coach, onCoachDone, nudge, onNudgeSh
 
   return (
     <>
-      {/* The edge tab — half-tucked unless slid out or listening. */}
-      <button
-        type="button"
-        onClick={handleTabClick}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        aria-label={
-          tab === "tucked" ? "Tell me your idea" : tab === "out" ? "Start talking" : "Listening"
-        }
-        aria-pressed={listening}
-        title="Tell me your idea!"
+      {/* The tab: a compact, FLOATING circular icon (2026-07-16 — see file
+          header) with a small margin off the edge (not flush against it —
+          a flush, rounded-one-side shape read as a stray "growth" on the
+          edge, not a self-contained button) and an always-visible caption
+          BELOW it, not beside it, so the label stays discoverable without
+          widening the tappable button. */}
+      <div
         style={{ top: `${topPct}%` }}
-        className={`absolute right-0 flex min-h-[44px] touch-none items-center gap-1.5 rounded-l-kid border-2 border-r-0 border-white py-2 pl-3 pr-2 text-xl shadow-lg transition-transform ${
-          coachActive || nudging ? "z-40 idea-coach-wiggle idea-coach-glow" : "z-20"
-        } ${listening ? "mic-listening bg-danger-500 text-white" : "bg-brand-500 text-white"}`}
+        className={`absolute right-3 flex flex-col items-center gap-1 ${
+          coachActive || nudging ? "z-40" : "z-20"
+        }`}
       >
-        🎤
-        {/* Always-visible label (BUG-FIX-LOG 2026-07-14: a hover-only title
-            never reached kids on touch devices — this makes the tab
-            discoverable without needing a tap to find out what it does). */}
-        {!listening && <span className="text-xs font-bold">Idea</span>}
-        {listening && <span className="text-[10px] font-extrabold">ON</span>}
-      </button>
+        <button
+          type="button"
+          onClick={handleTabClick}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          aria-label={
+            tab === "tucked" ? "Tell me your idea" : tab === "out" ? "Start talking" : "Listening"
+          }
+          aria-pressed={listening}
+          title="Tell me your idea!"
+          className={`flex h-12 w-12 touch-none items-center justify-center rounded-full border-2 border-white text-xl shadow-lg outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:ring-offset-2 ${
+            coachActive || nudging ? "idea-coach-wiggle idea-coach-glow" : ""
+          } ${listening ? "mic-listening bg-danger-500 text-white" : "bg-brand-500 text-white hover:bg-brand-600"}`}
+        >
+          🎤
+        </button>
+        {/* Always-visible caption (BUG-FIX-LOG 2026-07-14: a hover-only title
+            never reached kids on touch devices) — a small dock-style label
+            under the icon instead of beside it. */}
+        <span
+          aria-hidden
+          className="rounded-full bg-white px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-neutral-500 shadow-sm"
+        >
+          {listening ? "On" : "Idea"}
+        </span>
+      </div>
 
       {/* First-run coach overlay: dim + bubble + mini demo. Tap anywhere
           dismisses; the tab (z-40) stays clickable above the dim. */}
@@ -218,7 +260,7 @@ export function IdeaMicTab({ onIdea, ideas, coach, onCoachDone, nudge, onNudgeSh
           aria-label="Meet the Idea Button"
         >
           <div
-            className="idea-coach-pop absolute right-20 top-[16%] w-[min(320px,75%)] rounded-kid bg-white p-4 shadow-2xl"
+            className="idea-coach-pop absolute right-16 top-[16%] w-[min(320px,75%)] rounded-kid bg-white p-4 shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
             <p className="text-base font-extrabold text-neutral-800">
@@ -262,7 +304,7 @@ export function IdeaMicTab({ onIdea, ideas, coach, onCoachDone, nudge, onNudgeSh
       {micError && tab !== "tucked" && (
         /* z-30: above the bag chip — while the bar/error owns the bottom edge
            the chip must not swallow taps on ✅ (caught in the visual pass). */
-        <div className="absolute inset-x-3 bottom-3 z-30 flex items-center justify-between gap-2 rounded-kid border border-amber-200 bg-amber-50 px-4 py-2 shadow-lg">
+        <div className="absolute inset-x-3 bottom-3 z-30 flex items-center justify-between gap-2 rounded-kid border border-amber-200 bg-amber-50 px-4 py-2 shadow-md">
           <span className="text-sm font-medium text-amber-800">{micError}</span>
           <button
             type="button"
@@ -280,7 +322,7 @@ export function IdeaMicTab({ onIdea, ideas, coach, onCoachDone, nudge, onNudgeSh
 
       {/* Listening bar along the preview bottom — the game keeps running above. */}
       {listening && (
-        <div className="absolute inset-x-3 bottom-3 z-30 rounded-kid bg-white p-3 shadow-xl">
+        <div className="absolute inset-x-3 bottom-3 z-30 mx-auto max-w-md rounded-kid bg-white p-4 shadow-lg">
           {/* Corner close (2026-07-15): the standard "just close this" spot —
               same as Never mind (discard the CURRENT draft only; anything
               already in the bag stays put), offered as its own affordance
@@ -337,6 +379,22 @@ export function IdeaMicTab({ onIdea, ideas, coach, onCoachDone, nudge, onNudgeSh
               {interim}
             </p>
           )}
+          {/* ✨ Make my game better!, reachable directly from mid-capture
+              (2026-07-16) — same bundle-send the Idea Bag panel's own button
+              triggers, offered here too so finishing a thought and sending it
+              don't require a separate trip through the 🎒 chip. Only shown
+              when there's something to send (the current draft, or anything
+              already bagged) and the caller wired it up at all. */}
+          {onMakeBetter && (display.trim() || (ideas && ideas.length > 0)) && (
+            <button
+              type="button"
+              onClick={handleMakeBetterFromMic}
+              disabled={busy}
+              className="mt-2 w-full rounded-full bg-brand-500 px-4 py-2.5 text-sm font-extrabold text-white shadow-md shadow-brand-500/20 hover:bg-brand-600 disabled:opacity-40"
+            >
+              {busy ? "🛠️ Still building the last one…" : "✨ Make my game better!"}
+            </button>
+          )}
           <div className="mt-2 flex gap-2">
             {/* Next idea (2026-07-14, renamed from "Got it!" — that name was
                 misleading once it stopped closing anything): commits and
@@ -346,12 +404,18 @@ export function IdeaMicTab({ onIdea, ideas, coach, onCoachDone, nudge, onNudgeSh
                 Icon changed from ✕ to 🏁 (2026-07-15) — an X read as
                 "cancel/discard," the opposite of what finishing successfully
                 means; ✕ is now reserved for the corner Close and Never mind. */}
+            {/* Soft brand style (2026-07-16, was bg-safe-500/green): two
+                differently-hued solid pills side by side read as busy/
+                uncoordinated, and DESIGN_SYSTEM.md reserves safe/danger/warn
+                for actual STATUS signaling, not general button decoration.
+                One brand hue at two weights (soft here, solid on Done) reads
+                as a cleaner primary/secondary pair. */}
             <button
               type="button"
               onClick={() => finish("got")}
               disabled={!display.trim()}
-              className={`flex-1 rounded-full bg-safe-500 px-4 py-2 text-sm font-extrabold text-white shadow-sm disabled:opacity-40 ${
-                idle && display.trim() ? "animate-pulse" : ""
+              className={`flex-1 rounded-full bg-brand-50 px-4 py-2 text-sm font-extrabold text-brand-700 disabled:opacity-40 ${
+                idle && display.trim() ? "animate-pulse" : "hover:bg-brand-100"
               }`}
             >
               ➡️ Next idea

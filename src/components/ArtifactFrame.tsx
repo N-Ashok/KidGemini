@@ -16,14 +16,14 @@ import { PublishToArcade } from "./PublishToArcade";
 import { InviteToTest } from "./InviteToTest";
 import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
 import { GAME_CONSOLE_SOURCE, injectConsoleCapture } from "@/lib/game-console";
-import { DEVICE_PRESETS, deviceById, fitScale } from "@/lib/device-preview";
+import { DEVICE_PRESETS, deviceById, fitScale, orientedSize } from "@/lib/device-preview";
 import { injectPreviewInstrumentation } from "@/lib/preview-verify";
 import { keyToPanelAction, UPDATING_LINE } from "@/lib/preview-pane";
 import { usePreviewVerify } from "./usePreviewVerify";
 import { IdeaMicTab } from "./IdeaMicTab";
 import { IdeaBag, type BagIdea } from "./IdeaBag";
 import type { GameConsoleMessage } from "@/types/game-console.types";
-import type { PreviewDeviceId } from "@/types/device-preview.types";
+import type { PreviewDeviceId, PreviewOrientation } from "@/types/device-preview.types";
 import type { VerifyCheckId } from "@/types/preview-verify.types";
 
 interface ArtifactFrameProps {
@@ -42,6 +42,7 @@ interface ArtifactFrameProps {
   ideas?: BagIdea[];
   onCaptureIdea?: (text: string) => void;
   onDiscardIdea?: (id: string) => void;
+  onEditIdea?: (id: string, text: string) => void;
   onMakeBetter?: () => void;
   /** First-run coach + one-time re-nudge (policy in the container; the tab
       renders them, so covered/unsupported states are enforced structurally). */
@@ -77,6 +78,7 @@ export function ArtifactFrame({
   ideas,
   onCaptureIdea,
   onDiscardIdea,
+  onEditIdea,
   onMakeBetter,
   coach,
   onCoachDone,
@@ -101,9 +103,15 @@ export function ArtifactFrame({
   // The device box keeps the preset's real CSS-pixel size and is scaled DOWN
   // (never up) to fit — so the game truly lays out at that viewport.
   const [device, setDevice] = useState<PreviewDeviceId>("fit");
+  // Rotate toggle (2026-07-16) — only meaningful for orientable presets
+  // (tablet/phone); laptop is fixed-landscape, fit has no shape at all.
+  const [orientation, setOrientation] = useState<PreviewOrientation>("portrait");
   const previewBoxRef = useRef<HTMLDivElement>(null);
   const [panelSize, setPanelSize] = useState({ w: 0, h: 0 });
-  useEffect(() => setDevice("fit"), [html]); // new game → verify at panel size
+  useEffect(() => {
+    setDevice("fit"); // new game → verify at panel size
+    setOrientation("portrait");
+  }, [html]);
 
   // Esc leaves full screen (games often use Esc for pause — but the collapsed
   // panel keeps the game running, so worst case is a harmless un-expand).
@@ -130,6 +138,25 @@ export function ArtifactFrame({
     [docKey],
   );
   const covered = state.phase !== "done";
+
+  // Device frame's actual ON-SCREEN box (2026-07-16 fix): shared by the
+  // iframe wrapper AND the Idea Button/Bag overlays below. The overlays
+  // used to be siblings of this box positioned relative to the FULL panel —
+  // fine at "Fit", but whenever a framed preset (Tablet/Phone/Laptop) scaled
+  // DOWN to fit a wider panel, the frame's rendered box was smaller than the
+  // panel, and the overlays (anchored to the panel's own edges) landed
+  // outside the actual visible game area, on the gray backdrop. Computing the
+  // frame's real post-scale rect here lets the overlays share it instead.
+  const previewPreset = deviceById(device);
+  const previewOriented = orientedSize(previewPreset, orientation);
+  const previewFramed = previewOriented.width !== null && previewOriented.height !== null;
+  const previewScale = previewFramed
+    ? fitScale(panelSize.w - 24, panelSize.h - 24, previewOriented.width!, previewOriented.height!)
+    : 1;
+  const previewVisibleW = previewFramed ? previewOriented.width! * previewScale : panelSize.w;
+  const previewVisibleH = previewFramed ? previewOriented.height! * previewScale : panelSize.h;
+  const previewVisibleLeft = previewFramed ? Math.max(0, (panelSize.w - previewVisibleW) / 2) : 0;
+  const previewVisibleTop = previewFramed ? Math.max(0, (panelSize.h - previewVisibleH) / 2) : 0;
 
   // Track the panel's size while a device frame is shown (scale-to-fit).
   useEffect(() => {
@@ -273,6 +300,26 @@ export function ArtifactFrame({
                 {d.label}
               </button>
             ))}
+            {/* Rotate (2026-07-16) — landscape preview for tablet/phone.
+                ALWAYS rendered (disabled, not hidden, for non-orientable
+                Fit/Laptop) — hiding it entirely meant it only appeared AFTER
+                first picking Tablet/Phone, so nobody discovered it existed. */}
+            <button
+              onClick={() => setOrientation((o) => (o === "portrait" ? "landscape" : "portrait"))}
+              disabled={covered || !deviceById(device).orientable}
+              title={
+                !deviceById(device).orientable
+                  ? "Pick Tablet or Phone to rotate"
+                  : orientation === "portrait"
+                    ? "Rotate to landscape"
+                    : "Rotate to portrait"
+              }
+              aria-label={orientation === "portrait" ? "Rotate to landscape" : "Rotate to portrait"}
+              aria-pressed={orientation === "landscape"}
+              className="rounded-full px-2 py-0.5 text-xs font-medium text-neutral-500 hover:bg-neutral-100 disabled:opacity-40"
+            >
+              ⟳
+            </button>
           </div>
         )}
       </div>
@@ -301,57 +348,85 @@ export function ArtifactFrame({
             device === "fit" ? "" : "bg-neutral-100"
           }`}
         >
-          {(() => {
-            const preset = deviceById(device);
-            const framed = preset.width !== null && preset.height !== null;
-            // 24px breathing room around the device frame.
-            const scale = framed
-              ? fitScale(panelSize.w - 24, panelSize.h - 24, preset.width!, preset.height!)
-              : 1;
-            return (
-              /* One stable wrapper around ONE stable iframe — switching device
-                 restyles, never remounts (a remount would reload the game). */
-              <div
-                className={
-                  framed
-                    ? "shrink-0 overflow-hidden rounded-kid border border-neutral-200 bg-white shadow-md"
-                    : "h-full w-full"
-                }
-                style={
-                  framed
-                    ? { width: preset.width!, height: preset.height!, transform: `scale(${scale})` }
-                    : undefined
-                }
-              >
-                <iframe
-                  key={docKey} // bumps per game generation AND per verify round (incl. the pristine reload after a probe-click clean)
-                  ref={iframeRef}
-                  title="AI-generated game"
-                  sandbox="allow-scripts"
-                  srcDoc={srcDoc}
-                  onLoad={onIframeLoad}
-                  className="h-full w-full border-0"
-                />
-              </div>
-            );
-          })()}
+          {/* One stable wrapper around ONE stable iframe — switching device
+              restyles, never remounts (a remount would reload the game). */}
+          <div
+            className={
+              previewFramed
+                ? "shrink-0 overflow-hidden rounded-kid border border-neutral-200 bg-white shadow-md"
+                : "h-full w-full"
+            }
+            style={
+              previewFramed
+                ? {
+                    width: previewOriented.width!,
+                    height: previewOriented.height!,
+                    transform: `scale(${previewScale})`,
+                  }
+                : undefined
+            }
+          >
+            <iframe
+              key={docKey} // bumps per game generation AND per verify round (incl. the pristine reload after a probe-click clean)
+              ref={iframeRef}
+              title="AI-generated game"
+              sandbox="allow-scripts"
+              srcDoc={srcDoc}
+              onLoad={onIframeLoad}
+              className="h-full w-full border-0"
+            />
+          </div>
           {/* Idea Button overlays (docs/PRD-IDEA-BUTTON.md): the mic tab docks
               on the preview edge — the ONLY capture path while the composer is
               hidden (full screen / mobile). Hidden during the verify cover so
-              probes measure a clean game, and capture never fights the tester. */}
-          {!covered && onCaptureIdea && (
-            <IdeaMicTab
-              onIdea={onCaptureIdea}
-              ideas={ideas}
-              coach={coach}
-              onCoachDone={onCoachDone}
-              nudge={nudgeMic}
-              onNudgeShown={onNudgeShown}
-            />
-          )}
-          {!covered && ideas && onDiscardIdea && onMakeBetter && (
-            <IdeaBag ideas={ideas} busy={busy} onDiscard={onDiscardIdea} onMakeBetter={onMakeBetter} />
-          )}
+              probes measure a clean game, and capture never fights the tester.
+              Positioned AND SCALED to match the frame's actual on-screen box
+              (2026-07-16 fix), not the full outer panel: sized to the preset's
+              real (pre-scale) dimensions, then scaled by the SAME factor as
+              the iframe itself (transform-origin top-left, anchored at the
+              frame's visual top-left corner) — otherwise a scaled-down framed
+              preset (Tablet/Phone/Laptop smaller than the panel) either left
+              these anchored to the panel's edges outside the visible game
+              area, or (once repositioned) rendered the fixed-size button at
+              full 48px regardless of zoom — proportionally oversized next to
+              a shrunk-down simulated phone, unlike how it'd truly look at
+              real device size. Real devices (unsimulated, scale 1) are
+              unaffected — the button stays a fixed, accessible touch target. */}
+          <div
+            className="pointer-events-none absolute"
+            style={{
+              left: previewVisibleLeft,
+              top: previewVisibleTop,
+              width: previewFramed ? previewOriented.width! : panelSize.w,
+              height: previewFramed ? previewOriented.height! : panelSize.h,
+              transform: previewFramed ? `scale(${previewScale})` : undefined,
+              transformOrigin: "top left",
+            }}
+          >
+            <div className="relative h-full w-full [&>*]:pointer-events-auto">
+              {!covered && onCaptureIdea && (
+                <IdeaMicTab
+                  onIdea={onCaptureIdea}
+                  ideas={ideas}
+                  onMakeBetter={onMakeBetter}
+                  busy={busy}
+                  coach={coach}
+                  onCoachDone={onCoachDone}
+                  nudge={nudgeMic}
+                  onNudgeShown={onNudgeShown}
+                />
+              )}
+              {!covered && ideas && onDiscardIdea && onEditIdea && onMakeBetter && (
+                <IdeaBag
+                  ideas={ideas}
+                  busy={busy}
+                  onDiscard={onDiscardIdea}
+                  onEditIdea={onEditIdea}
+                  onMakeBetter={onMakeBetter}
+                />
+              )}
+            </div>
+          </div>
           {/* §8.1 — the cover card. The iframe is RENDERED AND PAINTING under
               this opaque layer (display:none would stop rAF and make healthy
               games look dead); the kid sees the checklist, not the probes. */}

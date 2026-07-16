@@ -22,6 +22,7 @@ import {
   loadIdeas,
   markSent,
   saveIdeas,
+  updateIdeaText,
 } from "@/lib/idea-bag";
 import {
   defaultCoachStore,
@@ -871,6 +872,7 @@ export function ChatPanelContainer() {
               setCoachStore((s) => (s.everCaptured ? s : { ...s, everCaptured: true }));
             }}
             onDiscardIdea={(id) => setIdeas((list) => discardIdea(list, id))}
+            onEditIdea={(id, text) => setIdeas((list) => updateIdeaText(list, id, text))}
             onMakeBetter={handleMakeBetter}
             // micSupported is enforced structurally: IdeaMicTab renders
             // nothing (tab OR coach) when Web Speech is unavailable.

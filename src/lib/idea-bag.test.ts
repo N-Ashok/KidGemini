@@ -14,6 +14,7 @@ import {
   MAX_BAGGED_PER_CONVO,
   MAX_TOTAL_RECORDS,
   saveIdeas,
+  updateIdeaText,
 } from "./idea-bag";
 import type { IdeaRecord } from "@/types/idea-bag.types";
 
@@ -118,6 +119,32 @@ describe("discardIdea", () => {
   it("unknown id is a no-op", () => {
     const ideas = [idea({ id: "a" })];
     expect(discardIdea(ideas, "nope")).toEqual(ideas);
+  });
+});
+
+describe("updateIdeaText", () => {
+  it("replaces a bagged idea's text, trimmed", () => {
+    const out = updateIdeaText([idea({ id: "a", text: "old text" })], "a", "  fixed text  ");
+    expect(out[0]).toMatchObject({ id: "a", text: "fixed text" });
+  });
+
+  it("ignores an empty/whitespace-only edit — no silent delete (use discard)", () => {
+    const ideas = [idea({ id: "a", text: "keep me" })];
+    expect(updateIdeaText(ideas, "a", "   ")).toEqual(ideas);
+  });
+
+  it("unknown id is a no-op", () => {
+    const ideas = [idea({ id: "a" })];
+    expect(updateIdeaText(ideas, "nope", "new text")).toEqual(ideas);
+  });
+
+  it("does not edit a sent or discarded idea — only 'bagged' is live/editable", () => {
+    const ideas = [
+      idea({ id: "a", text: "sent already", status: "sent" }),
+      idea({ id: "b", text: "discarded already", status: "discarded" }),
+    ];
+    expect(updateIdeaText(ideas, "a", "new text")).toEqual(ideas);
+    expect(updateIdeaText(ideas, "b", "new text")).toEqual(ideas);
   });
 });
 
