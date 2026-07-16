@@ -45,6 +45,34 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-16 — Mic dictation repeat, take 2: same symptom, new trigger (regression of 2026-07-14)
+
+- **Symptom (what the user saw):** dictated text repeating in the chat composer again — same shape
+  as the 2026-07-14 "I want I want I want" bug, reported as "we solved this before, it's back."
+- **Surface area:** `src/components/useSpeechInput.ts` (`start`, the `onend` restart timeout),
+  `src/lib/speech-transcript.ts` (new `committedCountAfterRestart`).
+- **Root cause:** the 2026-07-14 fix made the caller self-track `committedFinalsRef` instead of
+  trusting the browser's `event.resultIndex` — but it reset that counter to 0 at every `rec.start()`
+  **call**, not every *successful* start. `start()` throws `InvalidStateError` ("already started")
+  when the browser hasn't actually torn down the previous recognition session yet — a documented
+  Chrome timing quirk; the 200ms restart delay is best-effort, not a guarantee, and the code's own
+  `catch { /* already started */ }` shows this was anticipated but never wired up. When the race
+  hits, the OLD session — with its already-accumulated finals — keeps feeding `onresult`, so
+  zeroing the counter anyway makes the next event replay everything already committed. Same class
+  as 2026-07-14 (trusting a browser assumption without verifying it), different unverified
+  assumption: "a `start()` call always yields a fresh session."
+- **Fix:** `committedCountAfterRestart(startSucceeded, previousCount)` (`speech-transcript.ts`) —
+  only resets to 0 when `rec.start()` did not throw; both restart sites in `useSpeechInput.ts` now
+  track whether `start()` succeeded and call this instead of unconditionally zeroing.
+- **Result (verified):** 3 new tests in `speech-transcript.test.ts` (16/18 total in that file) —
+  including a regression test that reproduces the old always-reset behavior replaying "I want"
+  and confirms the fixed decision function doesn't. Full suite 661/661 green; `tsc --noEmit` clean.
+- **Impact:** dictation in both the composer and the Idea Bag mic tab no longer replays committed
+  text when a restart races the browser's own session teardown.
+- **Prevention:** class = **trusting an unverified browser-API assumption** (same family as
+  2026-07-14). The 3 new tests pin the specific "failed start ⇒ keep old count" contract.
+- **Related:** 2026-07-14 entry above (first occurrence, different mechanism, same symptom).
+
 ### 2026-07-14 — Sign-in wall mid-turn silently dropped the kid's message ("the chat died")
 
 - **Symptom (what the user saw):** during game development, hitting the

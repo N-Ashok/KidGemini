@@ -19,6 +19,30 @@
 // returned below) and passes that count back in, so "what's fresh" is
 // self-derived from our own bookkeeping, not a browser-supplied index.
 
+/**
+ * After an attempted (re)start of the recognizer, what should the caller's
+ * committed-finals counter become?
+ *
+ * Repeat-mic regression, take 2 (2026-07-16): the original 2026-07-14 fix
+ * (below) assumed "a new session gets a fresh browser results list" and
+ * reset the counter to 0 at every `rec.start()` call — but `start()` can
+ * THROW ("already started") when the browser hasn't actually torn down the
+ * PREVIOUS session yet (a documented Chrome timing quirk; the restart delay
+ * is a best-effort gap, not a guarantee). When that happens the old session
+ * — with its already-accumulated finals — keeps feeding `onresult`, so
+ * zeroing the counter anyway makes the next event replay everything already
+ * committed: the exact "I want" → "I want I want I want" shape, via a
+ * restart race instead of a resultIndex lie. Only a session that ACTUALLY
+ * (re)started gets a fresh counter; a failed start means the old session
+ * (and its old count) is still the one running.
+ */
+export function committedCountAfterRestart(
+  startSucceeded: boolean,
+  previousCount: number,
+): number {
+  return startSucceeded ? 0 : previousCount;
+}
+
 export interface SpeechResultSplit {
   /** Newly finalized speech beyond what the caller already committed — commit now. */
   freshFinalText: string;
