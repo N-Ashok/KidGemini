@@ -32,3 +32,19 @@ export function appendPage(prev: ConvoSummary[], page: ConvoSummary[]): ConvoSum
   const seen = new Set(prev.map((r) => r.id));
   return [...prev, ...page.filter((r) => !seen.has(r.id))];
 }
+
+/**
+ * A fresh browser (or cleared storage) has no local chats at all, but the
+ * account/guest identity may already have real history server-side — without
+ * this, the main view silently defaulted to a blank "New chat" greeting even
+ * though the SAME account's chats were sitting one click away in the sidebar
+ * (reported: "I lose chat though I log into the same account... tied to the
+ * browser rather than the account"). Returns the id of the most-recently-
+ * updated server chat to auto-open, or null when there's nothing to restore
+ * (remote is empty) or local data already exists — a device's OWN in-progress
+ * chats are never overridden by a server restore.
+ */
+export function chatToAutoRestore(hadLocalChats: boolean, remoteIndex: ConvoSummary[]): string | null {
+  if (hadLocalChats) return null;
+  return remoteIndex[0]?.id ?? null; // newest-first per ChatHistoryStore.list()
+}

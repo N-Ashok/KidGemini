@@ -44,7 +44,7 @@ import {
 } from "@/lib/preview-pane";
 import { PanelResizeHandle } from "./PanelResizeHandle";
 import { searchChats } from "@/lib/chat-search";
-import { appendPage, mergeRecents, SYNC_FLAG } from "@/lib/chat-sync";
+import { appendPage, chatToAutoRestore, mergeRecents, SYNC_FLAG } from "@/lib/chat-sync";
 import type { ConvoSummary } from "@/types/chat-history.types";
 import { pickSuggestions } from "@/lib/game-suggestions";
 import { shouldAutoRetry } from "@/lib/stream-recovery";
@@ -148,6 +148,14 @@ export function ChatPanelContainer() {
   // wiggle-only re-nudge if the feature stays unused, then silence forever.
   const [coachStore, setCoachStore] = useState<CoachStore>(defaultCoachStore());
 
+  // Cross-browser chat-history bug (2026-07-16): "I lose chat though I log
+  // into the same account... tied to the browser rather than the account."
+  // True: a fresh browser has no local cache, so the main view defaulted to
+  // a blank "New chat" even when the SAME account's real history existed
+  // server-side, one click away in the sidebar. Tracked here so the
+  // server-history bootstrap below knows whether it's safe to auto-restore
+  // (never override a device's OWN existing local chats).
+  const hadLocalChatsRef = useRef(false);
   const hydratedFromStore = useRef(false);
   useEffect(() => {
     if (hydratedFromStore.current) return;
@@ -156,6 +164,7 @@ export function ChatPanelContainer() {
     if (saved) {
       setConvos(saved.convos);
       setActiveId(saved.activeId);
+      hadLocalChatsRef.current = saved.convos.length > 0;
     }
     setIdeas(loadIdeas(window.localStorage));
     setCoachStore(loadCoach(window.localStorage));
@@ -193,20 +202,25 @@ export function ChatPanelContainer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authStatus, activeId]);
 
-  /** Fetch the next page of the server Recents index (30/page). Reentrant-safe. */
-  async function loadMoreRemote(reset = false) {
-    if (remoteLoadingRef.current) return;
+  /** Fetch the next page of the server Recents index (30/page). Reentrant-safe.
+   *  Returns the fetched page (not the accumulated `remoteIndex` state, which
+   *  a caller right after `await` would otherwise see stale/unset) so the
+   *  bootstrap below can decide on an auto-restore without a second round trip. */
+  async function loadMoreRemote(reset = false): Promise<ConvoSummary[] | undefined> {
+    if (remoteLoadingRef.current) return undefined;
     remoteLoadingRef.current = true;
     try {
       const cursor = !reset ? remoteIndexRef.current.at(-1) : undefined;
       const qs = cursor ? `?before=${cursor.updatedAt}&beforeId=${encodeURIComponent(cursor.id)}` : "";
       const res = await fetch(`/api/chats${qs}`, { cache: "no-store" });
-      if (!res.ok) return;
+      if (!res.ok) return undefined;
       const { chats } = (await res.json()) as { chats: ConvoSummary[] };
       setRemoteHasMore(chats.length >= 30);
       setRemoteIndex((prev) => (reset ? chats : appendPage(prev, chats)));
+      return chats;
     } catch {
       /* offline — the local cache still works; next scroll retries */
+      return undefined;
     } finally {
       remoteLoadingRef.current = false;
     }
@@ -277,7 +291,26 @@ export function ChatPanelContainer() {
       } catch {
         /* offline migration attempt — flag stays unset, retried next visit */
       }
-      await loadMoreRemote(true);
+      const chats = await loadMoreRemote(true);
+      // Cross-browser chat-history bug (2026-07-16, see hadLocalChatsRef
+      // above): this device had NOTHING locally, but the account/guest
+      // identity already has real history server-side — open the most
+      // recent one instead of leaving the blank default greeting active.
+      // Replaces (not appends) — that greeting was never a real chat, just
+      // this render's placeholder before the restore landed.
+      const restoreId = chatToAutoRestore(hadLocalChatsRef.current, chats ?? []);
+      if (restoreId) {
+        try {
+          const res = await fetch(`/api/chats/${encodeURIComponent(restoreId)}`, { cache: "no-store" });
+          if (res.ok) {
+            const { convo } = (await res.json()) as { convo: Conversation };
+            setConvos([convo]);
+            setActiveId(convo.id);
+          }
+        } catch {
+          /* offline — the blank greeting stays; sidebar still has the index */
+        }
+      }
     };
     void bootstrap();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot bootstrap

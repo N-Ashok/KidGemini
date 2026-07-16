@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mergeRecents, appendPage } from "./chat-sync";
+import { mergeRecents, appendPage, chatToAutoRestore } from "./chat-sync";
 
 const s = (id: string, title = `Chat ${id}`, updatedAt = 1) => ({ id, title, updatedAt });
 
@@ -20,5 +20,19 @@ describe("chat-sync — sidebar merge", () => {
   it("appendPage dedupes a chat that moved pages between fetches", () => {
     const out = appendPage([s("a"), s("b")], [s("b"), s("c")]);
     expect(out.map((r) => r.id)).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("chatToAutoRestore (cross-browser chat-history bug)", () => {
+  it("picks the newest remote chat when the device has no local chats at all", () => {
+    expect(chatToAutoRestore(false, [s("a"), s("b")])).toBe("a"); // newest-first
+  });
+
+  it("returns null when local chats already exist — never override a device's own history", () => {
+    expect(chatToAutoRestore(true, [s("a")])).toBeNull();
+  });
+
+  it("returns null when there's nothing server-side to restore either", () => {
+    expect(chatToAutoRestore(false, [])).toBeNull();
   });
 });

@@ -45,6 +45,38 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-16 — Chat history looked lost on a new browser — real, just never auto-restored
+
+- **Symptom (what the user saw):** "i lose chat though i log into the same account. i think it is
+  tied up to the browser rather to account" — opening kidgemini in a different browser while
+  logged into the same real account showed a blank "New chat" greeting instead of their actual
+  conversation.
+- **Surface area:** `src/components/ChatPanel.container.tsx` (the mount/bootstrap effects),
+  `src/lib/chat-sync.ts` (new `chatToAutoRestore`).
+- **Root cause:** not data loss — chats were durably stored server-side the whole time
+  (`TECH_DEBT.md` #26). But the ACTIVE/main-view conversation was hydrated ONLY from
+  `localStorage` on mount; the server-history bootstrap separately loaded a paginated INDEX
+  (summaries only) shown in the sidebar. On a browser with empty localStorage, `convos` stayed at
+  its default blank greeting — the real history existed and was technically one click away in the
+  sidebar, but nothing surfaced it as "your chat is right here," so it read as lost.
+- **Fix:** `chatToAutoRestore(hadLocalChats, remoteIndex)` (`chat-sync.ts`) — a pure function
+  returning the id of the newest server chat to auto-open when the device had NO local chats at
+  all, or `null` when local chats already exist (a device's own in-progress chats are never
+  overridden) or there's nothing server-side either. `ChatPanel.container.tsx`'s bootstrap effect
+  now calls this after loading the first index page and, if it returns an id, fetches that chat's
+  full messages and replaces the blank greeting with it.
+- **Result (verified):** 3 new tests in `chat-sync.test.ts` (9/9 in that file) covering all three
+  branches (restore-newest, never-override-local, nothing-to-restore). Full suite 671/671 green;
+  `tsc --noEmit` clean.
+- **Impact:** logging into the same account on a new browser/device now resumes the most recent
+  conversation automatically instead of silently starting fresh; a device that already has local
+  chats is never touched by this.
+- **Prevention:** class = **data existed, but nothing surfaced it as present** (the console-log
+  class from `BUG_LOG.md`'s protocol, applied here to a UI default rather than a network error).
+  The 3 new tests pin the exact restore-vs-never-override contract.
+- **Related:** `TECH_DEBT.md` #26 (server-side chat history) shipped the durable storage this
+  entry's fix finally surfaces correctly on a fresh device.
+
 ### 2026-07-16 — Mic dictation repeat, take 2: same symptom, new trigger (regression of 2026-07-14)
 
 - **Symptom (what the user saw):** dictated text repeating in the chat composer again — same shape
