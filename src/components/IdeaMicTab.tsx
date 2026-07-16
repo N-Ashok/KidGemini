@@ -15,10 +15,15 @@ import { nextMicTabState, TAB_AUTO_TUCK_MS, type MicTabState } from "@/lib/idea-
 import { COACH_LINE } from "@/lib/idea-coach";
 import { useSpeechInput } from "./useSpeechInput";
 import { useTextToSpeech } from "./useTextToSpeech";
+import type { BagIdea } from "./IdeaBag";
 
 interface IdeaMicTabProps {
   /** ✅ Got it! — the finished transcript, ready for the bag. */
   onIdea: (text: string) => void;
+  /** Already-bagged ideas (2026-07-15) — shown as a compact list while
+   *  listening, so a kid mid-capture can see what they've already said
+   *  without leaving this bar to open the separate Idea Bag panel. */
+  ideas?: BagIdea[];
   /** First-run coach (docs/PRD-IDEA-BUTTON.md §coach): the tab introduces
       itself with a silent bubble + animation; voice only on the 🔊 Hear it
       button. Policy lives in the container; mic support is enforced HERE
@@ -37,7 +42,7 @@ const NUDGE_MS = 5000;
 // The wiggle-only reminder runs two wiggle cycles (globals.css) then rests.
 const RENUDGE_ANIM_MS = 3000;
 
-export function IdeaMicTab({ onIdea, coach, onCoachDone, nudge, onNudgeShown }: IdeaMicTabProps) {
+export function IdeaMicTab({ onIdea, ideas, coach, onCoachDone, nudge, onNudgeShown }: IdeaMicTabProps) {
   const [tab, setTab] = useState<MicTabState>("tucked");
   // Committed (finalized) speech for the CURRENT capture; interim rides on top.
   const [draft, setDraft] = useState("");
@@ -276,12 +281,43 @@ export function IdeaMicTab({ onIdea, coach, onCoachDone, nudge, onNudgeShown }: 
       {/* Listening bar along the preview bottom — the game keeps running above. */}
       {listening && (
         <div className="absolute inset-x-3 bottom-3 z-30 rounded-kid bg-white p-3 shadow-xl">
-          <p className="flex items-center gap-2 text-sm font-extrabold text-neutral-800">
+          {/* Corner close (2026-07-15): the standard "just close this" spot —
+              same as Never mind (discard the CURRENT draft only; anything
+              already in the bag stays put), offered as its own affordance
+              since a kid reaching for a corner X shouldn't have to parse
+              Next/Done/Never mind first. */}
+          <button
+            type="button"
+            onClick={() => finish("never")}
+            aria-label="Close"
+            className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+          >
+            ✕
+          </button>
+          <p className="flex items-center gap-2 pr-8 text-sm font-extrabold text-neutral-800">
             <span className="mic-listening inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-danger-500 text-sm text-white" aria-hidden>
               🎤
             </span>
-            {idle ? "All done? Tap ➡️ Next idea, or ✕ Done" : "I'm listening! Tell me your idea — you can keep playing!"}
+            {idle ? "All done? Tap ➡️ Next idea, or 🏁 Done" : "I'm listening! Tell me your idea — you can keep playing!"}
           </p>
+          {/* Already-saved ideas (2026-07-15): a kid mid-capture could only
+              see this list by leaving the bar and opening the separate Idea
+              Bag chip — surfaced here too, compact and scrollable, so "what
+              have I already said?" doesn't need a detour. */}
+          {ideas && ideas.length > 0 && (
+            <div className="mt-2 max-h-16 overflow-y-auto rounded-lg bg-brand-50/60 px-2 py-1">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-neutral-400">
+                🎒 Saved so far ({ideas.length})
+              </p>
+              <ul className="mt-0.5 space-y-0.5">
+                {ideas.map((idea) => (
+                  <li key={idea.id} className="truncate text-xs text-neutral-600">
+                    • {idea.text}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {/* Editable (2026-07-14): a kid can tap in and fix a minor spelling
               mistake with the keyboard instead of re-saying the whole idea.
               Bound to `draft` only — new speech still appends onto whatever's
@@ -306,7 +342,10 @@ export function IdeaMicTab({ onIdea, coach, onCoachDone, nudge, onNudgeShown }: 
                 misleading once it stopped closing anything): commits and
                 keeps listening. "Done" is the explicit close — commits
                 whatever's here (if anything) THEN tucks away, so ending the
-                session no longer requires discarding through Never mind. */}
+                session no longer requires discarding through Never mind.
+                Icon changed from ✕ to 🏁 (2026-07-15) — an X read as
+                "cancel/discard," the opposite of what finishing successfully
+                means; ✕ is now reserved for the corner Close and Never mind. */}
             <button
               type="button"
               onClick={() => finish("got")}
@@ -322,7 +361,7 @@ export function IdeaMicTab({ onIdea, coach, onCoachDone, nudge, onNudgeShown }: 
               onClick={() => finish("done")}
               className="flex-1 rounded-full bg-brand-500 px-4 py-2 text-sm font-extrabold text-white shadow-sm hover:bg-brand-600"
             >
-              ✕ Done
+              🏁 Done
             </button>
           </div>
           <button

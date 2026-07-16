@@ -3,7 +3,7 @@
 // and drives the sidebar, message list (markdown + read-aloud), composer, and artifact panel.
 // Naming: `.container.tsx` = data-fetching component (CLAUDE.md § 5).
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { signIn, useSession } from "@/lib/useAriantraSession";
 import { Sidebar } from "./Sidebar";
 import { Composer, type Attachment } from "./Composer";
@@ -36,7 +36,6 @@ import {
   type ExpandState,
   loadPanelWidth,
   nextArtifact,
-  nextExpandOnCoveredChange,
   nextExpandOnManualToggle,
   PANEL_DEFAULT_W,
   panelShellClass,
@@ -104,14 +103,13 @@ export function ChatPanelContainer() {
   // Desktop full-screen preview (PRD-PREVIEW-PANE): a CSS-only wrapper toggle —
   // the ArtifactFrame subtree (and its iframe) never remounts, so collapsing
   // returns to exactly the prior view. Reset whenever the panel closes.
-  // Also auto-expands while a fresh game is loading/testing/repairing, even
-  // on a laptop-width window (2026-07-14, src/lib/preview-pane.ts) — decision
-  // logic is pure/tested there, this is just the glue.
-  const [expandState, setExpandState] = useState<ExpandState>({ expanded: false, wasAutoExpanded: false });
+  // Purely manual now (2026-07-15): a brief auto-expand-while-testing
+  // mechanism (2026-07-14) was removed — it broke the continuity of "I
+  // generated this, and here's the game" by yanking the kid into full
+  // screen the instant code finished. The verify cover now shows inline in
+  // the normal split view; a kid expands via the Full Screen button.
+  const [expandState, setExpandState] = useState<ExpandState>({ expanded: false });
   const previewExpanded = expandState.expanded;
-  const handleCoveredChange = useCallback((covered: boolean) => {
-    setExpandState((s) => nextExpandOnCoveredChange(covered, s));
-  }, []);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer; always visible on md+
   const [searchQuery, setSearchQuery] = useState(""); // sidebar chat search (title + message text)
   // Server-side history (TECH_DEBT #26): the paginated Recents index from
@@ -395,7 +393,7 @@ export function ChatPanelContainer() {
     setConvos((list) => [c, ...list]);
     setActiveId(c.id);
     setArtifact(null);
-    setExpandState({ expanded: false, wasAutoExpanded: false });
+    setExpandState({ expanded: false });
     setSearchQuery("");
     setSidebarOpen(false);
   }
@@ -403,7 +401,7 @@ export function ChatPanelContainer() {
   function handleSelect(id: string) {
     tts.stop();
     setArtifact(null);
-    setExpandState({ expanded: false, wasAutoExpanded: false });
+    setExpandState({ expanded: false });
     setSidebarOpen(false);
     if (convos.some((c) => c.id === id)) {
       setActiveId(id);
@@ -711,7 +709,7 @@ export function ChatPanelContainer() {
     const bundle = composeIdeaBundle(bagged.map((i) => i.text));
     if (!bundle) return;
     const convoId = activeId;
-    setExpandState({ expanded: false, wasAutoExpanded: false }); // watch the send land in chat (desktop split view)
+    setExpandState({ expanded: false }); // watch the send land in chat (desktop split view)
     // Mobile: the panel covers the whole screen — flip to the chat so the kid
     // SEES the bundle post; the updated game re-opens the panel via `done`.
     if (window.matchMedia("(max-width: 767px)").matches) setArtifact(null);
@@ -862,11 +860,10 @@ export function ChatPanelContainer() {
             originalRequest={[...active.messages].reverse().find((m) => m.role === "child")?.text ?? ""}
             onClose={() => {
               setArtifact(null);
-              setExpandState({ expanded: false, wasAutoExpanded: false });
+              setExpandState({ expanded: false });
             }}
             expanded={previewExpanded}
             onToggleExpand={() => setExpandState(nextExpandOnManualToggle)}
-            onCoveredChange={handleCoveredChange}
             ideas={baggedIdeas.map((i) => ({ id: i.id, text: i.text }))}
             onCaptureIdea={(text) => {
               setIdeas((list) => addIdea(list, activeId, text));

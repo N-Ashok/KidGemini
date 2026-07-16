@@ -146,6 +146,12 @@ describe("modelsPromptSection — the catalog version-locks with the manifest (P
     expect(section).toContain("AnimationMixer");
   });
 
+  it("teaches picking a clip by NAME (run/walk) instead of blindly playing animations[0] (2026-07-15: the dino's clip[0] is an Attack pounce, not Run — a kid asking for a running dino got a hopping attack animation)", () => {
+    expect(section).toMatch(/run.?\|.?walk|walk.?\|.?run/i); // the run/walk name-search pattern
+    expect(section).toMatch(/\.find\(/); // searches by name, doesn't just index in
+    expect(section).toContain("animations[0]"); // still the LAST-resort fallback, not the first choice
+  });
+
   it("is empty when the manifest has no models (nothing to teach, zero tokens)", () => {
     expect(modelsPromptSection({ assets: [fakeModels.assets[0]!] })).toBe("");
   });

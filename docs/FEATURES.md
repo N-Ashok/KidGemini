@@ -7,6 +7,14 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   Creator Profile deep link (`studio.ariantra.com/studio?profile=1`) — the
   ONE place parent/child details are collected (encrypted platform-side).
   KidGemini deliberately hosts no second form; SSO makes the hop seamless
+- **⏱️ Daily screen-time cap + alert** (2026-07-15,
+  `docs/PRD-SCREEN-TIME-CAP-MVP.md`): a parent sets a daily-minutes cap;
+  minutes are derived from presence pings — one per chat completion plus a
+  lightweight client heartbeat (`ScreenTimeHeartbeat.tsx`) while the tab is
+  open and visible, so playing an already-built game counts the same as
+  chatting — and crossing the cap fires exactly one alert into the same list
+  as safety alerts. Alert-only — nothing is blocked, and the kid sees no
+  timer at all.
 
 ## Chat (home `/`)
 - Gemini-powered kids chat: text + voice (TTS playback, regenerate last answer)
@@ -187,6 +195,14 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   (`IdeaMicTab.tsx`, `IdeaBag.tsx`, `src/lib/idea-bag.ts`, `src/lib/idea-mic.ts`).
   Wake-word invocation deliberately rejected (always-on mic = parent-trust +
   iOS reliability); revisit only with on-device keyword spotting / Gemini Live.
+  **2026-07-15 UAT polish:** a corner ✕ (top-right of the listening bar) is
+  now the standard "just close this" affordance — same effect as 🗑️ Never
+  mind (discards the in-progress draft only, keeps whatever's already
+  bagged); "Done" dropped its ✕ icon in favor of 🏁 (an X read as
+  "cancel/discard," not "successfully finished"); the listening bar now
+  shows a compact, scrollable preview of already-saved ideas so a kid
+  mid-capture doesn't have to leave the bar to check what they've said —
+  the full editable list still lives in the Idea Bag panel.
   **First-run coach** (same day): the very first playable preview dims and the
   tab introduces itself — wiggle + glow, speech bubble read ALOUD by the buddy
   voice (pre-readers), mini demo, "OK got it". Once per device; tapping the

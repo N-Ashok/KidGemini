@@ -62,9 +62,22 @@ const rateHit = vi.fn((): { state: string; mustPay?: boolean; until?: number } =
 const usageRows: Array<{ outputText?: string; outputTokens?: number }> = [];
 // Turn-result capture (resumable generations): what the route persisted.
 const turnCalls: Array<{ op: string; replyId: string; userId: string; text?: string; artifactHtml?: string | null }> = [];
+// Screen-time ping + recompute calls (PRD-SCREEN-TIME-CAP-MVP Part B).
+const screenTimePings: string[] = [];
+const screenTimeCalls: Array<{ accountId: string; userLabel: string | null }> = [];
+let screenTimeThrows = false;
 vi.mock("@/lib/db", () => ({
   SqliteAlertStore: class {
     record() {}
+  },
+  SqliteScreenTimeStore: class {
+    recordPing(accountId: string) {
+      if (screenTimeThrows) throw new Error("boom");
+      screenTimePings.push(accountId);
+    }
+    recomputeAndMaybeAlert(accountId: string, userLabel: string | null) {
+      screenTimeCalls.push({ accountId, userLabel });
+    }
   },
   SqliteTurnResultStore: class {
     start(replyId: string, userId: string) {
@@ -476,6 +489,49 @@ describe("POST /api/chat — resumable turns (2026-07-13)", () => {
     await res.text();
 
     expect(turnCalls).toEqual([]);
+  });
+});
+
+describe("POST /api/chat — screen-time tracking (PRD-SCREEN-TIME-CAP-MVP Part B)", () => {
+  beforeEach(() => {
+    screenTimePings.length = 0;
+    screenTimeCalls.length = 0;
+    screenTimeThrows = false;
+  });
+
+  it("SC.1 a signed-in completion records a ping AND triggers screen-time recompute", async () => {
+    authMock.mockResolvedValue({ userId: "user:kid@x.com", name: "Kid" });
+    replyStreamMock.mockReturnValue(one("Hello!"));
+
+    const res = await POST(makeReq({ message: "hello", history: [] }));
+    await res.text();
+
+    expect(res.status).toBe(200);
+    expect(screenTimePings).toEqual(["user:kid@x.com"]);
+    expect(screenTimeCalls).toEqual([{ accountId: "user:kid@x.com", userLabel: "Kid" }]);
+  });
+
+  it("SC.2 a guest completion never pings or recomputes screen time", async () => {
+    authMock.mockResolvedValue(null);
+    replyStreamMock.mockReturnValue(one("Hello!"));
+
+    const res = await POST(makeReq({ message: "hello", history: [] }));
+    await res.text();
+
+    expect(screenTimePings).toEqual([]);
+    expect(screenTimeCalls).toEqual([]);
+  });
+
+  it("SC.3 a thrown error from the screen-time store doesn't fail the chat response (fail-open)", async () => {
+    screenTimeThrows = true;
+    authMock.mockResolvedValue({ userId: "user:kid@x.com", name: "Kid" });
+    replyStreamMock.mockReturnValue(one("Hello!"));
+
+    const res = await POST(makeReq({ message: "hello", history: [] }));
+    const text = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(text).toContain('"type":"done"');
   });
 });
 

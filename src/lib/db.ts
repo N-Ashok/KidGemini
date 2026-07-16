@@ -16,6 +16,8 @@ import type {
 } from "@/types/usage.types";
 import type { IpLimitRecord, RateLimitStatus, RateLimitStore } from "@/types/rate-limit.types";
 import type { ParentAuthRecord, ParentAuthStore } from "@/types/parent-auth.types";
+import type { ScreenTimeSettings, ScreenTimeDaily, ScreenTimeStore } from "@/types/screen-time.types";
+import { utcDayStart, deriveActiveMinutes } from "./screen-time";
 import type { PaymentRecord, PaymentStore } from "@/types/billing.types";
 import type { ChatHistoryStore, ConvoSummary } from "@/types/chat-history.types";
 import type { TurnResult, TurnResultStore } from "@/types/turn-result.types";
@@ -138,6 +140,36 @@ function getDb(): Database.Database {
       lockedUntil INTEGER,
       lastLockoutAt INTEGER
     );
+    -- Daily screen-time cap (PRD-SCREEN-TIME-CAP-MVP Part B). Keyed by the
+    -- same SSO userId as parent_auth — one account per family, no separate
+    -- child entity for this feature.
+    CREATE TABLE IF NOT EXISTS screen_time_settings (
+      accountId TEXT PRIMARY KEY,
+      dailyCapMinutes INTEGER,
+      updatedAt INTEGER NOT NULL
+    );
+    -- One row per (account, UTC calendar day). activeMinutes is a cached
+    -- tally derived from screen_time_pings timestamps (see screen-time.ts);
+    -- alertedAt debounces the cap-crossed alert to once per account per day.
+    CREATE TABLE IF NOT EXISTS screen_time_daily (
+      accountId TEXT NOT NULL,
+      dayStart INTEGER NOT NULL,
+      activeMinutes INTEGER NOT NULL DEFAULT 0,
+      alertedAt INTEGER,
+      updatedAt INTEGER NOT NULL,
+      PRIMARY KEY (accountId, dayStart)
+    );
+    -- Presence timestamps the daily tally is derived from (2026-07-15): one
+    -- row per chat completion AND per client heartbeat tick
+    -- (ScreenTimeHeartbeat.tsx, while the tab is open+visible) — the single
+    -- source of truth for "how long was this account active," covering both
+    -- chatting and playing an already-built game. Pruned to a short window
+    -- on write (recordPing) — only "today" is ever queried.
+    CREATE TABLE IF NOT EXISTS screen_time_pings (
+      accountId TEXT NOT NULL,
+      createdAt INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_screen_time_pings ON screen_time_pings(accountId, createdAt);
   `);
   // Migration (2026-07-14): real billed token counts. Pre-existing DBs lack
   // the columns — add them, then backfill billed=estimate so history keeps
@@ -555,6 +587,105 @@ export class SqliteParentAuthStore implements ParentAuthStore {
            lastLockoutAt = @lastLockoutAt WHERE accountId = @accountId`,
       )
       .run({ accountId, ...fields });
+  }
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Only "today" is ever queried (recomputeAndMaybeAlert), so pings older than
+// this are pure dead weight — pruned on every write, same idiom as
+// SqliteTurnResultStore.start()'s 24h sweep.
+const PING_RETENTION_MS = 2 * DAY_MS;
+
+/** Daily screen-time cap + alert (PRD-SCREEN-TIME-CAP-MVP Part B). Minutes
+ *  are derived from screen_time_pings on every recompute — one row per chat
+ *  completion AND per client heartbeat tick (ScreenTimeHeartbeat.tsx), so
+ *  playing an already-built game counts the same as chatting. DI'd with an
+ *  AlertStore so "fires exactly once" is testable without a second store
+ *  reaching into the same DB. */
+export class SqliteScreenTimeStore implements ScreenTimeStore {
+  constructor(private alerts: AlertStore = new SqliteAlertStore()) {}
+
+  recordPing(accountId: string, nowMs: number): void {
+    const db = getDb();
+    db.prepare(`DELETE FROM screen_time_pings WHERE createdAt < ?`).run(nowMs - PING_RETENTION_MS);
+    db.prepare(`INSERT INTO screen_time_pings (accountId, createdAt) VALUES (?, ?)`).run(accountId, nowMs);
+  }
+
+  getSettings(accountId: string): ScreenTimeSettings | null {
+    const r = getDb().prepare(`SELECT * FROM screen_time_settings WHERE accountId = ?`).get(accountId) as
+      | Record<string, unknown>
+      | undefined;
+    if (!r) return null;
+    return {
+      accountId: r.accountId as string,
+      dailyCapMinutes: (r.dailyCapMinutes as number | null) ?? null,
+      updatedAt: r.updatedAt as number,
+    };
+  }
+
+  putSettings(accountId: string, dailyCapMinutes: number | null): ScreenTimeSettings {
+    const updatedAt = Date.now();
+    getDb()
+      .prepare(
+        `INSERT INTO screen_time_settings (accountId, dailyCapMinutes, updatedAt)
+         VALUES (@accountId, @dailyCapMinutes, @updatedAt)
+         ON CONFLICT(accountId) DO UPDATE SET
+           dailyCapMinutes = @dailyCapMinutes, updatedAt = @updatedAt`,
+      )
+      .run({ accountId, dailyCapMinutes, updatedAt });
+    return { accountId, dailyCapMinutes, updatedAt };
+  }
+
+  getToday(accountId: string, dayStart: number): ScreenTimeDaily | null {
+    const r = getDb()
+      .prepare(`SELECT * FROM screen_time_daily WHERE accountId = ? AND dayStart = ?`)
+      .get(accountId, dayStart) as Record<string, unknown> | undefined;
+    if (!r) return null;
+    return {
+      accountId: r.accountId as string,
+      dayStart: r.dayStart as number,
+      activeMinutes: r.activeMinutes as number,
+      alertedAt: (r.alertedAt as number | null) ?? null,
+      updatedAt: r.updatedAt as number,
+    };
+  }
+
+  recomputeAndMaybeAlert(accountId: string, userLabel: string | null, nowMs: number): void {
+    const dayStart = utcDayStart(nowMs);
+    const rows = getDb()
+      .prepare(
+        `SELECT createdAt FROM screen_time_pings
+         WHERE accountId = ? AND createdAt >= ? AND createdAt < ?
+         ORDER BY createdAt ASC`,
+      )
+      .all(accountId, dayStart, dayStart + DAY_MS) as Array<{ createdAt: number }>;
+    const activeMinutes = deriveActiveMinutes(rows.map((r) => r.createdAt));
+
+    const existing = this.getToday(accountId, dayStart);
+    const cap = this.getSettings(accountId)?.dailyCapMinutes ?? null;
+    const alreadyAlerted = existing?.alertedAt != null;
+    const shouldAlert = !alreadyAlerted && cap !== null && activeMinutes >= cap;
+    const alertedAt = shouldAlert ? nowMs : (existing?.alertedAt ?? null);
+
+    getDb()
+      .prepare(
+        `INSERT INTO screen_time_daily (accountId, dayStart, activeMinutes, alertedAt, updatedAt)
+         VALUES (@accountId, @dayStart, @activeMinutes, @alertedAt, @updatedAt)
+         ON CONFLICT(accountId, dayStart) DO UPDATE SET
+           activeMinutes = @activeMinutes, alertedAt = @alertedAt, updatedAt = @updatedAt`,
+      )
+      .run({ accountId, dayStart, activeMinutes, alertedAt, updatedAt: nowMs });
+
+    if (shouldAlert) {
+      this.alerts.record({
+        origin: "system",
+        category: null,
+        severity: "low",
+        action: "allow",
+        triggerText: "Daily screen-time cap reached",
+        reason: `${userLabel ?? "Your child"} has used kidgemini for ${activeMinutes} min today — your cap is ${cap} min.`,
+      });
+    }
   }
 }
 
