@@ -90,7 +90,9 @@ describe("buildTurnSystemInstruction — what a game-build turn actually sends",
 
 describe("buildTurnSystemInstruction — tier/keyword gates (PRD §9/§11: free + no keyword ≡ today's product)", () => {
   it("both gates closed → EXACTLY the bare child prompt, zero catalog tokens", () => {
-    expect(buildTurnSystemInstruction({ three: false, audio: false })).toBe(CHILD_SYSTEM_PROMPT);
+    // multiplayer is a separate, independent gate (PRD-MULTIPLAYER.md Phase 4)
+    // — held at false here so this stays a pure test of the 3D/audio gates.
+    expect(buildTurnSystemInstruction({ three: false, audio: false }, undefined, false)).toBe(CHILD_SYSTEM_PROMPT);
   });
 
   it("3D gate alone → 3D + models sections, no audio catalog", () => {

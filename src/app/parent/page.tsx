@@ -9,6 +9,13 @@ import { useCallback, useEffect, useState } from "react";
 import { signIn, useSession } from "@/lib/useAriantraSession";
 import type { ParentAlert } from "@/types/alert.types";
 
+interface FamilyGame {
+  slug: string;
+  name: string;
+  status: string;
+  multiplayer?: boolean;
+}
+
 // Family-profile signpost (owner decision 2026-07-13): the profile form lives
 // in ONE place — the Studio's Creator Profile card — and this page only links
 // to it (?profile=1 opens the card directly; SSO means no re-login).
@@ -36,6 +43,9 @@ export default function ParentPage() {
   const [pin, setPin] = useState("");
   const [pin2, setPin2] = useState("");
   const [error, setError] = useState("");
+  // Multiplayer toggle (PRD-MULTIPLAYER.md Phase 4) — null = not fetched yet.
+  const [games, setGames] = useState<FamilyGame[] | null>(null);
+  const [togglingSlug, setTogglingSlug] = useState<string | null>(null);
   // Daily screen-time cap (PRD-SCREEN-TIME-CAP-MVP Part B). null = not
   // fetched yet — the card stays hidden until it loads (no blank flash).
   const [screenTime, setScreenTime] = useState<{ dailyCapMinutes: number | null; todayActiveMinutes: number } | null>(null);
@@ -53,6 +63,38 @@ export default function ParentPage() {
     const data = (await res.json()) as { alerts: ParentAlert[] };
     setView({ kind: "alerts", alerts: data.alerts });
     return true;
+  }, []);
+
+  const loadGames = useCallback(async () => {
+    const res = await fetch("/api/parent/games", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ list: true }),
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { games?: FamilyGame[] };
+    setGames(data.games ?? []);
+  }, []);
+
+  const toggleMultiplayer = useCallback(async (slug: string, next: boolean) => {
+    setTogglingSlug(slug);
+    setGames((gs) => gs && gs.map((g) => (g.slug === slug ? { ...g, multiplayer: next } : g))); // optimistic
+    try {
+      const res = await fetch("/api/parent/games", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ toggleMultiplayer: true, slug, multiplayer: next }),
+      });
+      if (!res.ok) {
+        // Revert on failure — a silent toggle that doesn't stick is worse
+        // than an obvious one that snaps back.
+        setGames((gs) => gs && gs.map((g) => (g.slug === slug ? { ...g, multiplayer: !next } : g)));
+      }
+    } catch {
+      setGames((gs) => gs && gs.map((g) => (g.slug === slug ? { ...g, multiplayer: !next } : g)));
+    } finally {
+      setTogglingSlug(null);
+    }
   }, []);
 
   const loadScreenTime = useCallback(async () => {
@@ -74,9 +116,10 @@ export default function ParentPage() {
     }
     void (async () => {
       if (!(await loadAlerts())) { setView({ kind: "verify" }); return; }
+      void loadGames();
       void loadScreenTime();
     })();
-  }, [session.status, loadAlerts, loadScreenTime]);
+  }, [session.status, loadAlerts, loadGames, loadScreenTime]);
 
   async function saveScreenTimeCap(e: React.FormEvent) {
     e.preventDefault();
@@ -115,6 +158,7 @@ export default function ParentPage() {
     setPin("");
     if (res.ok) {
       await loadAlerts();
+      void loadGames();
       void loadScreenTime();
       return;
     }
@@ -151,6 +195,7 @@ export default function ParentPage() {
       setPin("");
       setPin2("");
       await loadAlerts();
+      void loadGames();
       void loadScreenTime();
       return;
     }
@@ -271,6 +316,45 @@ export default function ParentPage() {
               Open family profile →
             </a>
           </article>
+
+          {games && games.length > 0 && (
+            <article className="card space-y-3 border-l-4 border-brand-300">
+              <div>
+                <h2 className="text-lg font-semibold">🎮 Multiplayer</h2>
+                <p className="mt-1 text-sm text-ink-700">
+                  Turn "Play together" on or off for each of your child&rsquo;s published games.
+                  Off means friends can&rsquo;t invite each other into a live game.
+                </p>
+              </div>
+              <ul className="divide-y divide-neutral-100">
+                {games.map((g) => (
+                  <li key={g.slug} className="flex items-center justify-between gap-3 py-2">
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-ink-900">{g.name}</div>
+                      <div className="truncate text-xs text-ink-500">{g.slug}.ariantra.com · {g.status}</div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={g.multiplayer === true}
+                      aria-label={`Multiplayer for ${g.name}`}
+                      disabled={togglingSlug === g.slug}
+                      onClick={() => void toggleMultiplayer(g.slug, !g.multiplayer)}
+                      className={`relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                        g.multiplayer ? "bg-brand-500" : "bg-neutral-300"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+                          g.multiplayer ? "translate-x-5" : "translate-x-0.5"
+                        }`}
+                      />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </article>
+          )}
 
           {screenTime && (
             <article className="card space-y-3 border-l-4 border-brand-300">

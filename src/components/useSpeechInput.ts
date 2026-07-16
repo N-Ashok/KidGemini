@@ -32,10 +32,20 @@
 // finals again. Fixed by self-tracking how many finals we've already
 // committed (`committedFinalsRef`, reset at every rec.start()) instead of
 // trusting resultIndex — see speech-transcript.ts for the slicing logic.
+//
+// Repeat-mic fix, take 2 (BUG-FIX-LOG 2026-07-16): the fix above still reset
+// `committedFinalsRef` to 0 at every `rec.start()` CALL, not every successful
+// start — but `start()` throws ("already started") when the browser hasn't
+// actually torn down the previous session yet (a Chrome timing quirk; the
+// restart delay is best-effort, not a guarantee). When that race hits, the
+// OLD session — with its already-accumulated finals — keeps running, so
+// zeroing the counter anyway made the next result replay everything already
+// committed. `committedCountAfterRestart` only resets on a start() that
+// actually succeeded.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isFatalMicError, micErrorMessage } from "@/lib/mic-errors";
-import { splitSpeechResults } from "@/lib/speech-transcript";
+import { committedCountAfterRestart, splitSpeechResults } from "@/lib/speech-transcript";
 
 // Minimal typing for the non-standard SpeechRecognition API.
 type SpeechRecognition = {
@@ -133,8 +143,9 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
       }
       restartTimerRef.current = setTimeout(() => {
         if (!wantListeningRef.current) return;
-        committedFinalsRef.current = 0; // fresh session ⇒ fresh results list
-        try { rec.start(); } catch { /* already started */ }
+        let started = true;
+        try { rec.start(); } catch { started = false; /* old session still alive */ }
+        committedFinalsRef.current = committedCountAfterRestart(started, committedFinalsRef.current);
       }, RESTART_DELAY_MS);
     };
     rec.onerror = (e) => {
@@ -159,8 +170,10 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
     if (!rec) return;
     setError(null);
     wantListeningRef.current = true;
-    committedFinalsRef.current = 0; // fresh session ⇒ fresh results list
-    try { rec.start(); setIsListening(true); } catch { /* already started */ }
+    let started = true;
+    try { rec.start(); } catch { started = false; /* old session still alive */ }
+    committedFinalsRef.current = committedCountAfterRestart(started, committedFinalsRef.current);
+    if (started) setIsListening(true);
   }, []);
 
   const stop = useCallback(() => {

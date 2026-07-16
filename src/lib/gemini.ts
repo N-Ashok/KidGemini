@@ -7,6 +7,8 @@ import type { ChatMessage, ChatModel, ImageAttachment, StreamChunk, TokenUsage }
 import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
 import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection, type PromptTurnContext } from "./assets/prompt-catalog";
 import { catalogGates, type CatalogGates } from "./assets/catalog-gate";
+import { multiplayerGate } from "./multiplayer-gate";
+import { MULTIPLAYER_PROMPT_SECTION } from "./multiplayer-prompt";
 import { fallbackChain, isModelGone, shouldTryNextModel } from "./model-fallback";
 import { withRetry, withTimeout } from "./retry";
 
@@ -120,16 +122,21 @@ If the child asks for a game, respond with a single HTML document wrapped in a
 
 /** System instruction for a game-BUILD turn: the child-safety base plus
  *  whichever asset catalogs this turn's gates unlock (PRD-3D-GAMES-AND-ASSETS
- *  §9 — paid: both; free: keyword-invoked; 3D and audio independent). The
- *  default is fully unlocked — that's the paid/tests shape; configFor passes
- *  the real per-turn gates. Exported for the prompt-contract tests. */
+ *  §9 — paid: both; free: keyword-invoked; 3D and audio independent), plus the
+ *  multiplayer section (PRD-MULTIPLAYER.md Phase 4) gated independently — a
+ *  multiplayer game can be plain 2D and silent, so it isn't a CatalogGates
+ *  field. The default is fully unlocked — that's the paid/tests shape;
+ *  configFor passes the real per-turn gates. Exported for the prompt-contract
+ *  tests. */
 export function buildTurnSystemInstruction(
   gates: CatalogGates = { three: true, audio: true },
   context?: PromptTurnContext,
+  multiplayer = true,
 ): string {
   const sections = [
     ...(gates.three ? [THREE_PROMPT_SECTION, modelsPromptSection(undefined, context)] : []),
     ...(gates.audio ? [audioPromptSection()] : []),
+    ...(multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),
   ].filter(Boolean);
   return sections.length ? `${CHILD_SYSTEM_PROMPT}\n\n${sections.join("\n\n")}` : CHILD_SYSTEM_PROMPT;
 }
@@ -245,10 +252,11 @@ export class GeminiChatModel implements ChatModel {
     // paid: false until entitlement lands (TECH_DEBT #11) — then this becomes
     // the real per-user entitlement and the paid tier goes always-on (§9).
     const gates = catalogGates({ message: input.message, history: input.history, paid: false });
-    console.log(`[gemini] builder mode — thinking on, extended output, catalogs: 3d=${gates.three} audio=${gates.audio}`);
+    const wantsMultiplayer = multiplayerGate({ message: input.message, history: input.history });
+    console.log(`[gemini] builder mode — thinking on, extended output, catalogs: 3d=${gates.three} audio=${gates.audio} multiplayer=${wantsMultiplayer}`);
     return {
       ...GEN_CONFIG,
-      systemInstruction: buildTurnSystemInstruction(gates, { message: input.message, history: input.history }),
+      systemInstruction: buildTurnSystemInstruction(gates, { message: input.message, history: input.history }, wantsMultiplayer),
       ...builderGenOverrides(process.env),
     };
   }

@@ -15,7 +15,7 @@
 // a well-behaved resultIndex in the common single-event cases below, but the
 // "browser lies about the index" regression test is what actually pins the fix.
 import { describe, it, expect } from "vitest";
-import { composeDictation, splitSpeechResults } from "./speech-transcript";
+import { composeDictation, committedCountAfterRestart, splitSpeechResults } from "./speech-transcript";
 
 type Result = ArrayLike<{ transcript: string }> & { isFinal?: boolean };
 const final = (t: string): Result => Object.assign([{ transcript: t }], { isFinal: true, length: 1 });
@@ -107,6 +107,42 @@ describe("splitSpeechResults", () => {
       committed = finalCount;
     }
     expect(emitted).toEqual(["I want"]); // not ["I want", "I want", "I want"]
+  });
+});
+
+describe("committedCountAfterRestart (2026-07-16 repeat-mic regression, take 2)", () => {
+  it("a successful restart gets a fresh (zeroed) counter", () => {
+    expect(committedCountAfterRestart(true, 5)).toBe(0);
+  });
+
+  it("a FAILED restart (old session never tore down) keeps the old count", () => {
+    expect(committedCountAfterRestart(false, 5)).toBe(5);
+  });
+
+  it("regression: unconditionally zeroing on a failed restart replays already-committed finals", () => {
+    // The old (buggy) code path: reset to 0 no matter what `rec.start()` did.
+    const oldBehaviorAlwaysResets = (_startSucceeded: boolean, _previous: number) => 0;
+    let committed = 0;
+    const emitted: string[] = [];
+    // Session 1: kid says "I want" (finalized), then the browser ends the
+    // session on a silence gap. Our restart races the browser's own teardown
+    // — start() throws "already started" (session 1 is still alive).
+    ({ finalCount: committed } = splitSpeechResults([final("I want")], committed));
+    const startSucceeded = false; // simulates `rec.start()` throwing
+    committed = oldBehaviorAlwaysResets(startSucceeded, committed);
+    // Session 1 (never actually restarted) keeps running and finalizes more.
+    const r2 = splitSpeechResults([final("I want"), final("a car")], committed);
+    if (r2.freshFinalText) emitted.push(r2.freshFinalText);
+    expect(emitted).toEqual(["I want a car"]); // buggy: replays "I want"
+
+    // Same scenario with the FIXED decision function.
+    committed = 0;
+    const emittedFixed: string[] = [];
+    ({ finalCount: committed } = splitSpeechResults([final("I want")], committed));
+    committed = committedCountAfterRestart(startSucceeded, committed);
+    const r2Fixed = splitSpeechResults([final("I want"), final("a car")], committed);
+    if (r2Fixed.freshFinalText) emittedFixed.push(r2Fixed.freshFinalText);
+    expect(emittedFixed).toEqual(["a car"]); // fixed: "I want" never replays
   });
 });
 
