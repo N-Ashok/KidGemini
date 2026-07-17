@@ -189,6 +189,24 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   that's already online" — same address, new version. Typing a name that
   matches their own game also flips to update (`mine` check). Fail-closed:
   ownership verified server-side on both the list and the publish
+- **🔗 Share card on publish success** (2026-07-17,
+  `../Ariantra-Platform/docs/PRD-SHARING.md` Phase 1, S1 "I made this!"): the
+  "done" step of `PublishToArcade.tsx` gets an editable message
+  ("I made a game! Play it 👉 {link}") + WhatsApp/native-share/copy-link
+  buttons — but only when the family's Sharing & Privacy is turned ON
+  (`shareEnabled`, read straight off the publish response, no extra round
+  trip — the platform's partner bridge now returns it alongside `url`/
+  `version`). Off shows "🔒 Ask a grown-up to turn on sharing" linking to the
+  Parent area instead of a dead-end share button
+- **📤 "Share your child's games" (Parent area, S2 "parent pride push")**
+  (2026-07-17): a STANDING card (not a one-time notification) listing every
+  published game with its own Share button — parent-framed copy
+  ("{child} built this game — check it out!"), same WhatsApp/native-share/
+  copy-link channels as the kid's own card. Consent is account-level
+  (Sharing & Privacy in the family profile applies to every game), so one
+  `shareEnabled` flag from `/api/parent/games`'s `list` action (now also
+  returned by the partner bridge, alongside the existing games array) gates
+  the whole card; off shows a link to turn it on instead of per-row buttons
 - **🎮 Multiplayer generation + "Invite a friend to test"**
   (2026-07-14, `../Ariantra-Platform/docs/PRD-MULTIPLAYER.md` Phase 4): asking
   for a 2-player/co-op/versus game conditionally teaches the model
@@ -258,6 +276,13 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   inline filter over titles AND message text (client-side, `src/lib/chat-search.ts`;
   game artifact HTML excluded to avoid noise matches), with match count and a
   friendly no-results state
+- **Desktop sidebar collapse** (2026-07-17): a « / » toggle in the sidebar
+  header shrinks it to an icon-only rail (`md:` only — the mobile drawer is
+  already collapsible via open/close and always renders full), reclaiming
+  width for chat/preview; state persists across reloads (`src/lib/sidebar-pane.ts`).
+  Expanding scrolls the active chat back into view. A failed Recents fetch now
+  shows a "Couldn't load your chats — tap to retry" row instead of silently
+  looking empty (BUG-FIX-LOG 2026-07-17)
 - **History trim** (2026-07-08, server-side): the model only sees the last 12
   messages and only the NEWEST game's code — older game versions collapse to
   a placeholder (each carried ~10-15K input tokens on every message of an

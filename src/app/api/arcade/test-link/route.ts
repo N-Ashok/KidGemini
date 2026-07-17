@@ -15,8 +15,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { SESSION_COOKIE, verifyAriantraSession } from "@/lib/ariantra-session";
-
-const PLATFORM_BASE = process.env.ARIANTRA_API_BASE ?? "https://studio.ariantra.com";
+import { partner } from "@/lib/arcade-partner";
 
 interface Body {
   name?: string;
@@ -38,20 +37,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
   const name = (body.name ?? "My game").trim().slice(0, 60);
 
-  const res = await fetch(`${PLATFORM_BASE}/api/studio/partner/publish`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-admin-secret": secret },
-    body: JSON.stringify({ createTestLink: true, sessionToken: rawSession, name, html: body.html }),
-  });
-  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  // Same rationale as the publish route (BUG-FIX-LOG 2026-07-11): a secret
-  // mismatch/misconfigured ARIANTRA_API_BASE must not collide with our own
-  // 401/422 shapes.
-  if (res.status === 403) {
-    return NextResponse.json(
-      { error: "The Arcade server said no — a grown-up should check that kidgemini and the platform share the same secret." },
-      { status: 502 },
-    );
-  }
-  return NextResponse.json(data, { status: res.status });
+  const { status, data } = await partner({ createTestLink: true, sessionToken: rawSession, name, html: body.html });
+  return NextResponse.json(data, { status });
 }

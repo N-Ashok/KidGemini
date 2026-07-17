@@ -25,8 +25,19 @@ export async function POST(req: NextRequest) {
   }
 
   // Idempotency — Razorpay retries deliver the same event id; process it at most once.
+  // isNewEvent/getByOrderId/markPaid were previously unguarded (2026-07-17):
+  // a thrown DB error here still 500s exactly as before (so Razorpay's own
+  // retry semantics keep working unchanged) — the only change is a log line
+  // naming the event before it propagates, instead of a bare stack trace.
   const eventId = req.headers.get("x-razorpay-event-id") ?? "";
-  if (eventId && !payments.isNewEvent(eventId)) {
+  let isNew: boolean;
+  try {
+    isNew = eventId ? payments.isNewEvent(eventId) : true;
+  } catch (err) {
+    console.error(`[api/billing/webhook] ✖ isNewEvent failed event=${eventId}: ${(err as Error).message}`);
+    throw err;
+  }
+  if (!isNew) {
     console.log(`[api/billing/webhook] ↺ duplicate event ${eventId} ignored`);
     return NextResponse.json({ status: "duplicate_ignored" });
   }
@@ -46,13 +57,18 @@ export async function POST(req: NextRequest) {
     const orderId = entity?.order_id;
     const paymentId = entity?.id;
     if (orderId && paymentId) {
-      const record = payments.getByOrderId(orderId);
-      const plan = record ? findPlan(record.planKey) : undefined;
-      const periodEndsAt = Date.now() + (plan?.periodDays ?? 30) * DAY_MS;
-      const updated = payments.markPaid(orderId, paymentId, periodEndsAt);
-      console.log(
-        `[api/billing/webhook] ${updated ? "✓ paid" : "⚠ unknown order"} event=${event.event} order=${orderId}`,
-      );
+      try {
+        const record = payments.getByOrderId(orderId);
+        const plan = record ? findPlan(record.planKey) : undefined;
+        const periodEndsAt = Date.now() + (plan?.periodDays ?? 30) * DAY_MS;
+        const updated = payments.markPaid(orderId, paymentId, periodEndsAt);
+        console.log(
+          `[api/billing/webhook] ${updated ? "✓ paid" : "⚠ unknown order"} event=${event.event} order=${orderId}`,
+        );
+      } catch (err) {
+        console.error(`[api/billing/webhook] ✖ markPaid failed event=${event.event} order=${orderId}: ${(err as Error).message}`);
+        throw err;
+      }
     }
   }
 

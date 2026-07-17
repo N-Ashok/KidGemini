@@ -45,6 +45,7 @@ import {
 import { PanelResizeHandle } from "./PanelResizeHandle";
 import { searchChats } from "@/lib/chat-search";
 import { appendPage, chatToAutoRestore, mergeRecents, SYNC_FLAG } from "@/lib/chat-sync";
+import { loadSidebarCollapsed, saveSidebarCollapsed } from "@/lib/sidebar-pane";
 import type { ConvoSummary } from "@/types/chat-history.types";
 import { pickSuggestions } from "@/lib/game-suggestions";
 import { shouldAutoRetry } from "@/lib/stream-recovery";
@@ -112,6 +113,20 @@ export function ChatPanelContainer() {
   const [expandState, setExpandState] = useState<ExpandState>({ expanded: false });
   const previewExpanded = expandState.expanded;
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer; always visible on md+
+  // Desktop icon-rail collapse (2026-07-17) — mobile ignores this (its drawer
+  // is already collapsible via sidebarOpen). Starts expanded; the saved value
+  // hydrates after mount so server/client markup matches on first paint.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  useEffect(() => {
+    setSidebarCollapsed(loadSidebarCollapsed(window.localStorage));
+  }, []);
+  function toggleSidebarCollapsed() {
+    setSidebarCollapsed((c) => {
+      const next = !c;
+      saveSidebarCollapsed(window.localStorage, next);
+      return next;
+    });
+  }
   const [searchQuery, setSearchQuery] = useState(""); // sidebar chat search (title + message text)
   // Server-side history (TECH_DEBT #26): the paginated Recents index from
   // /api/chats. Chats live durably on the server keyed by account/guest
@@ -119,6 +134,9 @@ export function ChatPanelContainer() {
   // only — a chat's messages are fetched when the kid opens it.
   const [remoteIndex, setRemoteIndex] = useState<ConvoSummary[]>([]);
   const [remoteHasMore, setRemoteHasMore] = useState(false);
+  // A failed fetch used to leave Recents silently empty with no way to tell
+  // "you have no chats" apart from "the server didn't answer" (2026-07-17).
+  const [recentsError, setRecentsError] = useState(false);
   const remoteIndexRef = useRef<ConvoSummary[]>([]);
   remoteIndexRef.current = remoteIndex;
   const remoteLoadingRef = useRef(false);
@@ -213,13 +231,18 @@ export function ChatPanelContainer() {
       const cursor = !reset ? remoteIndexRef.current.at(-1) : undefined;
       const qs = cursor ? `?before=${cursor.updatedAt}&beforeId=${encodeURIComponent(cursor.id)}` : "";
       const res = await fetch(`/api/chats${qs}`, { cache: "no-store" });
-      if (!res.ok) return undefined;
+      if (!res.ok) {
+        setRecentsError(true);
+        return undefined;
+      }
       const { chats } = (await res.json()) as { chats: ConvoSummary[] };
+      setRecentsError(false);
       setRemoteHasMore(chats.length >= 30);
       setRemoteIndex((prev) => (reset ? chats : appendPage(prev, chats)));
       return chats;
     } catch {
-      /* offline — the local cache still works; next scroll retries */
+      /* offline — the local cache still works; the retry row asks again */
+      setRecentsError(true);
       return undefined;
     } finally {
       remoteLoadingRef.current = false;
@@ -267,7 +290,12 @@ export function ChatPanelContainer() {
                   method: "PUT",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ convo }),
-                }).catch(() => {});
+                }).catch((err) => {
+                  // Breadcrumb only (2026-07-17) — client-side, no user-facing
+                  // change. This exact failure class ("I lose chat across
+                  // browsers") is what this recovery path exists to prevent.
+                  console.warn("[chat] recovered-turn persist failed", err);
+                });
               }
               return next;
             });
@@ -333,14 +361,20 @@ export function ChatPanelContainer() {
       body: JSON.stringify({ convo: c }),
     })
       .then((res) => {
-        if (!res.ok) return;
+        if (!res.ok) {
+          console.warn(`[chat] write-through persist failed: ${res.status}`);
+          return;
+        }
         setRemoteIndex((prev) => [
           { id: c.id, title: c.title, updatedAt: Date.now() },
           ...prev.filter((r) => r.id !== c.id),
         ]);
       })
-      .catch(() => {
-        /* offline — local cache covers it until the next turn */
+      .catch((err) => {
+        // Breadcrumb only (2026-07-17) — local cache still covers it until
+        // the next finished turn re-syncs; this exact failure class ("I lose
+        // chat across browsers") is what this write-through path guards.
+        console.warn("[chat] write-through persist failed", err);
       });
   }, [busy, convos, activeId]);
   useEffect(() => {
@@ -797,6 +831,10 @@ export function ChatPanelContainer() {
         onSelect={handleSelect}
         hasMore={remoteHasMore}
         onEndReached={() => void loadMoreRemote()}
+        recentsError={recentsError}
+        onRetryRecents={() => void loadMoreRemote(remoteIndex.length === 0)}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={toggleSidebarCollapsed}
       />
 
       <main className="flex min-w-0 flex-1 flex-col">

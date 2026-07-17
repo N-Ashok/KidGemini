@@ -85,22 +85,29 @@ export async function POST(req: NextRequest) {
   // Recorded but gate-exempt (kind:"repair" is excluded from the tallies).
   // promptTokens/outputTokens stay estimates (gate semantics); billed* carry
   // the real usageMetadata counts and drive the cost estimate when present.
-  usage.record({
-    userId, userLabel, model, kind: "repair",
-    userAgent: req.headers.get("user-agent"),
-    promptTokens: estTokens(prompt), outputTokens: estTokens(reply),
-    billedPromptTokens: realUsage?.promptTokens,
-    billedOutputTokens: realUsage?.outputTokens,
-    thoughtTokens: realUsage?.thoughtTokens,
-    cachedTokens: realUsage?.cachedTokens,
-    costUsd: estimateCostUsd(model, {
-      prompt: realUsage?.promptTokens ?? estTokens(prompt),
-      output: realUsage?.outputTokens ?? estTokens(reply),
-      thoughts: realUsage?.thoughtTokens,
-      cached: realUsage?.cachedTokens,
-    }),
-    geo, requestText: `repair:${failureCode}`, outputText: reply.slice(0, 4_000), blocked: false,
-  });
+  // Wrapped (2026-07-17): Gemini already replied successfully at this point —
+  // a DB write failure here must not turn an already-computed repair into a
+  // 500 for the kid, purely because the usage row failed to save.
+  try {
+    usage.record({
+      userId, userLabel, model, kind: "repair",
+      userAgent: req.headers.get("user-agent"),
+      promptTokens: estTokens(prompt), outputTokens: estTokens(reply),
+      billedPromptTokens: realUsage?.promptTokens,
+      billedOutputTokens: realUsage?.outputTokens,
+      thoughtTokens: realUsage?.thoughtTokens,
+      cachedTokens: realUsage?.cachedTokens,
+      costUsd: estimateCostUsd(model, {
+        prompt: realUsage?.promptTokens ?? estTokens(prompt),
+        output: realUsage?.outputTokens ?? estTokens(reply),
+        thoughts: realUsage?.thoughtTokens,
+        cached: realUsage?.cachedTokens,
+      }),
+      geo, requestText: `repair:${failureCode}`, outputText: reply.slice(0, 4_000), blocked: false,
+    });
+  } catch (err) {
+    console.warn(`[api/repair] usage record failed (ignored): ${(err as Error).message}`);
+  }
 
   const patched = applyPatch(html, reply);
   if (!patched.ok) {

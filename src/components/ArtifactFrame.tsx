@@ -303,7 +303,12 @@ export function ArtifactFrame({
             {/* Rotate (2026-07-16) — landscape preview for tablet/phone.
                 ALWAYS rendered (disabled, not hidden, for non-orientable
                 Fit/Laptop) — hiding it entirely meant it only appeared AFTER
-                first picking Tablet/Phone, so nobody discovered it existed. */}
+                first picking Tablet/Phone, so nobody discovered it existed.
+                2026-07-17: the icon was a lone 12px glyph with no visible
+                label — the `title` tooltip it relied on for meaning never
+                shows on touch, so on a phone it just looked like a tiny,
+                unlabeled mark. Bigger icon + a real label + a rotating
+                animation that mirrors the actual state fix both. */}
             <button
               onClick={() => setOrientation((o) => (o === "portrait" ? "landscape" : "portrait"))}
               disabled={covered || !deviceById(device).orientable}
@@ -316,9 +321,15 @@ export function ArtifactFrame({
               }
               aria-label={orientation === "portrait" ? "Rotate to landscape" : "Rotate to portrait"}
               aria-pressed={orientation === "landscape"}
-              className="rounded-full px-2 py-0.5 text-xs font-medium text-neutral-500 hover:bg-neutral-100 disabled:opacity-40"
+              className="flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium text-neutral-500 hover:bg-neutral-100 disabled:opacity-40"
             >
-              ⟳
+              <span
+                aria-hidden
+                className={`text-base leading-none transition-transform ${orientation === "landscape" ? "rotate-90" : ""}`}
+              >
+                ⟳
+              </span>
+              <span className="hidden sm:inline">Rotate</span>
             </button>
           </div>
         )}

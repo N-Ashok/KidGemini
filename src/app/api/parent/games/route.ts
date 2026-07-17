@@ -15,28 +15,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { SESSION_COOKIE, verifyAriantraSession } from "@/lib/ariantra-session";
 import { getVerifiedParentAccount } from "@/lib/parent-session.server";
-
-const PLATFORM_BASE = process.env.ARIANTRA_API_BASE ?? "https://studio.ariantra.com";
+import { partner } from "@/lib/arcade-partner";
 
 interface Body {
   list?: boolean;
   toggleMultiplayer?: boolean;
   slug?: string;
   multiplayer?: boolean;
-}
-
-async function partner(payload: unknown): Promise<{ status: number; data: Record<string, unknown> }> {
-  const secret = process.env.AUTH_JWT_SECRET ?? "";
-  const res = await fetch(`${PLATFORM_BASE}/api/studio/partner/publish`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-admin-secret": secret },
-    body: JSON.stringify(payload),
-  });
-  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (res.status === 403) {
-    return { status: 502, data: { error: "The Arcade server said no — a grown-up should check that kidgemini and the platform share the same secret." } };
-  }
-  return { status: res.status, data };
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {

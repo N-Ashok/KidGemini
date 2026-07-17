@@ -45,6 +45,124 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-17 — Batch fix: Critical/High/Medium error-handling & logging audit findings
+
+- **Symptom (what the user saw):** none directly reported — this closes findings from a
+  cross-repo audit (Platform + kidgemini) the user requested after the Recents-fetch-failure
+  fix earlier the same day. See `../Ariantra-Platform/docs/BUG_LOG.md` #28 for the sibling
+  Platform entry.
+- **Scope:** 12 of the 14 kidgemini findings rated Critical/High/Medium (0 Critical here — the
+  one Critical was Platform's signaling process). The other 2 (`UpgradePlans.container.tsx`'s
+  checkout status-code leak and silent `alreadyPaid` check) were explicitly deferred per owner
+  steer — billing isn't live yet — tracked in `../Ariantra-Platform/docs/TECH_DEBT.md` #54.
+- **Root cause (class, not one bug):** same two patterns as the Platform sibling entry —
+  bookkeeping writes (`usage.record`, payment confirmation) sat outside the try/catch their
+  sibling calls already used ("bookkeeping must never break chat" was violated by exactly the
+  calls that should have honored it), and three near-identical cross-app fetches had no
+  network-failure handling at all.
+- **Fix, by area:**
+  - **Process-level crash logging:** new `src/instrumentation.ts` + `experimental.
+    instrumentationHook` in `next.config.js` — logs `unhandledRejection`/`uncaughtException`
+    instead of the app having zero trail if one ever happens. Preventive, not reactive: the
+    box's 70 pm2 restarts (investigated the same day, see below) turned out to be clean,
+    deploy-triggered `pm2 restart` calls (exit code 0, SIGINT) — zero actual crashes, so this
+    isn't fixing an observed problem, just closing a real gap (nothing was watching for one).
+    **First attempt broke the production build**: dynamically importing `@/lib/logger` from
+    `instrumentation.ts` failed to compile
+    for the edge-runtime bundle variant (`node:fs`/`node:path` aren't edge-compatible, and
+    webpack needs to COMPILE both variants regardless of a runtime guard) — caught by the
+    plan's own `npm run build` verification step, fixed by dropping that import and keeping
+    instrumentation.ts to plain `console.error` (no fs dependency, edge-bundle-safe).
+  - **Logger rotation:** `src/lib/logger.ts` was an unbounded append-only file on a box that
+    already pm2-restarts kidgemini at a 350MB ceiling out of 908MB total. Pure rotation check
+    extracted to new `src/lib/log-rotate.ts` (logger.ts itself imports `"server-only"`, which
+    isn't resolvable in vitest — this is also why no test existed for logger.ts before).
+    10MB ceiling, rotate-to-`.1`. Tests: `log-rotate.test.ts` (4 cases, real temp files).
+  - **Unguarded bookkeeping writes:** `api/chat/route.ts`'s `recordUsage(...)` now runs through
+    the existing `trackTurn(...)` wrapper (zero new code shape — reuses what was already there
+    for the sibling `turnResults` calls). `api/repair/route.ts`'s `usage.record({...})` wrapped
+    locally — previously a DB write failure turned an already-successful repair into a 500 for
+    the kid, for a reason unrelated to the repair itself.
+  - **Billing:** `api/billing/verify/route.ts` and `api/billing/webhook/route.ts` — `getByOrderId`/
+    `markPaid`/`isNewEvent` wrapped with logging before returning a clean 500 (verify) or
+    rethrowing (webhook, preserving Razorpay's retry semantics unchanged) — same DB-call
+    outcome as before, just diagnosable from `app.log` now instead of a bare stack trace.
+  - **Arcade fetches:** `api/arcade/publish`, `api/arcade/test-link`, and `api/parent/games` had
+    three copy-pasted, near-byte-identical `partner()` implementations, none guarding the
+    `fetch()` itself against a network failure/hang. Extracted to one shared
+    `src/lib/arcade-partner.ts` (try/catch → clean 502, `AbortController` timeout) — one fix
+    instead of three, and the three routes can no longer drift apart. Tests:
+    `arcade-partner.test.ts` (4 new cases).
+  - **`lib/db.ts`'s ~35 raw `getDb().prepare()` call sites deliberately NOT wrapped** — no
+    existing shared choke point, and fail-open-vs-closed genuinely differs per call site; the
+    two that mattered (usage recording, payment confirmation) were handled above at the call
+    site instead. Tracked as its own design pass: `../Ariantra-Platform/docs/TECH_DEBT.md` #53.
+  - **Messaging (same shape as the fix below this entry, found live in two more places):**
+    `PublishToArcade.tsx`'s existing-games fetch got the same `gamesLoadError`/retry pattern
+    as `Sidebar.tsx`'s `recentsError` (a failed fetch previously looked identical to "zero
+    games," silently routing a kid into "publish new" instead of offering "update").
+    `ChatPanel.container.tsx`'s two silent write-through `.catch(() => {})` sites (the exact
+    failure class the file's own comments already name — "I lose chat across browsers") now
+    log a client-side breadcrumb.
+  - **Data retention (documented, not changed):** new `docs/DATA_HANDLING.md` — full kid chat
+    text and generated game code are retained indefinitely in SQLite, admin-readable via
+    `/api/usage?detail=true`. Retention policy is flagged as an open product/legal decision,
+    not resolved by this pass (owner steer: document only, no behavior change).
+- **Result (verified):** full suite green (84 files / 684 tests, up from 676 before this pass),
+  `tsc --noEmit` clean, `npm run build` clean (after the instrumentation fix above) with
+  `instrumentationHook` confirmed active. `PublishToArcade`'s retry notice verified live via
+  Playwright (mocked session + a forced 500 on the games-list fetch) — screenshot-confirmed.
+- **Impact:** no user-visible behavior change on any success path — every fix is additive (a
+  catch that was missing, a log line that was missing, a shared helper replacing three copies).
+- **Prevention:** class = **bookkeeping write outside its sibling's established try/catch
+  pattern**, and **build-breaking edge-runtime bundling of a Node-only module** — the latter is
+  exactly why the plan mandated a real `npm run build` check for this kind of change, not just
+  typecheck + tests.
+- **Related:** `../Ariantra-Platform/docs/BUG_LOG.md` #28 (sibling Platform entry);
+  `../Ariantra-Platform/docs/TECH_DEBT.md` #53/#54 (deliberately deferred items).
+
+### 2026-07-17 — Recent chat history "not seen" — silent Recents fetch failure, no data loss
+
+- **Symptom (what the user saw):** "even now the chat history on the recent side is not seen" —
+  signed in with Google, same device/browser the chats were made on, sidebar's Recent section
+  showed nothing.
+- **Investigation (production, read-only):** compared `AUTH_JWT_SECRET` hashes between the
+  platform and kidgemini on the EC2 box (match — rules out the secret-drift risk in
+  `TECH_DEBT.md` #20); queried the live SQLite `conversations` table directly — the account
+  (`user:<email>`) had 8 rows correctly keyed, including guest-era chats published after signing
+  in (rules out the login-method identity split documented in `UAT_SSO.md`). No server-side data
+  loss and no identity-split occurred for this account.
+- **Surface area:** `src/components/ChatPanel.container.tsx` (`loadMoreRemote`),
+  `src/components/Sidebar.tsx` (Recents list).
+- **Root cause (this specific incident, unconfirmed):** most likely a stale client bundle after a
+  redeploy — production logs showed repeated `Failed to find Server Action... this request might
+  be from an older or newer deployment` around the same window. The pm2 restart count was
+  investigated separately the same day and turned out to be unrelated (see the 2026-07-17 "Batch
+  fix" entry above) — every one of kidgemini's 70 restarts is a clean, deploy-triggered
+  `pm2 restart` (exit code 0, SIGINT), not a crash or memory-cap kill; this line originally
+  speculated otherwise before that was checked. **Confirmed regardless:** `loadMoreRemote`
+  swallowed every fetch failure (`!res.ok` / network catch) with no user-visible signal — a kid or
+  parent had no way to tell "you truly have no chats" apart from "the request silently failed,"
+  violating the project's own no-dead-end-errors rule (`CLAUDE.md` §5).
+- **Fix:** `recentsError` state set on any failed/thrown `/api/chats` fetch, cleared on the next
+  success; `Sidebar` renders "⚠️ Couldn't load your chats — tap to retry" in the Recent list
+  (`Sidebar.tsx`) wired to `onRetryRecents` → `loadMoreRemote`.
+- **Result (verified):** manually forced `/api/chats` to 500 via Playwright route interception —
+  retry row renders and re-fetches on click (screenshot-verified). Full suite 676/676 green;
+  `tsc --noEmit` clean. No regression test added — this is presentational wiring with no new pure
+  logic branch (consistent with the repo's no-@testing-library convention).
+- **Impact:** a failed history fetch is now visible and recoverable instead of reading as "your
+  chats are gone." Does not fix the underlying stale-bundle-after-redeploy possibility — flagged
+  as a separate follow-up, not yet actioned (the restart-cadence half of the original theory was
+  ruled out the same day, see below).
+- **Prevention:** class = **silent fetch failure with no user affordance**. Any other spot that
+  swallows a fetch failure without surfacing a retry is the same class.
+- **Related:** `TECH_DEBT.md` #20 (secret-drift preflight, checked clean this time but still
+  unguarded going forward); `UAT_SSO.md` known limitations (identity split, checked clean this
+  time); the stale-bundle-after-redeploy signal is unlogged/unactioned — worth its own
+  KNOWN_BUGS.md row if it recurs. The restart-count part of the original theory was investigated
+  later the same day and found to be deploy cadence, not a bug — see the entry above.
+
 ### 2026-07-16 — Chat history looked lost on a new browser — real, just never auto-restored
 
 - **Symptom (what the user saw):** "i lose chat though i log into the same account. i think it is

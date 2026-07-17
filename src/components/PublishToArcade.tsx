@@ -35,6 +35,12 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
   const { status: authStatus } = useSession();
   const [myGames, setMyGames] = useState<MyGame[] | null>(null); // null = not fetched
   const [updateTarget, setUpdateTarget] = useState<MyGame | null>(null);
+  // A failed fetch used to look identical to "you have zero games" — the kid
+  // got silently routed into "publish new" with no sign anything went wrong,
+  // even if they actually had games that should have offered "update"
+  // instead (2026-07-17, same shape as the Sidebar Recents fix this session).
+  const [gamesLoadError, setGamesLoadError] = useState(false);
+  const [gamesLoadTick, setGamesLoadTick] = useState(0);
 
   // Signed in → fetch the kid's games; any existing ones mean we ASK first:
   // brand-new game, or update one of theirs (user decision 2026-07-07).
@@ -42,29 +48,46 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
     if (authStatus === "unauthenticated") { setStep("signin"); return; }
     if (authStatus !== "authenticated") return;
     let alive = true;
+    setGamesLoadError(false);
     fetch("/api/arcade/publish", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ list: true }),
     })
-      .then((r) => (r.ok ? r.json() : { games: [] }))
+      .then((r) => {
+        if (!r.ok) {
+          if (alive) setGamesLoadError(true);
+          return { games: [] };
+        }
+        return r.json();
+      })
       .then((d: { games?: MyGame[] }) => {
         if (!alive) return;
         const games = d.games ?? [];
         setMyGames(games);
         setStep((s) => (s === "signin" || s === "name" ? (games.length > 0 ? "choose" : "name") : s));
       })
-      .catch(() => alive && setMyGames([]));
+      .catch(() => {
+        if (!alive) return;
+        setGamesLoadError(true);
+        setMyGames([]);
+      });
     return () => {
       alive = false;
     };
-  }, [authStatus]);
+  }, [authStatus, gamesLoadTick]);
   const [name, setName] = useState(suggestedName ?? "");
   const [check, setCheck] = useState<{ state: "idle" | "checking" | "free" | "taken" | "mine" | "unknown"; suggestions: string[] }>({ state: "idle", suggestions: [] });
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [liveUrl, setLiveUrl] = useState("");
   const [stage, setStage] = useState(0);
+  // PRD-SHARING Phase 1 (S1, "I made this!"): the publish response carries
+  // shareEnabled/credit (account-level Sharing & Privacy, set in Studio) —
+  // no extra round trip needed for the share card below.
+  const [shareEnabled, setShareEnabled] = useState(false);
+  const [shareMessage, setShareMessage] = useState("");
+  const [shareConfirmed, setShareConfirmed] = useState(false);
   const checkTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const slug = updateTarget ? updateTarget.slug : nameToSlug(name);
@@ -125,7 +148,10 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
           ...(target ? { slug: target.slug } : {}),
         }),
       });
-      const data = (await res.json()) as { url?: string; error?: string; suggestions?: string[] };
+      const data = (await res.json()) as {
+        url?: string; error?: string; suggestions?: string[];
+        shareEnabled?: boolean; credit?: { name?: string; age?: number; place?: string } | null;
+      };
       clearTimeout(t1);
       clearTimeout(t2);
       // parent_required: no live parent session yet — ask for the PIN. (If a
@@ -136,6 +162,9 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
       if (!res.ok || !data.url) { setStep("pin"); setError(data.error ?? "That didn't work — nothing is broken. Try again in a minute."); return; }
       setStage(4);
       setLiveUrl(data.url);
+      setShareEnabled(data.shareEnabled === true);
+      setShareMessage(`I made a game! Play it 👉 ${data.url}`);
+      setShareConfirmed(false);
       setTimeout(() => setStep("done"), 700);
     } catch {
       clearTimeout(t1);
@@ -260,6 +289,15 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
           <>
             <h3 className="font-display text-xl font-bold">Name your game! 🎮</h3>
             <p className="mb-3 text-sm text-neutral-500">This becomes its very own web address.</p>
+            {gamesLoadError && (
+              <button
+                type="button"
+                onClick={() => setGamesLoadTick((t) => t + 1)}
+                className="mb-3 w-full rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-left text-xs font-bold text-amber-700"
+              >
+                ⚠️ Couldn&rsquo;t check your existing games — tap to retry
+              </button>
+            )}
             <input
               autoFocus
               value={name}
@@ -355,9 +393,66 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
             <a href={liveUrl} target="_blank" rel="noreferrer" className="mb-2 block w-full rounded-2xl bg-orange-500 py-3.5 text-base font-extrabold text-white">
               ▶ Play at my address
             </a>
-            <a href="https://games.ariantra.com/" target="_blank" rel="noreferrer" className="block w-full rounded-2xl border-2 border-neutral-200 py-3 text-base font-bold text-neutral-800">
+            <a href="https://games.ariantra.com/" target="_blank" rel="noreferrer" className="mb-3 block w-full rounded-2xl border-2 border-neutral-200 py-3 text-base font-bold text-neutral-800">
               🕹 See it in the Arcade
             </a>
+
+            {shareEnabled ? (
+              shareConfirmed ? (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-center">
+                  <div className="text-2xl">🎉</div>
+                  <div className="text-sm font-extrabold text-emerald-700">Nice! Thanks for sharing.</div>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-left">
+                  <div className="mb-2 text-xs font-bold uppercase tracking-wide text-neutral-400">Share it 🔗</div>
+                  <textarea
+                    value={shareMessage}
+                    onChange={(e) => setShareMessage(e.target.value)}
+                    className="mb-2 w-full rounded-xl border border-neutral-200 bg-white p-2 text-sm outline-none focus:border-orange-400"
+                    rows={2}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <a
+                      href={`https://wa.me/?text=${encodeURIComponent(shareMessage)}`}
+                      target="_blank" rel="noreferrer"
+                      onClick={() => setTimeout(() => setShareConfirmed(true), 300)}
+                      className="rounded-full bg-[#25d366] px-3.5 py-2 text-xs font-extrabold text-white"
+                    >
+                      💬 WhatsApp
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (navigator.share) navigator.share({ text: shareMessage, url: liveUrl }).then(() => setShareConfirmed(true)).catch(() => {});
+                        else setShareConfirmed(true);
+                      }}
+                      className="rounded-full bg-orange-500 px-3.5 py-2 text-xs font-extrabold text-white"
+                    >
+                      📲 More…
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(liveUrl).catch(() => {});
+                        setShareConfirmed(true);
+                      }}
+                      className="rounded-full border border-neutral-200 bg-white px-3.5 py-2 text-xs font-extrabold text-neutral-700"
+                    >
+                      🔗 Copy link
+                    </button>
+                  </div>
+                </div>
+              )
+            ) : (
+              <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-center">
+                <div className="text-sm font-bold text-neutral-700">🔒 Ask a grown-up to turn on sharing</div>
+                <p className="mt-1 text-xs text-neutral-500">Once they turn it on in the Parent area, you can share this game anytime.</p>
+                <a href="/parent" className="mt-2 inline-block text-xs font-extrabold text-orange-600">
+                  Open Parent area →
+                </a>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -311,7 +311,10 @@ export async function POST(req: NextRequest) {
     // Meter the FULL reply (BUG-FIX-LOG 2026-07-13): `cleaned` strips the
     // game code block — 90%+ of a build turn's billed output — so the cost
     // dashboard undercounted ~75x. Google bills for `full`; so do we.
-    recordUsage("chat", servedModel, message, full, false, streamUsage);
+    // Wrapped in trackTurn (2026-07-17): this is bookkeeping like the turnResults
+    // call above it — a DB write failure here must not turn an already-shown
+    // reply into a 500 for the kid.
+    trackTurn(() => recordUsage("chat", servedModel, message, full, false, streamUsage));
     // Screen-time cap (PRD-SCREEN-TIME-CAP-MVP Part B) — a completion always
     // records its own ping (so a short session counts even before the first
     // heartbeat tick), plus ScreenTimeHeartbeat.tsx pings independently while

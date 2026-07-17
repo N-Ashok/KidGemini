@@ -46,6 +46,14 @@ export default function ParentPage() {
   // Multiplayer toggle (PRD-MULTIPLAYER.md Phase 4) — null = not fetched yet.
   const [games, setGames] = useState<FamilyGame[] | null>(null);
   const [togglingSlug, setTogglingSlug] = useState<string | null>(null);
+  // Sharing & Privacy is ONE setting per account (PRD-SHARING §9, set in the
+  // family profile) — applies to every game in the list, not per-game. null
+  // = not fetched yet, same "stays hidden until it loads" rule as screenTime.
+  const [shareEnabled, setShareEnabled] = useState<boolean | null>(null);
+  const [shareCredit, setShareCredit] = useState<{ name?: string; age?: number; place?: string } | null>(null);
+  const [shareOpenSlug, setShareOpenSlug] = useState<string | null>(null);
+  const [shareMessage, setShareMessage] = useState("");
+  const [shareConfirmedSlug, setShareConfirmedSlug] = useState<string | null>(null);
   // Daily screen-time cap (PRD-SCREEN-TIME-CAP-MVP Part B). null = not
   // fetched yet — the card stays hidden until it loads (no blank flash).
   const [screenTime, setScreenTime] = useState<{ dailyCapMinutes: number | null; todayActiveMinutes: number } | null>(null);
@@ -72,9 +80,26 @@ export default function ParentPage() {
       body: JSON.stringify({ list: true }),
     });
     if (!res.ok) return;
-    const data = (await res.json()) as { games?: FamilyGame[] };
+    const data = (await res.json()) as {
+      games?: FamilyGame[];
+      shareEnabled?: boolean;
+      credit?: { name?: string; age?: number; place?: string } | null;
+    };
     setGames(data.games ?? []);
+    setShareEnabled(data.shareEnabled === true);
+    setShareCredit(data.credit ?? null);
   }, []);
+
+  function openShare(g: FamilyGame) {
+    const url = `https://${g.slug}.ariantra.com/`;
+    setShareMessage(
+      shareCredit?.name
+        ? `${shareCredit.name} built this game — check it out! 👉 ${url}`
+        : `My kid built this game — check it out! 👉 ${url}`,
+    );
+    setShareConfirmedSlug(null);
+    setShareOpenSlug((s) => (s === g.slug ? null : g.slug));
+  }
 
   const toggleMultiplayer = useCallback(async (slug: string, next: boolean) => {
     setTogglingSlug(slug);
@@ -309,13 +334,111 @@ export default function ParentPage() {
               <p className="mt-1 text-sm text-ink-700">
                 Add a parent&rsquo;s contact details (stored encrypted, never shown to anyone) so we
                 can reach you about your child&rsquo;s games — it&rsquo;s also needed before a game
-                can be published.
+                can be published. The same page has <strong>Sharing &amp; privacy</strong>: whether
+                their games can be shared outside Ariantra, show up in the public catalog, what name
+                details go with them, and who can see their creator profile. Set once — your child
+                shares freely within it after, no PIN each time.
               </p>
             </div>
             <a href={FAMILY_PROFILE_URL} className="btn-primary whitespace-nowrap">
               Open family profile →
             </a>
           </article>
+
+          {/* PRD-SHARING Phase 1 (S2, "parent pride push") — a STANDING
+              section, not just a one-time notification: every published
+              game gets a Share button here, always available, not tied to
+              the moment right after a fresh publish. Consent is account-
+              level (Sharing & Privacy in the family profile), so one
+              shareEnabled flag from loadGames() covers every row. */}
+          {games && games.length > 0 && shareEnabled !== null && (
+            <article className="card space-y-3 border-l-4 border-brand-300">
+              <div>
+                <h2 className="text-lg font-semibold">📤 Share your child&rsquo;s games</h2>
+                <p className="mt-1 text-sm text-ink-700">
+                  Parent shares tend to reach parent groups — a different, often better audience
+                  than a kid&rsquo;s own friends for the same game.
+                </p>
+              </div>
+              {!shareEnabled ? (
+                <div className="rounded-kid border border-neutral-200 bg-neutral-50 p-3 text-sm text-ink-700">
+                  🔒 Sharing isn&rsquo;t turned on yet — turn it on in your{" "}
+                  <a href={FAMILY_PROFILE_URL} className="font-semibold text-brand-600 hover:underline">
+                    family profile → Sharing &amp; Privacy
+                  </a>
+                  , then come back — it applies immediately.
+                </div>
+              ) : (
+                <ul className="divide-y divide-neutral-100">
+                  {games.filter((g) => g.status === "published").map((g) => (
+                    <li key={g.slug} className="py-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate font-medium text-ink-900">{g.name}</div>
+                          <div className="truncate text-xs text-ink-500">{g.slug}.ariantra.com</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => openShare(g)}
+                          className="shrink-0 rounded-full border border-brand-500 px-3.5 py-1.5 text-xs font-bold text-brand-600 hover:bg-brand-50"
+                        >
+                          📤 Share
+                        </button>
+                      </div>
+                      {shareOpenSlug === g.slug && (
+                        shareConfirmedSlug === g.slug ? (
+                          <div className="mt-2 rounded-kid border border-emerald-200 bg-emerald-50 p-3 text-center text-sm font-semibold text-emerald-700">
+                            🎉 Nice! Thanks for sharing.
+                          </div>
+                        ) : (
+                          <div className="mt-2 rounded-kid border border-neutral-200 bg-neutral-50 p-3">
+                            <textarea
+                              value={shareMessage}
+                              onChange={(e) => setShareMessage(e.target.value)}
+                              rows={2}
+                              className="mb-2 w-full rounded-lg border border-neutral-200 bg-white p-2 text-sm outline-none focus:border-brand-500"
+                            />
+                            <div className="flex flex-wrap gap-2">
+                              <a
+                                href={`https://wa.me/?text=${encodeURIComponent(shareMessage)}`}
+                                target="_blank" rel="noreferrer"
+                                onClick={() => setTimeout(() => setShareConfirmedSlug(g.slug), 300)}
+                                className="rounded-full bg-[#25d366] px-3.5 py-1.5 text-xs font-bold text-white"
+                              >
+                                💬 WhatsApp
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (navigator.share) {
+                                    navigator.share({ text: shareMessage, url: `https://${g.slug}.ariantra.com/` })
+                                      .then(() => setShareConfirmedSlug(g.slug)).catch(() => {});
+                                  } else setShareConfirmedSlug(g.slug);
+                                }}
+                                className="rounded-full bg-brand-500 px-3.5 py-1.5 text-xs font-bold text-white"
+                              >
+                                📲 More…
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard?.writeText(`https://${g.slug}.ariantra.com/`).catch(() => {});
+                                  setShareConfirmedSlug(g.slug);
+                                }}
+                                className="rounded-full border border-neutral-200 bg-white px-3.5 py-1.5 text-xs font-bold text-ink-700"
+                              >
+                                🔗 Copy link
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </article>
+          )}
 
           {games && games.length > 0 && (
             <article className="card space-y-3 border-l-4 border-brand-300">

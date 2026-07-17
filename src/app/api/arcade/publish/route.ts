@@ -23,8 +23,7 @@ import { cookies } from "next/headers";
 import { SESSION_COOKIE, verifyAriantraSession } from "@/lib/ariantra-session";
 import { getVerifiedParentAccount } from "@/lib/parent-session.server";
 import { nameToSlug } from "@/lib/arcade";
-
-const PLATFORM_BASE = process.env.ARIANTRA_API_BASE ?? "https://studio.ariantra.com";
+import { partner } from "@/lib/arcade-partner";
 
 interface Body {
   check?: boolean;
@@ -36,31 +35,6 @@ interface Body {
 }
 
 const SLUG_RE = /^[a-z0-9-]{2,40}$/;
-
-async function partner(payload: unknown): Promise<{ status: number; data: Record<string, unknown> }> {
-  const secret = process.env.AUTH_JWT_SECRET ?? "";
-  const res = await fetch(`${PLATFORM_BASE}/api/studio/partner/publish`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-admin-secret": secret },
-    body: JSON.stringify(payload),
-  });
-  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  // The partner endpoint 403s ONLY on an x-admin-secret mismatch (operator
-  // misconfig: secret drift, or ARIANTRA_API_BASE pointing at the wrong
-  // platform). Forwarding it verbatim collided with OUR 403 parent_required —
-  // the UI silently re-asked the PIN forever (BUG-FIX-LOG 2026-07-11). Map it
-  // to a distinct 502 so the failure is visible and actionable.
-  if (res.status === 403) {
-    return {
-      status: 502,
-      data: {
-        error:
-          "The Arcade server said no — a grown-up should check that kidgemini and the platform share the same secret (and ARIANTRA_API_BASE in local dev).",
-      },
-    };
-  }
-  return { status: res.status, data };
-}
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const body = (await req.json().catch(() => ({}))) as Body;

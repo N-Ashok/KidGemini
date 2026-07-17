@@ -25,8 +25,6 @@ const MAX_IMAGE_BYTES = 15_000_000; // raw camera photos; downscaled before send
 const MAX_IMAGE_EDGE_PX = 1024;
 // Matches max-h-40 (10rem) — the textarea grows to here, then scrolls.
 const MAX_TEXTAREA_PX = 160;
-// Silence (no new dictated words) before the banner nudges "tap Done to send".
-const DICTATION_NUDGE_MS = 5000;
 
 export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
   const [value, setValue] = useState("");
@@ -42,8 +40,6 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
     interim,
     clearError: clearMicError,
     toggle,
-    start,
-    stop,
     discardAndStop,
   } = useSpeechInput((text) => setValue((v) => (v ? `${v} ${text}` : text)));
 
@@ -60,24 +56,6 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_PX)}px`;
   }, [displayValue]);
-
-  // Closing the dictation loop: once words stop arriving for a bit, nudge
-  // the kid toward ✅ Done — "mic is on, text is there, now what?" was not
-  // intuitive. The timer resets on every new dictated word.
-  const [dictationIdle, setDictationIdle] = useState(false);
-  useEffect(() => {
-    setDictationIdle(false);
-    if (!isListening || !displayValue.trim()) return;
-    const t = setTimeout(() => setDictationIdle(true), DICTATION_NUDGE_MS);
-    return () => clearTimeout(t);
-  }, [isListening, displayValue]);
-
-  function handleRestart() {
-    setValue("");
-    stop();
-    // brief gap so recognition fully stops before restarting
-    setTimeout(start, 150);
-  }
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     setFileError("");
@@ -144,40 +122,9 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
         </div>
       )}
       {isListening && (
-        <div className="mb-2 flex items-center justify-between gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-2">
-          <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-blue-700">
-            <span className="mic-listening text-lg" aria-hidden>🎙️</span>
-            <span className="truncate">
-              {dictationIdle ? "All done? Tap ✅ Done to send." : "Listening… say your idea!"}
-            </span>
-          </span>
-          <div className="flex shrink-0 items-center gap-1">
-            {displayValue.trim() && (
-              <button
-                type="button"
-                onClick={submit}
-                className={`rounded-full bg-blue-600 px-3 py-1 text-sm font-bold text-white shadow-sm hover:bg-blue-700 ${
-                  dictationIdle ? "animate-pulse" : ""
-                }`}
-              >
-                ✅ Done<span className="hidden sm:inline"> — send it!</span>
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={stop}
-              className="rounded-full px-3 py-1 text-sm font-medium text-blue-700 hover:bg-blue-100"
-            >
-              ⏸ Pause
-            </button>
-            <button
-              type="button"
-              onClick={handleRestart}
-              className="rounded-full px-3 py-1 text-sm font-medium text-blue-700 hover:bg-blue-100"
-            >
-              🔁 Restart
-            </button>
-          </div>
+        <div className="mb-2 flex items-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-2">
+          <span className="mic-listening text-lg" aria-hidden>🎙️</span>
+          <span className="truncate text-sm font-medium text-blue-700">Listening… say your idea!</span>
         </div>
       )}
       {attachment && (

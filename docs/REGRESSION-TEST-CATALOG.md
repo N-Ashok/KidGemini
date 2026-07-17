@@ -163,6 +163,12 @@ npm run typecheck            # tsc --noEmit
 | `src/lib/db.ts` (SqliteChatHistoryStore), `src/app/api/chats/**`, `src/lib/chat-sync.ts`, `src/lib/chat-history.ts`, `src/components/ChatPanel.container.tsx` (bootstrap effect) | **`db.chat-history.test.ts`** (H.1–H.6) + **`chats.route.test.ts`** (C.1–C.7) + **`chat-sync.test.ts`** (9 tests) | Ownership fail-closed at SQL (foreign id: 404 on read, ignored on write); guest keyed by device cookie; composite (updatedAt,id) cursor never skips same-ms rows; bulk migration idempotent + skips malformed rows; sidebar merge dedupes local vs server entries; `chatToAutoRestore` opens the newest server chat when a device has no local chats at all, never overrides a device's own existing local chats (2026-07-16 — chat history looked lost across browsers) | 2026-07-16 (cross-browser restore) |
 | `src/lib/chat-store.ts` | **`chat-store.test.ts`** | No arbitrary convo cap; real quota trims oldest-first and never the active chat | BUG-FIX-LOG 2026-07-13 (silent 20-cap eviction) |
 
+## Desktop sidebar collapse + Recents fetch failure (2026-07-17)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/sidebar-pane.ts`, `src/components/Sidebar.tsx`, `src/components/ChatPanel.container.tsx` (`loadMoreRemote`, `sidebarCollapsed`) | **`sidebar-pane.test.ts`** | Collapsed-state persistence round-trips; defaults to expanded on absent/garbage storage; save/load never throw (quota/private mode) | BUG-FIX-LOG 2026-07-17 (Recents "not seen" — silent fetch failure) |
+
 ## Resumable generations (2026-07-13, TECH_DEBT #23)
 
 | When to run | Test | What it pins | Bug-fix ref |
