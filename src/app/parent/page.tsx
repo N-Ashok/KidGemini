@@ -28,7 +28,10 @@ const STUDIO_BASE = DEV ? "http://localhost:3000" : "https://studio.ariantra.com
 // signed-in visitor with ?returnTo= bounces immediately, before ever seeing
 // the page — reusing the name caused exactly that, the profile card never
 // rendered at all). safeReturnTo-validated the same way `returnTo` is.
-const ARI_PARENT_URL = DEV ? "http://localhost:3001/parent" : "https://ari.ariantra.com/parent";
+// games-lab.ariantra.com is the canonical host (2026-07-17, later same day)
+// — supersedes ari.ariantra.com; already allowlisted in the platform's
+// safeReturnTo (src/lib/auth/return-to.ts's PLATFORM_HOST_RE).
+const ARI_PARENT_URL = DEV ? "http://localhost:3001/parent" : "https://games-lab.ariantra.com/parent";
 const FAMILY_PROFILE_URL = `${STUDIO_BASE}/studio?profile=1&profileReturnTo=${encodeURIComponent(ARI_PARENT_URL)}`;
 
 // WhatsApp deep link (2026-07-17): try the installed app directly — mobile

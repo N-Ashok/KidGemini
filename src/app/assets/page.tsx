@@ -8,7 +8,9 @@ import type { Metadata } from "next";
 import { galleryCards, cardEmoji } from "@/lib/assets/gallery";
 import manifest from "@/lib/assets/manifest.json";
 
-const PAGE_URL = "https://ari.ariantra.com/assets";
+// games-lab.ariantra.com is the canonical host (2026-07-17, later same day)
+// — supersedes ari.ariantra.com.
+const PAGE_URL = "https://games-lab.ariantra.com/assets";
 
 export const metadata: Metadata = {
   title: "Game Stuff — 3D models & sounds for your games | Ari",

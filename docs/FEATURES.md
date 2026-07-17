@@ -455,10 +455,12 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   one (`upgrade-deeplink.test.ts`)
 
 ## Ariantra integration
-- Shared Ariantra header on every page (`ArNav`): Home · Games · Ari · Studio
-  — pixel-identical with the platform via the generated brand CSS (local copy,
-  `npm run sync:brand`)
-- Co-hosted on the Ariantra EC2 box at `ari.ariantra.com` (:3001 behind Caddy;
-  the legacy `kidgemini.ariantra.com` host still resolves during the rename
-  transition)
+- Shared Ariantra header on every page (`ArNav`): Home · Games · Games-Lab ·
+  Studio — pixel-identical with the platform via the generated brand CSS
+  (local copy, `npm run sync:brand`). "Ari" is the in-app AI-buddy persona
+  (chat identity, unchanged); "Games-Lab" is the nav/domain name
+- Co-hosted on the Ariantra EC2 box at `games-lab.ariantra.com` (:3001
+  behind Caddy — the CANONICAL host as of 2026-07-17, later same day; the
+  legacy `ari.ariantra.com` and `kidgemini.ariantra.com` hosts still
+  resolve during the transition)
 - One-command deploy: `npm run deploy` (rsync + pm2, SQLite kept on a persistent path)

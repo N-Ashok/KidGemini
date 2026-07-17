@@ -2,7 +2,9 @@
 // home, the asset gallery, and the pricing page.
 import type { MetadataRoute } from "next";
 
-const BASE = "https://ari.ariantra.com";
+// games-lab.ariantra.com is the canonical host (2026-07-17, later same day)
+// — supersedes ari.ariantra.com.
+const BASE = "https://games-lab.ariantra.com";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   return [

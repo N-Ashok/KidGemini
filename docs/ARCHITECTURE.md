@@ -51,9 +51,10 @@ closed everywhere: no/invalid cookie ⇒ /api/chat 401.
 Co-hosted on the Ariantra EC2 box as a second Next app:
 
 ```
-ari.ariantra.com       ── Caddy (explicit block, LE cert) ──► 127.0.0.1:3001 (pm2 "kidgemini")
-kidgemini.ariantra.com ── Caddy (legacy alias, still live during rename transition) ──► same
-ariantra platform      ── api/studio/games.ariantra.com   ──► 127.0.0.1:3000
+games-lab.ariantra.com ── Caddy (explicit block, LE cert) ──► 127.0.0.1:3001 (pm2 "kidgemini") — CANONICAL
+ari.ariantra.com        ── Caddy (legacy alias, still live during transition) ──► same
+kidgemini.ariantra.com  ── Caddy (legacy alias, still live during transition) ──► same
+ariantra platform       ── api/studio/games.ariantra.com   ──► 127.0.0.1:3000
 ```
 
 Deploy: `npm run deploy` = sync brand CSS → build locally → rsync artifacts →

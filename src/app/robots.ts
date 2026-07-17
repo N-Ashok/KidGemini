@@ -9,6 +9,8 @@ export default function robots(): MetadataRoute.Robots {
       allow: "/",
       disallow: ["/api/", "/admin/", "/parent/"],
     },
-    sitemap: "https://ari.ariantra.com/sitemap.xml",
+    // games-lab.ariantra.com is the canonical host (2026-07-17, later same
+    // day) — supersedes ari.ariantra.com.
+    sitemap: "https://games-lab.ariantra.com/sitemap.xml",
   };
 }

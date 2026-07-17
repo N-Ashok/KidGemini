@@ -31,7 +31,7 @@ export function ArFooter() {
             <h4>Explore</h4>
             <a href="https://games.ariantra.com">All games</a>
             <a href="https://ariantra.com/#videos">Videos</a>
-            <a href="/">Ari</a>
+            <a href="/">Games-Lab</a>
             <a href="https://studio.ariantra.com">Creator Studio</a>
           </div>
           <div className="ar-footer-col">
