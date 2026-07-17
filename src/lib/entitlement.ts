@@ -1,5 +1,5 @@
 // Entitlement predicate (Phase 5, ../Ariantra-Platform/docs/PRD-MULTIPLAYER.md
-// Open Decision #1, resolved: platform-side check, kidgemini stays the source
+// Open Decision #1, resolved: platform-side check, Ari stays the source
 // of truth). Extracted from api/billing/status/route.ts's inline expression
 // so /api/entitlement/check (the new cross-repo endpoint the platform calls)
 // shares the exact same rule instead of a second, driftable copy.

@@ -5,6 +5,7 @@ import { describe, it, expect } from "vitest";
 import vm from "node:vm";
 import {
   PREVIEW_VERIFY_SOURCE,
+  PARENT_READY_SOURCE,
   buildVerifyScript,
   injectPreviewInstrumentation,
   classifyVerify,
@@ -99,7 +100,7 @@ function bootVerify(opts: {
 
   opts.game?.(sandbox); // game script executes after injection, before load
   handlers["message"]?.forEach((fn) =>
-    fn({ data: { source: "kidgemini-parent", type: "ready", ...(opts.ready ?? {}) } }),
+    fn({ data: { source: PARENT_READY_SOURCE, type: "ready", ...(opts.ready ?? {}) } }),
   );
   handlers["load"]?.forEach((fn) => fn({})); // load fires → settle elapses → probes run
 
@@ -117,8 +118,8 @@ describe("injectPreviewInstrumentation", () => {
   it("injects console capture first, verify second, both before game code", () => {
     const html = "<!doctype html><html><head><script>game()</script></head></html>";
     const out = injectPreviewInstrumentation(html);
-    const captureIdx = out.indexOf("kidgemini-console-capture");
-    const verifyIdx = out.indexOf("kidgemini-preview-verify");
+    const captureIdx = out.indexOf("ari-console-capture");
+    const verifyIdx = out.indexOf("ari-preview-verify");
     const gameIdx = out.indexOf("game()");
     expect(captureIdx).toBeGreaterThan(-1);
     expect(verifyIdx).toBeGreaterThan(captureIdx);

@@ -1,4 +1,4 @@
-# Design System — KidGemini
+# Design System — Ari (formerly KidGemini)
 
 A documented, token-driven visual language. The aim: **professional, modern, and genuinely
 aesthetic — while warm and easy for a child.** Polished, not childish. Tokens here map 1:1

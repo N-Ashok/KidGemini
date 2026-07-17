@@ -6,7 +6,7 @@
 
 import { SignJWT, jwtVerify } from "jose";
 
-export const PARENT_SESSION_COOKIE = "kidgemini_parent";
+export const PARENT_SESSION_COOKIE = "ari_parent";
 /** §13 Q5 — 30 min default; tune after UAT. */
 export const PARENT_SESSION_TTL_S = 30 * 60;
 

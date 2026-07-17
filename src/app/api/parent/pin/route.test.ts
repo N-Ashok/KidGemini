@@ -76,7 +76,7 @@ describe("POST /api/parent/pin (set/reset)", () => {
     const row = rows.get(ACCOUNT)!;
     expect(row.pinHash).not.toContain("8264");
     expect(row.attempts).toBe(0);
-    expect(res.headers.get("set-cookie")).toContain("kidgemini_parent=");
+    expect(res.headers.get("set-cookie")).toContain("ari_parent=");
     // BUG-FIX-LOG 2026-07-11: not Secure outside production, or http://localhost
     // drops the cookie and the gate re-prompts forever.
     expect((res.headers.get("set-cookie") ?? "").toLowerCase()).not.toContain("secure");

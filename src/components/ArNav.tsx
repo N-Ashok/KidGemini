@@ -2,13 +2,14 @@
 // Ariantra shared header — same markup/classes as the platform's NavBar/Logo
 // (Ariantra-Platform src/lib/ui). Styling comes from the brand kit CSS linked in
 // the root layout, so this header is pixel-identical across www / catalog /
-// studio / kidgemini. Header-only rebrand: the kid-styled interior is untouched.
+// studio / Ari (renamed from "kidgemini" 2026-07-17). Header-only rebrand:
+// the kid-styled interior is untouched.
 //
 // Canonical menu (2026-07-11: Skills added, mirrors the platform's nav-links.ts):
-//   Skills · Games · KidGemini(active) · How it works · Videos · Studio · [Log in] · [Book CTA]
+//   Skills · Games · Ari(active) · How it works · Videos · Studio · [Log in] · [Book CTA]
 // "Studio" is a plain menu item that OPENS the Studio app (no returnTo — the
 // user stays in Studio after signing in there). The subtle "Log in" enters
-// KIDGEMINI's session via the shared SSO (signIn() → studio /login?returnTo=
+// Ari's session via the shared SSO (signIn() → studio /login?returnTo=
 // here) and hides once authenticated.
 // Mobile (2026-07-08): primary nav moves to an app-like bottom tab bar
 // (.ar-tabbar, same CSS as the platform's NavBar) — Chat · Arcade · Parent —
@@ -24,7 +25,7 @@ const DEV = process.env.NODE_ENV === "development";
 const WWW_URL = DEV ? "http://localhost:3000" : "https://ariantra.com";
 const GAMES_URL = DEV ? "http://localhost:3000/catalog" : "https://games.ariantra.com";
 const STUDIO_URL = DEV ? "http://localhost:3000/studio" : "https://studio.ariantra.com";
-// 2026-07-11 CTA revamp: the loud CTA creates a game. On KidGemini itself that
+// 2026-07-11 CTA revamp: the loud CTA creates a game. On Ari itself that
 // means starting a new chat — "/" — not a cross-site hop (guarded by ar-cta.test.ts).
 const CREATE_URL = "/";
 
@@ -48,7 +49,7 @@ export function ArNav() {
             {/* Landing anchor — always prod, like #how/#videos below. */}
             <a href="https://ariantra.com/#skills" className="ar-link">Skills</a>
             <a href={GAMES_URL} className="ar-link">Games</a>
-            <a href="/" className="ar-link on">KidGemini</a>
+            <a href="/" className="ar-link on">Ari</a>
             <a href={`${WWW_URL}/#how`} className="ar-link">How it works</a>
             <a href={`${WWW_URL}/#videos`} className="ar-link">Videos</a>
             <a href={STUDIO_URL} className="ar-link">Studio</a>

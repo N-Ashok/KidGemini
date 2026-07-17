@@ -16,7 +16,7 @@ import { SqliteUsageStore } from "@/lib/db";
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
-import { GUEST_COOKIE } from "@/lib/gate.config";
+import { readGuestId } from "@/lib/chat-identity";
 import {
   REPAIR_SYSTEM_PROMPT,
   REPAIR_TAXONOMY,
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
   }
 
   const session = await safeAuth();
-  const userId = session?.userId ?? req.cookies.get(GUEST_COOKIE)?.value ?? "guest:unknown";
+  const userId = session?.userId ?? readGuestId(req) ?? "guest:unknown";
   const userLabel = session?.name ?? session?.email ?? "Guest";
   const model = process.env.GEMINI_CHAT_MODEL ?? "gemini-2.5-flash";
 

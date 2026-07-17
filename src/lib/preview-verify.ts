@@ -11,9 +11,9 @@
 import type { GameConsoleMessage } from "@/types/game-console.types";
 import type { VerifyClassification, VerifyEvidence } from "@/types/preview-verify.types";
 import { injectConsoleCapture } from "./game-console";
+import { PREVIEW_VERIFY_SOURCE, PARENT_READY_SOURCE, CONSOLE_CAPTURE_MARKER } from "./preview-messages";
 
-export const PREVIEW_VERIFY_SOURCE = "kidgemini-preview-verify" as const;
-export const PARENT_READY_SOURCE = "kidgemini-parent" as const;
+export { PREVIEW_VERIFY_SOURCE, PARENT_READY_SOURCE };
 
 // §9 timing table. Settle lets synchronous-on-load games tick a few frames;
 // the pixel window catches frozen loops; the click wait gives a Start
@@ -23,7 +23,7 @@ export const PIXEL_WINDOW_MS = 800;
 export const CLICK_WAIT_MS = 1_000;
 
 /** Marker so injection is idempotent (same pattern as the console capture). */
-const MARKER = "<!--kidgemini-preview-verify-->";
+const MARKER = "<!--ari-preview-verify-->";
 
 /**
  * The probe script. Runs in the iframe's own global scope before the game's
@@ -257,7 +257,7 @@ export function injectPreviewInstrumentation(html: string): string {
   const script = `${MARKER}<script>${buildVerifyScript()}</script>`;
   // The console capture is already at the earliest injectable point; ride
   // directly behind it so both install before any game code.
-  const anchor = "<!--kidgemini-console-capture-->";
+  const anchor = CONSOLE_CAPTURE_MARKER;
   const idx = withConsole.indexOf(anchor);
   if (idx !== -1) {
     const afterCapture = withConsole.indexOf("</script>", idx) + "</script>".length;

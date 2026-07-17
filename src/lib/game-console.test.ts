@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import vm from "node:vm";
 import { GAME_CONSOLE_SOURCE, buildConsoleCaptureScript, injectConsoleCapture } from "./game-console";
+import { PARENT_READY_SOURCE } from "./preview-messages";
 
 describe("injectConsoleCapture — placement", () => {
   it("inserts the capture script right after <head> so it runs before game code", () => {
@@ -20,7 +21,7 @@ describe("injectConsoleCapture — placement", () => {
     const injectedScriptIdx = out.indexOf("<script>");
     // Nothing but the idempotency marker comment sits between <html> and the
     // injected <script> — i.e. it's the very first thing in the document body.
-    expect(out.slice(htmlTagEnd, injectedScriptIdx)).toBe("<!--kidgemini-console-capture-->");
+    expect(out.slice(htmlTagEnd, injectedScriptIdx)).toBe("<!--ari-console-capture-->");
     expect(out.indexOf(buildConsoleCaptureScript())).toBeLessThan(out.indexOf("doStuff()"));
   });
 
@@ -53,8 +54,11 @@ describe("injectConsoleCapture — runtime behavior (sandboxed via node:vm)", ()
     vm.createContext(sandbox);
     vm.runInContext(buildConsoleCaptureScript(), sandbox);
     const fire = (name: string, event: unknown) => handlers[name]?.forEach((fn) => fn(event));
-    /** Parent handshake — flushes the in-iframe buffer (PRD §0 A2 race fix). */
-    const ready = () => fire("message", { data: { source: "kidgemini-parent", type: "ready" } });
+    /** Parent handshake — flushes the in-iframe buffer (PRD §0 A2 race fix).
+     *  Sourced from the shared constant, not a hardcoded literal — a test
+     *  that hardcodes its own copy of the value can't catch the injected
+     *  script drifting from it (2026-07-17 rename found exactly this gap). */
+    const ready = () => fire("message", { data: { source: PARENT_READY_SOURCE, type: "ready" } });
     return { sandbox, posted, fire, ready };
   }
 

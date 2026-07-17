@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "KidGemini Guard",
+  "name": "Ari Guard",
   "version": "0.1.0",
   "description": "Watches Gemini and hides unsafe responses from kids until vetted; alerts parents.",
   "permissions": ["storage"],
@@ -18,7 +18,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "KidGemini Guard"
+    "default_title": "Ari Guard"
   },
   "background": {
     "service_worker": "background.js"

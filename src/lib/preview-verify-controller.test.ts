@@ -7,9 +7,10 @@ import { PreviewVerifyController, ROUND_HARD_TIMEOUT_MS } from "./preview-verify
 import type { VerifyControllerState } from "./preview-verify-controller";
 import type { RepairResponse, VerifyEvidence } from "@/types/preview-verify.types";
 import { WALL_CLOCK_CAP_MS } from "./verify-policy";
+import { GAME_CONSOLE_SOURCE, PREVIEW_VERIFY_SOURCE } from "./preview-messages";
 
 const RESULT = (over: Partial<VerifyEvidence> = {}) => ({
-  source: "kidgemini-preview-verify",
+  source: PREVIEW_VERIFY_SOURCE,
   event: {
     type: "result",
     evidence: {
@@ -27,7 +28,7 @@ const CLEAN_RESULT = RESULT({ rafCountAtSettle: 5, rafCountFinal: 12, pixel: "ch
 
 /** A load-time throw — a hard-evidence (repairable) failure class. */
 const LOAD_ERROR = {
-  source: "kidgemini-game-console",
+  source: GAME_CONSOLE_SOURCE,
   message: {
     level: "error",
     kind: "error",

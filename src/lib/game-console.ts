@@ -4,11 +4,12 @@
 // no React (SRP: ArtifactFrame owns the UI, this owns the capture script).
 
 import type { GameConsoleMessage } from "@/types/game-console.types";
+import { GAME_CONSOLE_SOURCE, PARENT_READY_SOURCE, CONSOLE_CAPTURE_MARKER } from "./preview-messages";
 
-export const GAME_CONSOLE_SOURCE = "kidgemini-game-console" as const;
+export { GAME_CONSOLE_SOURCE };
 
 /** Marker so injectConsoleCapture is idempotent (never double-inject). */
-const MARKER = "<!--kidgemini-console-capture-->";
+const MARKER = CONSOLE_CAPTURE_MARKER;
 
 /**
  * Source for the capture script, injected verbatim into the game's iframe.
@@ -27,7 +28,7 @@ export function buildConsoleCaptureScript(): string {
   }
   // The parent's message listener mounts in a React effect, so a message fired
   // in the game's first ticks could race it and vanish. Buffer until the
-  // parent posts {source:"kidgemini-parent", type:"ready"}, then flush.
+  // parent posts {source:"${PARENT_READY_SOURCE}", type:"ready"}, then flush.
   var buffer = [];
   var ready = false;
   function send(message) {
@@ -40,7 +41,7 @@ export function buildConsoleCaptureScript(): string {
   }
   addEventListener("message", function (event) {
     var d = event && event.data;
-    if (!d || d.source !== "kidgemini-parent" || d.type !== "ready") return;
+    if (!d || d.source !== "${PARENT_READY_SOURCE}" || d.type !== "ready") return;
     ready = true;
     for (var i = 0; i < buffer.length; i++) send(buffer[i]);
     buffer = [];

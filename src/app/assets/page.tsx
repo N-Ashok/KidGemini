@@ -8,16 +8,16 @@ import type { Metadata } from "next";
 import { galleryCards, cardEmoji } from "@/lib/assets/gallery";
 import manifest from "@/lib/assets/manifest.json";
 
-const PAGE_URL = "https://kidgemini.ariantra.com/assets";
+const PAGE_URL = "https://ari.ariantra.com/assets";
 
 export const metadata: Metadata = {
-  title: "Game Stuff — 3D models & sounds for your games | KidGemini",
+  title: "Game Stuff — 3D models & sounds for your games | Ari",
   description:
-    "Peek inside the KidGemini toy box: real 3D models and game sounds you can use in the games you make. Every card shows the magic words to say in chat.",
+    "Peek inside Ari's toy box: real 3D models and game sounds you can use in the games you make. Every card shows the magic words to say in chat.",
   alternates: { canonical: PAGE_URL },
   openGraph: {
-    title: "Game Stuff — the KidGemini toy box",
-    description: "Real 3D models and sounds for the games kids build with KidGemini.",
+    title: "Game Stuff — the Ari toy box",
+    description: "Real 3D models and sounds for the games kids build with Ari.",
     url: PAGE_URL,
     type: "website",
   },
@@ -30,8 +30,8 @@ export default function AssetsPage() {
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "ItemList",
-    name: "KidGemini Game Stuff",
-    description: "3D models and sounds available in KidGemini games",
+    name: "Ari Game Stuff",
+    description: "3D models and sounds available in Ari games",
     itemListElement: [...models, ...sounds].map((c, i) => ({
       "@type": "ListItem",
       position: i + 1,

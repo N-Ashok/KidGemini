@@ -223,7 +223,7 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
         </div>
       </div>
       <p className="pt-2 text-center text-xs text-neutral-400">
-        KidGemini is AI and can make mistakes. A grown-up keeps you safe. 🛡️{" "}
+        Ari is AI and can make mistakes. A grown-up keeps you safe. 🛡️{" "}
         {/* The chat screen has no footer (scroll trap) — legal links live here. */}
         <a href="https://ariantra.com/terms.html" className="underline hover:text-neutral-600">
           Terms

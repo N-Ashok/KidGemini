@@ -57,5 +57,5 @@
   }
 
   // Expose to content.js (same isolated world).
-  window.KidGeminiRules = { classifyLocal: classifyLocal };
+  window.AriRules = { classifyLocal: classifyLocal };
 })();

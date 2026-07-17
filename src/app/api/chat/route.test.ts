@@ -117,11 +117,11 @@ vi.mock("@/lib/db", () => ({
 import { POST } from "./route";
 import { GUEST_TOKEN_LIMIT, IP_GUEST_TOKEN_CAP, GUEST_WINDOW_MS, SIGNED_IN_DAILY_TOKEN_LIMIT } from "@/lib/gate.config";
 
-function makeReq(body: unknown): import("next/server").NextRequest {
+function makeReq(body: unknown, cookies: Record<string, string> = {}): import("next/server").NextRequest {
   return {
     json: async () => body,
     headers: new Headers(),
-    cookies: { get: () => undefined },
+    cookies: { get: (name: string) => (name in cookies ? { value: cookies[name] } : undefined) },
   } as unknown as import("next/server").NextRequest;
 }
 
@@ -171,7 +171,7 @@ afterEach(() => {
 });
 
 describe("POST /api/chat — guest trial (10K) with layered abuse control", () => {
-  it("G.1 a fresh guest streams and gets a device cookie", async () => {
+  it("G.1 a fresh guest streams and gets a device cookie under the current (post-rename) name", async () => {
     authMock.mockResolvedValue(null);
     replyStreamMock.mockReturnValue(one("Hello!"));
 
@@ -179,8 +179,27 @@ describe("POST /api/chat — guest trial (10K) with layered abuse control", () =
 
     expect(res.status).toBe(200);
     expect(replyStreamMock).toHaveBeenCalledTimes(1);
-    expect(res.headers.get("set-cookie")).toContain("kg_guest=");
+    expect(res.headers.get("set-cookie")).toContain("ari_guest=");
     expect(await res.text()).toContain('"type":"done"');
+  });
+
+  // 2026-07-17 rename ("kidgemini" → "Ari"): a returning guest's whole
+  // identity/history lives behind this cookie for up to a year — a name
+  // change with no fallback would silently reset every existing guest.
+  it("G.1b a device carrying only the pre-rename cookie keeps its identity, migrated to the new cookie name", async () => {
+    authMock.mockResolvedValue(null);
+    replyStreamMock.mockReturnValue(one("Hello!"));
+    const existingId = "guest:11111111-1111-1111-1111-111111111111";
+
+    const res = await POST(makeReq({ message: "hello", history: [] }, { kg_guest: existingId }));
+
+    expect(res.status).toBe(200);
+    // Same identity carried forward — the token gate's usage lookup ran
+    // against the SAME id the legacy cookie already had usage tallied under.
+    expect(usedByUser).toHaveBeenCalledWith(existingId, expect.anything());
+    // Re-persisted under the new name so future requests stop needing the
+    // legacy fallback — never re-minted as a fresh random id.
+    expect(res.headers.get("set-cookie")).toContain(`ari_guest=${existingId}`);
   });
 
   it("G.2 guest over the 10K device limit → 401 sign-in wall, Gemini never called", async () => {

@@ -95,7 +95,7 @@ that dies before `usageMetadata` still costs money we don't meter.
 
 ## Monitoring runbook
 
-- **Dashboard:** `kidgemini.ariantra.com/admin` (needs `ADMIN_SECRET` from
+- **Dashboard:** `ari.ariantra.com/admin` (needs `ADMIN_SECRET` from
   the box `.env`) — totals, per-day with top spender, per-user, per-location,
   per-call detail. Rows before 2026-07-13 are undercounted (metering bugs) —
   use Google billing for history.

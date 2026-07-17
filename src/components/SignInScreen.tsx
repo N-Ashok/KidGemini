@@ -1,5 +1,5 @@
 "use client";
-// Full-screen sign-in gate shown to unauthenticated visitors. KidGemini requires sign-in
+// Full-screen sign-in gate shown to unauthenticated visitors. Ari requires sign-in
 // before any chat (the composer isn't rendered until authenticated), so this is the entry point
 // rather than a reactive modal. Presentational: raises the sign-in intent via onSignIn.
 
@@ -14,7 +14,7 @@ export function SignInScreen({ onSignIn }: SignInScreenProps) {
         <div className="text-5xl" aria-hidden>
           ✨
         </div>
-        <h1 className="mt-4 text-2xl font-semibold text-neutral-800">Welcome to KidGemini</h1>
+        <h1 className="mt-4 text-2xl font-semibold text-neutral-800">Welcome to Ari</h1>
         <p className="mt-2 text-sm text-neutral-600">
           Sign in to start chatting, ask questions, and make games. A grown-up keeps you safe. 🛡️
         </p>

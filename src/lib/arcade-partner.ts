@@ -9,7 +9,7 @@ const PLATFORM_BASE = process.env.ARIANTRA_API_BASE ?? "https://studio.ariantra.
 const PARTNER_TIMEOUT_MS = 8000;
 
 const SECRET_MISMATCH_ERROR =
-  "The Arcade server said no — a grown-up should check that kidgemini and the platform share the same secret (and ARIANTRA_API_BASE in local dev).";
+  "The Arcade server said no — a grown-up should check that Ari and the platform share the same secret (and ARIANTRA_API_BASE in local dev).";
 const NETWORK_ERROR = "Couldn't reach the Arcade server — try again in a moment.";
 
 export interface PartnerResult {

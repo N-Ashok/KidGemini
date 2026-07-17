@@ -1,4 +1,6 @@
-# KidGemini Guard (Chrome extension)
+# Ari Guard (Chrome extension)
+
+*(Formerly "KidGemini Guard" — renamed 2026-07-17 alongside the app.)*
 
 Watches the **real** `gemini.google.com`, hides each model response until it's vetted, and
 logs alerts for parents — so you reuse Google's free Gemini infra and just add a kid-safety

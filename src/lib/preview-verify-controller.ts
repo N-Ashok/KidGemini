@@ -22,6 +22,7 @@ import type {
 import { classifyVerify, CLICK_WAIT_MS, PIXEL_WINDOW_MS, SETTLE_MS } from "./preview-verify";
 import { REPAIR_TAXONOMY, SECOND_ATTEMPT_LINE, exhaustedQuestion } from "./repair-prompt";
 import { WALL_CLOCK_CAP_MS, shouldRepair, verifyOutcome } from "./verify-policy";
+import { GAME_CONSOLE_SOURCE, PREVIEW_VERIFY_SOURCE } from "./preview-messages";
 
 /** If the probe script never reports (game clobbered postMessage, document
  *  crashed, iframe unmounted), stop waiting and pass through — a stuck cover
@@ -115,9 +116,9 @@ export class PreviewVerifyController {
       | { source?: string; message?: GameConsoleMessage; event?: VerifyScriptEvent }
       | null;
     if (!d?.source) return;
-    if (d.source === "kidgemini-game-console" && d.message?.level === "error") {
+    if (d.source === GAME_CONSOLE_SOURCE && d.message?.level === "error") {
       this.errors.push(d.message);
-    } else if (d.source === "kidgemini-preview-verify" && d.event) {
+    } else if (d.source === PREVIEW_VERIFY_SOURCE && d.event) {
       const ev = d.event;
       if (ev.type === "check") {
         this.emit({

@@ -1,4 +1,4 @@
-// KidGemini Guard — content script for gemini.google.com.
+// Ari Guard — content script for gemini.google.com.
 // Watches for each model response, blurs it while it streams, buffers the text,
 // classifies it (local rules + optional LLM via the app's /api/safety), then either
 // reveals it or replaces it with a kid-friendly redirect and alerts the parent.
@@ -41,7 +41,7 @@
     observer.observe(document.body, { childList: true, subtree: true });
     // Catch anything already on the page.
     scan(document.body);
-    console.log("[KidGemini Guard] active. selector:", config.responseSelector);
+    console.log("[Ari Guard] active. selector:", config.responseSelector);
   }
 
   function scan(root) {
@@ -86,7 +86,7 @@
     if (!text) return reveal(node, overlay);
 
     // Layer 0: local deterministic rules (instant).
-    var local = window.KidGeminiRules.classifyLocal(text, "model");
+    var local = window.AriRules.classifyLocal(text, "model");
     if (local.action === "hard_block") return blockNode(node, overlay, local);
 
     // Layer 2: optional LLM check via the app backend (through the service worker,
@@ -122,7 +122,7 @@
       action: verdict.action || "hard_block",
       at: Date.now(),
     });
-    console.warn("[KidGemini Guard] blocked a response:", verdict);
+    console.warn("[Ari Guard] blocked a response:", verdict);
   }
 
   function addOverlay(node, kind, label) {

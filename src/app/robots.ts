@@ -9,6 +9,6 @@ export default function robots(): MetadataRoute.Robots {
       allow: "/",
       disallow: ["/api/", "/admin/", "/parent/"],
     },
-    sitemap: "https://kidgemini.ariantra.com/sitemap.xml",
+    sitemap: "https://ari.ariantra.com/sitemap.xml",
   };
 }

@@ -1,4 +1,10 @@
-# CLAUDE.md — KidGemini codebase guide
+# CLAUDE.md — Ari (formerly KidGemini) codebase guide
+
+> Renamed 2026-07-17: the product is now **Ari**. Internal infra — the pm2
+> process name, EC2 directory, SQLite path, and this repo's own folder name
+> (`Game`) — deliberately still says "kidgemini" (see §12); only the public
+> brand and URL changed. Grepping for "kidgemini" in this repo will still
+> find plenty of legitimate hits.
 
 This is the single source of truth for **how we build** in this repo. Claude Code (and any
 human) should read this before writing code. **Read the relevant docs BEFORE touching the
@@ -119,7 +125,7 @@ in-band event), no dead ends, mobile-first checks, visual pass before "done".
 
 **Non-negotiable SEO/AI-answer bar:** every public page ships with unique title +
 meta description, OpenGraph, canonical URL, and SSR-readable content; keep
-sitemap/robots current so search engines AND AI assistants represent KidGemini well.
+sitemap/robots current so search engines AND AI assistants represent Ari well.
 
 ## 7. Development process — **MANDATORY**
 
@@ -232,9 +238,9 @@ Copy `.env.example` → `.env.local`. `GEMINI_API_KEY` (server-only) and
 `AUTH_JWT_SECRET` (Ariantra SSO — MUST equal the platform's value; see
 `docs/ARCHITECTURE.md` §Auth) are required. There is no local OAuth anymore.
 
-Local dev convention: **kidgemini runs on :3001, the platform on :3000** (the
+Local dev convention: **Ari runs on :3001, the platform on :3000** (the
 env-aware nav/login links assume this pairing). Start both with one command:
-`npm run dev:all` in the platform repo. kidgemini alone is fine once you're
+`npm run dev:all` in the platform repo. Ari alone is fine once you're
 logged in (the browser cookie lasts 30 days); first login needs the platform up.
 
 ⚠️ Per the **Hard rule** at the top of this file: never read or edit `.env*` or the `data/`
@@ -244,7 +250,9 @@ database. The human manages those. Only ever touch `.env.example`.
 
 - **Prod host:** EC2, co-hosted with the Ariantra platform (`../Ariantra-Platform`) as a
   second Next app — pm2 name `kidgemini`, port **3001**, Caddy routes
-  `kidgemini.ariantra.com → 127.0.0.1:3001`. Deploy with `npm run deploy`
+  `ari.ariantra.com → 127.0.0.1:3001` (the legacy `kidgemini.ariantra.com` host
+  still resolves during the rename transition — see
+  `../Ariantra-Platform/docs/TECH_DEBT.md`). Deploy with `npm run deploy`
   (`scripts/deploy-rsync.sh`; config in gitignored `scripts/deploy.env`).
 - **SQLite in prod** lives at `/var/lib/kidgemini/kidgemini.db` (absolute `DATABASE_PATH`,
   outside the app dir so deploys can't wipe it) with a daily WAL-safe `.backup` cron.

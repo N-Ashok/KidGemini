@@ -119,7 +119,7 @@ export function UpgradePlans() {
         order_id: order.orderId,
         amount: order.amount,
         currency: order.currency,
-        name: "KidGemini",
+        name: "Ari",
         description: `${order.planLabel} plan`,
         prefill: { email: session?.user?.email ?? undefined, name: session?.user?.name ?? undefined },
         theme: { color: "#262626" },
@@ -178,7 +178,7 @@ export function UpgradePlans() {
       </a>
       <h1 className="mt-6 text-3xl font-bold text-neutral-900">Choose your plan ✨</h1>
       <p className="mt-2 max-w-md text-sm text-neutral-600">
-        Every plan includes KidGemini and a year on the platform. Assisted plans add live
+        Every plan includes Ari and a year on the platform. Assisted plans add live
         one-on-one classes with a teacher.
       </p>
 

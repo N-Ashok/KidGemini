@@ -1,4 +1,4 @@
-// KidGemini Guard — service worker.
+// Ari Guard — service worker.
 // 1) Proxies LLM safety checks to the app backend (host permission bypasses page CORS).
 // 2) Persists parent alerts to chrome.storage and shows a badge count.
 
@@ -23,7 +23,7 @@ async function classify(msg) {
     if (!res.ok) return null;
     return await res.json(); // { action, category, severity, reason }
   } catch (e) {
-    console.warn("[KidGemini Guard] safety API unreachable; using local rules only.", e);
+    console.warn("[Ari Guard] safety API unreachable; using local rules only.", e);
     return null; // content script falls back to local-rules verdict
   }
 }

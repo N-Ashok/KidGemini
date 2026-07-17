@@ -1,4 +1,4 @@
-# KidGemini — Features (one-pager)
+# Ari (formerly KidGemini) — Features (one-pager)
 
 What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`.
 
@@ -6,7 +6,7 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 - **Family profile signpost** (2026-07-13): a card linking to the Studio's
   Creator Profile deep link (`studio.ariantra.com/studio?profile=1`) — the
   ONE place parent/child details are collected (encrypted platform-side).
-  KidGemini deliberately hosts no second form; SSO makes the hop seamless
+  Ari deliberately hosts no second form; SSO makes the hop seamless
 - **🎮 Multiplayer on/off toggle** (2026-07-14, Phase 4 of
   `../Ariantra-Platform/docs/PRD-MULTIPLAYER.md` — the first on/off toggle
   built on this page): one switch per published game; off means friends can
@@ -191,22 +191,45 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   ownership verified server-side on both the list and the publish
 - **🔗 Share card on publish success** (2026-07-17,
   `../Ariantra-Platform/docs/PRD-SHARING.md` Phase 1, S1 "I made this!"): the
-  "done" step of `PublishToArcade.tsx` gets an editable message
-  ("I made a game! Play it 👉 {link}") + WhatsApp/native-share/copy-link
-  buttons — but only when the family's Sharing & Privacy is turned ON
+  "done" step of `PublishToArcade.tsx` gets an editable message — templated
+  from `data.credit` (name/age off the publish response) when opted in:
+  "{name}, {age}, made a game. Actual playable game, in the browser, no
+  download.\n{link}"; otherwise "I made a game! Play it here.\n{link}\n
+  (Built it on Ariantra — kids make the games.)" — + WhatsApp/native-share/
+  copy-link buttons — but only when the family's Sharing & Privacy is turned ON
   (`shareEnabled`, read straight off the publish response, no extra round
   trip — the platform's partner bridge now returns it alongside `url`/
   `version`). Off shows "🔒 Ask a grown-up to turn on sharing" linking to the
-  Parent area instead of a dead-end share button
+  Parent area instead of a dead-end share button. This IS the family's own
+  voice pushing their kid's identity forward, so it stays gated — unlike a
+  stranger just passing along a link (see the platform's `share-overlay.ts`
+  and catalog `CatalogClient.tsx`, which never gate on this flag)
 - **📤 "Share your child's games" (Parent area, S2 "parent pride push")**
   (2026-07-17): a STANDING card (not a one-time notification) listing every
-  published game with its own Share button — parent-framed copy
-  ("{child} built this game — check it out!"), same WhatsApp/native-share/
-  copy-link channels as the kid's own card. Consent is account-level
-  (Sharing & Privacy in the family profile applies to every game), so one
-  `shareEnabled` flag from `/api/parent/games`'s `list` action (now also
-  returned by the partner bridge, alongside the existing games array) gates
-  the whole card; off shows a link to turn it on instead of per-row buttons
+  published game with its own Share button — parent-framed, third-person
+  copy templated from `shareCredit`: "{name}, {age}, made a game. Actual
+  playable game, in the browser, no download." when opted in, else "My kid
+  made a game! Actual playable game, in the browser, no download." — same
+  WhatsApp/native-share/copy-link channels as the kid's own card. Consent is
+  account-level (Sharing & Privacy in the family profile applies to every
+  game), so one `shareEnabled` flag from `/api/parent/games`'s `list` action
+  (now also returned by the partner bridge, alongside the existing games
+  array) gates the whole card; off shows a link to turn it on instead of
+  per-row buttons. Same "family's own voice, stays gated" reasoning as the
+  kid's own share card
+- Copy rewrite (2026-07-17): the kid is the hook, not the platform — a named
+  "a 10-year-old made this" beats any platform tagline, and "no download"
+  removes WhatsApp's one real objection. There is no `ARIANTRA_TAGLINE`
+  constant any more — the brand line lives only in each game's OG
+  description (platform's `seo.ts`), which the link preview already
+  carries; repeating it in the message text was doing the preview's job
+  twice. Neither surface uses non-BMP emoji (🎮/👾/etc.) in message text —
+  wa.me's own redirect to api.whatsapp.com corrupts them into the UTF-8
+  replacement character (verified independent of this repo's code)
+- **WhatsApp button opens the app directly** (2026-07-17, both share
+  surfaces on this side): tries `whatsapp://send?text=` first (mobile app or
+  WhatsApp Desktop, hands off immediately — no "select WhatsApp Web" step),
+  falls back to `wa.me` only if the page is still visible ~1.2s later
 - **🎮 Multiplayer generation + "Invite a friend to test"**
   (2026-07-14, `../Ariantra-Platform/docs/PRD-MULTIPLAYER.md` Phase 4): asking
   for a 2-player/co-op/versus game conditionally teaches the model
@@ -269,7 +292,7 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   `clampPanelWidth` in `src/lib/preview-pane.ts`)
 - Guest trial: chat free up to 10K tokens per device per rolling 2-day window
   (per-IP backstop at 2× so cookie-clearing doesn't reset it) → then a blocking "Please sign in to continue
-  using KidGemini" wall → Ariantra SSO (Google or username/password)
+  using Ari" wall → Ariantra SSO (Google or username/password)
 - Signed-in: unlimited today; config-ready daily budget → upgrade paywall
   (`SIGNED_IN_DAILY_TOKEN_LIMIT` env knob, ships OFF)
 - Recents sidebar, new-chat, **chat search** (2026-07-09): the sidebar 🔍 is an
@@ -422,8 +445,10 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   one (`upgrade-deeplink.test.ts`)
 
 ## Ariantra integration
-- Shared Ariantra header on every page (`ArNav`): Home · Games · KidGemini · Studio
+- Shared Ariantra header on every page (`ArNav`): Home · Games · Ari · Studio
   — pixel-identical with the platform via the generated brand CSS (local copy,
   `npm run sync:brand`)
-- Co-hosted on the Ariantra EC2 box at `kidgemini.ariantra.com` (:3001 behind Caddy)
+- Co-hosted on the Ariantra EC2 box at `ari.ariantra.com` (:3001 behind Caddy;
+  the legacy `kidgemini.ariantra.com` host still resolves during the rename
+  transition)
 - One-command deploy: `npm run deploy` (rsync + pm2, SQLite kept on a persistent path)

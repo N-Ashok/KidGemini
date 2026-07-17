@@ -1,4 +1,4 @@
-# PRD — KidGemini
+# PRD — Ari (formerly KidGemini)
 
 A kids-safe conversational AI. It feels like talking to Gemini (text **and** voice), but
 every response passes through a safety gate before a child sees it, and parents get
@@ -283,9 +283,11 @@ an access period, but no entitlement gate consumes it. The gate is a deliberate 
 the product funnel is *try free → sign in → (later) pay*.
 
 - **Guest trial:** anyone may chat up to `GUEST_TOKEN_LIMIT` (10K tokens) per device
-  (httpOnly `kg_guest` cookie), server-enforced, over a ROLLING `GUEST_WINDOW_MS`
-  (2-day) window — the allowance resets as usage ages out. At the wall a blocking overlay —
-  "Please sign in to continue using KidGemini ✨" — forces Ariantra SSO login to proceed.
+  (httpOnly `ari_guest` cookie, falling back to the legacy `kg_guest` cookie for
+  devices that had one from before the 2026-07-17 rename), server-enforced, over a
+  ROLLING `GUEST_WINDOW_MS` (2-day) window — the allowance resets as usage ages out.
+  At the wall a blocking overlay — "Please sign in to continue using Ari ✨" —
+  forces Ariantra SSO login to proceed.
 - **Abuse control:** per-IP guest cap `IP_GUEST_TOKEN_CAP` (2× the device allowance —
   defeats cookie-clearing while staying generous to shared family/school IPs), plus the
   per-IP rate limit with 3-strike escalation → paywall (HTTP 402).

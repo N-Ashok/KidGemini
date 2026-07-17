@@ -82,7 +82,7 @@ export function Sidebar(props: SidebarProps) {
       >
       <div className="flex items-center gap-2 px-4 py-4">
         <span className="text-xl" aria-hidden>✨</span>
-        <span className={`text-lg font-semibold text-neutral-700 ${hideWhenCollapsed}`}>KidGemini</span>
+        <span className={`text-lg font-semibold text-neutral-700 ${hideWhenCollapsed}`}>Ari</span>
         <button
           aria-label="Close menu"
           onClick={onClose}

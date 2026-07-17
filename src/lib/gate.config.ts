@@ -10,7 +10,14 @@ export const GUEST_TOKEN_LIMIT = 10_000;
 export const GUEST_WINDOW_MS = 2 * 24 * 60 * 60 * 1000;
 
 /** Cookie that identifies an anonymous device so its usage can be tallied server-side. */
-export const GUEST_COOKIE = "kg_guest";
+export const GUEST_COOKIE = "ari_guest";
+/** Pre-rename cookie name (2026-07-17, "kidgemini" → "Ari"). A returning
+ *  guest's whole identity — chat history, token allowance — lives behind
+ *  this cookie for up to a year; renaming it with no fallback would silently
+ *  reset every existing guest device to a blank slate. Every read site falls
+ *  back to this name, and re-persists under GUEST_COOKIE once found, so the
+ *  legacy cookie naturally stops being needed as devices revisit. */
+export const GUEST_COOKIE_LEGACY = "kg_guest";
 
 /** How long the guest identity persists (also the gate's memory window). */
 export const GUEST_COOKIE_MAX_AGE_S = 60 * 60 * 24 * 365; // 1 year

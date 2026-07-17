@@ -1,6 +1,6 @@
 /**
  * Mixpanel web analytics — ONE hardened snippet used by every Ariantra
- * surface (this app's layout, kidgemini's layout, and the Hostinger landing
+ * surface (this app's layout, Ari's layout, and the Hostinger landing
  * via deploy/hostinger/landing-snippet.html — keep those copies in sync).
  *
  * Privacy posture (user requirement 2026-07-06: "no sensitive information"):
@@ -22,7 +22,7 @@
 export const MIXPANEL_TOKEN = '6c7d47ee4e9c7d1a2634c3ad4d4e8295';
 
 /** Only these hosts get tracked — every real Ariantra surface lives under
- *  ariantra.com (apex + all subdomains: platform, kidgemini, game slugs). */
+ *  ariantra.com (apex + all subdomains: platform, Ari, game slugs). */
 export const TRACKED_HOSTNAME_RE = /(^|\.)ariantra\.com$/;
 
 // Official Mixpanel JS stub (loads the real library async), verbatim.

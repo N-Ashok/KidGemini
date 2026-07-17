@@ -54,6 +54,7 @@ import { savePendingTurn, clearPendingTurn, loadPendingTurn } from "@/lib/pendin
 import { savePendingMessage, loadPendingMessage, clearPendingMessage } from "@/lib/pending-message";
 import { waitLine } from "@/lib/wait-line";
 import { useWakeLock } from "./useWakeLock";
+import { RenameNoticeBanner } from "./RenameNoticeBanner";
 
 const KIND_FALLBACK = "Let's talk about something else! How about a game? 🌟";
 
@@ -565,8 +566,8 @@ export function ChatPanelContainer() {
         // Gate statuses (silent-hang prevention: blocks travel as HTTP statuses).
         const body = (await res.json().catch(() => ({}))) as { message?: string };
         if (res.status === 401) {
-          setReply(body.message ?? "Please sign in to continue using KidGemini ✨");
-          setGate({ text: body.message ?? "Please sign in to continue using KidGemini ✨", upgrade: false });
+          setReply(body.message ?? "Please sign in to continue using Ari ✨");
+          setGate({ text: body.message ?? "Please sign in to continue using Ari ✨", upgrade: false });
           // Auth interruption (BUG-FIX-LOG 2026-07-14): remember what the kid
           // was sending so it can auto-resend after sign-in instead of being
           // silently lost (retyping after the platform redirect read as "the
@@ -847,7 +848,10 @@ export function ChatPanelContainer() {
           >
             ☰
           </button>
-          <span className="text-base font-semibold text-neutral-700">✨ KidGemini</span>
+          <span className="text-base font-semibold text-neutral-700">✨ Ari</span>
+        </div>
+        <div className="px-4 pt-3">
+          <RenameNoticeBanner />
         </div>
         <div
           ref={scrollRef}

@@ -1,3 +1,5 @@
+import type { GAME_CONSOLE_SOURCE } from "@/lib/preview-messages";
+
 /** A single console/error line captured from a sandboxed game preview.
  *  `level`/`text` are always present (the console view renders them); the
  *  structured fields ride along for runtime errors — the stack is a repair
@@ -17,6 +19,6 @@ export interface GameConsoleMessage {
 
 /** Shape of the postMessage payload the injected capture script sends. */
 export interface GameConsoleEvent {
-  source: "kidgemini-game-console";
+  source: typeof GAME_CONSOLE_SOURCE;
   message: GameConsoleMessage;
 }

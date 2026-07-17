@@ -1,4 +1,4 @@
-# KidGemini Architecture
+# Ari (formerly KidGemini) Architecture
 
 One-page system map. Build rules: `../CLAUDE.md`; product: `PRD.md`;
 scaling constraints: `SCALABILITY_ISSUES.md`.
@@ -51,7 +51,8 @@ closed everywhere: no/invalid cookie ⇒ /api/chat 401.
 Co-hosted on the Ariantra EC2 box as a second Next app:
 
 ```
-kidgemini.ariantra.com ── Caddy (explicit block, LE cert) ──► 127.0.0.1:3001 (pm2 "kidgemini")
+ari.ariantra.com       ── Caddy (explicit block, LE cert) ──► 127.0.0.1:3001 (pm2 "kidgemini")
+kidgemini.ariantra.com ── Caddy (legacy alias, still live during rename transition) ──► same
 ariantra platform      ── api/studio/games.ariantra.com   ──► 127.0.0.1:3000
 ```
 

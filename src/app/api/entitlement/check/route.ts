@@ -4,11 +4,11 @@ export const dynamic = "force-dynamic";
  * (../Ariantra-Platform/docs/PRD-MULTIPLAYER.md Open Decision #1, resolved
  * 2026-07-14: platform-side check). The REVERSE direction of every other
  * cross-repo call in this codebase — the Ariantra platform calls INTO
- * kidgemini, since kidgemini holds the Razorpay payment truth (`payments`
+ * Ari, since Ari holds the Razorpay payment truth (`payments`
  * table). Auth mirrors `/api/arcade/publish`'s gate, inverted:
  *   `x-admin-secret` header must equal the shared AUTH_JWT_SECRET.
  * The caller forwards the raw `ariantra_session` JWT it already holds (the
- * SAME token kidgemini's OWN browser calls carry) rather than a derived id —
+ * SAME token Ari's OWN browser calls carry) rather than a derived id —
  * `verifyAriantraSession` derives the identical `userId` string
  * (`user:<email|name|sub>`) that `payments.userId` rows already use, so there
  * is no separate identity-mapping table to get wrong or drift.

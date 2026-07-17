@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
  *   1. The SSO `ariantra_session` cookie must verify — the game publishes
  *      under the family's Ariantra account. Signed out → 401 (UI offers
  *      "Sign in with Google").
- *   2. A PIN-verified parent-session cookie (kidgemini_parent) whose account
+ *   2. A PIN-verified parent-session cookie (ari_parent) whose account
  *      MATCHES the SSO session — a grown-up of THIS family approves putting
  *      the game on the public internet. The ownership match (not the PIN
  *      itself) is what stops any parent approving any kid's publish

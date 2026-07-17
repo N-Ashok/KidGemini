@@ -3,6 +3,7 @@
 // classifies it into a failure code (pure function — see lib/preview-verify.ts).
 
 import type { GameConsoleMessage } from "./game-console.types";
+import type { PREVIEW_VERIFY_SOURCE, PARENT_READY_SOURCE } from "@/lib/preview-messages";
 
 /** §7 failure taxonomy. `no_start_button` is classified as `no_loop` in v1
  *  (same observation, same kid line); it stays in the union so the repair
@@ -63,7 +64,7 @@ export type VerifyScriptEvent =
 
 /** postMessage envelope from the injected verify script. */
 export interface VerifyPostedEvent {
-  source: "kidgemini-preview-verify";
+  source: typeof PREVIEW_VERIFY_SOURCE;
   event: VerifyScriptEvent;
 }
 
@@ -71,7 +72,7 @@ export interface VerifyPostedEvent {
  *  capture until this arrives (the parent's message listener mounts in an
  *  effect, so an unbuffered first post could race it and vanish). */
 export interface ParentReadyMessage {
-  source: "kidgemini-parent";
+  source: typeof PARENT_READY_SOURCE;
   type: "ready";
   /** false = flush captures but DO NOT probe (post-verify reload — probing
    *  again would ghost-click the kid's Start button). Absent = true. */

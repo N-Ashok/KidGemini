@@ -1,4 +1,4 @@
-// 2026-07-11 pricing revamp: KidGemini no longer sells premium in the kid UI.
+// 2026-07-11 pricing revamp: Ari no longer sells premium in the kid UI.
 // Plans are sold on ariantra.com (Explorer / Assisted Starter / Assisted Pro),
 // so the sidebar must NOT show a "Go premium" tab or link kids to /upgrade.
 // The /upgrade route itself stays (parents can be deep-linked to it).

@@ -1,4 +1,4 @@
-// Server half of parent-session verification: read the `kidgemini_parent`
+// Server half of parent-session verification: read the `ari_parent`
 // cookie off the current request (pure logic in parent-session.ts).
 
 import "server-only";

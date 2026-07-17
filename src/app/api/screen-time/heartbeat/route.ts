@@ -1,5 +1,5 @@
 // POST /api/screen-time/heartbeat — a lightweight presence ping fired by
-// ScreenTimeHeartbeat.tsx while the kidgemini tab is open and visible, so
+// ScreenTimeHeartbeat.tsx while the Ari tab is open and visible, so
 // playing an already-built game counts toward screen time the same as
 // chatting (PRD-SCREEN-TIME-CAP-MVP Part B, extended 2026-07-15). Signed-in
 // only; a guest ping is a no-op 200 — not an error, since heartbeats fire

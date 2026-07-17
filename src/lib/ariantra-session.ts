@@ -1,6 +1,6 @@
 // SSO session verification (PURE — no Next imports, per CLAUDE.md §4, so it
-// unit-tests plain). Turns a platform-minted `ariantra_session` JWT into a
-// kidgemini identity, or null — fail closed. The cookie is issued by
+// unit-tests plain). Turns a platform-minted `ariantra_session` JWT into an
+// Ari identity, or null — fail closed. The cookie is issued by
 // Ariantra-Platform (src/lib/auth/tokens.ts) on Domain=.ariantra.com; both
 // apps share AUTH_JWT_SECRET. Request-cookie reading lives in
 // ariantra-session.server.ts.

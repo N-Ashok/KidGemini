@@ -27,6 +27,29 @@ const NAME_IDEAS = [
   "Turbo Trails", "Moon Hopper", "Laser Legend", "Wobble World", "Rocket Rally",
 ];
 
+// WhatsApp deep link (2026-07-17): try the installed app directly — mobile
+// app or WhatsApp Desktop — via its `whatsapp://` URI scheme, which hands
+// off to the app straight away, skipping wa.me's web landing page (the
+// "select WhatsApp Web" intermediate step this replaces). Falls back to
+// wa.me only if nothing takes over the page within ~1.2s, i.e. no app was
+// there to catch the custom scheme. Kept in sync by hand with the
+// equivalent function in Ariantra-Platform's CatalogClient.tsx /
+// share-overlay.ts and this repo's parent/page.tsx.
+function openWhatsApp(text: string) {
+  const appUrl = `whatsapp://send?text=${encodeURIComponent(text)}`;
+  const webUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
+  const fallback = window.setTimeout(() => {
+    window.open(webUrl, "_blank", "noopener,noreferrer");
+  }, 1200);
+  const cancel = () => window.clearTimeout(fallback);
+  window.addEventListener("blur", cancel, { once: true });
+  const onVisibility = () => {
+    if (document.hidden) { cancel(); document.removeEventListener("visibilitychange", onVisibility); }
+  };
+  document.addEventListener("visibilitychange", onVisibility);
+  window.location.href = appUrl;
+}
+
 export function PublishToArcade({ html, suggestedName, onClose }: Props) {
   const [step, setStep] = useState<Step>("name");
   // Sign-in is checked FIRST (before the kid invests in naming + PIN): the
@@ -163,7 +186,18 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
       setStage(4);
       setLiveUrl(data.url);
       setShareEnabled(data.shareEnabled === true);
-      setShareMessage(`I made a game! Play it 👉 ${data.url}`);
+      // Copy rewrite (2026-07-17): the kid is the hook, not the platform — a
+      // named "a 10-year-old made this" beats any platform tagline, and "no
+      // download" removes WhatsApp's one real objection. Brand tagline lives
+      // in the game's OG description (platform's seo.ts), not repeated here.
+      // No non-BMP emoji (🎮/👾/etc.) in message text — wa.me's own redirect
+      // to api.whatsapp.com corrupts them into the UTF-8 replacement
+      // character, verified independently of our code via a raw wa.me request.
+      setShareMessage(
+        data.credit?.name
+          ? `${data.credit.name}${data.credit.age ? `, ${data.credit.age},` : ""} made a game. Actual playable game, in the browser, no download.\n${data.url}`
+          : `I made a game! Play it here.\n${data.url}\n(Built it on Ariantra — kids make the games.)`,
+      );
       setShareConfirmed(false);
       setTimeout(() => setStep("done"), 700);
     } catch {
@@ -413,14 +447,13 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
                     rows={2}
                   />
                   <div className="flex flex-wrap gap-2">
-                    <a
-                      href={`https://wa.me/?text=${encodeURIComponent(shareMessage)}`}
-                      target="_blank" rel="noreferrer"
-                      onClick={() => setTimeout(() => setShareConfirmed(true), 300)}
+                    <button
+                      type="button"
+                      onClick={() => { openWhatsApp(shareMessage); setTimeout(() => setShareConfirmed(true), 300); }}
                       className="rounded-full bg-[#25d366] px-3.5 py-2 text-xs font-extrabold text-white"
                     >
                       💬 WhatsApp
-                    </a>
+                    </button>
                     <button
                       type="button"
                       onClick={() => {

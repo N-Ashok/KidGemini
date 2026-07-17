@@ -1,4 +1,8 @@
-# KidGemini
+# Ari
+
+*(Product name as of 2026-07-17 — formerly "KidGemini." Internal infra — the
+pm2 process, EC2 paths, SQLite file — still uses "kidgemini"; see
+[`CLAUDE.md`](./CLAUDE.md) §12.)*
 
 A kids-safe, Gemini-quality chat app (text + voice) with a **server-enforced safety gate**,
 **parent alerting**, **sandboxed HTML game artifacts**, and an **admin usage/cost dashboard**.

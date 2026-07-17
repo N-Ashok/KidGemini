@@ -131,7 +131,7 @@ function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_turn_results_updated ON turn_results(updatedAt);
     -- (billed* / thought / cached columns migrated below for pre-2026-07-14 DBs)
     -- Per-family parent PIN (PRD-PARENT-AUTH-ALERT-SCOPING §8). Keyed by the
-    -- SSO userId — kidgemini has no local accounts table; identity is the JWT.
+    -- SSO userId — Ari has no local accounts table; identity is the JWT.
     CREATE TABLE IF NOT EXISTS parent_auth (
       accountId TEXT PRIMARY KEY,
       pinHash TEXT NOT NULL,
@@ -683,7 +683,7 @@ export class SqliteScreenTimeStore implements ScreenTimeStore {
         severity: "low",
         action: "allow",
         triggerText: "Daily screen-time cap reached",
-        reason: `${userLabel ?? "Your child"} has used kidgemini for ${activeMinutes} min today — your cap is ${cap} min.`,
+        reason: `${userLabel ?? "Your child"} has used Ari for ${activeMinutes} min today — your cap is ${cap} min.`,
       });
     }
   }

@@ -2,7 +2,7 @@
 // home, the asset gallery, and the pricing page.
 import type { MetadataRoute } from "next";
 
-const BASE = "https://kidgemini.ariantra.com";
+const BASE = "https://ari.ariantra.com";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   return [

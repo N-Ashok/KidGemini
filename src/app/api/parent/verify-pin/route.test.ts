@@ -79,7 +79,7 @@ describe("POST /api/parent/verify-pin", () => {
     const res = await POST(req({ pin: "8264" }));
     expect(res.status).toBe(200);
     const cookie = res.headers.get("set-cookie") ?? "";
-    expect(cookie).toContain("kidgemini_parent=");
+    expect(cookie).toContain("ari_parent=");
     expect(cookie.toLowerCase()).toContain("httponly");
     expect(cookie.toLowerCase()).toContain("samesite=strict");
     expect(cookie).not.toContain("8264");

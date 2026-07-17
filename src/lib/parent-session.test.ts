@@ -22,7 +22,7 @@ describe("parent session token", () => {
 
   it("has a ~30 minute TTL and a stable cookie name", () => {
     expect(PARENT_SESSION_TTL_S).toBe(30 * 60);
-    expect(PARENT_SESSION_COOKIE).toBe("kidgemini_parent");
+    expect(PARENT_SESSION_COOKIE).toBe("ari_parent");
   });
 
   it("rejects an ariantra_session JWT (typ 'session' ≠ 'parent') — a kid's SSO cookie is NOT parent proof", async () => {

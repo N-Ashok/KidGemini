@@ -11,7 +11,7 @@ const BRAND_CSS_URL =
   process.env.NEXT_PUBLIC_ARIANTRA_BRAND_URL ?? "/brand/ariantra-brand.v1.css";
 
 export const metadata: Metadata = {
-  title: "KidGemini — a friendly, safe AI buddy",
+  title: "Ari — a friendly, safe AI buddy",
   description: "A kids-safe AI chat with voice, games, and parent controls.",
   // Ariantra brand mark — local copy refreshed by `npm run sync:brand`.
   icons: { icon: "/brand/ariantra-favicon.svg" },

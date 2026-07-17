@@ -17,7 +17,7 @@ import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore, SqliteTurnRes
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
-import { GUEST_TOKEN_LIMIT, GUEST_COOKIE, GUEST_COOKIE_MAX_AGE_S, GUEST_WINDOW_MS, IP_GUEST_TOKEN_CAP, signedInDailyTokenLimit } from "@/lib/gate.config";
+import { GUEST_TOKEN_LIMIT, GUEST_COOKIE, GUEST_COOKIE_LEGACY, GUEST_COOKIE_MAX_AGE_S, GUEST_WINDOW_MS, IP_GUEST_TOKEN_CAP, signedInDailyTokenLimit } from "@/lib/gate.config";
 import { validateImageAttachment } from "@/lib/image-attachment";
 import type { ChatMessage, ImageAttachment, TokenUsage } from "@/types/chat.types";
 import type { SafetyVerdict } from "@/types/safety.types";
@@ -121,8 +121,19 @@ export async function POST(req: NextRequest) {
   } else {
     let guestId = req.cookies.get(GUEST_COOKIE)?.value;
     if (!guestId) {
-      guestId = `guest:${crypto.randomUUID()}`;
-      setGuestCookie = guestId; // brand-new device — persist the identity on the response
+      // Pre-rename cookie (2026-07-17, "kidgemini" → "Ari") — a returning
+      // device's whole identity/history lives behind this cookie for up to
+      // a year, so a name change alone would silently reset every existing
+      // guest. Found under the old name → same identity, one-time silent
+      // migration to the new cookie name (same Set-Cookie path as brand-new
+      // below, just a different source for the id).
+      guestId = req.cookies.get(GUEST_COOKIE_LEGACY)?.value;
+      if (guestId) {
+        setGuestCookie = guestId;
+      } else {
+        guestId = `guest:${crypto.randomUUID()}`;
+        setGuestCookie = guestId; // brand-new device — persist the identity on the response
+      }
     }
     userId = guestId;
     userLabel = "Guest";
@@ -154,7 +165,7 @@ export async function POST(req: NextRequest) {
         console.log(`[api/chat] ⛔ gate: ip=${geo.ip} used=${ipUsed}/${IP_GUEST_TOKEN_CAP} → 401`);
         return NextResponse.json(
           { error: "auth_required", reason: "ip_limit",
-            message: "Please sign in to continue using KidGemini ✨" },
+            message: "Please sign in to continue using Ari ✨" },
           { status: 401, headers: guestCookieHeader(setGuestCookie) },
         );
       }
@@ -166,7 +177,7 @@ export async function POST(req: NextRequest) {
       console.log(`[api/chat] ⛔ gate: guest over device limit → 401 sign-in wall`);
       return NextResponse.json(
         { error: "auth_required", reason: "guest_limit",
-          message: "Please sign in to continue using KidGemini ✨" },
+          message: "Please sign in to continue using Ari ✨" },
         { status: 401, headers: guestCookieHeader(setGuestCookie) },
       );
     }
