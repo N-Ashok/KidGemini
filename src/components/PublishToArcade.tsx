@@ -100,7 +100,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
     };
   }, [authStatus, gamesLoadTick]);
   const [name, setName] = useState(suggestedName ?? "");
-  const [check, setCheck] = useState<{ state: "idle" | "checking" | "free" | "taken" | "mine" | "unknown"; suggestions: string[] }>({ state: "idle", suggestions: [] });
+  const [check, setCheck] = useState<{ state: "idle" | "checking" | "free" | "taken" | "mine" | "copyright" | "unknown"; suggestions: string[]; matched?: string }>({ state: "idle", suggestions: [] });
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [liveUrl, setLiveUrl] = useState("");
@@ -130,11 +130,13 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ check: true, name }),
         });
-        const data = (await res.json()) as { free?: boolean; mine?: boolean; suggestions?: string[] };
-        // "taken" ONLY on a confirmed answer — a failed check (network, server)
-        // must not claim the name is gone; publish re-validates server-side.
+        const data = (await res.json()) as { free?: boolean; mine?: boolean; matched?: string; suggestions?: string[] };
+        // "taken"/"copyright" ONLY on a confirmed answer — a failed check
+        // (network, server) must not claim the name is gone; publish
+        // re-validates server-side either way.
         if (res.ok && data.free === true) setCheck({ state: "free", suggestions: [] });
         else if (res.ok && data.free === false && data.mine === true) setCheck({ state: "mine", suggestions: [] });
+        else if (res.ok && data.free === false && data.matched) setCheck({ state: "copyright", suggestions: data.suggestions ?? [], matched: data.matched });
         else if (res.ok && data.free === false) setCheck({ state: "taken", suggestions: data.suggestions ?? [] });
         else setCheck({ state: "unknown", suggestions: [] });
       } catch {
@@ -172,7 +174,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
         }),
       });
       const data = (await res.json()) as {
-        url?: string; error?: string; suggestions?: string[];
+        url?: string; error?: string; suggestions?: string[]; matched?: string;
         shareEnabled?: boolean; credit?: { name?: string; age?: number; place?: string } | null;
       };
       clearTimeout(t1);
@@ -182,6 +184,10 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
       if (res.status === 403) { setStep("pin"); setPin(""); return; }
       if (res.status === 401) { setStep("signin"); return; } // session expired mid-flow
       if (res.status === 409) { setStep("name"); setCheck({ state: "taken", suggestions: data.suggestions ?? [] }); return; }
+      // 451 "Unavailable For Legal Reasons" — the name/slug matches a known
+      // trademarked property (copyright-policy.ts). Same "back to naming,
+      // here are alternatives" flow as a taken name, distinct messaging.
+      if (res.status === 451) { setStep("name"); setCheck({ state: "copyright", suggestions: data.suggestions ?? [], matched: data.matched }); return; }
       if (!res.ok || !data.url) { setStep("pin"); setError(data.error ?? "That didn't work — nothing is broken. Try again in a minute."); return; }
       setStage(4);
       setLiveUrl(data.url);
@@ -344,10 +350,15 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
               {check.state === "free" && <span className="text-emerald-600">✓ {slug}.ariantra.com is free!</span>}
               {check.state === "mine" && <span className="text-emerald-600">🔄 that&rsquo;s YOUR game — this updates {slug}.ariantra.com!</span>}
               {check.state === "taken" && <span className="text-red-500">someone got that one first — try a 🎲 idea!</span>}
+              {check.state === "copyright" && (
+                <span className="text-red-500">
+                  &ldquo;{check.matched}&rdquo; belongs to a big company, not you — pick your OWN game name and it&rsquo;ll be even cooler! 🌟
+                </span>
+              )}
               {check.state === "unknown" && <span className="text-neutral-400">couldn&rsquo;t check the name — you can still continue</span>}
             </p>
             <div className="mb-4 mt-1 flex flex-wrap gap-1.5">
-              {(check.state === "taken" && check.suggestions.length > 0 ? check.suggestions : []).map((s) => (
+              {((check.state === "taken" || check.state === "copyright") && check.suggestions.length > 0 ? check.suggestions : []).map((s) => (
                 <button key={s} onClick={() => setName(s.replace(/-/g, " "))} className="rounded-full border border-neutral-200 px-3 py-1 text-xs font-bold text-neutral-600 hover:border-orange-400">
                   {s}
                 </button>
@@ -357,7 +368,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
               </button>
             </div>
             <button
-              disabled={!slug || check.state === "taken"}
+              disabled={!slug || check.state === "taken" || check.state === "copyright"}
               // Straight to publish: if a grown-up verified the PIN within
               // the last 30 min the game just goes; otherwise the server's
               // parent_required 403 routes to the PIN step.

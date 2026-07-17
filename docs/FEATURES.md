@@ -189,6 +189,16 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   that's already online" — same address, new version. Typing a name that
   matches their own game also flips to update (`mine` check). Fail-closed:
   ownership verified server-side on both the list and the publish
+- **Copyright/trademark check** (2026-07-17, enforced platform-side —
+  `../Ariantra-Platform/docs/FEATURES.md`'s Studio section,
+  `copyright-policy.ts`): the live debounced name-availability check and
+  the final publish both surface a match as a distinct `check.state ===
+  "copyright"` (not lumped in with "taken"), with kid-friendly copy —
+  "'{term}' belongs to a big company, not you — pick your OWN game name and
+  it'll be even cooler! 🌟" — and the same clickable suggestion chips
+  already used for a taken name, populated with alternatives close to what
+  the kid typed (the trademarked word stripped out) that are confirmed both
+  clean and available
 - **🔗 Share card on publish success** (2026-07-17,
   `../Ariantra-Platform/docs/PRD-SHARING.md` Phase 1, S1 "I made this!"): the
   "done" step of `PublishToArcade.tsx` gets an editable message — templated

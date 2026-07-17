@@ -6,7 +6,13 @@
 // the kid-styled interior is untouched.
 //
 // Canonical menu (2026-07-11: Skills added, mirrors the platform's nav-links.ts):
-//   Skills · Games · Ari(active) · How it works · Videos · Studio · [Log in] · [Book CTA]
+//   Skills · Games · Games Lab(active) · How it works · Videos · Studio · [Log in] · [Book CTA]
+// "Games Lab" (not "Ari") is the label here deliberately — nav-links.ts's
+// source-of-truth entry for this link reads 'Games Lab' even though it
+// points at Ari; matches the already-regenerated static header partials
+// (public/brand/ariantra-header.html, deploy/hostinger/landing-snippet.html).
+// This file is a hand-kept duplicate (TECH_DEBT #17/#2) — no build step
+// syncs it, so a future label change here needs the same by-hand update.
 // "Studio" is a plain menu item that OPENS the Studio app (no returnTo — the
 // user stays in Studio after signing in there). The subtle "Log in" enters
 // Ari's session via the shared SSO (signIn() → studio /login?returnTo=
@@ -49,7 +55,7 @@ export function ArNav() {
             {/* Landing anchor — always prod, like #how/#videos below. */}
             <a href="https://ariantra.com/#skills" className="ar-link">Skills</a>
             <a href={GAMES_URL} className="ar-link">Games</a>
-            <a href="/" className="ar-link on">Ari</a>
+            <a href="/" className="ar-link on">Games Lab</a>
             <a href={`${WWW_URL}/#how`} className="ar-link">How it works</a>
             <a href={`${WWW_URL}/#videos`} className="ar-link">Videos</a>
             <a href={STUDIO_URL} className="ar-link">Studio</a>
