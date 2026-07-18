@@ -13,6 +13,9 @@
 // Collaborators are mocked so no real Gemini, SQLite, or log file is touched.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+// Real (unmocked) module — the honest kid-facing lines the route substitutes
+// when a whole-game rebuild happened (penguin-maze hardening, 2026-07-18).
+import { REBUILT_GAME_LINE, FRESH_GAME_LINE } from "@/lib/game-edit";
 
 // getAriantraSession() — toggled per test (SSO session).
 const authMock = vi.fn();
@@ -26,6 +29,10 @@ const replyStreamMock = vi.fn();
 // One-shot reply — used ONLY by the patch-fallback path (a failed edit-patch
 // falls back to a full regeneration, BUG-FIX-LOG class fix 2026-07-18).
 const replyMock = vi.fn();
+// Hunks-only retry when the model answered an edit turn with a full rewrite
+// (penguin-maze hardening, 2026-07-18): one bounded second chance to express
+// the change as a patch before the rewrite is accepted.
+const strictEditRetryMock = vi.fn();
 const extractArtifactMock = vi.fn((t: string): { text: string; artifactHtml?: string } => ({ text: t, artifactHtml: undefined }));
 vi.mock("@/lib/gemini", () => ({
   GeminiChatModel: class {
@@ -34,6 +41,9 @@ vi.mock("@/lib/gemini", () => ({
     }
     reply(...args: unknown[]) {
       return replyMock(...args);
+    }
+    strictEditRetry(...args: unknown[]) {
+      return strictEditRetryMock(...args);
     }
   },
   extractArtifact: (t: string) => extractArtifactMock(t),
@@ -163,6 +173,7 @@ beforeEach(() => {
   authMock.mockReset();
   replyStreamMock.mockReset();
   replyMock.mockReset();
+  strictEditRetryMock.mockReset();
   replyMock.mockResolvedValue({ text: "fallback" });
   extractArtifactMock.mockReset();
   extractArtifactMock.mockImplementation((t: string) => ({ text: t, artifactHtml: undefined }));
@@ -639,6 +650,44 @@ describe("POST /api/chat — patch-based feature edits", () => {
     expect(replyMock).not.toHaveBeenCalled(); // no fallback needed, patch applied clean
   });
 
+  // "Continue from here" (chat-rewind.ts): the client can name an EARLIER
+  // game message as the one to build on. This proves the wiring end to end —
+  // the later (regressed) game stays in `history` (nothing deleted from the
+  // chat), but the patch targets the pinned, earlier one.
+  it("activeGameMessageId pins the patch target to an EARLIER game even with a newer one in history", async () => {
+    const OLD_GOOD_GAME = '<!doctype html><html><body><div id="score">0</div><div>GOOD_FEATURE</div></body></html>';
+    const NEW_REGRESSED_GAME = "<!doctype html><html><body>BROKEN</body></html>";
+    const historyWithBothVersions = [
+      { id: "1", role: "child" as const, text: "make me a game", createdAt: 1 },
+      {
+        id: "2", role: "assistant" as const,
+        text: "Here!\n```html\n" + OLD_GOOD_GAME + "\n```",
+        artifactHtml: OLD_GOOD_GAME,
+        createdAt: 2,
+      },
+      { id: "3", role: "child" as const, text: "add sound", createdAt: 3 },
+      {
+        id: "4", role: "assistant" as const,
+        text: "Added!\n```html\n" + NEW_REGRESSED_GAME + "\n```",
+        artifactHtml: NEW_REGRESSED_GAME,
+        createdAt: 4,
+      },
+    ];
+    const patchReply = "Added a medic kit! 🎮\n<<<<<<< SEARCH\nGOOD_FEATURE\n=======\nMEDIC_KIT_FEATURE\n>>>>>>> REPLACE";
+    replyStreamMock.mockReturnValue(one(patchReply));
+
+    const res = await POST(makeReq({
+      message: "add a medic kit",
+      history: historyWithBothVersions,
+      activeGameMessageId: "2",
+    }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(done.artifactHtml).toBe(OLD_GOOD_GAME.replace("GOOD_FEATURE", "MEDIC_KIT_FEATURE"));
+    expect(replyMock).not.toHaveBeenCalled(); // patched clean against the pinned version — no fallback
+  });
+
   it("an off-topic reply (no patch, no full doc) passes through as ordinary chat — the game is untouched and no extra Gemini call is wasted", async () => {
     replyStreamMock.mockReturnValue(one("Pandas eat bamboo! 🐼"));
 
@@ -649,6 +698,45 @@ describe("POST /api/chat — patch-based feature edits", () => {
     expect(done.text).toBe("Pandas eat bamboo! 🐼");
     expect(done.artifactHtml).toBeFalsy(); // game untouched — no new artifact sent
     expect(replyMock).not.toHaveBeenCalled(); // key: no wasted full-regeneration call
+  });
+
+  // BUG-FIX-LOG 2026-07-18 follow-up ("multiple blocks and not working
+  // code"): a truncated/garbled patch attempt has NO complete SEARCH/REPLACE
+  // block for applyPatch() to find, so it fell into the SAME branch as
+  // genuine off-topic chat and got shown to the child as literal raw text
+  // (visible <<<<<<< markers, broken fragments). looksLikeAttemptedEdit
+  // must catch this and route it to the fallback regeneration instead.
+  it("a truncated/malformed patch attempt is NEVER shown raw — falls back to a full regeneration instead", async () => {
+    const truncatedReply = "Sure, adding that now!\n<<<<<<< SEARCH\nOLD_FEATURE\n";
+    replyStreamMock.mockReturnValue(one(truncatedReply));
+    replyMock.mockResolvedValue({ text: "Here you go!", artifactHtml: "<html>FALLBACK GAME</html>", wasFenced: true });
+
+    const res = await POST(makeReq({ message: "add a medic kit", history: historyWithGame }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(done.text).not.toContain("<<<<<<<"); // never leak raw patch markers to the chat bubble
+    expect(replyMock).toHaveBeenCalledTimes(1);
+    expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
+    expect(done.artifactHtml).toBe("<html>FALLBACK GAME</html>");
+  });
+
+  // Same class: applyPatch()'s "regeneration" fallback trusts ANY ```html
+  // fence as a full replacement — if the model ignored the patch contract
+  // and explained "here's the changed part" with a PARTIAL snippet, that
+  // fragment would silently become the entire game.
+  it("a partial snippet mistaken for a full document is rejected — falls back to a full regeneration instead of corrupting the game", async () => {
+    const partialSnippetReply = "Here's the updated part:\n```html\n<div>MEDIC_KIT_FEATURE</div>\n```";
+    replyStreamMock.mockReturnValue(one(partialSnippetReply));
+    replyMock.mockResolvedValue({ text: "Here you go!", artifactHtml: "<html>FALLBACK GAME</html>", wasFenced: true });
+
+    const res = await POST(makeReq({ message: "add a medic kit", history: historyWithGame }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(replyMock).toHaveBeenCalledTimes(1);
+    expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
+    expect(done.artifactHtml).toBe("<html>FALLBACK GAME</html>"); // never the bare <div> snippet
   });
 
   it("a genuinely attempted-but-mismatched patch falls back to ONE full-regeneration call — never a dead end", async () => {
@@ -663,6 +751,85 @@ describe("POST /api/chat — patch-based feature edits", () => {
     expect(replyMock).toHaveBeenCalledTimes(1);
     expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
     expect(done.artifactHtml).toBe("<html>FALLBACK GAME</html>");
+  });
+
+  // ---- Penguin-maze hardening (2026-07-18): strict retry, kill switch, honest messaging ----
+
+  const COMPLETE_REWRITE = '<!doctype html><html><body><div id="score">0</div><div>REWRITTEN_GAME</div></body></html>';
+
+  it("a full-rewrite reply on an edit turn triggers ONE hunks-only retry — a clean retry patch wins and the rewrite is discarded", async () => {
+    replyStreamMock.mockReturnValue(one("I made it 3D!\n```html\n" + COMPLETE_REWRITE + "\n```"));
+    strictEditRetryMock.mockResolvedValue({
+      text: "Added the 3D look! 🎮\n<<<<<<< SEARCH\nOLD_FEATURE\n=======\nTHREE_D_FEATURE\n>>>>>>> REPLACE",
+    });
+
+    const res = await POST(makeReq({ message: "make it 3D", history: historyWithGame }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(strictEditRetryMock).toHaveBeenCalledTimes(1);
+    expect(done.artifactHtml).toBe(CURRENT_GAME.replace("OLD_FEATURE", "THREE_D_FEATURE")); // patched, NOT the rewrite
+    expect(done.text).toBe("Added the 3D look! 🎮");
+    expect(replyMock).not.toHaveBeenCalled();
+  });
+
+  it("when the retry answers NEEDS_FULL_REBUILD the original rewrite is accepted — with the model's own prose, never raw code", async () => {
+    replyStreamMock.mockReturnValue(one("I made it 3D!\n```html\n" + COMPLETE_REWRITE + "\n```"));
+    strictEditRetryMock.mockResolvedValue({ text: "NEEDS_FULL_REBUILD" });
+
+    const res = await POST(makeReq({ message: "make it 3D", history: historyWithGame }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(done.artifactHtml).toBe(COMPLETE_REWRITE);
+    expect(done.text).toContain("I made it 3D!");
+    expect(done.text).not.toMatch(/```|<html/i);
+  });
+
+  it("a code-only rewrite accepted after a failed retry gets the HONEST rebuilt-game line, not a bare success claim", async () => {
+    replyStreamMock.mockReturnValue(one("```html\n" + COMPLETE_REWRITE + "\n```"));
+    strictEditRetryMock.mockRejectedValue(new Error("model unavailable"));
+
+    const res = await POST(makeReq({ message: "make it 3D", history: historyWithGame }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(done.artifactHtml).toBe(COMPLETE_REWRITE); // retry failure never dead-ends the turn
+    expect(done.text).toBe(REBUILT_GAME_LINE); // honest: a rebuild happened, invite bug reports
+  });
+
+  it("the fallback regeneration never shows the bare generic done-line either — substitutes the honest rebuilt-game line", async () => {
+    const badPatchReply = "Trying!\n<<<<<<< SEARCH\nNOT_IN_SOURCE\n=======\nNEW\n>>>>>>> REPLACE";
+    replyStreamMock.mockReturnValue(one(badPatchReply));
+    replyMock.mockResolvedValue({ text: FRESH_GAME_LINE, artifactHtml: "<html>FALLBACK GAME</html>", wasFenced: true });
+
+    const res = await POST(makeReq({ message: "add a medic kit", history: historyWithGame }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(done.artifactHtml).toBe("<html>FALLBACK GAME</html>");
+    expect(done.text).toBe(REBUILT_GAME_LINE);
+  });
+
+  // Kill switch (the user's guaranteed rollback): GAME_EDIT_PATCH=off restores
+  // exact pre-patch routing — the edit branch, retry, and fallback all vanish.
+  it("GAME_EDIT_PATCH=off restores pre-patch behavior: the stream's full rewrite is delivered as-is, no patch machinery runs", async () => {
+    process.env.GAME_EDIT_PATCH = "off";
+    try {
+      const rewriteReply = "New game!\n```html\n" + COMPLETE_REWRITE + "\n```";
+      replyStreamMock.mockReturnValue(one(rewriteReply));
+      extractArtifactMock.mockImplementation(() => ({ text: "New game!", artifactHtml: COMPLETE_REWRITE }));
+
+      const res = await POST(makeReq({ message: "add a medic kit", history: historyWithGame }));
+      const text = await res.text();
+      const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+      expect(done.artifactHtml).toBe(COMPLETE_REWRITE);
+      expect(replyMock).not.toHaveBeenCalled();
+      expect(strictEditRetryMock).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.GAME_EDIT_PATCH;
+    }
   });
 
   it("a fresh build with no game yet never touches the patch/fallback path", async () => {

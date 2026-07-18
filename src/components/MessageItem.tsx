@@ -21,6 +21,8 @@ interface MessageItemProps {
   onRestart: () => void;
   onRegenerate: () => void;
   onOpenArtifact?: () => void; // set when the message carries artifactHtml
+  onContinueFromHere?: () => void; // set when this earlier game message can become the pinned edit target
+  isPinned: boolean; // this message IS the current "Continue from here" target
 }
 
 export function MessageItem(props: MessageItemProps) {
@@ -52,12 +54,27 @@ export function MessageItem(props: MessageItemProps) {
     <div className="group">
       <Markdown>{m.text}</Markdown>
       {m.artifactHtml && props.onOpenArtifact && (
-        <button
-          onClick={props.onOpenArtifact}
-          className="mt-2 flex items-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-2.5 text-sm font-medium text-neutral-800 hover:border-neutral-300 hover:bg-neutral-100"
-        >
-          🎮 Open game
-        </button>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            onClick={props.onOpenArtifact}
+            className="flex items-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-2.5 text-sm font-medium text-neutral-800 hover:border-neutral-300 hover:bg-neutral-100"
+          >
+            🎮 Open game
+          </button>
+          {props.onContinueFromHere && (
+            <button
+              onClick={props.onContinueFromHere}
+              className="flex items-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-2.5 text-sm font-medium text-neutral-800 hover:border-neutral-300 hover:bg-neutral-100"
+            >
+              ⏪ Continue from here
+            </button>
+          )}
+          {props.isPinned && (
+            <span className="flex items-center gap-1 rounded-2xl bg-warn-500/10 px-3 py-1.5 text-sm font-medium text-warn-600">
+              🔧 Building from this version
+            </span>
+          )}
+        </div>
       )}
       {m.text !== "" && (
         <div className="mt-1 flex items-center gap-1 text-neutral-400">

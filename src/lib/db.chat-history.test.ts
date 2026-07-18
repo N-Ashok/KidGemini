@@ -77,4 +77,27 @@ describe("SqliteChatHistoryStore", () => {
     store.upsert("user:t@x.com", convo("t-old"), 3000);
     expect(store.list("user:t@x.com", 10)[0]!.id).toBe("t-old");
   });
+
+  it("H.7 claim reassigns every row from a guest identity to the account (guest→account merge gap)", () => {
+    store.upsert("guest:claim1", convo("cl1"), 1000);
+    store.upsert("guest:claim1", convo("cl2"), 2000);
+    const n = store.claim("guest:claim1", "user:claim@x.com");
+    expect(n).toBe(2);
+    expect(store.list("guest:claim1", 10)).toEqual([]);
+    expect(store.list("user:claim@x.com", 10).map((s) => s.id).sort()).toEqual(["cl1", "cl2"]);
+  });
+
+  it("H.8 claim leaves the account's own pre-existing chats untouched", () => {
+    store.upsert("user:coll@x.com", convo("acct1", "Account's own"), 1000);
+    store.upsert("guest:claim2", convo("g1"), 2000);
+    const n = store.claim("guest:claim2", "user:coll@x.com");
+    expect(n).toBe(1); // only the guest row moved
+    expect(store.get("user:coll@x.com", "acct1")!.title).toBe("Account's own");
+    expect(store.list("user:coll@x.com", 10).map((s) => s.id).sort()).toEqual(["acct1", "g1"]);
+  });
+
+  it("H.9 claim is a no-op when there is nothing to claim, or from === to", () => {
+    expect(store.claim("guest:never-existed", "user:new@x.com")).toBe(0);
+    expect(store.claim("user:new@x.com", "user:new@x.com")).toBe(0);
+  });
 });

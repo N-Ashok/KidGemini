@@ -14,6 +14,10 @@ import { useTextToSpeech } from "./useTextToSpeech";
 import type { ChatMessage, Conversation } from "@/types/chat.types";
 import type { IdeaRecord } from "@/types/idea-bag.types";
 import { loadChats, saveChats } from "@/lib/chat-store";
+import { canContinueFromHere } from "@/lib/chat-rewind";
+// Never render raw SEARCH/REPLACE hunks mid-stream (BUG-FIX-LOG 2026-07-18
+// "not kid friendly") — every partial-text render goes through this.
+import { streamingDisplayText } from "@/lib/game-edit";
 import {
   addIdea,
   baggedFor,
@@ -517,6 +521,10 @@ export function ChatPanelContainer() {
     // Fired ONLY on the `done` event — the Idea Bag empties through this, so a
     // dropped/blocked/errored stream can never eat a kid's ideas.
     onSuccess?: () => void,
+    // "Continue from here" (chat-rewind.ts): captured once at send time so a
+    // silent auto-retry of THIS turn still targets the same pinned version,
+    // even though the conversation's pin is cleared right after sending.
+    activeGameMessageId?: string,
   ) {
     const setReply = (t: string, artifactHtml?: string) =>
       patchActive((c) => ({
@@ -556,7 +564,13 @@ export function ChatPanelContainer() {
         headers: { "Content-Type": "application/json" },
         // replyId: the server keeps this turn's finished result under it, so a
         // dropped/stalled stream can be RESUMED (polled) instead of re-generated.
-        body: JSON.stringify({ message: text, history, replyId, ...(image ? { image } : {}) }),
+        body: JSON.stringify({
+          message: text,
+          history,
+          replyId,
+          ...(image ? { image } : {}),
+          ...(activeGameMessageId ? { activeGameMessageId } : {}),
+        }),
         signal: controller.signal,
       });
       // Fail loud, never hang: a non-streaming response (401 auth gate, 4xx/5xx, or a body-less
@@ -607,7 +621,7 @@ export function ChatPanelContainer() {
           } else if (ev.type === "delta") {
             if (!firstTokenAt) { firstTokenAt = Date.now(); console.log(`[chat] first token @${firstTokenAt - startedAt}ms`); }
             acc += ev.text ?? "";
-            setReply(acc);
+            setReply(streamingDisplayText(acc));
           } else if (ev.type === "restart") {
             // A model died mid-answer and a fallback is answering FRESH
             // (2026-07-13): the partial code was only a "working" signal —
@@ -661,7 +675,7 @@ export function ChatPanelContainer() {
     } catch (err) {
       const aborted = (err as Error)?.name === "AbortError";
       if (manualStopRef.current) {
-        setReply(acc || "⏹ Stopped."); // user pressed Stop — keep whatever streamed
+        setReply(streamingDisplayText(acc) || "⏹ Stopped."); // user pressed Stop — keep whatever streamed
         console.warn(`[chat] stopped by user after ${Date.now() - startedAt}ms`);
       } else if (finalized) {
         console.warn(`[chat] post-finalize stream drop (ignored) after ${Date.now() - startedAt}ms`);
@@ -670,7 +684,7 @@ export function ChatPanelContainer() {
         // recovery work on the kid, and screen-lock drops happen constantly.
         willRetry = true;
         console.warn(`[chat] ↻ stream ${aborted ? "stalled" : "dropped"} after ${Date.now() - startedAt}ms — auto-retry ${attempt + 1}`);
-        setReply(`${acc ? `${acc}\n\n---\n` : ""}📶 Reconnecting… hang tight!`);
+        setReply(`${acc ? `${streamingDisplayText(acc)}\n\n---\n` : ""}📶 Reconnecting… hang tight!`);
       } else {
         console.error(`[chat] ✖ ${aborted ? "STALLED (no tokens 30s)" : "stream error"} after ${Date.now() - startedAt}ms (retries exhausted)`, err);
         // NEVER discard what already streamed (BUG-FIX-LOG 2026-07-07: phones
@@ -680,7 +694,7 @@ export function ChatPanelContainer() {
         const note = aborted
           ? "\n\n---\n😅 That took too long — the model is busy. Ask me again!"
           : "\n\n---\n📶 The connection keeps hiccuping — I tried a few times. Ask me again and I'll redo it!";
-        setReply(acc ? acc + note : note.replace(/^\n+---\n/, ""));
+        setReply(acc ? streamingDisplayText(acc) + note : note.replace(/^\n+---\n/, ""));
       }
     } finally {
       clearTimeout(stall);
@@ -697,7 +711,7 @@ export function ChatPanelContainer() {
       await whenVisible(); // screen locked? wait for the kid to come back first
       await new Promise((r) => setTimeout(r, 800));
       if (manualStopRef.current) {
-        setReply(acc || "⏹ Stopped.");
+        setReply(streamingDisplayText(acc) || "⏹ Stopped.");
         setBusy(false);
         return;
       }
@@ -707,7 +721,7 @@ export function ChatPanelContainer() {
       // patience). Only a genuine server-side failure re-generates (paid).
       const resumed = await pollTurnResult(replyId);
       if (manualStopRef.current) {
-        setReply(acc || "⏹ Stopped.");
+        setReply(streamingDisplayText(acc) || "⏹ Stopped.");
         setBusy(false);
         return;
       }
@@ -720,7 +734,7 @@ export function ChatPanelContainer() {
         onSuccess?.();
         return;
       }
-      await runStream(text, history, replyId, attempt + 1, image, onSuccess);
+      await runStream(text, history, replyId, attempt + 1, image, onSuccess, activeGameMessageId);
     }
   }
 
@@ -730,6 +744,10 @@ export function ChatPanelContainer() {
     opts?: { fromIdeaBag?: boolean; onSuccess?: (childId: string) => void },
   ) {
     const history = active.messages;
+    // "Continue from here" pin (chat-rewind.ts): captured now, sent with THIS
+    // turn only, then cleared below — once this reply lands it's the newest
+    // message again, so ordinary "last game wins" behavior resumes on its own.
+    const activeGameMessageId = active.activeGameMessageId;
     const replyId = crypto.randomUUID();
     const displayText = text || (attachment ? "" : "");
     // What the model receives: text files fold their contents into the prompt;
@@ -753,6 +771,7 @@ export function ChatPanelContainer() {
     patchActive((c) => ({
       ...c,
       title: c.title === "New chat" ? (text || attachment?.name || "New chat").slice(0, 40) : c.title,
+      activeGameMessageId: undefined, // consumed by this turn — see runStream below
       messages: [
         ...c.messages,
         {
@@ -763,10 +782,17 @@ export function ChatPanelContainer() {
           ...(opts?.fromIdeaBag ? { fromIdeaBag: true } : {}),
           createdAt: Date.now(),
         },
-        { id: replyId, role: "assistant", text: "", createdAt: Date.now() },
+        {
+          id: replyId, role: "assistant", text: "", createdAt: Date.now(),
+          ...(activeGameMessageId ? { basedOnMessageId: activeGameMessageId } : {}),
+        },
       ],
     }));
-    await runStream(apiMessage, history, replyId, 0, image, opts?.onSuccess && (() => opts.onSuccess!(childId)));
+    await runStream(
+      apiMessage, history, replyId, 0, image,
+      opts?.onSuccess && (() => opts.onSuccess!(childId)),
+      activeGameMessageId,
+    );
   }
 
   // ✨ Make my game better! — the whole bag becomes ONE visible chat message
@@ -803,6 +829,11 @@ export function ChatPanelContainer() {
     const userText = msgs[idx]!.text;
     const history = msgs.slice(0, idx);
     const replyId = crypto.randomUUID();
+    // The reply being redone may itself have been generated against a
+    // "Continue from here" pin (chat-rewind.ts) rather than whatever's newest
+    // in `history` — carry it forward so the redo targets the SAME version,
+    // not whatever the sliced history now considers newest.
+    const basedOnMessageId = msgs[idx + 1]?.basedOnMessageId;
     // Keep the old game on screen and playable until the redo lands
     // (PRD-PREVIEW-PANE §2 — regenerate used to blank the panel here).
     setArtifact((a) => nextArtifact({ type: "regenerate" }, a));
@@ -811,10 +842,27 @@ export function ChatPanelContainer() {
       ...c,
       messages: [
         ...c.messages.slice(0, idx + 1),
-        { id: replyId, role: "assistant", text: "", createdAt: Date.now() },
+        {
+          id: replyId, role: "assistant", text: "", createdAt: Date.now(),
+          ...(basedOnMessageId ? { basedOnMessageId } : {}),
+        },
       ],
     }));
-    await runStream(userText, history, replyId, 0, sessionImagesRef.current.get(activeId));
+    await runStream(userText, history, replyId, 0, sessionImagesRef.current.get(activeId), undefined, basedOnMessageId);
+  }
+
+  // "Continue from here" (an earlier game was better): pins this message as
+  // the one the NEXT edit turn builds on (Conversation.activeGameMessageId,
+  // consumed and cleared by handleSend) instead of whatever's newest — see
+  // chat-rewind.ts. Non-destructive: nothing is deleted or reordered, the
+  // regressed later messages stay right where they are in the thread.
+  function handleContinueFromHere(messageId: string) {
+    if (busy) return;
+    const target = active.messages.find((m) => m.id === messageId);
+    if (!target) return;
+    tts.stop();
+    setArtifact(target.artifactHtml ?? null);
+    patchActive((c) => ({ ...c, activeGameMessageId: messageId }));
   }
 
   // Guests may chat up to the free-token trial (server-enforced); the sign-in
@@ -875,6 +923,12 @@ export function ChatPanelContainer() {
                 onRestart={tts.restart}
                 onRegenerate={handleRegenerate}
                 onOpenArtifact={m.artifactHtml ? () => setArtifact(m.artifactHtml!) : undefined}
+                onContinueFromHere={
+                  canContinueFromHere(active.messages, i, active.activeGameMessageId)
+                    ? () => handleContinueFromHere(m.id)
+                    : undefined
+                }
+                isPinned={active.activeGameMessageId === m.id}
               />
               </div>
             ))}
@@ -901,6 +955,17 @@ export function ChatPanelContainer() {
             )}
           </div>
         </div>
+        {active.activeGameMessageId && (
+          <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 px-4 pb-2 text-sm text-warn-600">
+            <span>🔧 Your next message will build on the earlier version above, not the newest one.</span>
+            <button
+              onClick={() => patchActive((c) => ({ ...c, activeGameMessageId: undefined }))}
+              className="shrink-0 font-medium underline hover:text-warn-500"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
         <Composer disabled={busy} busy={busy} onSend={handleSend} onStop={handleStop} />
       </main>
 

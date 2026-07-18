@@ -45,6 +45,277 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-18 — Every edit turn failed `search_not_found`: the model was shown an OLD game version while applyPatch targeted the newest
+
+- **Symptom (what the user saw):** live UAT after the strict-retry hardening — every
+  single edit request logged `patch failed (search_not_found) — falling back to full
+  regeneration`; one regeneration then rebuilt the current 3D maze as a 2D game with
+  broken controls (built from a stale version).
+- **Surface area:** `src/lib/history-trim.ts` (`hasGame`, `trimHistory`); interacts
+  with `src/app/api/chat/route.ts`'s patch branch and `src/lib/game-edit.ts`.
+- **Root cause:** two "current game" definitions diverged. `applyPatch` targets
+  `currentGameHtml()` — the newest message's `artifactHtml` FIELD. But the model's
+  view of the conversation (`trimHistory`) located "the current game" by scanning
+  message TEXT for a code fence. A patch/fallback turn stores prose-only text (the
+  game travels only in the field), so from the second edit onward the model saw an
+  older version's code as current, copied its lines into SEARCH blocks, and the patch
+  could never match the true source — self-perpetuating, since every failed turn
+  stored another prose-only message. This also retro-explains most of the penguin-maze
+  session's fallback loop.
+- **Fix:** `hasGame` now checks the `artifactHtml` field first (same signal
+  `game-edit.ts`'s `lastGameIndex` uses; text scan kept for legacy messages), and new
+  `withInlineGame()` re-inlines the current game's source from the field into the text
+  the model sees — so the lines the model copies are byte-identical to the lines
+  `applyPatch` searches.
+- **Result (verified):** 5 new `history-trim.test.ts` cases (prose-only game messages
+  found, re-inlined, still stripped when stale, pin honored, never double-inlined) —
+  failed before, pass after; suite 791 green.
+- **Impact:** minimal patches can now actually apply on multi-edit conversations; a
+  regeneration fallback builds from the TRUE current version instead of a stale one.
+- **Prevention (class):** "two modules answering the same question ('which version is
+  current?') from different signals WILL diverge — derive both from one source." New
+  route debug line logs the patch-target source + `inSource=` check of the model's
+  first SEARCH block, which makes any recurrence obvious from the log alone.
+- **Related:** penguin-maze entry below; `route.ts` `logSearchMiss` diagnostics.
+
+### 2026-07-18 — Raw SEARCH/REPLACE hunks streamed live into the chat bubble ("not kid friendly")
+
+- **Symptom (what the user saw):** screenshot from live UAT — while an edit reply was
+  generating, the bubble showed `<<<<<<< SEARCH window.addEventListener('resize'…`
+  plus raw code to the child. The server-side prose split (`editReplyProse`) only
+  runs when the stream finishes, so every partial render leaked the raw reply.
+- **Surface area:** `src/components/ChatPanel.container.tsx` (all partial-text
+  renders), `src/lib/game-edit.ts`.
+- **Root cause:** the delta handler set the raw accumulated stream text straight into
+  the bubble (`setReply(acc)`), and the stop/retry/error paths re-showed `acc` raw too.
+- **Fix:** new pure `streamingDisplayText()` (game-edit.ts) — cuts at the first run of
+  four-or-more `<` (catches a marker still arriving at the stream tail) and shows the
+  prose plus a friendly `EDIT_STREAM_WORKING_LINE`; applied at every `setReply` site
+  that renders partial text (delta, stop, reconnect, error-keep-partial).
+- **Result (verified):** 4 new `game-edit.test.ts` cases — failed before, pass after.
+- **Impact:** a child never sees patch markers or hunk code mid-stream; finished
+  messages were already clean.
+- **Prevention (class):** "server-side output cleaning must have a client-side twin
+  for STREAMING partials — anything rendered mid-stream needs its own sanitizer."
+- **Related:** penguin-maze entry below (same feature); `MessageItem` markdown code
+  cards (fenced full-game code during fresh builds) are unchanged, deliberate.
+
+### 2026-07-18 — Patch-based edits almost never engaged: 17 of 18 real edit turns silently rewrote the whole game ("penguin maze" session)
+
+- **Symptom (what the user saw):** live UAT, the "Make me a maze game with penguins 🐧"
+  chat — 18 edit turns over 76 minutes without landing a single change: controls
+  flipped, colors changed uninvited, the road became invisible, four turns delivered a
+  blank game, four replies were a bare "Here's your game! 🎮", and the child pasted the
+  identical request three times because each reply claimed success without the change
+  appearing. The user gave up after 45+ minutes on what was one camera/viewport issue.
+- **Surface area:** `src/app/api/chat/route.ts` (edit branch), `src/lib/game-edit.ts`,
+  `src/lib/gemini.ts` (`configFor`, `extractArtifact`).
+- **Root cause:** `applyPatch()`'s `mode: "regeneration"` loophole. When the model
+  ignored the SEARCH/REPLACE contract and emitted a full document, the route accepted
+  it as a successful "edit" (guarded only by `looksLikeCompleteDocument`). Measured
+  against the real conversation's stored artifacts: only 1 of 18 turns produced a true
+  minimal patch (88% line carry-over); the other 17 rewrote ~half the file each
+  (31–56% carry-over) — the exact regression machine the feature was built to prevent,
+  running with a success log line. Compounding it: rebuilds shipped with bare success
+  prose implying a targeted change, and an identical re-sent request (the clearest
+  "your last reply didn't work" signal) got the same flow and the same success claim.
+- **Fix:**
+  - Strict retry: a full-document reply on an edit turn no longer counts as silent
+    success — ONE hunks-only retry (`GeminiChatModel.strictEditRetry`, gemini.ts;
+    `GAME_EDIT_STRICT_RETRY_SECTION` with a `NEEDS_FULL_REBUILD` honest-out sentinel,
+    game-edit.ts) against the same source; a clean retry patch wins, anything else
+    accepts the original rewrite (floor unchanged: "no worse than before").
+  - Honest messaging: accepted rewrites and the `forceFullRegen` fallback never show a
+    bare success line — `regenReplyProse()`/`REBUILT_GAME_LINE` say a whole-game
+    rebuild happened and invite the child to report anything that broke.
+  - Repeat escalation: `isRepeatedRequest()` + `REPEATED_REQUEST_SECTION` tell the
+    model its previous reply did NOT work and to change approach, not re-claim success.
+  - Kill switch: `GAME_EDIT_PATCH=off` (checked in `patchEditsEnabled()`, gated inside
+    `isGameEditTurn()` so one choke point reverts both call sites) restores exact
+    pre-patch behavior — the user's guaranteed rollback, documented in `.env.example`.
+- **Result (verified):** 12 new tests fail-before/pass-after (`game-edit.test.ts` 34
+  total, `route.test.ts` "patch-based feature edits" 12 total); full suite 782 passing,
+  typecheck clean. Session evidence from the local SQLite conversation record
+  (artifact-hash + line-carry-over analysis per turn).
+- **Impact:** edit turns can no longer silently regress untouched parts of a game
+  without at least one enforced patch attempt; a rebuild is always labeled as one; a
+  frustrated repeat changes the model's strategy instead of repeating it; and the whole
+  feature can be switched off in one env flip if it misbehaves.
+- **Prevention (class):** "a fallback acceptance path can quietly become the MAIN path
+  — measure how often each branch actually fires against real sessions, and never let
+  a fallback report itself as the success case." The `✓ edit patch` vs `edit
+  regeneration accepted` vs `strict retry` log lines now make the split observable.
+- **Related:** the two 2026-07-18 entries below (same feature, same day); deferred
+  headless blank-canvas check + screenshot feedback loop → platform `TECH_DEBT.md`
+  #64/#65 (4 of the 18 turns shipped a game that rendered nothing — not catchable
+  server-side without a browser).
+
+### 2026-07-18 — The idea mic button (and Idea Bag) was invisible on every ordinary game preview
+
+- **Symptom (what the user saw):** live UAT (local `next dev`, Chrome) — "when
+  the preview loads, the idea mic button is not visible." Confirmed: never
+  appears, however long you wait, in a browser with full Web Speech support.
+- **Surface area:** `src/components/ArtifactFrame.tsx` (the panel-size
+  `ResizeObserver` and the Idea Button/Bag overlay sizing that reads it).
+- **Root cause:** the overlay hosting `IdeaMicTab`/`IdeaBag` is absolutely
+  positioned and sized from JS-measured `panelSize` state whenever no device
+  frame (Tablet/Phone/Laptop) is active — `width: previewFramed ?
+  previewOriented.width! : panelSize.w` (same for height). But the
+  `ResizeObserver` that populates `panelSize` explicitly skipped measuring
+  whenever `device === "fit"` (comment: "Track the panel's size while a
+  device frame is shown") — and `"fit"` is BOTH `useState`'s initial value
+  AND what a separate effect resets `device` to on every new game ("new game
+  → verify at panel size"). So on the ordinary, default preview (no frame
+  selected — the common case, not an edge case), `panelSize` never left its
+  initial `{ w: 0, h: 0 }`, and the overlay rendered at `width:0; height:0` —
+  present in the DOM, permanently invisible. The iframe itself was unaffected
+  (sized via CSS `h-full w-full`, not `panelSize`), so the game always
+  rendered fine while the mic/bag silently vanished.
+- **Investigation note:** first ruled out two more likely-looking causes
+  before finding this — (1) the unrelated, uncommitted "Continue from here"
+  pin feature (`chat-rewind.ts`) touches only the chat message list, not
+  `ArtifactFrame`/z-index/layout at all; (2) `isSupported` (Web Speech API
+  detection) was confirmed correct and browser-standard. Asked the user two
+  targeted questions (browser? does it ever appear after a delay?) — "Chrome,
+  never" ruled out both hypotheses and pointed at layout/sizing instead.
+- **Fix:** `src/components/ArtifactFrame.tsx` — removed the `device ===
+  "fit"` early-return from the `panelSize` `ResizeObserver` effect; it now
+  measures the panel in every device mode, not only while a frame is shown.
+- **Result (verified):** full suite 764/764 green (unaffected — this
+  component has no unit-test harness, consistent with several other complex
+  UI pieces in `docs/REGRESSION-TEST-CATALOG.md`; verification here is via
+  the user's own live `next dev` session with hot reload). `npx tsc --noEmit`
+  clean.
+- **Impact:** the Idea Button and Idea Bag are visible again on the default
+  (real-device/"fit") preview — the mode virtually every kid sees, since a
+  Tablet/Phone/Laptop frame is an opt-in toggle, not the default.
+- **Prevention — name the class:** *a performance/scope guard on a measurement
+  effect outliving the assumption that justified it* — the `device ===
+  "fit"` skip was written when (presumably) `panelSize` was ONLY read by
+  framed-mode code; a later change (the overlay's fallback sizing) started
+  reading the SAME state in the unframed case too, without revisiting whether
+  the skip still made sense. When a piece of state gains a new reader, check
+  every guard on what populates it.
+- **Related:** none prior (first bug logged against `ArtifactFrame.tsx`'s
+  panel-size measurement).
+
+### 2026-07-18 — A malformed/partial edit reply could leak raw patch markers into the chat or silently replace the whole game with a fragment
+
+- **Symptom (what the user saw):** live UAT right after the patch-based
+  feature-edit deploy — "it build poor quality game. the chat window is not
+  user friendly. multiple blocks and not working code."
+- **Surface area:** `src/app/api/chat/route.ts` (the edit-turn branch added
+  for patch-based feature edits), `src/lib/game-edit.ts`.
+- **Root cause:** the edit-turn branch treated `applyPatch()`'s `ok:false,
+  reason:"no_patch_in_reply"` as ALWAYS meaning "the model just answered
+  off-topic, safe to show as plain chat" — but that's also exactly what
+  happens when the model attempts an edit and the attempt comes out
+  malformed: a truncated/incomplete `<<<<<<< SEARCH` block with no closing
+  `REPLACE`, for instance, has no COMPLETE match for `applyPatch`'s regex, so
+  it falls into that same "no patch found" bucket, and the raw
+  literal markers/fragments got dumped straight into the chat bubble
+  (unfenced — CommonMark then renders the indentation as several stray
+  "code block" widgets, the reported "multiple blocks"). Separately,
+  `applyPatch`'s "regeneration" fallback mode (meant to tolerate a model that
+  ignores the patch instruction and returns a full replacement file) trusts
+  ANY ` ```html ` fence as if it were that full file — if the model instead
+  wrote an explanatory "here's the changed part" with a PARTIAL snippet
+  fenced the same way, that fragment was accepted as `ok:true,
+  mode:"regeneration"` and would silently become the ENTIRE game
+  ("not working code" — a bare fragment instead of a playable page).
+- **Regression test FIRST:** `src/lib/game-edit.test.ts` (new
+  `looksLikeAttemptedEdit`/`looksLikeCompleteDocument` describe blocks, 7
+  tests) and `src/app/api/chat/route.test.ts` (2 new cases: a truncated patch
+  attempt must never leak `<<<<<<<` into `done.text`; a partial snippet must
+  never become `done.artifactHtml`) — both reproduced against the pre-fix
+  code (raw markers visible in the chat text; the bare snippet accepted as
+  the new game) before the fix, passed after.
+- **Fix:** `src/lib/game-edit.ts` — two new pure guards:
+  `looksLikeAttemptedEdit()` (patch markers, a code fence, or raw HTML/script
+  tags anywhere in the reply — tells a genuinely off-topic answer apart from
+  a mangled edit attempt) and `looksLikeCompleteDocument()` (requires both an
+  opening and closing `<html>` tag). `src/app/api/chat/route.ts`'s edit
+  branch now only trusts a `mode:"regeneration"` result when
+  `looksLikeCompleteDocument` passes, and only takes the "off-topic chat"
+  passthrough when `no_patch_in_reply` AND `!looksLikeAttemptedEdit(full)` —
+  anything else (a malformed attempt, or an incomplete "regeneration") falls
+  to the SAME full-regeneration safety net already built for a clean-but-
+  mismatched patch, so a bad reply is retried once rather than ever shown
+  raw or silently corrupting the game.
+- **Result (verified):** full suite 764/764 green (up from 755);
+  `npx tsc --noEmit` clean.
+- **Impact:** an edit turn can no longer leak literal `<<<<<<< SEARCH`-style
+  text into the chat, and can no longer replace a whole game with a partial
+  snippet — both degrade to the existing full-regeneration fallback instead,
+  same floor as before patch-based editing shipped.
+- **Prevention — name the class:** *a "no signal found" branch conflating two
+  different causes* — `no_patch_in_reply` was treated as one outcome
+  ("nothing to do here") when it actually covers two: genuinely nothing
+  attempted, and something attempted but too broken to parse. Whenever a
+  parser's "not found" result feeds a routing decision, check whether
+  "not found because never attempted" and "not found because malformed" need
+  different handling before assuming they're the same case.
+- **Related:** 2026-07-18 "Patch-based feature edits" (the entry that
+  introduced this branch); 2026-07-18 "Patch-mismatch fallback ... dead-ended
+  on a bad/unavailable model" (a different bug in the same feature's fallback
+  path, already fixed).
+
+### 2026-07-18 — Patch-mismatch fallback and self-healing repair dead-ended on a bad/unavailable model, even though the main answer recovered fine
+
+- **Symptom (what the user saw):** live UAT of the new "Continue from here" pin
+  feature (chat-rewind.ts) — the pinned edit's first turn eventually produced a
+  game after ~30s (slow but worked), but the self-heal that followed failed
+  silently, and a second edit attempt died outright with **"Oops! Something
+  went wrong. Let's try again."** with no game and no way to recover short of
+  starting a brand-new build. Not actually a bug in the pin feature — the log
+  showed `edit=true` and the SEARCH/REPLACE mechanism engaging correctly
+  against the pinned version both times.
+- **Surface area:** `src/lib/gemini.ts` (`GeminiChatModel.reply()`, `.repair()`).
+- **Root cause:** `GEMINI_CHAT_MODEL` was misconfigured (`emini-3-flash-preview`
+  — missing the leading "g"), so every call to the primary model 404'd
+  (`models/emini-3-flash-preview is not found`). `replyStream()` (the main
+  streamed answer) has a 4-deep fallback chain (`PRD-MODEL-FALLBACK`) and
+  recovered on its own by walking to `gemini-2.5-flash` — which is why the
+  first turn eventually worked. But `reply()` (the "patch didn't cleanly
+  match → do one full regeneration" safety net used by
+  `api/chat/route.ts`'s patch-fallback path) and `repair()` (self-healing
+  preview, PRD §7) both called `this.model` directly with **no fallback chain
+  at all** — a leftover gap from when the patch-fallback path was added
+  (2026-07-18, patch-based feature edits), which never gave `reply()` the
+  same resilience `replyStream()` already had. So the exact moment either
+  safety net was needed (a patch not matching — a normal, expected,
+  occasional occurrence — or a generated game failing to load), it hit the
+  same 404 with nothing to catch it.
+- **Fix:** extracted `oneShotWithFallback()` on `GeminiChatModel` — the same
+  chain-walk policy `replyStream()` uses (primary keeps its own retry count,
+  each fallback gets ONE attempt, `shouldTryNextModel` decides whether a
+  failure walks the chain or throws immediately) — and routed both `reply()`
+  and `repair()` through it instead of calling `this.model` directly
+  (`src/lib/gemini.ts`).
+- **Result (verified):** new `src/lib/gemini.oneshot-fallback.test.ts` (5
+  tests) reproduces the live incident's exact error string and confirms both
+  methods now fall back correctly while a genuine non-transient error (400/403)
+  still throws immediately, no fallback call burned. Confirmed the tests
+  actually pin the bug: `git stash`-ing just `gemini.ts` back to the pre-fix
+  version and re-running failed 3 of the 5 new tests with the exact same "chat
+  generation failed: 404 NOT_FOUND" / "repair generation failed: 404
+  NOT_FOUND" errors from the live log. Full suite 755/755 green;
+  `npx tsc --noEmit` clean.
+- **Impact:** a single bad/retired/temporarily-unavailable primary model id
+  (misconfiguration OR a genuine transient Google-side outage) can no longer
+  dead-end an edit turn or a self-heal — both now recover the same way the
+  main streamed answer already does. No behavior change on the happy path.
+- **Prevention — name the class:** *inconsistent resilience across sibling
+  code paths* — a fallback/retry mechanism added to ONE entry point
+  (`replyStream()`, 2026-07-11) silently didn't cover a SECOND entry point
+  added later (`reply()`'s patch-fallback, 2026-07-18) that shares the same
+  failure modes. When adding a new one-shot model call, route it through
+  `oneShotWithFallback()` rather than calling `this.model` directly.
+- **Related:** 2026-07-18 "Patch-based feature edits" (the entry that added
+  `reply({forceFullRegen:true})` without this resilience);
+  `docs/PRD-MODEL-FALLBACK.md`; chat-rewind.ts "Continue from here" (the
+  feature under test when this surfaced — itself unaffected).
+
 ### 2026-07-18 — "medic kit" (and any two innocent words colliding across a space) hard-blocked as profanity
 
 - **Symptom (what the user saw):** repeatedly rephrasing a game-feature request — "enemy can pick

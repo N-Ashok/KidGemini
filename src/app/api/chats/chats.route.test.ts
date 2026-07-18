@@ -96,6 +96,40 @@ describe("GET /api/chats — paginated index", () => {
   });
 });
 
+describe("GET /api/chats — guest→account claim on login", () => {
+  it("C.8 signing in while still holding the guest cookie claims the guest's chats into the account", async () => {
+    // Chatted as a guest first — chats land under the guest cookie's identity.
+    await onePUT(makeReq({ cookie: "guest:merge1", body: { convo: convo("mgc1") } }), { params: { id: "mgc1" } });
+    await onePUT(makeReq({ cookie: "guest:merge1", body: { convo: convo("mgc2") } }), { params: { id: "mgc2" } });
+
+    // Same device, now signed in — the browser still sends the (httpOnly) guest cookie
+    // alongside the fresh SSO session, same as a real post-login request.
+    authMock.mockResolvedValue({ userId: "user:merge@x.com" });
+    const list = await (await listGET(makeReq({ cookie: "guest:merge1" }))).json();
+
+    expect(list.chats.map((c: { id: string }) => c.id).sort()).toEqual(["mgc1", "mgc2"]);
+    // And the guest identity itself is left with nothing — fully migrated, not copied.
+    // (Force identity resolution back to guest-cookie-only, as it would be for
+    // any request the platform's SSO session cookie never reaches.)
+    authMock.mockResolvedValue(null);
+    expect((await oneGET(makeReq({ cookie: "guest:merge1" }), { params: { id: "mgc1" } })).status).toBe(404);
+  });
+
+  it("C.9 a guest-only request (no session) never claims anything", async () => {
+    await onePUT(makeReq({ cookie: "guest:onlyg", body: { convo: convo("og1") } }), { params: { id: "og1" } });
+    const list = await (await listGET(makeReq({ cookie: "guest:onlyg" }))).json();
+    expect(list.chats.map((c: { id: string }) => c.id)).toEqual(["og1"]);
+  });
+
+  it("C.10 claiming twice (e.g. a second tab) is idempotent — no error, no duplicates", async () => {
+    await onePUT(makeReq({ cookie: "guest:merge2", body: { convo: convo("m2a") } }), { params: { id: "m2a" } });
+    authMock.mockResolvedValue({ userId: "user:merge2@x.com" });
+    await listGET(makeReq({ cookie: "guest:merge2" }));
+    const list = await (await listGET(makeReq({ cookie: "guest:merge2" }))).json();
+    expect(list.chats.map((c: { id: string }) => c.id)).toEqual(["m2a"]);
+  });
+});
+
 describe("POST /api/chats — device migration", () => {
   it("C.7 bulk-uploads a device's chats, skipping malformed rows, idempotently", async () => {
     authMock.mockResolvedValue({ userId: "user:mig@x.com" });

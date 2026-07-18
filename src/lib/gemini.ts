@@ -9,7 +9,10 @@ import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection, type Pro
 import { catalogGates, type CatalogGates } from "./assets/catalog-gate";
 import { multiplayerGate } from "./multiplayer-gate";
 import { MULTIPLAYER_PROMPT_SECTION } from "./multiplayer-prompt";
-import { isGameEditTurn, GAME_EDIT_PROMPT_SECTION } from "./game-edit";
+import {
+  isGameEditTurn, isRepeatedRequest, GAME_EDIT_PROMPT_SECTION,
+  GAME_EDIT_STRICT_RETRY_SECTION, REPEATED_REQUEST_SECTION, FRESH_GAME_LINE,
+} from "./game-edit";
 import { fallbackChain, isModelGone, shouldTryNextModel } from "./model-fallback";
 import { withRetry, withTimeout } from "./retry";
 
@@ -134,12 +137,14 @@ export function buildTurnSystemInstruction(
   context?: PromptTurnContext,
   multiplayer = true,
   isEdit = false,
+  repeated = false,
 ): string {
   const sections = [
     ...(gates.three ? [THREE_PROMPT_SECTION, modelsPromptSection(undefined, context)] : []),
     ...(gates.audio ? [audioPromptSection()] : []),
     ...(multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),
     ...(isEdit ? [GAME_EDIT_PROMPT_SECTION] : []),
+    ...(repeated ? [REPEATED_REQUEST_SECTION] : []),
   ].filter(Boolean);
   return sections.length ? `${CHILD_SYSTEM_PROMPT}\n\n${sections.join("\n\n")}` : CHILD_SYSTEM_PROMPT;
 }
@@ -169,7 +174,9 @@ export class GeminiError extends Error {
  * indentation gets misparsed as CommonMark indented code blocks (BUG-FIX-LOG 2026-07-14).
  */
 export function extractArtifact(text: string): { text: string; artifactHtml?: string; wasFenced?: boolean } {
-  const done = "Here's your game! 🎮";
+  // Shared with game-edit.ts so the route can RECOGNIZE this default: fine on
+  // a fresh build, misleading on a turn that replaced an existing game.
+  const done = FRESH_GAME_LINE;
 
   const closed = text.match(/```html\s*([\s\S]*?)```/i);
   if (closed) {
@@ -249,22 +256,61 @@ export class GeminiChatModel implements ChatModel {
     return buildChatContents(input);
   }
 
+  /** Same fallback-chain resilience replyStream() has, for a ONE-SHOT call
+   *  (reply()/repair()): the primary keeps its own retry count, each
+   *  fallback gets ONE attempt, and shouldTryNextModel decides whether a
+   *  failure walks the chain or throws immediately. BUG-FIX-LOG 2026-07-18:
+   *  before this, reply()/repair() called `this.model` directly with no
+   *  recovery — so the "patch didn't match → full regeneration" safety net
+   *  and self-healing repair both dead-ended on exactly the failures
+   *  replyStream() already survives (a retired/misconfigured model id, a
+   *  transient outage), even though the main streamed answer recovered fine. */
+  private async oneShotWithFallback<T>(
+    label: string,
+    primaryRetries: number,
+    call: (model: string) => Promise<T>,
+  ): Promise<T> {
+    const chain = [this.model, ...this.fallbacks];
+    let lastErr: unknown;
+    for (let i = 0; i < chain.length; i++) {
+      const model = chain[i]!;
+      if (i > 0) {
+        console.warn(
+          `[gemini] ${isModelGone(lastErr) ? "model gone (CHECK CONFIG)" : "overloaded"} — falling back to ${model} (${label})`,
+        );
+      }
+      try {
+        return await withRetry(
+          () => withTimeout(() => call(model), CHAT_TIMEOUT_MS, label),
+          { label, retries: i === 0 ? primaryRetries : 0 },
+        );
+      } catch (err) {
+        lastErr = err;
+        if (i === chain.length - 1 || !shouldTryNextModel(err)) throw err;
+      }
+    }
+    throw lastErr; // unreachable — chain always has at least the primary
+  }
+
   /** Fast chat config, or the builder overrides when this turn builds a game.
    *  `forceFullRegen` (api/chat/route.ts's patch-fallback path, BUG-FIX-LOG
    *  class fix 2026-07-18): when a patch attempt fails to apply, the fallback
    *  regeneration call must NOT get the edit-patch instruction again — it
    *  needs a full file back this time. */
-  private configFor(input: { history: ChatMessage[]; message: string; forceFullRegen?: boolean }) {
+  private configFor(input: { history: ChatMessage[]; message: string; forceFullRegen?: boolean; activeGameMessageId?: string }) {
     if (!isGameBuildTurn(input.message, input.history)) return GEN_CONFIG;
     // paid: false until entitlement lands (TECH_DEBT #11) — then this becomes
     // the real per-user entitlement and the paid tier goes always-on (§9).
     const gates = catalogGates({ message: input.message, history: input.history, paid: false });
     const wantsMultiplayer = multiplayerGate({ message: input.message, history: input.history });
-    const isEdit = !input.forceFullRegen && isGameEditTurn(input.message, input.history);
-    console.log(`[gemini] builder mode — thinking on, extended output, catalogs: 3d=${gates.three} audio=${gates.audio} multiplayer=${wantsMultiplayer} edit=${isEdit}`);
+    const isEdit = !input.forceFullRegen && isGameEditTurn(input.message, input.history, input.activeGameMessageId);
+    // Penguin-maze hardening 2026-07-18: an identical re-send means the last
+    // reply claimed success without the change appearing — tell the model.
+    const repeated = isRepeatedRequest(input.message, input.history);
+    console.log(`[gemini] builder mode — thinking on, extended output, catalogs: 3d=${gates.three} audio=${gates.audio} multiplayer=${wantsMultiplayer} edit=${isEdit} repeated=${repeated}`);
     return {
       ...GEN_CONFIG,
-      systemInstruction: buildTurnSystemInstruction(gates, { message: input.message, history: input.history }, wantsMultiplayer, isEdit),
+      systemInstruction: buildTurnSystemInstruction(gates, { message: input.message, history: input.history }, wantsMultiplayer, isEdit, repeated),
       ...builderGenOverrides(process.env),
     };
   }
@@ -272,21 +318,19 @@ export class GeminiChatModel implements ChatModel {
   /** One-shot reply (used where streaming isn't needed — e.g. the
    *  patch-fallback regeneration in api/chat/route.ts). Returns the real
    *  billed usage when Gemini reports it, same as repair() below, so a
-   *  fallback call's cost is tracked like any other generation. */
+   *  fallback call's cost is tracked like any other generation. Walks the
+   *  same model-fallback chain replyStream() uses (oneShotWithFallback) —
+   *  this is the SAFETY NET for a mismatched patch, so it must not itself be
+   *  a dead end on a single bad/unavailable model. */
   async reply(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean }) {
     const ai = getClient();
     try {
-      const res = await withRetry(
-        () => withTimeout(
-          () => ai.models.generateContent({
-            model: this.model,
-            contents: this.buildContents(input),
-            config: this.configFor(input),
-          }),
-          CHAT_TIMEOUT_MS,
-          "gemini.chat",
-        ),
-        { label: "gemini.chat", retries: 2 },
+      const res = await this.oneShotWithFallback("gemini.chat", 2, (model) =>
+        ai.models.generateContent({
+          model,
+          contents: this.buildContents(input),
+          config: this.configFor(input),
+        }),
       );
       const um = (res as { usageMetadata?: GenUsageMetadata }).usageMetadata;
       return { ...extractArtifact(res.text ?? ""), usage: um ? usageChunk(um).usage : undefined };
@@ -295,30 +339,59 @@ export class GeminiChatModel implements ChatModel {
     }
   }
 
+  /** ONE hunks-only retry after the model answered an edit turn with a full
+   *  rewrite (penguin-maze hardening 2026-07-18). Same shape as repair():
+   *  one-shot, raw text back (the route runs applyPatch on it), tight output
+   *  cap — a patch is small, and this call only exists because the model
+   *  disobeyed the patch contract once already. Child-safety base prompt
+   *  stays: an edit can introduce new visible content. Walks the same
+   *  model-fallback chain as every other call. */
+  async strictEditRetry(input: { currentHtml: string; message: string }): Promise<{ text: string; usage?: TokenUsage }> {
+    const ai = getClient();
+    try {
+      const res = await this.oneShotWithFallback("gemini.strict-edit", 1, (model) =>
+        ai.models.generateContent({
+          model,
+          contents: [{
+            role: "user",
+            parts: [{ text: `Current game source:\n${input.currentHtml}\n\nThe child asked: ${input.message}` }],
+          }],
+          config: {
+            ...GEN_CONFIG,
+            systemInstruction: `${CHILD_SYSTEM_PROMPT}\n\n${GAME_EDIT_STRICT_RETRY_SECTION}`,
+            maxOutputTokens: 4096,
+          },
+        }),
+      );
+      const um = (res as { usageMetadata?: GenUsageMetadata }).usageMetadata;
+      return { text: res.text ?? "", usage: um ? usageChunk(um).usage : undefined };
+    } catch (err) {
+      throw new GeminiError(`strict edit retry failed: ${(err as Error).message}`);
+    }
+  }
+
   /**
    * One-shot repair call (self-healing preview, PRD §7). Same model as
    * generation — repair needs the same code competence (§9) — but its own
    * system prompt (minimal-patch contract) and tighter output headroom:
    * a patch is ~8 lines, and output tokens dominate repair latency (§7.1).
+   * Walks the same model-fallback chain replyStream()/reply() use — a repair
+   * call failing outright on a bad/unavailable model must not cost the kid
+   * the auto-heal (BUG-FIX-LOG 2026-07-18).
    */
   async repair(input: { systemPrompt: string; prompt: string }): Promise<{ text: string; usage?: TokenUsage }> {
     const ai = getClient();
     try {
-      const res = await withRetry(
-        () => withTimeout(
-          () => ai.models.generateContent({
-            model: this.model,
-            contents: [{ role: "user", parts: [{ text: input.prompt }] }],
-            config: {
-              ...GEN_CONFIG,
-              systemInstruction: input.systemPrompt,
-              maxOutputTokens: 4096,
-            },
-          }),
-          CHAT_TIMEOUT_MS,
-          "gemini.repair",
-        ),
-        { label: "gemini.repair", retries: 1 },
+      const res = await this.oneShotWithFallback("gemini.repair", 1, (model) =>
+        ai.models.generateContent({
+          model,
+          contents: [{ role: "user", parts: [{ text: input.prompt }] }],
+          config: {
+            ...GEN_CONFIG,
+            systemInstruction: input.systemPrompt,
+            maxOutputTokens: 4096,
+          },
+        }),
       );
       const um = (res as { usageMetadata?: GenUsageMetadata }).usageMetadata;
       return { text: res.text ?? "", usage: um ? usageChunk(um).usage : undefined };
@@ -330,7 +403,7 @@ export class GeminiChatModel implements ChatModel {
   /** Streaming reply — yields answer deltas AND thought summaries as they're
    *  generated. Thought parts (part.thought, includeThoughts in builder mode)
    *  become the kid-facing planning line; they are NOT part of the answer. */
-  async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment }): AsyncGenerator<StreamChunk> {
+  async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; activeGameMessageId?: string }): AsyncGenerator<StreamChunk> {
     const ai = getClient();
     // Primary keeps its normal retries; each fallback gets ONE attempt so a
     // full incident walks the whole chain in ~a handful of tries, not 15

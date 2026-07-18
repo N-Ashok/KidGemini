@@ -21,4 +21,9 @@ export interface ChatHistoryStore {
   list(userId: string, limit: number, before?: { updatedAt: number; id: string }): ConvoSummary[];
   /** Full conversation, or null when absent OR owned by someone else. */
   get(userId: string, id: string): Conversation | null;
+  /** Guest→account merge on login: reassigns every row owned by `fromUserId`
+   *  to `toUserId`. An id the target already owns is left under `fromUserId`
+   *  (never overwritten/dropped) rather than picking a winner. Returns how
+   *  many rows moved. */
+  claim(fromUserId: string, toUserId: string): number;
 }

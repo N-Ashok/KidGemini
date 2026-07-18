@@ -102,3 +102,97 @@ describe("findLastGameIndex — the shared 'which message holds the current game
     expect(findLastGameIndex([pasted, msg("assistant", "just chatting, no game")])).toBe(-1);
   });
 });
+
+describe("findLastGameIndex / trimHistory - pinnedId (Continue from here)", () => {
+  it("an earlier pinned game wins over a newer one", () => {
+    const history = [msg("child", "make a game"), msg("assistant", GAME_V1), msg("child", "faster"), msg("assistant", GAME_V2)];
+    expect(findLastGameIndex(history, history[1]!.id)).toBe(1);
+  });
+
+  it("trimHistory keeps the PINNED game's code, not the newest one's", () => {
+    const history = [msg("child", "make a game"), msg("assistant", GAME_V1), msg("child", "faster"), msg("assistant", GAME_V2)];
+    const out = trimHistory(history, history[1]!.id);
+    expect(out[1]!.text).toContain("GAME V1 CODE");
+    expect(out[3]!.text).not.toContain("GAME V2 CODE");
+    expect(out[3]!.text).toContain(GAME_OMITTED_PLACEHOLDER);
+  });
+
+  it("falls back to the newest game when the pin names an id that isn't a game message", () => {
+    const history = [msg("child", "make a game"), msg("assistant", GAME_V1), msg("child", "faster"), msg("assistant", GAME_V2)];
+    expect(findLastGameIndex(history, history[0]!.id)).toBe(3);
+  });
+
+  it("falls back to the newest game when the pin names an id not present at all", () => {
+    const history = [msg("assistant", GAME_V1), msg("assistant", GAME_V2)];
+    expect(findLastGameIndex(history, "does-not-exist")).toBe(1);
+  });
+});
+
+// BUG-FIX-LOG 2026-07-18 ("search_not_found on every edit turn"): a patch or
+// fallback turn stores PROSE-ONLY text — the new game travels in the separate
+// `artifactHtml` field. hasGame()/findLastGameIndex only looked at text, so
+// from the second edit onward the model was shown an OLD version's code as
+// "the current game", wrote SEARCH blocks against it, and applyPatch (which
+// correctly reads the newest artifactHtml) could never match them. Live
+// symptom: every edit turn logged `patch failed (search_not_found)` and fell
+// back to a full regeneration built from the STALE version (a 3D game
+// regressed to 2D). The model's view and applyPatch's target must be the
+// same source: the artifactHtml FIELD.
+describe("prose-only game messages (artifactHtml field, no code in text) — the patch-turn shape", () => {
+  const NEW_GAME = "<!doctype html><html><body>PATCHED V3 CODE</body></html>";
+  function proseMsg(text: string, artifactHtml: string): ChatMessage {
+    seq += 1;
+    return { id: `m${seq}`, role: "assistant", text, artifactHtml, createdAt: seq };
+  }
+
+  it("findLastGameIndex counts a prose-only assistant message that carries artifactHtml", () => {
+    const history = [
+      msg("child", "make a game"),
+      msg("assistant", GAME_V1),
+      msg("child", "add a medic kit"),
+      proseMsg("Added the medic kit! 🎮", NEW_GAME),
+    ];
+    expect(findLastGameIndex(history)).toBe(3);
+  });
+
+  it("trimHistory re-inlines the current game's source from the field so the model can copy exact lines", () => {
+    const history = [
+      msg("child", "make a game"),
+      msg("assistant", GAME_V1),
+      msg("child", "add a medic kit"),
+      proseMsg("Added the medic kit! 🎮", NEW_GAME),
+    ];
+    const out = trimHistory(history);
+    expect(out[3]!.text).toContain("PATCHED V3 CODE"); // the model now SEES the true current source
+    expect(out[3]!.text).toContain("Added the medic kit!"); // prose kept
+    expect(out[1]!.text).not.toContain("GAME V1 CODE"); // older version still stripped
+    expect(out[1]!.text).toContain(GAME_OMITTED_PLACEHOLDER);
+  });
+
+  it("an OLDER prose-only game message is stripped to prose + placeholder like any stale version", () => {
+    const history = [
+      msg("child", "make a game"),
+      proseMsg("Added the medic kit! 🎮", NEW_GAME),
+      msg("child", "faster"),
+      msg("assistant", GAME_V2),
+    ];
+    const out = trimHistory(history);
+    expect(out[1]!.text).not.toContain("PATCHED V3 CODE");
+    expect(out[1]!.text).toContain(GAME_OMITTED_PLACEHOLDER);
+    expect(out[3]!.text).toContain("GAME V2 CODE");
+  });
+
+  it("a pinned prose-only game message wins and gets its source re-inlined", () => {
+    const pinned = proseMsg("Added the medic kit! 🎮", NEW_GAME);
+    const history = [msg("child", "make a game"), pinned, msg("child", "faster"), msg("assistant", GAME_V2)];
+    const out = trimHistory(history, pinned.id);
+    expect(out[1]!.text).toContain("PATCHED V3 CODE");
+    expect(out[3]!.text).not.toContain("GAME V2 CODE");
+  });
+
+  it("a message whose text ALREADY carries the code is not double-inlined", () => {
+    const history = [msg("child", "make a game"), msg("assistant", GAME_V2)];
+    const out = trimHistory(history);
+    expect(out[1]!.text.match(/GAME V2 CODE/g)).toHaveLength(1);
+  });
+});

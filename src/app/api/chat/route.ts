@@ -9,7 +9,10 @@
 import "@/lib/logger"; // tees all server console output to logs/app.log
 import { NextRequest, NextResponse } from "next/server";
 import { GeminiChatModel, extractArtifact } from "@/lib/gemini";
-import { isGameEditTurn, currentGameHtml, editReplyProse } from "@/lib/game-edit";
+import {
+  isGameEditTurn, currentGameHtml, editReplyProse, looksLikeAttemptedEdit, looksLikeCompleteDocument,
+  regenReplyProse, REBUILT_GAME_LINE, FRESH_GAME_LINE,
+} from "@/lib/game-edit";
 import { applyPatch } from "@/lib/repair-prompt";
 import { injectAssets } from "@/lib/assets/inject";
 import { kidThoughtLine } from "@/lib/kid-thought";
@@ -40,7 +43,7 @@ const estTokens = (t: string) => Math.ceil(t.length / 4);
 
 export async function POST(req: NextRequest) {
   const geo = resolveGeo(req);
-  let body: { message?: string; history?: ChatMessage[]; image?: unknown; replyId?: unknown };
+  let body: { message?: string; history?: ChatMessage[]; image?: unknown; replyId?: unknown; activeGameMessageId?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -64,9 +67,13 @@ export async function POST(req: NextRequest) {
   };
 
   const message = (body.message ?? "").trim();
+  // "Continue from here" (chat-rewind.ts): the client names an EARLIER game
+  // message to build on instead of the newest one, for exactly this turn —
+  // it clears its own pin once sent, so there's nothing to persist here.
+  const activeGameMessageId = typeof body.activeGameMessageId === "string" ? body.activeGameMessageId : undefined;
   // Trim what the MODEL sees (stale game versions stripped + sliding window,
   // see history-trim.ts) — the client's stored conversation is untouched.
-  const history = trimHistory(body.history ?? []);
+  const history = trimHistory(body.history ?? [], activeGameMessageId);
   if (!message) return NextResponse.json({ error: "Empty message" }, { status: 400 });
 
   // Picture upload (context for the model): deterministic guards, fail-closed —
@@ -244,7 +251,7 @@ export async function POST(req: NextRequest) {
     if (replyId) trackTurn(() => turnResults.start(replyId, userId, Date.now()));
     try {
       console.log(`[api/chat] streaming… @${ms()}ms`);
-      for await (const chunk of chatModel.replyStream({ history, message, image })) {
+      for await (const chunk of chatModel.replyStream({ history, message, image, activeGameMessageId })) {
         if (chunk.kind === "thought") {
           // Thought summaries drive the kid-facing planning line during the
           // silent thinking phase. kidThoughtLine fails closed (null = drop):
@@ -312,35 +319,93 @@ export async function POST(req: NextRequest) {
     // repair flow already uses (repair-prompt.ts's applyPatch) — instead of a
     // full-file regeneration, so parts the child never asked to change can't
     // silently regress.
-    if (isGameEditTurn(message, history)) {
-      const currentHtml = currentGameHtml(history)!; // isGameEditTurn guarantees a game exists
+    if (isGameEditTurn(message, history, activeGameMessageId)) {
+      const currentHtml = currentGameHtml(history, activeGameMessageId)!; // isGameEditTurn guarantees a game exists
+      // Debug trail (2026-07-18 search_not_found class): make it obvious from
+      // the log alone WHICH source a patch was applied against, and — on a
+      // mismatch — whether the model's SEARCH text exists in that source at
+      // all. A persistent "inSource=false" streak means the model is looking
+      // at a DIFFERENT version than we're patching (the history-trim bug).
+      console.log(
+        `[api/chat] edit turn: source=${activeGameMessageId ? `pinned:${activeGameMessageId}` : "newest"} len=${currentHtml.length} reply chars=${full.length}`,
+      );
+      const logSearchMiss = (reply: string) => {
+        const firstSearch = reply.match(/<{7} SEARCH\n([\s\S]*?)\n={7}/)?.[1];
+        if (firstSearch === undefined) return;
+        const head = firstSearch.slice(0, 80).replace(/\n/g, "\\n");
+        console.warn(`[api/chat]   first SEARCH head: "${head}" inSource=${currentHtml.includes(firstSearch)}`);
+      };
       const applied = applyPatch(currentHtml, full);
-      if (applied.ok) {
-        console.log(`[api/chat] ✓ edit ${applied.mode} @${ms()}ms`);
+      if (applied.ok && applied.mode === "patch") {
+        console.log(`[api/chat] ✓ edit patch @${ms()}ms`);
         displayText = editReplyProse(full); // the kid-facing sentence only — never the raw hunks
         deliverableHtml = toDeliverable(applied.html);
-      } else if (applied.reason === "no_patch_in_reply") {
+      } else if (applied.ok && applied.mode === "regeneration" && looksLikeCompleteDocument(applied.html)) {
+        // The model ignored the patch instruction and rewrote the whole game.
+        // Penguin-maze hardening 2026-07-18: this loophole took 17 of 18 real
+        // edit turns, regressing untouched parts (controls flipped, colors
+        // changed) every time — so it no longer counts as silent success.
+        // ONE hunks-only retry against the same source; a clean retry patch
+        // wins, anything else (NEEDS_FULL_REBUILD, garbage, a thrown error)
+        // falls back to accepting the rewrite — floor stays "no worse than
+        // before" — but with the honest rebuilt-game line, never a bare
+        // "small change done" claim. (looksLikeCompleteDocument still guards
+        // the accept: a partial snippet is handled by the else branch below.)
+        displayText = regenReplyProse(full);
+        deliverableHtml = toDeliverable(applied.html);
+        try {
+          const retry = await chatModel.strictEditRetry({ currentHtml, message });
+          trackTurn(() => recordUsage("chat", servedModel, message, retry.text, false, retry.usage));
+          const retryApplied = applyPatch(currentHtml, retry.text);
+          if (retryApplied.ok && retryApplied.mode === "patch") {
+            console.log(`[api/chat] ✓ edit patch (strict retry) @${ms()}ms`);
+            displayText = editReplyProse(retry.text);
+            deliverableHtml = toDeliverable(retryApplied.html);
+          } else {
+            const why = retryApplied.ok ? `mode=${retryApplied.mode}` : retryApplied.reason;
+            console.log(`[api/chat] edit regeneration accepted (strict retry declined: ${why}) @${ms()}ms`);
+            logSearchMiss(retry.text);
+          }
+        } catch (err) {
+          console.warn(`[api/chat] strict edit retry unavailable (${(err as Error).message}) — accepting rewrite @${ms()}ms`);
+        }
+      } else if (!applied.ok && applied.reason === "no_patch_in_reply" && !looksLikeAttemptedEdit(full)) {
         // isGameEditTurn is deliberately over-inclusive (true for ANY message
         // once a game exists, matching isGameBuildTurn's own tradeoff —
         // builder-mode.ts). GAME_EDIT_PROMPT_SECTION is hedged for exactly
         // this: an off-topic message gets an ordinary reply, no patch
         // attempted. Treat it as plain chat — the game stays untouched, and a
         // whole extra generation is NOT wasted regenerating it for nothing.
+        // looksLikeAttemptedEdit guards this: a message that DOES carry
+        // patch/code traces (a truncated SEARCH block, a code fence, raw
+        // HTML) is a malformed attempt, not off-topic chat — see the else
+        // branch below (BUG-FIX-LOG 2026-07-18 follow-up: "multiple blocks").
         console.log(`[api/chat] edit turn was off-topic chat (no patch attempted) @${ms()}ms`);
         displayText = full;
         deliverableHtml = null;
       } else {
-        // The model DID attempt an edit (SEARCH markers present) but it
-        // didn't cleanly apply (${applied.reason}) — a genuine failed edit,
-        // so fall back to ONE full-regeneration call rather than a dead end.
-        // Floor stays "no worse than before this feature existed."
-        console.warn(`[api/chat] patch failed (${applied.reason}) — falling back to full regeneration @${ms()}ms`);
+        // Either the model attempted an edit (SEARCH markers present) that
+        // didn't cleanly apply, or the reply was too malformed/incomplete to
+        // trust (truncated patch, or a partial snippet mistaken for a full
+        // document) — a genuine failed edit either way, so fall back to ONE
+        // full-regeneration call rather than showing raw garbage or a
+        // corrupted game. Floor stays "no worse than before this feature
+        // existed."
+        const reason = applied.ok ? `incomplete ${applied.mode} output` : applied.reason;
+        logSearchMiss(full);
+        console.warn(`[api/chat] patch failed (${reason}) — falling back to full regeneration @${ms()}ms`);
         try {
           const fallback = await chatModel.reply({ history, message, image, forceFullRegen: true });
           trackTurn(() => recordUsage("chat", servedModel, message, fallback.text, false, fallback.usage));
-          displayText = fallback.artifactHtml && !fallback.wasFenced
-            ? `${fallback.text}\n\n\`\`\`html\n${fallback.artifactHtml}\n\`\`\``.trim()
+          // Honest messaging (penguin-maze hardening): this path REPLACED the
+          // child's game — the bare fresh-build default would read as a small
+          // targeted change and hide the rebuild that just happened.
+          const fallbackProse = fallback.artifactHtml && (!fallback.text.trim() || fallback.text.trim() === FRESH_GAME_LINE)
+            ? REBUILT_GAME_LINE
             : fallback.text;
+          displayText = fallback.artifactHtml && !fallback.wasFenced
+            ? `${fallbackProse}\n\n\`\`\`html\n${fallback.artifactHtml}\n\`\`\``.trim()
+            : fallbackProse;
           deliverableHtml = toDeliverable(fallback.artifactHtml);
         } catch (err) {
           console.error(`[api/chat] ✖ fallback regeneration failed @${ms()}ms: ${(err as Error).message}`);

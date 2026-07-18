@@ -114,7 +114,12 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   real defects throw at once. 3-flash-preview is Gemini-3-class game code at
   $0.5/$3 per M vs 3.5-flash's $1.5/$9 — the premium model is the deep
   fallback, not the default. Kids get a game from a sibling model instead of
-  "Oops! Something went wrong." during spikes
+  "Oops! Something went wrong." during spikes. Originally `replyStream()`
+  only (the main streamed answer); `GeminiChatModel.reply()` (the
+  patch-mismatch full-regeneration safety net) and `.repair()` (self-healing
+  preview) called the primary model directly with no fallback of their own —
+  a gap BUG-FIX-LOG 2026-07-18 closed via a shared `oneShotWithFallback()`, so
+  all three entry points now recover the same way
 - **Starter chips** (2026-07-08): 4 random game prompts from a 500-strong pool
   (`src/lib/game-suggestions.ts`, 10 mechanics × 50 themes) — fresh picks every
   load and every new chat, so kids don't see the same four twice
@@ -190,7 +195,58 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   never hits a dead end — the floor is "no worse than before this feature
   existed." `isGameEditTurn` is deliberately as over-inclusive as
   `isGameBuildTurn` itself (any message once a game exists) rather than
-  guessing intent from keywords
+  guessing intent from keywords. **Hardened same-day** after live UAT
+  ("multiple blocks and not working code"): a truncated/malformed patch
+  attempt has no COMPLETE SEARCH/REPLACE match, so it used to fall into the
+  same bucket as genuine off-topic chat and get shown to the kid as literal
+  raw text; separately, `applyPatch`'s "model ignored the instruction"
+  fallback trusted ANY fenced ```html block as a full replacement, so a
+  partial "here's the changed part" snippet could silently become the whole
+  game. Two new guards in `game-edit.ts` — `looksLikeAttemptedEdit()` (patch
+  markers/fence/HTML traces mean a malformed attempt, not off-topic chat)
+  and `looksLikeCompleteDocument()` (requires a real opening+closing
+  `<html>`) — route both cases to the existing full-regeneration fallback
+  instead, so a bad reply is retried once rather than ever shown raw or
+  silently corrupting the game. **Hardened again same-day** (penguin-maze
+  session, BUG-FIX-LOG 2026-07-18): measured against a real 18-turn edit
+  session, the "model ignored the instruction, accept its full rewrite"
+  path fired on 17 of 18 turns — so it no longer counts as silent success.
+  A full-document reply on an edit turn now gets ONE hunks-only retry
+  (`GeminiChatModel.strictEditRetry` + `GAME_EDIT_STRICT_RETRY_SECTION`,
+  with a `NEEDS_FULL_REBUILD` honest-out); a clean retry patch wins,
+  anything else accepts the rewrite but labels it honestly
+  (`regenReplyProse`/`REBUILT_GAME_LINE` — never a bare "Added that!"-style
+  line when the whole game was rebuilt, including on the fallback path). An
+  identically re-sent child message (`isRepeatedRequest` +
+  `REPEATED_REQUEST_SECTION`) tells the model its previous reply did NOT
+  work and to change approach. And the whole feature has a kill switch:
+  `GAME_EDIT_PATCH=off` (`patchEditsEnabled`, gated inside `isGameEditTurn`)
+  restores exact pre-patch full-regeneration behavior in one env flip —
+  the guaranteed rollback path
+- **⏪ Continue from here** (2026-07-18): `currentGameHtml`/`findLastGameIndex`
+  normally target the NEWEST game message in the conversation — there's no
+  separate "which version is active" pointer anywhere. So when a later edit
+  regresses a game, a kid/creator can click "Continue from here" on any
+  earlier game message to pin it (`Conversation.activeGameMessageId`,
+  `chat-rewind.ts`) as the edit target for the NEXT turn only — non-destructive:
+  nothing is deleted or reordered, the regressed later messages stay right
+  where they are in the thread, visible and still playable via their own
+  "Open game" button. A banner above the composer names the pin and offers
+  Cancel; the pin auto-clears the instant that next turn is sent (`handleSend`
+  reads then clears `activeGameMessageId`) — once the new reply lands it's
+  the newest message again and ordinary "last game wins" behavior resumes on
+  its own, no lingering state. The pin travels to the server as
+  `activeGameMessageId` in the `/api/chat` body and is threaded through
+  `trimHistory`/`isGameEditTurn`/`currentGameHtml` (each keeps its own
+  override lookup, same "duplicated on purpose" pattern as the rest of this
+  module pair) so the model's system instruction AND the post-stream patch
+  target both resolve to the pinned version, not the newest one. Regenerating
+  a reply that was itself generated from a pin (`ChatMessage.basedOnMessageId`)
+  redoes against that SAME pinned version rather than falling back to
+  whatever the regenerate history slice considers newest. E2E-pinned
+  (`scripts/e2e-continue-from-here.mjs`) since the pin banner, DOM
+  non-destruction, preview swap, and the actual outgoing request body need a
+  real browser
 - **🛠 Console (debug-only since 2026-07-10)**: the capture script injected into
   every game's iframe (before the game's own code runs) forwards
   `console.log/warn/error`, uncaught errors (now with filename/line/stack), and
@@ -321,6 +377,13 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   tab during the intro goes straight to listening; ONE wiggle-only re-nudge
   after 3 idea-less games, then silence forever (`src/lib/idea-coach.ts`,
   policy truth-table tested + `scripts/e2e-idea-coach.mjs` browser pins)
+  **Fixed 2026-07-18 (BUG-FIX-LOG):** the mic tab/Idea Bag overlay was
+  invisible on every ORDINARY game preview (default "fit"/real-device mode,
+  not a Tablet/Phone/Laptop frame) — `ArtifactFrame.tsx`'s panel-size
+  `ResizeObserver` only ran while a device frame was shown, but the overlay's
+  width/height fall back to that SAME measured size whenever no frame is
+  active, so it was permanently stuck at the initial `{0,0}`. The observer
+  now runs in every device mode
 - **↔ Pull-to-resize preview** (2026-07-12): the 440px desktop panel now has a
   drag handle on its left border (min 360px, max 70vw, width remembered in
   localStorage; keyboard ←/→ on the separator). CSS-var driven (`--panel-w`) so

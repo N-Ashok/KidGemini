@@ -1,13 +1,16 @@
 // Server-side chat history (TECH_DEBT #26).
 // GET  /api/chats?before=<updatedAt>&limit=N → { chats: ConvoSummary[] } —
 //      the sidebar's paginated Recents index (titles only, no payloads).
+//      Also claims any guest-owned rows into the account the moment both
+//      identities show up on the same request (see the claim() call below) —
+//      the guest→account merge gap, BUG-FIX-LOG 2026-07-18.
 // POST /api/chats { convos: Conversation[] } → one-time device migration
 //      (bulk upsert, idempotent). Identity = SSO session or guest cookie;
 //      no identity → empty list / 401 on write (fail closed).
 
 import { NextRequest, NextResponse } from "next/server";
 import { SqliteChatHistoryStore } from "@/lib/db";
-import { resolveChatUser } from "@/lib/chat-identity";
+import { resolveChatUser, readGuestId } from "@/lib/chat-identity";
 import { sanitizeConversation, LIST_DEFAULT, LIST_MAX, MAX_BULK } from "@/lib/chat-history";
 import type { Conversation } from "@/types/chat.types";
 
@@ -18,6 +21,17 @@ const store = new SqliteChatHistoryStore();
 export async function GET(req: NextRequest) {
   const userId = await resolveChatUser(req);
   if (!userId) return NextResponse.json({ chats: [] });
+  // Guest→account merge gap (BUG-FIX-LOG 2026-07-18): the client-side
+  // localStorage migration is one-shot and NOT identity-aware (SYNC_FLAG
+  // fires once, usually while still a guest, and never re-runs on login),
+  // so a guest's server-side rows were never otherwise claimed. This request
+  // is signed in AND still carries the (httpOnly) guest cookie from before
+  // login — exactly the moment to fold that guest's history into the
+  // account. Idempotent and cheap (indexed no-op) once already claimed.
+  if (userId.startsWith("user:")) {
+    const guestId = readGuestId(req);
+    if (guestId) store.claim(guestId, userId);
+  }
   const q = req.nextUrl.searchParams;
   const limit = Math.min(LIST_MAX, Math.max(1, Number(q.get("limit")) || LIST_DEFAULT));
   // Composite cursor = the prior page's last row (before + beforeId together).

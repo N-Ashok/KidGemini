@@ -18,7 +18,9 @@ fi
 
 mkdir -p "$REPO_DIR/public/brand"
 cp "$SRC" "$REPO_DIR/public/brand/ariantra-brand.v1.css"
-# Favicon ships with the kit too (generated alongside the CSS).
-FAVICON="$PLATFORM_DIR/public/brand/ariantra-favicon.svg"
-[ -f "$FAVICON" ] && cp "$FAVICON" "$REPO_DIR/public/brand/ariantra-favicon.svg"
-echo "✓ brand CSS + favicon synced from $PLATFORM_DIR/public/brand/"
+# Favicon ships with the kit too (SVG generated, PNGs rastered from it — see
+# build-favicon-raster.mjs in the platform repo).
+for f in ariantra-favicon.svg ariantra-favicon.png apple-touch-icon.png; do
+  [ -f "$PLATFORM_DIR/public/brand/$f" ] && cp "$PLATFORM_DIR/public/brand/$f" "$REPO_DIR/public/brand/$f"
+done
+echo "✓ brand CSS + favicons synced from $PLATFORM_DIR/public/brand/"

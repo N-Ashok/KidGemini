@@ -158,10 +158,17 @@ export function ArtifactFrame({
   const previewVisibleLeft = previewFramed ? Math.max(0, (panelSize.w - previewVisibleW) / 2) : 0;
   const previewVisibleTop = previewFramed ? Math.max(0, (panelSize.h - previewVisibleH) / 2) : 0;
 
-  // Track the panel's size while a device frame is shown (scale-to-fit).
+  // Track the panel's size in EVERY device mode — not just while a device
+  // frame is shown. previewVisibleLeft/Top and the Idea Button/Bag overlay's
+  // width/height (below) fall back to panelSize.w/h whenever previewFramed
+  // is false (the default "fit" mode, reset on every new game — see the
+  // effect above), so skipping measurement in "fit" left panelSize stuck at
+  // its initial {0,0} forever: the overlay got width:0/height:0 and the idea
+  // mic button/bag were rendered but invisible on every ordinary game preview
+  // (BUG-FIX-LOG 2026-07-18, "the idea mic button is not visible").
   useEffect(() => {
     const el = previewBoxRef.current;
-    if (!el || device === "fit") return;
+    if (!el) return;
     const ro = new ResizeObserver(([entry]) => {
       if (entry) setPanelSize({ w: entry.contentRect.width, h: entry.contentRect.height });
     });

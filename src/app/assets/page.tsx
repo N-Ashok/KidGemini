@@ -11,6 +11,10 @@ import manifest from "@/lib/assets/manifest.json";
 // games-lab.ariantra.com is the canonical host (2026-07-17, later same day)
 // — supersedes ari.ariantra.com.
 const PAGE_URL = "https://games-lab.ariantra.com/assets";
+// Same asset as the root layout's fallback — set explicitly, not inherited
+// (2026-07-18 OG audit; see src/app/page.tsx for why). No dedicated "toy box"
+// card image exists yet.
+const SOCIAL_IMAGE = "https://ariantra.com/ariantra-site.png";
 
 export const metadata: Metadata = {
   title: "Game Stuff — 3D models & sounds for your games | Ari",
@@ -22,6 +26,11 @@ export const metadata: Metadata = {
     description: "Real 3D models and sounds for the games kids build with Ari.",
     url: PAGE_URL,
     type: "website",
+    images: [{ url: SOCIAL_IMAGE, width: 1440, height: 900, alt: "Ari's toy box — 3D models and sounds for kids' games" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    images: [SOCIAL_IMAGE],
   },
 };
 

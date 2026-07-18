@@ -13,6 +13,12 @@ export interface ChatMessage {
   /** True when this child message is a bundled Idea Bag send (🎒 label in the
    *  bubble) — spoken thoughts captured during play, docs/PRD-IDEA-BUTTON.md. */
   fromIdeaBag?: boolean;
+  /** Set on an assistant reply generated while a "Continue from here" pin was
+   *  active (chat-rewind.ts) — which message it was built on. Conversation.
+   *  activeGameMessageId is cleared the instant the turn is sent, so without
+   *  this a later Regenerate on this exact reply would fall back to
+   *  whatever's newest instead of redoing against the same pinned version. */
+  basedOnMessageId?: string;
   createdAt: number;
 }
 
@@ -21,6 +27,12 @@ export interface Conversation {
   id: string;
   title: string;
   messages: ChatMessage[];
+  /** "Continue from here" pin (chat-rewind.ts): when set, the NEXT turn edits
+   *  this message's game instead of the newest one — every message stays in
+   *  the thread, including whatever regressed later. Cleared once that turn
+   *  is sent; after it lands, the freshly generated reply is newest again and
+   *  ordinary "last game wins" behavior resumes on its own. */
+  activeGameMessageId?: string;
 }
 
 /** A picture the child attached for context (base64 payload, no data: prefix).

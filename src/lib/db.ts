@@ -761,6 +761,18 @@ export class SqliteChatHistoryStore implements ChatHistoryStore {
       return null; // corrupt row — treat as missing, never throw into a route
     }
   }
+
+  claim(fromUserId: string, toUserId: string): number {
+    if (fromUserId === toUserId) return 0;
+    const result = getDb()
+      .prepare(
+        `UPDATE conversations SET userId = @toUserId
+         WHERE userId = @fromUserId
+           AND id NOT IN (SELECT id FROM conversations WHERE userId = @toUserId)`,
+      )
+      .run({ fromUserId, toUserId });
+    return result.changes;
+  }
 }
 
 /** Resumable generations (TECH_DEBT #23): each turn's finished reply, keyed

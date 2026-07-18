@@ -21,8 +21,28 @@ import type { ChatMessage } from "@/types/chat.types";
 // own signal rather than mixing it with history-trim's separate
 // text-re-derivation rule (used there for a different purpose — stripping
 // stale prose, not locating the current source).
-function lastGameIndex(history: ChatMessage[]): number {
+// `pinnedId` (chat-rewind.ts's "Continue from here") overrides recency, same
+// rule as history-trim.ts's findLastGameIndex — kept as a separate lookup
+// rather than a shared one for the reason explained above (the module-cycle
+// + text-vs-field signal mismatch), but the override behaves identically:
+// when set and it names a real game message, that one wins over anything
+// newer.
+function lastGameIndex(history: ChatMessage[], pinnedId?: string): number {
+  if (pinnedId) {
+    const pinned = history.findIndex((m) => m.id === pinnedId && m.role === "assistant" && Boolean(m.artifactHtml));
+    if (pinned !== -1) return pinned;
+  }
   return history.reduce((acc, m, i) => (m.role === "assistant" && Boolean(m.artifactHtml) ? i : acc), -1);
+}
+
+/** Kill switch (penguin-maze hardening, 2026-07-18): GAME_EDIT_PATCH=off
+ *  restores exact pre-patch behavior — every follow-up regenerates in full,
+ *  as before faab905 — with one env flip and a restart, no git surgery.
+ *  Checked inside isGameEditTurn so this single choke point disables both
+ *  call sites at once (the route's edit branch and gemini.ts's configFor
+ *  prompt section). Any value other than "off" (including unset) = enabled. */
+export function patchEditsEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return env.GAME_EDIT_PATCH !== "off";
 }
 
 /** True when this turn should edit the EXISTING game via a patch, rather than
@@ -38,18 +58,83 @@ function lastGameIndex(history: ChatMessage[]): number {
  *  is hedged to just answer normally when the message isn't about the game,
  *  and the route treats that plain-prose reply as ordinary chat rather than
  *  forcing a wasted regeneration (api/chat/route.ts). */
-export function isGameEditTurn(message: string, history: ChatMessage[]): boolean {
-  return isGameBuildTurn(message, history) && lastGameIndex(history) !== -1;
+export function isGameEditTurn(message: string, history: ChatMessage[], pinnedId?: string): boolean {
+  return patchEditsEnabled() && isGameBuildTurn(message, history) && lastGameIndex(history, pinnedId) !== -1;
 }
 
-/** The current game's full source (the newest one), or undefined if none
+/** True when the child sent the SAME message again (whitespace/case
+ *  normalized) as their previous one. Penguin-maze session 2026-07-18: the
+ *  identical request was pasted three times because each reply claimed
+ *  success without the change appearing on screen — a repeat is a failure
+ *  signal, and the model must be told instead of re-claiming success. */
+export function isRepeatedRequest(message: string, history: ChatMessage[]): boolean {
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+  const current = norm(message);
+  if (!current) return false;
+  const lastChild = [...history].reverse().find((m) => m.role === "child");
+  return Boolean(lastChild) && norm(lastChild!.text) === current;
+}
+
+/** The current game's full source — the newest one, or the pinned one
+ *  ("Continue from here") when a pin is active — or undefined if none
  *  exists yet. */
-export function currentGameHtml(history: ChatMessage[]): string | undefined {
-  const idx = lastGameIndex(history);
+export function currentGameHtml(history: ChatMessage[], pinnedId?: string): string | undefined {
+  const idx = lastGameIndex(history, pinnedId);
   return idx === -1 ? undefined : history[idx]!.artifactHtml;
 }
 
+/** True when text carries any visible trace of an attempted code/patch edit
+ *  (patch markers, a markdown code fence, or HTML/script tags) — tells a
+ *  genuinely off-topic reply (safe to show as plain chat) apart from a
+ *  malformed/truncated edit attempt (unsafe to show raw; must fall back to a
+ *  full regeneration instead of dumping it in the chat bubble). BUG-FIX-LOG
+ *  2026-07-18 follow-up: a garbled SEARCH/REPLACE attempt applyPatch()
+ *  couldn't parse at all was landing in "no patch found" and being shown to
+ *  the child as literal raw text — "multiple blocks and not working code." */
+export function looksLikeAttemptedEdit(reply: string): boolean {
+  return /<{3,}|>{3,}|=======|```|<html[\s>]|<!doctype html|<script[\s>]/i.test(reply);
+}
+
+/** True when html looks like a genuinely complete document (has both an
+ *  opening and closing <html> tag). Guards applyPatch()'s "regeneration"
+ *  fallback mode (the model ignored the patch instruction and wrote a
+ *  fenced/raw block instead): a PARTIAL snippet or "here's what changed"
+ *  explanation would otherwise be silently trusted as the WHOLE game,
+ *  replacing it with a broken fragment. */
+export function looksLikeCompleteDocument(html: string): boolean {
+  return /<html[\s>]/i.test(html) && /<\/html>/i.test(html);
+}
+
 const DEFAULT_EDIT_LINE = "Added that! 🎮";
+
+/** The generic done-line for a FRESH build (extractArtifact's default when
+ *  the model returned only code). Lives here so the route can recognize it:
+ *  on a turn that REPLACED an existing game it must never be shown — it
+ *  reads as "small change done" when the whole game was rebuilt. */
+export const FRESH_GAME_LINE = "Here's your game! 🎮";
+
+/** Honest kid-facing line whenever an edit turn ended in a whole-game
+ *  rebuild (accepted regeneration or the forceFullRegen fallback) and the
+ *  model left no usable prose. Penguin-maze hardening 2026-07-18: bare
+ *  success lines ("Added that!", "Here's your game!") on rebuilds hid real
+ *  regressions — colors changed, controls flipped — and the child had no
+ *  idea why. Saying a rebuild happened invites the bug report instead. */
+export const REBUILT_GAME_LINE =
+  "I rebuilt your whole game to do that! If anything else now looks different or broken, tell me and I'll fix it! 🛠️";
+
+/** Kid-facing line for an ACCEPTED whole-game regeneration on an edit turn:
+ *  the model's own prose with all code stripped, or the honest
+ *  REBUILT_GAME_LINE when it wrote code only. Never leaks fences, raw HTML,
+ *  or a misleading "small change done" default into the chat bubble. */
+export function regenReplyProse(reply: string): string {
+  const prose = reply
+    .replace(/```(?:\w+)?[\s\S]*?(?:```|$)/g, "") // fenced blocks, even unclosed/truncated
+    .replace(/<!doctype html[\s\S]*$/i, "")
+    .replace(/<html[\s>][\s\S]*$/i, "")
+    .trim();
+  if (!prose || /```|<\w+[\s>]/.test(prose) || prose === FRESH_GAME_LINE) return REBUILT_GAME_LINE;
+  return prose;
+}
 
 /** Splits the model's edit-turn reply into its kid-facing sentence (never
  *  shown: the raw SEARCH/REPLACE hunks). The full, unsplit reply still goes
@@ -79,3 +164,48 @@ Rules:
 - Change only what this request needs. Do not rename, restyle, reformat, or "improve" anything else — the child is proud of the game exactly as it plays right now.
 - Everything you don't put in a REPLACE block must stay byte-for-byte identical.
 - No prose after the patch blocks, no markdown fences, no full HTML document.`;
+
+/** Friendly line shown in place of streaming patch hunks (see below). */
+export const EDIT_STREAM_WORKING_LINE = "Making your change… ✨";
+
+/** Sanitizes a PARTIAL streaming reply for the chat bubble. BUG-FIX-LOG
+ *  2026-07-18 ("not kid friendly"): the server-side prose split only runs
+ *  when the stream FINISHES — while it streamed, the raw accumulated text
+ *  (`<<<<<<< SEARCH` markers, code) was rendered live to the child. Cuts at
+ *  the first run of `<<<<` (four or more — never legitimate prose, and it
+ *  catches a marker still arriving at the stream tail) and swaps in a
+ *  friendly working line. */
+export function streamingDisplayText(partial: string): string {
+  const idx = partial.search(/<{4}/);
+  if (idx === -1) return partial;
+  const prose = partial.slice(0, idx).trim();
+  return prose ? `${prose}\n\n${EDIT_STREAM_WORKING_LINE}` : EDIT_STREAM_WORKING_LINE;
+}
+
+/** System-instruction section for the ONE hunks-only retry the route makes
+ *  when the model answered an edit turn with a full rewrite instead of a
+ *  patch (penguin-maze hardening 2026-07-18: 17 of 18 real edit turns took
+ *  the rewrite loophole, regressing untouched parts every time). Appended to
+ *  the child-safety base prompt in gemini.ts's strictEditRetry(). The
+ *  NEEDS_FULL_REBUILD sentinel is the model's honest out — better than
+ *  hallucinating hunks for a change that genuinely touches everything. */
+export const GAME_EDIT_STRICT_RETRY_SECTION = `You just answered a request to change the child's existing game by rewriting the ENTIRE file. That loses their work: parts they never asked about get changed or broken. Do it again, correctly this time.
+You will be given the CURRENT game source and the child's request. Reply with:
+First, on its own line, ONE short encouraging sentence about the change (no code).
+Then the change as SEARCH/REPLACE blocks ONLY, in EXACTLY this format:
+<<<<<<< SEARCH
+(lines copied EXACTLY, character for character, from the current source)
+=======
+(the replacement lines)
+>>>>>>> REPLACE
+Rules:
+- The SEARCH text must match the current source exactly and uniquely.
+- Change ONLY what the request needs; everything else stays byte-for-byte identical.
+- No markdown fences, no full HTML document, nothing after the blocks.
+- ONLY if the request truly cannot be done without rebuilding most of the file, reply with exactly NEEDS_FULL_REBUILD on a single line and nothing else.`;
+
+/** Appended to the build/edit system instruction when the child re-sent the
+ *  same message (isRepeatedRequest): the previous reply claimed success but
+ *  the change never showed up on their screen — re-claiming success is the
+ *  one guaranteed-wrong answer. */
+export const REPEATED_REQUEST_SECTION = `IMPORTANT: The child has just sent the SAME message again, word for word. That means your previous reply did NOT work — whatever you said you changed never showed up in their game, even though you claimed it did. Do not repeat the same approach and do not claim success the same way again. Re-read the request, rebuild that specific part in a DIFFERENT way, and double-check the change is actually visible and playable in the game you return.`;
