@@ -20,11 +20,58 @@ function normalize(text: string): string {
     .replace(/@/g, "a");
 }
 
-const BLOCK_WORDS = [
+// Same substitutions as normalize(), applied to one already-whitespace-split
+// token — no \s in the punctuation class since a token has none.
+function normalizeToken(token: string): string {
+  return token
+    .toLowerCase()
+    .replace(/[._\-*]+/g, "")
+    .replace(/0/g, "o")
+    .replace(/1/g, "i")
+    .replace(/3/g, "e")
+    .replace(/4/g, "a")
+    .replace(/5/g, "s")
+    .replace(/@/g, "a");
+}
+
+/** Real evasion technique: spelling a word out with a separator between EVERY
+ *  letter ("f u c k", "d.i.c.k"). Merges consecutive single-character tokens
+ *  together before matching, but leaves genuine short words (2+ letters —
+ *  "to", "an", "kit") untouched, so "medic kit" doesn't get glued into
+ *  "medickit" (see PROFANITY below) while "f u c k" still gets caught. */
+function collapseSpelledOutLetters(text: string): string[] {
+  const merged: string[] = [];
+  let buffer = "";
+  for (const raw of text.split(/\s+/)) {
+    const cleaned = normalizeToken(raw);
+    if (cleaned.length === 1) {
+      buffer += cleaned;
+      continue;
+    }
+    if (buffer) {
+      merged.push(buffer);
+      buffer = "";
+    }
+    if (cleaned) merged.push(cleaned);
+  }
+  if (buffer) merged.push(buffer);
+  return merged;
+}
+
+// Short profanity/sexual terms — matched PER WORD TOKEN (see
+// collapseSpelledOutLetters), never against the whole message concatenated,
+// because concatenating two unrelated real words can accidentally spell one
+// of these at the boundary (BUG-FIX-LOG 2026-07-18: "medic kit" -> "medickit"
+// contains "dick").
+const PROFANITY = [
   "fuck", "shit", "bitch", "asshole", "bastard", "dick", "pussy",
   "sex", "porn", "nude", "naked", "rape",
-  "suicide", "killmyself", "killyourself", "selfharm", "cutmyself",
 ];
+
+// Self-harm terms — deliberately matched against the FULLY space-stripped
+// message, since a genuine expression is naturally written across real word
+// boundaries ("kill myself", "cut myself") and needs the merge to be caught.
+const SELF_HARM = ["suicide", "killmyself", "killyourself", "selfharm", "cutmyself"];
 
 const PII: Array<{ re: RegExp; label: string }> = [
   { re: /\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/, label: "phone number" },
@@ -48,9 +95,16 @@ export class RulesClassifier implements SafetyClassifier {
 
   classifySync(input: { text: string; origin: "child" | "model" }): SafetyVerdict {
     const norm = normalize(input.text);
-    for (const w of BLOCK_WORDS) {
+    for (const w of SELF_HARM) {
       if (norm.includes(w)) {
         return { action: "hard_block", category: HARD, severity: "high", reason: `Matched blocked term (rule).` };
+      }
+    }
+    for (const word of collapseSpelledOutLetters(input.text)) {
+      for (const w of PROFANITY) {
+        if (word.includes(w)) {
+          return { action: "hard_block", category: HARD, severity: "high", reason: `Matched blocked term (rule).` };
+        }
       }
     }
     if (input.origin === "child") {

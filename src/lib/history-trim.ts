@@ -31,8 +31,16 @@ function stripGame(m: ChatMessage): ChatMessage {
   return { ...m, text: `${text}\n${GAME_OMITTED_PLACEHOLDER}`.trim() };
 }
 
+/** Index of the message holding the CURRENT game (the newest one), or -1 if
+ *  no game exists yet. The single shared source of truth for "which message
+ *  is the game to edit" — game-edit.ts reuses this rather than
+ *  re-implementing it, so the two can't silently disagree. */
+export function findLastGameIndex(history: ChatMessage[]): number {
+  return history.reduce((acc, m, i) => (hasGame(m) ? i : acc), -1);
+}
+
 export function trimHistory(history: ChatMessage[]): ChatMessage[] {
-  const lastGameIdx = history.reduce((acc, m, i) => (hasGame(m) ? i : acc), -1);
+  const lastGameIdx = findLastGameIndex(history);
 
   // 1) Strip every game except the newest one.
   const stripped = history.map((m, i) => (i !== lastGameIdx && hasGame(m) ? stripGame(m) : m));

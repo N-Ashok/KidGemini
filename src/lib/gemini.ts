@@ -9,6 +9,7 @@ import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection, type Pro
 import { catalogGates, type CatalogGates } from "./assets/catalog-gate";
 import { multiplayerGate } from "./multiplayer-gate";
 import { MULTIPLAYER_PROMPT_SECTION } from "./multiplayer-prompt";
+import { isGameEditTurn, GAME_EDIT_PROMPT_SECTION } from "./game-edit";
 import { fallbackChain, isModelGone, shouldTryNextModel } from "./model-fallback";
 import { withRetry, withTimeout } from "./retry";
 
@@ -132,11 +133,13 @@ export function buildTurnSystemInstruction(
   gates: CatalogGates = { three: true, audio: true },
   context?: PromptTurnContext,
   multiplayer = true,
+  isEdit = false,
 ): string {
   const sections = [
     ...(gates.three ? [THREE_PROMPT_SECTION, modelsPromptSection(undefined, context)] : []),
     ...(gates.audio ? [audioPromptSection()] : []),
     ...(multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),
+    ...(isEdit ? [GAME_EDIT_PROMPT_SECTION] : []),
   ].filter(Boolean);
   return sections.length ? `${CHILD_SYSTEM_PROMPT}\n\n${sections.join("\n\n")}` : CHILD_SYSTEM_PROMPT;
 }
@@ -246,23 +249,31 @@ export class GeminiChatModel implements ChatModel {
     return buildChatContents(input);
   }
 
-  /** Fast chat config, or the builder overrides when this turn builds a game. */
-  private configFor(input: { history: ChatMessage[]; message: string }) {
+  /** Fast chat config, or the builder overrides when this turn builds a game.
+   *  `forceFullRegen` (api/chat/route.ts's patch-fallback path, BUG-FIX-LOG
+   *  class fix 2026-07-18): when a patch attempt fails to apply, the fallback
+   *  regeneration call must NOT get the edit-patch instruction again — it
+   *  needs a full file back this time. */
+  private configFor(input: { history: ChatMessage[]; message: string; forceFullRegen?: boolean }) {
     if (!isGameBuildTurn(input.message, input.history)) return GEN_CONFIG;
     // paid: false until entitlement lands (TECH_DEBT #11) — then this becomes
     // the real per-user entitlement and the paid tier goes always-on (§9).
     const gates = catalogGates({ message: input.message, history: input.history, paid: false });
     const wantsMultiplayer = multiplayerGate({ message: input.message, history: input.history });
-    console.log(`[gemini] builder mode — thinking on, extended output, catalogs: 3d=${gates.three} audio=${gates.audio} multiplayer=${wantsMultiplayer}`);
+    const isEdit = !input.forceFullRegen && isGameEditTurn(input.message, input.history);
+    console.log(`[gemini] builder mode — thinking on, extended output, catalogs: 3d=${gates.three} audio=${gates.audio} multiplayer=${wantsMultiplayer} edit=${isEdit}`);
     return {
       ...GEN_CONFIG,
-      systemInstruction: buildTurnSystemInstruction(gates, { message: input.message, history: input.history }, wantsMultiplayer),
+      systemInstruction: buildTurnSystemInstruction(gates, { message: input.message, history: input.history }, wantsMultiplayer, isEdit),
       ...builderGenOverrides(process.env),
     };
   }
 
-  /** One-shot reply (used where streaming isn't needed). */
-  async reply(input: { history: ChatMessage[]; message: string; image?: ImageAttachment }) {
+  /** One-shot reply (used where streaming isn't needed — e.g. the
+   *  patch-fallback regeneration in api/chat/route.ts). Returns the real
+   *  billed usage when Gemini reports it, same as repair() below, so a
+   *  fallback call's cost is tracked like any other generation. */
+  async reply(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean }) {
     const ai = getClient();
     try {
       const res = await withRetry(
@@ -277,7 +288,8 @@ export class GeminiChatModel implements ChatModel {
         ),
         { label: "gemini.chat", retries: 2 },
       );
-      return extractArtifact(res.text ?? "");
+      const um = (res as { usageMetadata?: GenUsageMetadata }).usageMetadata;
+      return { ...extractArtifact(res.text ?? ""), usage: um ? usageChunk(um).usage : undefined };
     } catch (err) {
       throw new GeminiError(`chat generation failed: ${(err as Error).message}`);
     }

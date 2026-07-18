@@ -45,6 +45,113 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-18 — "medic kit" (and any two innocent words colliding across a space) hard-blocked as profanity
+
+- **Symptom (what the user saw):** repeatedly rephrasing a game-feature request — "enemy can pick
+  medic kit and increase his life" — got an instant "kind redirect" hard-block on every attempt
+  (`[api/chat] input-rules action=hard_block @0-1ms` in the pm2 log, `userId=user:ashokn14@iimklive.com`),
+  even though the message has nothing objectionable in it.
+- **Surface area:** `src/lib/safety.rules.ts` (`RulesClassifier.classifySync`, the Layer-0
+  deterministic pre-check that runs before any Gemini call).
+- **Root cause:** `normalize()` lowercases the ENTIRE message and strips all whitespace/punctuation
+  before substring-matching against `BLOCK_WORDS` — deliberately, so letter-spaced evasion
+  ("f u c k") and multi-word self-harm phrases ("kill myself") are still caught. But stripping the
+  space between two unrelated real words merges them too: "medic kit" → "medickit", and "medi**c**"
+  + "**k**it" spells "dick" right at the boundary (classic Scunthorpe-problem substring collision).
+  Reproduced deterministically by running the actual `normalize()`/`BLOCK_WORDS` logic against the
+  reported message — matched `"dick"` at index 63 of the normalized string.
+- **Fix:** split `BLOCK_WORDS` into two lists with two different matching strategies. `PROFANITY`
+  (`fuck`, `shit`, `bitch`, `asshole`, `bastard`, `dick`, `pussy`, `sex`, `porn`, `nude`, `naked`,
+  `rape`) is now matched **per whitespace-delimited word token** via new `collapseSpelledOutLetters()`
+  — it merges only *consecutive single-character* tokens together first (so "f u c k" still becomes
+  "fuck" and gets caught), leaving genuine short words ("medic", "kit", "to", "an") as separate
+  tokens that never get glued to a neighbor. `SELF_HARM` (`suicide`, `killmyself`, `killyourself`,
+  `selfharm`, `cutmyself`) keeps the old whole-string-concatenation check, since those are
+  intentionally meant to span real word boundaries ("kill myself", "cut myself"). Rejected
+  alternative: allowlisting "medic kit" specifically — fixes the symptom, not the class; the same
+  boundary collision could recur with any other word pair.
+- **Result (verified):** new `src/lib/safety.rules.test.ts` (8 tests) — "medic kit" now `allow`;
+  letter-spaced ("f u c k"), punctuation-obfuscated ("d.i.c.k"), and leetspeak ("sh1t") evasion
+  still `hard_block`; a standalone real blocked word next to an innocent one ("sex ed") still
+  `hard_block`; self-harm phrases across real word boundaries ("kill myself", "cut myself") still
+  `hard_block`. All failed against the pre-fix code except the pre-existing-behavior ones; pass
+  after. Full suite 708/708 green (up from 700); `tsc --noEmit` clean.
+- **Impact:** legitimate game-design/creative messages that happen to contain two ordinary words
+  colliding at a boundary are no longer wrongly hard-blocked; the letter-spacing and self-harm
+  evasion paths this filter exists for are unaffected. Does **not** cover every conceivable
+  adversarial obfuscation (e.g. mixing spaces and punctuation within the same evasion attempt) —
+  same residual gap the pre-fix code had, and the background LLM safety check remains the second
+  line of defense for anything the deterministic Layer-0 rule doesn't catch.
+- **Prevention:** `src/lib/safety.rules.test.ts` locks the word-boundary behavior; regression class
+  is "any BLOCK_WORDS entry short enough to appear at the seam of two unrelated real words" — a
+  future addition to `PROFANITY` should stay in the per-token list, not get added to `SELF_HARM`'s
+  whole-string check, unless it's genuinely meant to span words.
+- **Related:** none prior (first bug logged against `safety.rules.ts`'s matching mechanism).
+
+### 2026-07-18 — Recent chats missing after guest→account signup, and after a subdomain rename
+
+- **Symptom (what the user saw):** "I don't see the full list of my chats on the recent chats
+  section" — fewer chats than before, live on `games-lab.ariantra.com`. User confirmed: chatted
+  as a guest first, created an account afterward.
+- **Investigation:** the 2026-07-17 "Recents not seen" entry (below) had already ruled out an
+  identity split for the account it checked (DB had all rows correctly keyed, including guest-era
+  chats) — so this needed its own root-cause pass rather than assuming the same cause. Traced the
+  actual guest→account code path end to end (no production DB access needed — the bug reproduces
+  from source).
+- **Surface area:** `src/lib/chat-sync.ts` (`SYNC_FLAG`), `src/components/ChatPanel.container.tsx`
+  (bootstrap), `src/app/api/chats/route.ts`, `src/lib/db.ts`
+  (`SqliteChatHistoryStore`), `src/app/api/chat/route.ts` (`guestCookieHeader`).
+- **Root cause — two independent bugs, both closing the same symptom class:**
+  1. **The guest→account chat migration only ever existed client-side, and is gated by an
+     identity-agnostic one-shot flag.** `POST /api/chats` bulk-migrates whatever conversations are
+     cached in the browser's `localStorage` at that moment — there was no code anywhere (this repo
+     or the sibling Ariantra-Platform SSO repo) that queried the `conversations` table for rows
+     under the guest's old `userId` and reassigned them to the account. Worse, that client POST is
+     gated by `SYNC_FLAG` (`chat-sync.ts:8`), a single `localStorage` flag with no identity
+     awareness: it's set the first time it ever succeeds — almost always *while still a guest*,
+     mid-session — and login (a full-page redirect back into the app) never resets it. So by the
+     time a guest signs up, the one-shot migration has usually already fired and permanently
+     skips itself on every future mount, including the post-login one. Any chat not sitting in
+     that exact localStorage snapshot stays parked under the old `guest:<uuid>` row forever.
+  2. **The guest cookie (`ari_guest`) was host-only** (`guestCookieHeader`, no `Domain=` attribute)
+     — unlike the shared SSO `ariantra_session` cookie (`Domain=.ariantra.com`). A canonical-domain
+     rename (`kidgemini.ariantra.com` → `ari.ariantra.com` → `games-lab.ariantra.com`, three times
+     in two days) mints a brand-new guest identity on the new host, so even a same-day guest→account
+     conversion can lose the trail if a rename happened in between.
+- **Fix:**
+  - `src/types/chat-history.types.ts` / `src/lib/db.ts`: new `ChatHistoryStore.claim(fromUserId,
+    toUserId)` — a single indexed `UPDATE conversations SET userId = ... WHERE userId = ... AND id
+    NOT IN (...)` that reassigns every row from one identity to another; skips (never overwrites)
+    an id the target already owns.
+  - `src/app/api/chats/route.ts` (`GET`): the moment a request resolves to a signed-in `user:`
+    identity that *also* still carries the (httpOnly) guest cookie, calls `store.claim(guestId,
+    userId)` before listing. This route is unconditionally called on every app mount — including
+    the post-login remount — regardless of `SYNC_FLAG`, so it's the one reliable choke point.
+    Idempotent and cheap once already claimed (indexed no-op).
+  - `src/app/api/chat/route.ts` (`guestCookieHeader`): guest cookie now carries `Domain=.ariantra.com`
+    in production (same `SESSION_COOKIE_DOMAIN` knob and pattern as `/api/logout`), so it survives
+    future canonical-domain renames instead of being reminted.
+- **Result (verified):** new tests — `db.chat-history.test.ts` H.7–H.9 (claim reassigns rows,
+  leaves the account's own chats alone, no-ops when nothing to claim); `chats.route.test.ts`
+  C.8–C.10 (login-time claim end to end, guest-only requests never claim, claiming twice is safe);
+  `chat/route.test.ts` G.1c/G.1d (`Domain=.ariantra.com` in production, host-only in dev). Full
+  suite 700/700 green (up from 676); `tsc --noEmit` clean; `npm run build` clean.
+- **Impact:** signing in while the browser still holds a guest cookie now folds that guest's whole
+  chat history into the account, regardless of what's left in `localStorage`. Guest identity now
+  survives a subdomain rename going forward. Does **not** retroactively recover chats already
+  orphaned under a guest id the current browser no longer sends (e.g. this user's chats from
+  before today's rename, if the old host's cookie was lost) — recovering those needs either the
+  user still holding the old host's cookie (visiting the old subdomain directly triggers the same
+  claim) or a one-time production DB reconciliation, not done here (no prod DB access in this
+  pass).
+- **Prevention:** class = **migration state that lives client-side and isn't identity-aware**, and
+  **an identity cookie scoped narrower than the identity it's supposed to survive across**. Any
+  other one-shot `localStorage` flag gating a server write is the same risk shape.
+- **Related:** 2026-07-17 "Recents not seen" entry below (ruled out identity-split for a different
+  account, motivating a fresh investigation here rather than reusing that conclusion);
+  `UAT_SSO.md` known limitations (the *separate*, already-accepted Google-vs-credentials identity
+  split — unaffected by this fix, still open).
+
 ### 2026-07-17 — Batch fix: Critical/High/Medium error-handling & logging audit findings
 
 - **Symptom (what the user saw):** none directly reported — this closes findings from a

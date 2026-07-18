@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { trimHistory, HISTORY_WINDOW, GAME_OMITTED_PLACEHOLDER } from "./history-trim";
+import { trimHistory, findLastGameIndex, HISTORY_WINDOW, GAME_OMITTED_PLACEHOLDER } from "./history-trim";
 import type { ChatMessage } from "@/types/chat.types";
 
 let seq = 0;
@@ -82,5 +82,23 @@ describe("trimHistory — sliding window", () => {
 
   it("handles an empty history", () => {
     expect(trimHistory([])).toEqual([]);
+  });
+});
+
+/** Exported so game-edit.ts can find "the current game to edit" without
+ *  re-implementing the same rule a second time. */
+describe("findLastGameIndex — the shared 'which message holds the current game' rule", () => {
+  it("returns -1 when no game exists yet", () => {
+    expect(findLastGameIndex([msg("child", "hi"), msg("assistant", "hello!")])).toBe(-1);
+  });
+
+  it("returns the index of the newest game when several exist", () => {
+    const history = [msg("child", "make a game"), msg("assistant", GAME_V1), msg("child", "faster"), msg("assistant", GAME_V2)];
+    expect(findLastGameIndex(history)).toBe(3);
+  });
+
+  it("ignores a child message that pasted HTML — only assistant messages count", () => {
+    const pasted = msg("child", "my file: ```html\n<html><body>KID PASTE</body></html>\n```");
+    expect(findLastGameIndex([pasted, msg("assistant", "just chatting, no game")])).toBe(-1);
   });
 });

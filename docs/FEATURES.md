@@ -31,9 +31,12 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   chats…"); opening a server-only chat fetches its messages on demand.
   localStorage is now just the warm cache (its quota trims oldest-first,
   never the active chat). One-time migration uploads a device's pre-existing
-  chats on the first visit after the update. Ownership fail-closed at the SQL
-  layer (`/api/chats*`, `SqliteChatHistoryStore`); write-through happens once
-  per finished turn, never per streamed token
+  chats on the first visit after the update; independently, **claiming a
+  guest's server-side history on login** (2026-07-18, BUG-FIX-LOG) reassigns
+  the guest cookie's rows to the account the moment both identities show up
+  on one request, regardless of what's left in localStorage. Ownership
+  fail-closed at the SQL layer (`/api/chats*`, `SqliteChatHistoryStore`);
+  write-through happens once per finished turn, never per streamed token
 - **Resumable generations** (2026-07-13, TECH_DEBT #23 shipped): the server
   keeps each turn's finished reply in `turn_results` (24h TTL) keyed by the
   client's replyId — a dropped or stalled stream POLLS `/api/chat/result`
@@ -165,6 +168,29 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   Title-screen guard: a running loop idling on its start screen is static by
   design — the probe clicks Start, re-samples pixels, and reloads the iframe
   after a probe-click clean so the kid still gets a pristine title screen
+- **🩹 Patch-based feature edits** (2026-07-18, BUG-FIX-LOG class fix): a
+  follow-up request on an already-good game ("add a medic kit") used to be
+  answered by regenerating the ENTIRE file from conversation context, which
+  could silently regress parts the kid never asked to change — a known LLM
+  weak spot even under "keep the rest the same" framing. Reuses the
+  self-healing flow's own minimal-patch contract (`applyPatch()`,
+  `repair-prompt.ts`) for feature requests, not just bug fixes:
+  `isGameEditTurn`/`currentGameHtml`/`GAME_EDIT_PROMPT_SECTION`
+  (`src/lib/game-edit.ts`) route a follow-up turn on an existing game to a
+  SEARCH/REPLACE-only system instruction instead of "write a full HTML
+  document" — anything the model doesn't emit a hunk for survives
+  byte-for-byte. Also cheaper and faster than before: a patch reply is a
+  handful of lines instead of the 10-20K output tokens a full regeneration
+  costs. Three outcomes after the model replies (`api/chat/route.ts`): a
+  clean patch applies directly; an off-topic message (no patch attempted,
+  the edit prompt is hedged for this) passes through as ordinary chat with
+  the game untouched and no extra Gemini call wasted; a genuinely attempted
+  but mismatched patch falls back to ONE full-regeneration call
+  (`GeminiChatModel.reply({ forceFullRegen: true })`) so a real edit request
+  never hits a dead end — the floor is "no worse than before this feature
+  existed." `isGameEditTurn` is deliberately as over-inclusive as
+  `isGameBuildTurn` itself (any message once a game exists) rather than
+  guessing intent from keywords
 - **🛠 Console (debug-only since 2026-07-10)**: the capture script injected into
   every game's iframe (before the game's own code runs) forwards
   `console.log/warn/error`, uncaught errors (now with filename/line/stack), and

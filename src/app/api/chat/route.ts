@@ -9,6 +9,8 @@
 import "@/lib/logger"; // tees all server console output to logs/app.log
 import { NextRequest, NextResponse } from "next/server";
 import { GeminiChatModel, extractArtifact } from "@/lib/gemini";
+import { isGameEditTurn, currentGameHtml, editReplyProse } from "@/lib/game-edit";
+import { applyPatch } from "@/lib/repair-prompt";
 import { injectAssets } from "@/lib/assets/inject";
 import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
@@ -280,7 +282,6 @@ export async function POST(req: NextRequest) {
     }
     console.log(`[api/chat] stream done @${ms()}ms chars=${full.length}`);
 
-    const { text: prose, artifactHtml, wasFenced } = extractArtifact(full);
     // 3D games get their engine import map here — an asset-host URL string
     // spliced in, nothing read, nothing fetched (src/lib/assets/inject.ts).
     // CONTRACT: post-processing can never cost the child the game (BUG-FIX-LOG
@@ -288,33 +289,84 @@ export async function POST(req: NextRequest) {
     // ENOENT → the done event was lost and the preview never opened). On ANY
     // injection failure, fall back to the raw artifact: the preview opens, and
     // a 3D game's import error lands in its Console tab, not a dead end.
-    let deliverableHtml: string | null = null;
-    if (artifactHtml) {
+    function toDeliverable(rawHtml: string | undefined): string | null {
+      if (!rawHtml) return null;
       try {
-        const injected = injectAssets(artifactHtml);
+        const injected = injectAssets(rawHtml);
         if (injected.dropped?.length) {
           console.warn(`[api/chat] asset names dropped fail-soft: ${injected.dropped.join(", ")}`);
         }
-        deliverableHtml = injected.html;
+        return injected.html;
       } catch (err) {
         console.error(`[api/chat] ✖ asset injection failed @${ms()}ms (serving raw artifact): ${(err as Error).message}`);
-        deliverableHtml = artifactHtml;
+        return rawHtml;
       }
     }
-    // Send the FULL text (code block kept inline, Gemini-style) for the chat,
-    // and the extracted HTML for the side panel preview. When the model didn't
-    // produce one clean ```html fence (truncated mid-fence, or no fence at all
-    // — extractArtifact's fallback cases), `full` still carries raw, unfenced
-    // HTML/CSS/JS: the markdown renderer would reinterpret its indentation as
-    // a series of CommonMark "indented code blocks," each spawning its own
-    // stray code-card widget in the chat bubble (BUG-FIX-LOG 2026-07-14,
-    // reproduced against the real remark/react-markdown stack). Re-fence it so
-    // the bubble always shows one clean, collapsible code block. The
-    // already-working case (a clean fence) is untouched byte-for-byte,
-    // including any trailing prose after the closing fence.
-    const displayText = artifactHtml && !wasFenced
-      ? `${prose}\n\n\`\`\`html\n${artifactHtml}\n\`\`\``.trim()
-      : full;
+
+    let displayText: string;
+    let deliverableHtml: string | null;
+
+    // Patch-based feature edits (BUG-FIX-LOG class fix, 2026-07-18): a
+    // follow-up request on an already-good game is answered with a targeted
+    // SEARCH/REPLACE patch — the same minimal-patch contract the self-healing
+    // repair flow already uses (repair-prompt.ts's applyPatch) — instead of a
+    // full-file regeneration, so parts the child never asked to change can't
+    // silently regress.
+    if (isGameEditTurn(message, history)) {
+      const currentHtml = currentGameHtml(history)!; // isGameEditTurn guarantees a game exists
+      const applied = applyPatch(currentHtml, full);
+      if (applied.ok) {
+        console.log(`[api/chat] ✓ edit ${applied.mode} @${ms()}ms`);
+        displayText = editReplyProse(full); // the kid-facing sentence only — never the raw hunks
+        deliverableHtml = toDeliverable(applied.html);
+      } else if (applied.reason === "no_patch_in_reply") {
+        // isGameEditTurn is deliberately over-inclusive (true for ANY message
+        // once a game exists, matching isGameBuildTurn's own tradeoff —
+        // builder-mode.ts). GAME_EDIT_PROMPT_SECTION is hedged for exactly
+        // this: an off-topic message gets an ordinary reply, no patch
+        // attempted. Treat it as plain chat — the game stays untouched, and a
+        // whole extra generation is NOT wasted regenerating it for nothing.
+        console.log(`[api/chat] edit turn was off-topic chat (no patch attempted) @${ms()}ms`);
+        displayText = full;
+        deliverableHtml = null;
+      } else {
+        // The model DID attempt an edit (SEARCH markers present) but it
+        // didn't cleanly apply (${applied.reason}) — a genuine failed edit,
+        // so fall back to ONE full-regeneration call rather than a dead end.
+        // Floor stays "no worse than before this feature existed."
+        console.warn(`[api/chat] patch failed (${applied.reason}) — falling back to full regeneration @${ms()}ms`);
+        try {
+          const fallback = await chatModel.reply({ history, message, image, forceFullRegen: true });
+          trackTurn(() => recordUsage("chat", servedModel, message, fallback.text, false, fallback.usage));
+          displayText = fallback.artifactHtml && !fallback.wasFenced
+            ? `${fallback.text}\n\n\`\`\`html\n${fallback.artifactHtml}\n\`\`\``.trim()
+            : fallback.text;
+          deliverableHtml = toDeliverable(fallback.artifactHtml);
+        } catch (err) {
+          console.error(`[api/chat] ✖ fallback regeneration failed @${ms()}ms: ${(err as Error).message}`);
+          send({ type: "error", text: "Oops! Something went wrong. Let's try again." });
+          if (replyId) trackTurn(() => turnResults.fail(replyId, userId, Date.now()));
+          return;
+        }
+      }
+    } else {
+      const { text: prose, artifactHtml, wasFenced } = extractArtifact(full);
+      deliverableHtml = toDeliverable(artifactHtml);
+      // Send the FULL text (code block kept inline, Gemini-style) for the chat,
+      // and the extracted HTML for the side panel preview. When the model didn't
+      // produce one clean ```html fence (truncated mid-fence, or no fence at all
+      // — extractArtifact's fallback cases), `full` still carries raw, unfenced
+      // HTML/CSS/JS: the markdown renderer would reinterpret its indentation as
+      // a series of CommonMark "indented code blocks," each spawning its own
+      // stray code-card widget in the chat bubble (BUG-FIX-LOG 2026-07-14,
+      // reproduced against the real remark/react-markdown stack). Re-fence it so
+      // the bubble always shows one clean, collapsible code block. The
+      // already-working case (a clean fence) is untouched byte-for-byte,
+      // including any trailing prose after the closing fence.
+      displayText = artifactHtml && !wasFenced
+        ? `${prose}\n\n\`\`\`html\n${artifactHtml}\n\`\`\``.trim()
+        : full;
+    }
     send({ type: "done", text: displayText, artifactHtml: deliverableHtml });
     // Keep the finished result server-side even if nobody is listening — a
     // disconnected client polls /api/chat/result instead of re-generating.
@@ -356,12 +408,20 @@ async function safeAuth() {
   }
 }
 
-/** Set-Cookie header that persists a brand-new guest identity (httpOnly so the client can't forge it). */
+/** Set-Cookie header that persists a brand-new guest identity (httpOnly so the client can't forge it).
+ *  Scoped to the whole apex domain in production (same knob + pattern as the
+ *  shared SSO cookie, `/api/logout`) — a host-only cookie would mint a fresh
+ *  guest identity on every canonical-domain rename and orphan the old one's
+ *  chat history (BUG-FIX-LOG 2026-07-18). No Domain in dev: `.localhost` isn't
+ *  a valid cookie domain for `http://localhost`. */
 function guestCookieHeader(guestId: string | null): Record<string, string> | undefined {
   if (!guestId) return undefined;
-  return {
-    "Set-Cookie": `${GUEST_COOKIE}=${guestId}; Path=/; Max-Age=${GUEST_COOKIE_MAX_AGE_S}; HttpOnly; SameSite=Lax`,
-  };
+  const domain =
+    process.env.SESSION_COOKIE_DOMAIN ??
+    (process.env.NODE_ENV === "production" ? ".ariantra.com" : undefined);
+  const parts = [`${GUEST_COOKIE}=${guestId}`, "Path=/", `Max-Age=${GUEST_COOKIE_MAX_AGE_S}`, "HttpOnly", "SameSite=Lax"];
+  if (domain) parts.push(`Domain=${domain}`);
+  return { "Set-Cookie": parts.join("; ") };
 }
 
 /** Wraps a producer in an NDJSON streaming Response. `extraHeaders` lets callers attach e.g.

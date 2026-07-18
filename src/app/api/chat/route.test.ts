@@ -23,11 +23,17 @@ vi.mock("server-only", () => ({}));
 
 // Gemini — spy so we can assert it is NEVER called on blocked paths.
 const replyStreamMock = vi.fn();
+// One-shot reply — used ONLY by the patch-fallback path (a failed edit-patch
+// falls back to a full regeneration, BUG-FIX-LOG class fix 2026-07-18).
+const replyMock = vi.fn();
 const extractArtifactMock = vi.fn((t: string): { text: string; artifactHtml?: string } => ({ text: t, artifactHtml: undefined }));
 vi.mock("@/lib/gemini", () => ({
   GeminiChatModel: class {
     replyStream(...args: unknown[]) {
       return replyStreamMock(...args);
+    }
+    reply(...args: unknown[]) {
+      return replyMock(...args);
     }
   },
   extractArtifact: (t: string) => extractArtifactMock(t),
@@ -156,6 +162,8 @@ async function codeNodes(markdown: string): Promise<Array<{ lang: string | null;
 beforeEach(() => {
   authMock.mockReset();
   replyStreamMock.mockReset();
+  replyMock.mockReset();
+  replyMock.mockResolvedValue({ text: "fallback" });
   extractArtifactMock.mockReset();
   extractArtifactMock.mockImplementation((t: string) => ({ text: t, artifactHtml: undefined }));
   injectMock.mockReset();
@@ -168,6 +176,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.SIGNED_IN_DAILY_TOKEN_LIMIT;
+  vi.unstubAllEnvs();
 });
 
 describe("POST /api/chat — guest trial (10K) with layered abuse control", () => {
@@ -200,6 +209,30 @@ describe("POST /api/chat — guest trial (10K) with layered abuse control", () =
     // Re-persisted under the new name so future requests stop needing the
     // legacy fallback — never re-minted as a fresh random id.
     expect(res.headers.get("set-cookie")).toContain(`ari_guest=${existingId}`);
+  });
+
+  // Guest→account merge gap (BUG-FIX-LOG 2026-07-18): the guest cookie used to
+  // be host-only (no Domain=), so a canonical-domain rename
+  // (kidgemini.ariantra.com → ari.ariantra.com → games-lab.ariantra.com) mints
+  // a brand-new guest identity on the new host and orphans the old one's chats.
+  it("G.1c in production, the guest cookie is scoped to the whole apex domain so a subdomain rename doesn't orphan it", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    authMock.mockResolvedValue(null);
+    replyStreamMock.mockReturnValue(one("Hello!"));
+
+    const res = await POST(makeReq({ message: "hello", history: [] }));
+
+    expect(res.headers.get("set-cookie")).toContain("Domain=.ariantra.com");
+  });
+
+  it("G.1d outside production (local dev), the cookie stays host-only — no Domain on http://localhost", async () => {
+    vi.stubEnv("NODE_ENV", "test");
+    authMock.mockResolvedValue(null);
+    replyStreamMock.mockReturnValue(one("Hello!"));
+
+    const res = await POST(makeReq({ message: "hello", history: [] }));
+
+    expect(res.headers.get("set-cookie")).not.toContain("Domain=");
   });
 
   it("G.2 guest over the 10K device limit → 401 sign-in wall, Gemini never called", async () => {
@@ -568,5 +601,79 @@ describe("POST /api/chat — cost metering (2026-07-13)", () => {
 
     expect(usageRows).toHaveLength(1);
     expect(usageRows[0]!.outputText).toBe(gameReply); // full billed output, not the ~4-token stripped text
+  });
+});
+
+// Patch-based feature edits (BUG-FIX-LOG class fix, 2026-07-18): a follow-up
+// request on an already-good game used to regenerate the whole file and
+// regress unrelated parts. isGameEditTurn/currentGameHtml/editReplyProse
+// (game-edit.ts) and applyPatch (repair-prompt.ts) are the REAL
+// implementations here, not mocked — this is the actual regression test
+// proving the mechanism preserves everything untouched.
+describe("POST /api/chat — patch-based feature edits", () => {
+  const CURRENT_GAME = '<!doctype html><html><body><div id="score">0</div><div>OLD_FEATURE</div></body></html>';
+  const historyWithGame = [
+    { id: "1", role: "child" as const, text: "make me a game", createdAt: 1 },
+    {
+      id: "2", role: "assistant" as const,
+      text: "Here!\n```html\n" + CURRENT_GAME + "\n```",
+      artifactHtml: CURRENT_GAME,
+      createdAt: 2,
+    },
+  ];
+
+  beforeEach(() => {
+    authMock.mockResolvedValue(null);
+  });
+
+  it("a clean SEARCH/REPLACE reply patches ONLY the matched hunk — everything else survives byte-for-byte", async () => {
+    const patchReply = "Added a medic kit! 🎮\n<<<<<<< SEARCH\nOLD_FEATURE\n=======\nMEDIC_KIT_FEATURE\n>>>>>>> REPLACE";
+    replyStreamMock.mockReturnValue(one(patchReply));
+
+    const res = await POST(makeReq({ message: "add a medic kit", history: historyWithGame }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(done.artifactHtml).toBe(CURRENT_GAME.replace("OLD_FEATURE", "MEDIC_KIT_FEATURE"));
+    expect(done.text).toBe("Added a medic kit! 🎮"); // the sentence only — never the raw hunks
+    expect(replyMock).not.toHaveBeenCalled(); // no fallback needed, patch applied clean
+  });
+
+  it("an off-topic reply (no patch, no full doc) passes through as ordinary chat — the game is untouched and no extra Gemini call is wasted", async () => {
+    replyStreamMock.mockReturnValue(one("Pandas eat bamboo! 🐼"));
+
+    const res = await POST(makeReq({ message: "what do pandas eat?", history: historyWithGame }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(done.text).toBe("Pandas eat bamboo! 🐼");
+    expect(done.artifactHtml).toBeFalsy(); // game untouched — no new artifact sent
+    expect(replyMock).not.toHaveBeenCalled(); // key: no wasted full-regeneration call
+  });
+
+  it("a genuinely attempted-but-mismatched patch falls back to ONE full-regeneration call — never a dead end", async () => {
+    const badPatchReply = "Trying to add that!\n<<<<<<< SEARCH\nTHIS_TEXT_IS_NOT_IN_THE_SOURCE\n=======\nNEW\n>>>>>>> REPLACE";
+    replyStreamMock.mockReturnValue(one(badPatchReply));
+    replyMock.mockResolvedValue({ text: "Here you go!", artifactHtml: "<html>FALLBACK GAME</html>", wasFenced: true });
+
+    const res = await POST(makeReq({ message: "add a medic kit", history: historyWithGame }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(replyMock).toHaveBeenCalledTimes(1);
+    expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
+    expect(done.artifactHtml).toBe("<html>FALLBACK GAME</html>");
+  });
+
+  it("a fresh build with no game yet never touches the patch/fallback path", async () => {
+    extractArtifactMock.mockImplementation(() => ({ text: "Here's your game!", artifactHtml: "<html>NEW GAME</html>" }));
+    replyStreamMock.mockReturnValue(one("```html<html>NEW GAME</html>```"));
+
+    const res = await POST(makeReq({ message: "make me a racing game", history: [] }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(done.artifactHtml).toBe("<html>NEW GAME</html>");
+    expect(replyMock).not.toHaveBeenCalled();
   });
 });
