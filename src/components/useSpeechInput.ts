@@ -99,6 +99,12 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
   // be trusted (see speech-transcript.ts, 2026-07-14 repeat-mic bug). Reset
   // to 0 at every rec.start() — a fresh session gets a fresh results list.
   const committedFinalsRef = useRef(0);
+  // The actual TEXTS committed this listen (across silent restarts) — the
+  // take-3 replay guard (speech-transcript.ts, 2026-07-18): counters reset on
+  // a successful restart, but a lingering old session's stale list can then
+  // resurface; matching texts catches what counting can't. Reset only on a
+  // kid-initiated start().
+  const committedTextsRef = useRef<string[]>([]);
 
   // Latest callback without retriggering the setup effect.
   const onTranscriptRef = useRef(onTranscript);
@@ -113,11 +119,13 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
     rec.continuous = true; // don't end the session at the first pause in speech
     rec.interimResults = true; // see interim-flush note above — finals alone lose long speech
     rec.onresult = (e) => {
-      const { freshFinalText, interimText, finalCount } = splitSpeechResults(
+      const { freshFinalText, freshSegments, interimText, finalCount } = splitSpeechResults(
         e.results,
         committedFinalsRef.current,
+        committedTextsRef.current,
       );
       committedFinalsRef.current = finalCount;
+      committedTextsRef.current.push(...freshSegments);
       // Committed as-is: Web Speech emits no punctuation, and heuristics only
       // punctuated pause boundaries (owner decision 2026-07-10: none at all
       // beats inconsistent — revisit with a server STT if UAT demands it).
@@ -132,6 +140,9 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
       // the browser. Commit it so a hard-capped monologue keeps every word.
       if (interimRef.current) {
         onTranscriptRef.current(interimRef.current);
+        // It just got committed like any final — the replay guard must know,
+        // or a stale list re-delivering it as a REAL final slips past dedup.
+        committedTextsRef.current.push(interimRef.current);
         interimRef.current = "";
       }
       setInterim("");
@@ -169,6 +180,7 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
     const rec = recRef.current;
     if (!rec) return;
     setError(null);
+    committedTextsRef.current = []; // fresh listen — the replay guard starts clean
     wantListeningRef.current = true;
     let started = true;
     try { rec.start(); } catch { started = false; /* old session still alive */ }

@@ -46,6 +46,9 @@ export function committedCountAfterRestart(
 export interface SpeechResultSplit {
   /** Newly finalized speech beyond what the caller already committed — commit now. */
   freshFinalText: string;
+  /** The same fresh finals as individual segments — append to the caller's
+   *  committed-texts record (the take-3 replay guard below). */
+  freshSegments: string[];
   /** Recognized but not yet final — replaces any previous interim tail. */
   interimText: string;
   /** Total finalized segments seen this session — pass back in as `alreadyCommitted`
@@ -65,25 +68,48 @@ export function composeDictation(committed: string, interim: string): string {
   return committed ? `${committed} ${interim}` : interim;
 }
 
+/** Replay guard, take 3 (2026-07-18, found by e2e-mic-dictation.mjs): the
+ *  count-based accounting can't tell a fresh session's NEW list from a
+ *  lingering OLD session's stale list. After a SUCCESSFUL restart the counter
+ *  legitimately resets to 0 — if the old session then resurfaces (a restart
+ *  race later in the same listen), its cumulative finals all sit "past" the
+ *  zeroed counter and re-commit: the "I want I want" flood via a third path.
+ *  Texts don't lie where counters can: two or more consecutive
+ *  already-committed finals reappearing at the HEAD of the fresh slice are a
+ *  replay, not new speech, and are dropped. A single match is deliberately
+ *  let through — a kid may genuinely say the same phrase twice. */
+const MIN_REPLAY_RUN = 2;
+
+function dropReplayedPrefix(fresh: string[], committedTexts: string[]): string[] {
+  const max = Math.min(fresh.length, committedTexts.length);
+  for (let k = max; k >= MIN_REPLAY_RUN; k--) {
+    const tail = committedTexts.slice(committedTexts.length - k);
+    if (tail.every((t, i) => t === fresh[i])) return fresh.slice(k);
+  }
+  return fresh;
+}
+
 export function splitSpeechResults(
   results: ArrayLike<SpeechResultLike>,
   alreadyCommitted: number | undefined,
+  committedTexts: string[] = [],
 ): SpeechResultSplit {
   const all = Array.from(results);
-  const text = (rs: SpeechResultLike[]) =>
-    rs
-      .map((r) => r[0]?.transcript ?? "")
-      .filter(Boolean)
-      .join(" ")
-      .trim();
+  const segments = (rs: SpeechResultLike[]) =>
+    rs.map((r) => r[0]?.transcript?.trim() ?? "").filter(Boolean);
   const finals = all.filter((r) => r.isFinal === true);
+  // Sliced by OUR OWN running count, not the browser's resultIndex (see the
+  // 2026-07-14 note), then replay-guarded by committed TEXTS (take 3 above).
+  const freshSegments = dropReplayedPrefix(
+    segments(finals.slice(alreadyCommitted ?? 0)),
+    committedTexts,
+  );
   return {
-    // Sliced by OUR OWN running count, not the browser's resultIndex — see
-    // the 2026-07-14 note above for why the browser's index can't be trusted.
-    freshFinalText: text(finals.slice(alreadyCommitted ?? 0)),
+    freshFinalText: freshSegments.join(" ").trim(),
+    freshSegments,
     // Interims always sit at the session tail — rebuild from the WHOLE list so
     // a segment that just finalized drops out of the interim buffer (no doubles).
-    interimText: text(all.filter((r) => r.isFinal !== true)),
+    interimText: segments(all.filter((r) => r.isFinal !== true)).join(" ").trim(),
     finalCount: finals.length,
   };
 }

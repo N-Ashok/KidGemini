@@ -160,3 +160,45 @@ describe("composeDictation (live typing while the kid speaks)", () => {
     expect(composeDictation("", "")).toBe("");
   });
 });
+
+// Repeat-mic take 3 (2026-07-18, e2e-mic-dictation.mjs finding): the take-2
+// fix defends a FAILED restart, but a SUCCESSFUL restart legitimately resets
+// the counter to 0 — and if a lingering old session then resurfaces (restart
+// race later in the same listen), its cumulative finals all re-commit past
+// the zeroed counter. Counters can't tell "fresh session's new list" from
+// "old session's stale list", so the caller now also passes the committed
+// TEXTS: two or more consecutive already-committed finals reappearing at the
+// head of the fresh slice are a replay, and are dropped.
+describe("splitSpeechResults — committed-text replay guard (take 3)", () => {
+  const final = (t: string) => Object.assign([{ transcript: t }], { isFinal: true as const });
+
+  it("drops a >=2-segment replay of already-committed finals after a counter reset", () => {
+    const committedTexts = ["make me a maze game", "with penguins", "in 3d"];
+    const r = splitSpeechResults(
+      [final("make me a maze game"), final("with penguins"), final("in 3d"), final("please")],
+      0, // counter was reset by a successful restart
+      committedTexts,
+    );
+    expect(r.freshFinalText).toBe("please");
+  });
+
+  it("a SINGLE repeated phrase is NOT deduped — a kid may genuinely say the same thing twice", () => {
+    const r = splitSpeechResults([final("hello")], 0, ["make me a game", "hello"]);
+    expect(r.freshFinalText).toBe("hello");
+  });
+
+  it("a genuinely fresh session's new words pass through untouched", () => {
+    const r = splitSpeechResults([final("add a dragon")], 0, ["make me a maze game", "with penguins"]);
+    expect(r.freshFinalText).toBe("add a dragon");
+  });
+
+  it("no committed texts (or omitted) → behavior identical to before", () => {
+    const r = splitSpeechResults([final("I want"), final("a car")], 1);
+    expect(r.freshFinalText).toBe("a car");
+  });
+
+  it("returns freshSegments so the caller can extend its committed-texts record", () => {
+    const r = splitSpeechResults([final("one"), final("two")], 1, ["one"]);
+    expect(r.freshSegments).toEqual(["two"]);
+  });
+});

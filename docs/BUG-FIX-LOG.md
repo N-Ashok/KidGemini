@@ -45,6 +45,39 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-18 — Repeat-mic, take 3: a successful restart re-opened the replay-flood window (found by the new mic e2e)
+
+- **Symptom (what the user saw):** field report "the mic is not good" (Chrome, HP
+  laptop). Reproduced in `scripts/e2e-mic-dictation.mjs` (real Chromium against the
+  running app, scripted SpeechRecognition fake): after a successful silent restart, a
+  later failed restart let the lingering old session's cumulative finals re-commit —
+  "make me a maze game with penguins in 3d **make me a maze game with penguins in
+  3d** please".
+- **Surface area:** `src/lib/speech-transcript.ts`, `src/components/useSpeechInput.ts`.
+- **Root cause:** counters can't distinguish "fresh session's new list" from "old
+  session's stale list". Take 2 (2026-07-16) kept the counter on a FAILED start, but a
+  SUCCESSFUL restart legitimately zeroes it — if the old session then resurfaces via a
+  later restart race in the same listen, every stale final sits "past" the zeroed
+  counter and re-commits. A second leak: the interim tail flushed by `onend` was
+  committed to the composer without being recorded, so a stale list re-delivering it
+  as a real final slipped past any guard.
+- **Fix:** the caller now also passes the committed TEXTS (`committedTextsRef`, reset
+  only on a kid-initiated start): `dropReplayedPrefix()` drops two-or-more consecutive
+  already-committed finals reappearing at the head of the fresh slice
+  (`MIN_REPLAY_RUN = 2` — a single match is deliberately let through, a kid may really
+  say the same phrase twice). The onend interim flush records its text too.
+- **Result (verified):** 5 new `speech-transcript.test.ts` cases (2 failed before,
+  pass after) and the new 14-check mic e2e all green; suite 796 passing.
+- **Impact:** replay floods are now text-impossible across all three known paths
+  (stale resultIndex, failed restart, stale-list-after-successful-restart). Remaining
+  edge (documented): a kid repeating 2+ identical consecutive phrases across a silence
+  restart could be over-deduped; wrong-word complaints are the recognizer itself, not
+  this wiring.
+- **Prevention (class):** "session-scoped counters guarding cross-session streams —
+  identity must come from content, not position." Pinned by
+  `scripts/e2e-mic-dictation.mjs` (run: dev server + `node scripts/e2e-mic-dictation.mjs`).
+- **Related:** 2026-07-14 repeat-mic, 2026-07-16 take 2 (same class, both still pinned).
+
 ### 2026-07-18 — Every edit turn failed `search_not_found`: the model was shown an OLD game version while applyPatch targeted the newest
 
 - **Symptom (what the user saw):** live UAT after the strict-retry hardening — every
