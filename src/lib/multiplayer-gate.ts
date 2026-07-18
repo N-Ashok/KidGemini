@@ -30,3 +30,26 @@ export function multiplayerGate(input: { message: string; history: ChatMessage[]
   const artifacts = input.history.map((m) => m.artifactHtml).filter((h): h is string => Boolean(h));
   return texts.some((t) => MULTIPLAYER_TRIGGER.test(t)) || artifacts.some((h) => MULTIPLAYER_ARTIFACT.test(h));
 }
+
+// Real multiplayer usage = the game calls the platform SDK's messaging
+// surface. Deliberately NOT the mere word "multiplayer" — a single-player
+// game that only mentions it in copy must never grow a lobby.
+const SDK_MULTIPLAYER_CALL = /Ariantra\.(broadcast|onMessage|onPlayers)\s*\(/;
+
+/** Marker insurance (owner UAT 2026-07-18: "asked for multiplayer capability,
+ *  it did not even provide invite button"): the model sometimes writes real
+ *  `Ariantra.broadcast`/`onMessage` game logic but forgets the
+ *  `<!--USES_MULTIPLAYER-->` opt-in line it was taught — and the marker is
+ *  the ONLY signal the preview's "🎮 Invite" button and the publish-time
+ *  lobby overlay key off, so working multiplayer shipped with no way to use
+ *  it. Called on every delivered game (api/chat/route.ts `toDeliverable`):
+ *  if the game genuinely calls the multiplayer SDK and the marker is
+ *  missing, add it right after `<body>`; anything else passes through
+ *  byte-identical. */
+export function ensureMultiplayerMarker(html: string): string {
+  if (!SDK_MULTIPLAYER_CALL.test(html) || html.includes(MULTIPLAYER_MARKER)) return html;
+  const body = /<body\b[^>]*>/i.exec(html);
+  if (!body) return `${MULTIPLAYER_MARKER}${html}`;
+  const end = body.index + body[0].length;
+  return `${html.slice(0, end)}${MULTIPLAYER_MARKER}${html.slice(end)}`;
+}

@@ -45,7 +45,11 @@ never enforce it yourself; the platform's lobby already rejects a 6th joiner.
    fires, not just once at page load — a player who joins after your first
    render still needs a starting position, spawn slot, or avatar created for
    them at that moment, not left at whatever default (like \`{x:0,y:0}\`) your
-   code happened to initialize it to.
+   code happened to initialize it to. Every player gets a DIFFERENT starting
+   slot derived from their index in the roster (sorted by \`joinedAt\` or
+   \`playerId\` so all copies agree) — never spawn two players at the same
+   spot: identical coordinates also break the push-apart collision math in
+   rule 6 (distance zero → division by zero).
    \`Ariantra.broadcast({ ... })\` / \`Ariantra.onMessage((data, fromPlayerId)
    => { ... })\` — for DISCRETE one-off events only: a win, an item pickup, a
    round starting, a chat ping. Applied the instant they arrive.
@@ -79,6 +83,26 @@ never enforce it yourself; the platform's lobby already rejects a 6th joiner.
    (from \`getPeerState\`); if they overlap, push your position apart along
    the line between the two centers (move away by however much they overlap)
    instead of leaving them stacked or letting them cross over each other.
+   Guard the division: when the distance is exactly zero (two cars on the
+   same point — e.g. right after a shared spawn or reset), dividing the
+   offset by it produces NaN, which poisons the position and camera until
+   the screen shows nothing but the background color — in that case push in
+   a fixed direction (or skip the push that frame) instead of dividing.
 7. The game must work, alone, before a friend joins — start it immediately
    like every other game; multiplayer moves simply start arriving once
-   someone else connects.`;
+   someone else connects.
+8. One session hosts MANY rounds — friends play round after round without
+   re-inviting. Never reload the page to restart (\`location.reload()\`, or
+   setting \`location.href\`, disconnects the player from the friend session
+   and kills the rematch): the "play again" button must instead reset the
+   game in code — positions, scores, timers, obstacles back to their starting
+   values — and \`Ariantra.broadcast({ type: 'restart' })\` so every player
+   resets together, applied through the same shared reset function whether it
+   was your own button press or an incoming \`onMessage\` (the exact contract
+   rule 5 uses for game-over). Inside that reset, re-derive EVERY player's
+   spawn position and the camera from the CURRENT roster (the same layout
+   logic your \`onPlayers\` handler runs) — \`onPlayers\` does NOT fire again
+   on restart because nobody joined or left, so a reset that skips its own
+   car/camera placement leaves that player staring at an empty scene (a
+   real bug report: the second player's screen went solid blue after a
+   rematch while the first player could still see both cars).`;

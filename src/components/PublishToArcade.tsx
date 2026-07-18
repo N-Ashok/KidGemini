@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { nameToSlug } from "@/lib/arcade";
+import { whatsappShareUrl } from "@/lib/share-links";
 import { signIn, useSession } from "@/lib/useAriantraSession";
 
 interface Props {
@@ -27,28 +28,9 @@ const NAME_IDEAS = [
   "Turbo Trails", "Moon Hopper", "Laser Legend", "Wobble World", "Rocket Rally",
 ];
 
-// WhatsApp deep link (2026-07-17): try the installed app directly — mobile
-// app or WhatsApp Desktop — via its `whatsapp://` URI scheme, which hands
-// off to the app straight away, skipping wa.me's web landing page (the
-// "select WhatsApp Web" intermediate step this replaces). Falls back to
-// wa.me only if nothing takes over the page within ~1.2s, i.e. no app was
-// there to catch the custom scheme. Kept in sync by hand with the
-// equivalent function in Ariantra-Platform's CatalogClient.tsx /
-// share-overlay.ts and this repo's parent/page.tsx.
-function openWhatsApp(text: string) {
-  const appUrl = `whatsapp://send?text=${encodeURIComponent(text)}`;
-  const webUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
-  const fallback = window.setTimeout(() => {
-    window.open(webUrl, "_blank", "noopener,noreferrer");
-  }, 1200);
-  const cancel = () => window.clearTimeout(fallback);
-  window.addEventListener("blur", cancel, { once: true });
-  const onVisibility = () => {
-    if (document.hidden) { cancel(); document.removeEventListener("visibilitychange", onVisibility); }
-  };
-  document.addEventListener("visibilitychange", onVisibility);
-  window.location.href = appUrl;
-}
+// WhatsApp share is a plain anchor to wa.me — see src/lib/share-links.ts for
+// why the whatsapp:// deep-link + delayed-window.open approach is banned
+// (BUG-FIX-LOG 2026-07-18: it silently opened nothing without the app).
 
 export function PublishToArcade({ html, suggestedName, onClose }: Props) {
   const [step, setStep] = useState<Step>("name");
@@ -458,13 +440,15 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
                     rows={2}
                   />
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => { openWhatsApp(shareMessage); setTimeout(() => setShareConfirmed(true), 300); }}
-                      className="rounded-full bg-[#25d366] px-3.5 py-2 text-xs font-extrabold text-white"
+                    <a
+                      href={whatsappShareUrl(shareMessage)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => setShareConfirmed(true)}
+                      className="rounded-full bg-[#25d366] px-3.5 py-2 text-xs font-extrabold text-white no-underline"
                     >
                       💬 WhatsApp
-                    </button>
+                    </a>
                     <button
                       type="button"
                       onClick={() => {

@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { signIn, useSession } from "@/lib/useAriantraSession";
+import { whatsappShareUrl } from "@/lib/share-links";
 import type { ParentAlert } from "@/types/alert.types";
 
 interface FamilyGame {
@@ -34,28 +35,9 @@ const STUDIO_BASE = DEV ? "http://localhost:3000" : "https://studio.ariantra.com
 const ARI_PARENT_URL = DEV ? "http://localhost:3001/parent" : "https://games-lab.ariantra.com/parent";
 const FAMILY_PROFILE_URL = `${STUDIO_BASE}/studio?profile=1&profileReturnTo=${encodeURIComponent(ARI_PARENT_URL)}`;
 
-// WhatsApp deep link (2026-07-17): try the installed app directly — mobile
-// app or WhatsApp Desktop — via its `whatsapp://` URI scheme, which hands
-// off to the app straight away, skipping wa.me's web landing page (the
-// "select WhatsApp Web" intermediate step this replaces). Falls back to
-// wa.me only if nothing takes over the page within ~1.2s, i.e. no app was
-// there to catch the custom scheme. Kept in sync by hand with the
-// equivalent function in Ariantra-Platform's CatalogClient.tsx /
-// share-overlay.ts and this repo's PublishToArcade.tsx.
-function openWhatsApp(text: string) {
-  const appUrl = `whatsapp://send?text=${encodeURIComponent(text)}`;
-  const webUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
-  const fallback = window.setTimeout(() => {
-    window.open(webUrl, "_blank", "noopener,noreferrer");
-  }, 1200);
-  const cancel = () => window.clearTimeout(fallback);
-  window.addEventListener("blur", cancel, { once: true });
-  const onVisibility = () => {
-    if (document.hidden) { cancel(); document.removeEventListener("visibilitychange", onVisibility); }
-  };
-  document.addEventListener("visibilitychange", onVisibility);
-  window.location.href = appUrl;
-}
+// WhatsApp share is a plain anchor to wa.me — see src/lib/share-links.ts for
+// why the whatsapp:// deep-link + delayed-window.open approach is banned
+// (BUG-FIX-LOG 2026-07-18: it silently opened nothing without the app).
 
 type View =
   | { kind: "loading" }
@@ -432,13 +414,15 @@ export default function ParentPage() {
                               className="mb-2 w-full rounded-lg border border-neutral-200 bg-white p-2 text-sm outline-none focus:border-brand-500"
                             />
                             <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                onClick={() => { openWhatsApp(shareMessage); setTimeout(() => setShareConfirmedSlug(g.slug), 300); }}
-                                className="rounded-full bg-[#25d366] px-3.5 py-1.5 text-xs font-bold text-white"
+                              <a
+                                href={whatsappShareUrl(shareMessage)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={() => setShareConfirmedSlug(g.slug)}
+                                className="rounded-full bg-[#25d366] px-3.5 py-1.5 text-xs font-bold text-white no-underline"
                               >
                                 💬 WhatsApp
-                              </button>
+                              </a>
                               <button
                                 type="button"
                                 onClick={() => {

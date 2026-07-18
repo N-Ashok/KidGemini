@@ -15,6 +15,7 @@ import {
 } from "@/lib/game-edit";
 import { applyPatch } from "@/lib/repair-prompt";
 import { injectAssets } from "@/lib/assets/inject";
+import { ensureMultiplayerMarker } from "@/lib/multiplayer-gate";
 import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
 import { RulesClassifier } from "@/lib/safety.rules";
@@ -303,10 +304,13 @@ export async function POST(req: NextRequest) {
         if (injected.dropped?.length) {
           console.warn(`[api/chat] asset names dropped fail-soft: ${injected.dropped.join(", ")}`);
         }
-        return injected.html;
+        // Marker insurance (2026-07-18): real SDK multiplayer code without the
+        // opt-in marker = an invite button that never appears. Self-gating —
+        // byte-identical pass-through for everything else.
+        return ensureMultiplayerMarker(injected.html);
       } catch (err) {
         console.error(`[api/chat] ✖ asset injection failed @${ms()}ms (serving raw artifact): ${(err as Error).message}`);
-        return rawHtml;
+        return ensureMultiplayerMarker(rawHtml);
       }
     }
 

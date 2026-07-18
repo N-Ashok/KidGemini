@@ -15,12 +15,22 @@ export interface ResumedTurn {
 export const RESUME_MAX_MS = 240_000;
 export const RESUME_INTERVAL_MS = 4_000;
 
+/** Dead-server fail-fast budget (BUG-FIX-LOG 2026-07-18): the heavy-load
+ *  patience above only pays off when SOMEONE is generating. If the server has
+ *  never answered at all (stopped dev server, dead network), every tick throws
+ *  — burning the full 4-minute budget per attempt kept the kid staring at
+ *  "Reconnecting… hang tight!" with the composer locked for ~12 minutes. */
+export const UNREACHABLE_MAX_MS = 20_000;
+
 /**
  * Poll for a turn's server-side result.
  *  - `done`   → the finished reply (apply it, no re-generation).
  *  - `error`, 404, or `running` past the budget → null (caller re-generates).
- * Any network failure while polling counts as a miss for that tick, not a
- * verdict — the loop keeps going until the budget runs out.
+ * Network failures while polling count as misses for that tick, not verdicts —
+ * BUT only once the server has answered at least once this poll. A server
+ * that has NEVER answered gets the short `unreachableMaxMs` budget instead
+ * (nobody is generating — patience buys nothing).
+ * `shouldStop` (the kid's ⏹) is honored every tick.
  */
 export async function pollTurnResult(
   replyId: string,
@@ -29,16 +39,22 @@ export async function pollTurnResult(
     sleep?: (ms: number) => Promise<void>;
     maxMs?: number;
     intervalMs?: number;
+    unreachableMaxMs?: number;
+    shouldStop?: () => boolean;
   } = {},
 ): Promise<ResumedTurn | null> {
   const fetchFn = opts.fetchFn ?? fetch;
   const sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   const maxMs = opts.maxMs ?? RESUME_MAX_MS;
   const intervalMs = opts.intervalMs ?? RESUME_INTERVAL_MS;
+  const unreachableMaxMs = opts.unreachableMaxMs ?? UNREACHABLE_MAX_MS;
 
+  let reached = false; // any HTTP response at all proves a live server
   for (let waited = 0; ; waited += intervalMs) {
+    if (opts.shouldStop?.()) return null;
     try {
       const res = await fetchFn(`/api/chat/result?replyId=${encodeURIComponent(replyId)}`, { cache: "no-store" });
+      reached = true;
       if (res.status === 404) return null; // unknown turn (old server / never started) — re-generate
       if (res.ok) {
         const body = (await res.json()) as { status: string; text?: string; artifactHtml?: string | null };
@@ -47,9 +63,9 @@ export async function pollTurnResult(
         // `running` → fall through and keep waiting
       }
     } catch {
-      /* offline tick — keep polling until the budget runs out */
+      /* offline tick — keep polling until the (right) budget runs out */
     }
-    if (waited + intervalMs > maxMs) return null;
+    if (waited + intervalMs > (reached ? maxMs : Math.min(maxMs, unreachableMaxMs))) return null;
     await sleep(intervalMs);
   }
 }

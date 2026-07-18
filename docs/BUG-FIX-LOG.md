@@ -45,6 +45,213 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-18 — Blue-screen root cause CONFIRMED from the game's code: identical spawn point + divide-by-zero in push-apart collision → NaN position
+
+- **Symptom:** same report as the entry below — player 2 solid blue after a
+  rematch while player 1 saw both cars. The user then pasted the actual
+  generated game HTML, which pinned the mechanism exactly.
+- **Root cause (confirmed, two compounding gaps):** (1) `resetGame()` spawned
+  EVERY player at the hardcoded point `(30, 0.4, 5)` — no per-player slots;
+  (2) the push-apart collision computed `d = √(dx²+dz²)` then `dx/d` — with
+  both cars byte-identical at spawn, `d === 0` → `0/0 = NaN` → the car's
+  position went NaN → camera lerped to NaN → only the sky color rendered.
+  The asymmetry: player 2 sat frozen at spawn while the smoothed peer
+  position converged onto the exact same point; player 1 had already moved,
+  so their distance never hit zero — and player 2's `broadcastState` kept
+  streaming, which is why player 1 still saw both cars.
+- **Fix:** two contract additions (`multiplayer-prompt.ts` + both platform
+  mirrors): the roster-layout rule now REQUIRES a different starting slot
+  per player (derived from roster index, sorted so all copies agree; "never
+  spawn two players at the same spot"), and rule 6 now REQUIRES a
+  zero-distance guard on the push-apart division, naming NaN and the
+  background-color-only screen as the failure.
+- **Result (verified):** 2 new contract pins (23 total in
+  `multiplayer-prompt.test.ts`); Game 814/814; llms.txt 7/7; both typechecks
+  clean.
+- **Impact:** prompt-level; the user's race game needs one edit turn to
+  absorb it ("give each player a different starting position and guard the
+  collision push against divide-by-zero").
+- **Prevention:** class = "vector math on peer-relative offsets must guard
+  the degenerate zero-distance case, and shared spawns make that case
+  routine, not rare."
+- **Related:** the two rematch entries below (same UAT thread).
+
+### 2026-07-18 — Rematch left player 2 on a solid blue screen (spawn/camera only derived in onPlayers, which never re-fires on restart)
+
+- **Symptom (what the user saw):** owner UAT, two-device race — "we restarted
+  but the second player screen shows blue while first player can see the
+  other player."
+- **Surface area:** `src/lib/multiplayer-prompt.ts` rule 8 (+ the two platform
+  contract mirrors, synced in the same change).
+- **Root cause:** restart does not change the roster, so `onPlayers` — where
+  generated games put ALL spawn/camera layout, as the contract itself
+  teaches — never fires again after a rematch. The restarting player resets
+  through their own local path; the receiving player's reset cleared
+  scores/timers but never re-placed their own car and camera, leaving the
+  camera aimed at empty sky (solid blue). Player 1 still saw both cars
+  because player 2's `broadcastState` kept streaming. Rule 8 (added earlier
+  today) said "reset positions" but not that the reset must re-run the
+  roster-layout logic itself — the exact trap.
+- **Fix:** rule 8 extended: the shared reset must re-derive EVERY player's
+  spawn position and the camera from the current roster (the same layout
+  logic as the `onPlayers` handler), with the explicit warning that
+  `onPlayers` does not re-fire on restart. Both platform mirrors
+  (`AI_INTEGRATION_PROMPT.md`, `llms.txt` route) updated.
+- **Result (verified):** 2 new contract pins in `multiplayer-prompt.test.ts`
+  (21 total); Game 812/812; llms.txt route tests 7/7; both typechecks clean.
+- **Impact:** prompt-level — games built/edited after this ships get the full
+  rematch contract. The user's existing race game needs one edit turn
+  ("after play again the second player's screen goes blue — fix the restart")
+  to absorb it.
+- **Prevention:** class = "event-driven layout + a synthetic reset event:
+  any state normally derived from an event that won't re-fire must be
+  re-derived explicitly in the reset path." Pinned by the new contract tests.
+- **Related:** the one-race rematch entry directly below; platform BUG_LOG #33.
+
+### 2026-07-18 — A hosted room only lasted one race: "play again" reloaded the page and killed the friend session
+
+- **Symptom (what the user saw):** owner UAT — "host a game should last not
+  for one race. it should allow multiple game restart." After a race ended,
+  playing again meant re-hosting and re-sharing the invite link.
+- **Surface area:** `src/lib/multiplayer-prompt.ts` (+ the two contract
+  mirrors in Ariantra-Platform: `docs/AI_INTEGRATION_PROMPT.md`,
+  `src/app/llms.txt/route.ts` — TECH_DEBT #41's manual sync, done in the same
+  change).
+- **Root cause:** the prompt's rule 5 required a "play again" button but never
+  said what restart must DO. Generated games default to `location.reload()` —
+  the room itself survives (2-hour TTL, server-side), but a reload tears down
+  the page's WebSocket session, so the rematch was dead and the lobby had to
+  be redone from scratch.
+- **Fix:** new contract rule 8 — one session hosts MANY rounds: reloading the
+  page to restart is forbidden by name (`location.reload()`/`location.href`);
+  "play again" must reset game state in code and
+  `Ariantra.broadcast({ type: 'restart' })`, applied through the same shared
+  reset function as game-over (rule 5's exact pattern), so all players reset
+  together.
+- **Result (verified):** 3 new contract pins in `multiplayer-prompt.test.ts`
+  (19 total; failed before, pass after); suite 810/810, both repos typecheck
+  clean; llms.txt route tests 7/7 still green after the mirror sync.
+- **Impact:** prompt-level — applies to games built/edited AFTER this ships;
+  existing games keep their reload-style restart until regenerated.
+- **Prevention:** class = "a UI element the contract requires must also have
+  its BEHAVIOR specified — 'show a play-again button' without 'and never
+  reload' invites the default that breaks the session."
+- **Related:** rule 5 (shared game-over function), platform BUG_LOG #33
+  (lobby rework), PRD-MULTIPLAYER.md.
+
+### 2026-07-18 — "Multiplayer capability" built real SDK code but no invite button ever appeared (missing opt-in marker)
+
+- **Symptom (what the user saw):** owner UAT screenshot — asked the 2-player
+  race game for "multiplayer capability"; Ari replied "I've added multiplayer
+  magic…" but the preview showed **no 🎮 Invite button** (and, had it been
+  published, no lobby overlay).
+- **Surface area:** `src/lib/multiplayer-gate.ts`, `src/app/api/chat/route.ts`
+  (`toDeliverable`).
+- **Root cause:** everything that surfaces multiplayer UI keys off ONE signal
+  — the `<!--USES_MULTIPLAYER-->` marker the model is taught to write
+  (`multiplayer-prompt.ts` rule 1). The preview's Invite button
+  (`ArtifactFrame`) and the platform's publish-time lobby overlay both check
+  it. The model sometimes writes genuine `Ariantra.broadcast`/`onMessage`
+  game logic but forgets the marker line (especially plausible on patch-edit
+  turns, where changes are expressed as hunks) — working multiplayer with no
+  way to use it, while the reply claims success.
+- **Fix:** `ensureMultiplayerMarker(html)` in `multiplayer-gate.ts` — if the
+  delivered game calls the multiplayer SDK (`Ariantra.broadcast|onMessage|
+  onPlayers(`) and lacks the marker, insert it right after `<body>` (prepend
+  if no body tag); byte-identical pass-through otherwise (single-player games
+  can never grow a lobby from this). Wired into `toDeliverable()` in the chat
+  route — the single choke point every delivery path (patch, strict retry,
+  regen fallback, fresh build) already flows through, including the
+  asset-injection-failure fallback.
+- **Result (verified):** 5 new unit tests in `multiplayer-gate.test.ts`
+  (insertion, no-op-with-marker, no-op-single-player, body-with-attributes,
+  no-body fail-soft); suite 807/807, typecheck clean.
+- **Impact:** a game whose code really does multiplayer now always shows the
+  preview Invite button and gets the published lobby overlay. A model that
+  writes NO SDK calls still ships single-player (nothing to key off) — that
+  case remains a prompt-quality issue, not a wiring one.
+- **Prevention:** class = "UI gated on a model-written marker must not trust
+  the model to remember the marker — derive it from the code when the code is
+  unambiguous." Same day, the platform's lobby itself was reworked
+  (invite-link-first hosting, platform BUG_LOG #33).
+- **Related:** TECH_DEBT #43 (no reference multiplayer templates),
+  platform BUG_LOG #25/#33, PRD-MULTIPLAYER.md Phase 4.
+
+### 2026-07-18 — WhatsApp share opened nothing; the card claimed "Thanks for sharing" anyway
+
+- **Symptom (what the user saw):** owner UAT — after publishing a game, the
+  💬 WhatsApp button on the publish-done share card "led to nothing. it just
+  went to thanks for sharing without going to web whatsapp".
+- **Surface area:** `src/components/PublishToArcade.tsx`, `src/app/parent/page.tsx`
+  (this repo) + Ariantra-Platform's `CatalogClient.tsx` and `share-overlay.ts` —
+  four hand-synced copies of the same `openWhatsApp()`.
+- **Root cause:** the 2026-07-17 deep-link design navigated to `whatsapp://send`
+  and fell back to `window.open(wa.me)` from a 1.2 s timer. Without the app
+  installed, the custom-scheme navigation silently no-ops; by the time the timer
+  fires, the click's transient user activation is spent, so the popup blocker
+  silently eats the `window.open` — and the blur from Chrome's own
+  external-protocol dialog could cancel the fallback outright. Every call site
+  then flipped to "Nice! Thanks for sharing." on a blind 300 ms timer,
+  masking the failure.
+- **Fix:** WhatsApp share is now a real `<a href>` to `https://wa.me/?text=…`
+  (`whatsappShareUrl()` in the new `src/lib/share-links.ts`; platform mirror
+  `src/lib/publish/share-links.ts`). Anchors are never popup-blocked, and wa.me
+  itself hands off to the installed app (mobile + Desktop) or offers WhatsApp
+  Web — the exact pattern the overlay's X/Facebook/email/SMS links already
+  used. All four `openWhatsApp` copies deleted; confirm now fires on the
+  anchor's click (a navigation the browser is actually performing).
+- **Result (verified):** new `share-links.test.ts` in both repos (wa.me-not-
+  whatsapp://, encoding); suites 802/802 (Game) and 668/668 (platform),
+  typecheck clean in both.
+- **Impact:** sharing works with or without a WhatsApp app; one extra wa.me tap
+  when the app exists. Platform BUG_LOG #32 is the same fix from the platform
+  side; TECH_DEBT #66 tracks already-published games whose baked-in overlay
+  keeps the old button until republished. KNOWN_BUGS #3 tracks the sibling
+  "📲 More…" fake-confirm when `navigator.share` is missing.
+- **Prevention:** class = "programmatic window.open outside the click's user
+  activation is a popup-block roulette — share/handoff links must be real
+  anchors." The share-links tests + the banned-pattern comment in
+  `share-links.ts` pin it.
+- **Related:** 2026-07-17 share-copy rewrite (e9515d8, platform), PRD-SHARING S1/S5/S10.
+
+### 2026-07-18 — "Reconnecting… hang tight!" froze the chat for up to ~12 minutes when the server was down; ⏹ Stop couldn't break it
+
+- **Symptom (what the user saw):** owner UAT (penguin-maze session, ~8:10 PM): sent
+  "speed has to be slow and change of view give a head ache" while the local dev
+  server was down (a stray background server had taken :3000, so the tab's backend
+  was gone). The bubble showed "📶 Reconnecting… hang tight!" and never moved on;
+  the composer stayed locked (Stop button showing), Stop did nothing, and no new
+  commands could be given.
+- **Surface area:** `src/lib/turn-resume.ts` (`pollTurnResult`),
+  `src/components/ChatPanel.container.tsx` (reconnect branch of `runStream`,
+  `handleStop`).
+- **Root cause:** two gaps in the stream-recovery design (TECH_DEBT #23), which was
+  tuned for "server alive but slow" and never considered "server unreachable":
+  1. every network-level poll failure counted as a patient "offline tick", so a dead
+     server consumed the FULL 4-minute resume budget — per attempt. With the
+     2-retry limit that's ~12 minutes of frozen banner before the honest
+     "connection keeps hiccuping" message.
+  2. `handleStop` only aborts the in-flight stream fetch (`abortRef`); during the
+     poll phase there is nothing to abort and `manualStopRef` was only consulted
+     AFTER `pollTurnResult` returned — the kid's ⏹ was dead for minutes.
+- **Fix:** `pollTurnResult` now (a) tracks whether the server has answered at all
+  this poll (`reached`); until it has, the budget is `UNREACHABLE_MAX_MS` (20s)
+  instead of 4 minutes — once any HTTP response arrives, full heavy-load patience
+  applies as before; (b) takes `shouldStop` and honors it every tick. The container
+  passes `shouldStop: () => manualStopRef.current`.
+- **Result (verified):** 3 new unit tests in `turn-resume.test.ts` (fail-fast when
+  never reachable; full patience preserved once the server answered; shouldStop
+  breaks the poll at the next tick). All fail before the fix, pass after; suite
+  799/799, typecheck clean.
+- **Impact:** worst case with a dead server drops from ~12 minutes to ~1 minute
+  before the kid gets the "ask me again" message; ⏹ unlocks the composer within
+  one 4s tick at any point in the reconnect wait. The heavy-load resume path
+  (server genuinely still generating) is unchanged.
+- **Prevention:** class = "retry loops must distinguish 'slow' from 'dead' and stay
+  interruptible." The three tests above pin both properties.
+- **Related:** BUG-FIX-LOG 2026-07-09 (auto-retry), TECH_DEBT #23 (resumable
+  generations), 2026-07-07 (never discard streamed partials).
+
 ### 2026-07-18 — Repeat-mic, take 3: a successful restart re-opened the replay-flood window (found by the new mic e2e)
 
 - **Symptom (what the user saw):** field report "the mic is not good" (Chrome, HP

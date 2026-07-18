@@ -719,7 +719,10 @@ export function ChatPanelContainer() {
       // generating while we were detached — under heavy load the reply is
       // usually FINISHED (or still cooking: `running` gets minutes of free
       // patience). Only a genuine server-side failure re-generates (paid).
-      const resumed = await pollTurnResult(replyId);
+      // Stop-aware + dead-server fail-fast (BUG-FIX-LOG 2026-07-18): the kid's
+      // ⏹ must break this wait, and a server that never answers gets ~20s of
+      // patience, not 4 minutes of a frozen "Reconnecting…" banner.
+      const resumed = await pollTurnResult(replyId, { shouldStop: () => manualStopRef.current });
       if (manualStopRef.current) {
         setReply(streamingDisplayText(acc) || "⏹ Stopped.");
         setBusy(false);

@@ -114,3 +114,57 @@ describe("MULTIPLAYER_PROMPT_SECTION — smooth continuous state (latency compen
     expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/stutter/i);
   });
 });
+
+// Owner UAT 2026-07-18: "host a game should last not for one race. it should
+// allow multiple game restart." Generated games wire "play again" to
+// location.reload() by default — a reload tears down the WebSocket session,
+// so every rematch meant re-hosting and re-sharing the invite link. The
+// contract must make one room host MANY rounds.
+describe("MULTIPLAYER_PROMPT_SECTION — rematch without reload (one room, many rounds)", () => {
+  it("forbids reloading the page to restart", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/never\s+(reload|use\s+location\.reload)/i);
+    expect(MULTIPLAYER_PROMPT_SECTION).toContain("location.reload()");
+  });
+
+  it("requires a broadcast restart event applied through one shared reset function", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/['"]restart['"]/);
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/same shared (reset|function)/i);
+  });
+
+  it("says the session/room outlives a single round", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/many rounds|round after round|stays? connected/i);
+  });
+});
+
+// Owner UAT 2026-07-18 (second race): after a rematch, player 2's screen went
+// solid blue while player 1 saw both cars — the restart reset scores but not
+// player 2's own spawn/camera, because spawn layout lived only in the
+// onPlayers handler and onPlayers does NOT re-fire on restart (roster
+// unchanged). The contract must say so explicitly.
+describe("MULTIPLAYER_PROMPT_SECTION — restart re-derives spawn/camera (onPlayers won't re-fire)", () => {
+  it("warns that onPlayers does not fire again on restart", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/onPlayers\`? does NOT fire again/i);
+  });
+
+  it("requires the reset to re-derive every player's spawn AND the camera from the current roster", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/re-derive EVERY player's[\s\S]{0,40}spawn/i);
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/spawn position and the camera/i);
+  });
+});
+
+// Owner UAT 2026-07-18 (third race, code inspected): both players spawned at
+// the IDENTICAL hardcoded point, and the push-apart collision divides by the
+// distance — two stacked cars → d === 0 → 0/0 = NaN position → camera lerps
+// to NaN → solid sky-blue screen for the stationary player. Two contract
+// gaps: no distinct-spawn rule, no zero-distance guard.
+describe("MULTIPLAYER_PROMPT_SECTION — distinct spawns + zero-distance collision guard", () => {
+  it("requires a DIFFERENT starting slot per player, never identical coordinates", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/DIFFERENT starting\s+(slot|position)/);
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/never[\s\S]{0,60}(same|identical)\s+(spot|coordinates|position)/i);
+  });
+
+  it("warns the push-apart division needs a zero-distance guard (NaN)", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/distance is (exactly )?zero/i);
+    expect(MULTIPLAYER_PROMPT_SECTION).toContain("NaN");
+  });
+});
