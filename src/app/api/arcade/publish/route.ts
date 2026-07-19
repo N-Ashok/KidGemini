@@ -24,6 +24,8 @@ import { SESSION_COOKIE, verifyAriantraSession } from "@/lib/ariantra-session";
 import { getVerifiedParentAccount } from "@/lib/parent-session.server";
 import { nameToSlug } from "@/lib/arcade";
 import { partner } from "@/lib/arcade-partner";
+import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
+import { GAME_CATEGORIES } from "@/lib/game-categories";
 
 interface Body {
   check?: boolean;
@@ -32,6 +34,10 @@ interface Body {
   html?: string;
   /** Explicit target slug (update picker) — otherwise derived from name. */
   slug?: string;
+  /** Catalog category the kid picked (validated against GAME_CATEGORIES). */
+  category?: string;
+  /** Kid's explicit single/multiplayer choice (default single = absent/false). */
+  multiplayer?: boolean;
 }
 
 const SLUG_RE = /^[a-z0-9-]{2,40}$/;
@@ -85,11 +91,29 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "That game looks empty — generate it again and retry." }, { status: 422 });
   }
 
+  // Multiplayer flag (owner UAT 2026-07-18: published game had "no way to
+  // start the multiplayer game", then "the kid need to choose single/multi,
+  // default single"): the platform injects its lobby overlay only when
+  // seo.multiplayer is true. It takes BOTH the kid's explicit choice in the
+  // publish dialog AND the USES_MULTIPLAYER marker actually being in the
+  // HTML — choice alone would ship a dead lobby on a single-player game,
+  // marker alone would override the kid saying "single player". Only ever
+  // sent as true: omitting it leaves an already-flagged game on (the
+  // platform treats absent as "no change").
+  const multiplayer = body.multiplayer === true && body.html.includes(MULTIPLAYER_MARKER);
+  // Category chosen in the publish dialog; unknown values are dropped (the
+  // platform keeps its own default) so a stale client can't block a publish.
+  const category =
+    typeof body.category === "string" && (GAME_CATEGORIES as readonly string[]).includes(body.category)
+      ? body.category
+      : undefined;
   const { status, data } = await partner({
     sessionToken: rawSession,
     name,
     slug,
     files: { "index.html": { data: body.html, encoding: "utf8" } },
+    ...(category ? { category } : {}),
+    ...(multiplayer ? { seo: { multiplayer: true } } : {}),
   });
   return NextResponse.json({ slug, ...data }, { status });
 }

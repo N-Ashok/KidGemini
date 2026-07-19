@@ -152,6 +152,23 @@ describe("MULTIPLAYER_PROMPT_SECTION — restart re-derives spawn/camera (onPlay
   });
 });
 
+// Owner UAT 2026-07-19 (platform BUG_LOG #35): an edit turn hallucinated an
+// "Inline Polyfill for Ariantra Multiplayer" — `window.Ariantra = (…)` with a
+// local-only stub — into the game body. It shipped, silently replacing the
+// real SDK: the lobby still worked (the overlay captures its SDK reference in
+// <head> before the clobber), but the game talked to the stub, so both
+// players raced alone. Nothing in the prompt said the SDK always exists.
+describe("MULTIPLAYER_PROMPT_SECTION — never stub or reassign the SDK (BUG_LOG #35)", () => {
+  it("forbids polyfilling/stubbing/reassigning window.Ariantra", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/NEVER\s+(write|add)?\s*a?\s*(polyfill|stub|mock|fallback)/i);
+    expect(MULTIPLAYER_PROMPT_SECTION).toContain("window.Ariantra");
+  });
+
+  it("says the real SDK is always loaded before the game code runs", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/always\s+(exists|loaded)/i);
+  });
+});
+
 // Owner UAT 2026-07-18 (third race, code inspected): both players spawned at
 // the IDENTICAL hardcoded point, and the push-apart collision divides by the
 // distance — two stacked cars → d === 0 → 0/0 = NaN position → camera lerps

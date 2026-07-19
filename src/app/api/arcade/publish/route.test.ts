@@ -105,3 +105,66 @@ describe("arcade publish gates", () => {
     expect(res.status).toBe(422);
   });
 });
+
+// Owner UAT 2026-07-18: "when i push to arcade there is no way to start the
+// multiplayer game" — Ari's publish never told the platform the game is
+// multiplayer, so seo.multiplayer stayed false and the published page got no
+// 🎮 lobby overlay at all. The flag is now derived from the same
+// <!--USES_MULTIPLAYER--> marker the preview's Invite button keys off.
+describe("arcade publish — multiplayer flag derived from the marker", () => {
+  const MP_HTML = "<html><body><!--USES_MULTIPLAYER--><script>Ariantra.broadcast({})</script></body></html>";
+
+  it("G.6 kid chose multiplayer AND the game carries USES_MULTIPLAYER → seo.multiplayer=true", async () => {
+    cookieJar.ariantra_session = await sessionToken();
+    cookieJar[PARENT_SESSION_COOKIE] = await mintParentSession(FAMILY, SECRET);
+    const res = await POST(req({ name: "Race Together", html: MP_HTML, multiplayer: true }));
+    expect(res.status).toBe(200);
+    expect(platformCalls[0]).toMatchObject({ seo: { multiplayer: true } });
+  });
+
+  it("G.7 a single-player game sends NO multiplayer flag (never flips an existing game off)", async () => {
+    cookieJar.ariantra_session = await sessionToken();
+    cookieJar[PARENT_SESSION_COOKIE] = await mintParentSession(FAMILY, SECRET);
+    const res = await POST(req({ name: "Solo Maze", html: HTML, multiplayer: false }));
+    expect(res.status).toBe(200);
+    expect((platformCalls[0] as { seo?: unknown }).seo).toBeUndefined();
+  });
+
+  it("G.8 kid chose single player → no flag even when the marker exists (explicit choice wins)", async () => {
+    cookieJar.ariantra_session = await sessionToken();
+    cookieJar[PARENT_SESSION_COOKIE] = await mintParentSession(FAMILY, SECRET);
+    const res = await POST(req({ name: "Race Alone", html: MP_HTML, multiplayer: false }));
+    expect(res.status).toBe(200);
+    expect((platformCalls[0] as { seo?: unknown }).seo).toBeUndefined();
+  });
+
+  it("G.9 choosing multiplayer WITHOUT multiplayer code in the game sends no flag (no dead lobby)", async () => {
+    cookieJar.ariantra_session = await sessionToken();
+    cookieJar[PARENT_SESSION_COOKIE] = await mintParentSession(FAMILY, SECRET);
+    const res = await POST(req({ name: "Solo Maze", html: HTML, multiplayer: true }));
+    expect(res.status).toBe(200);
+    expect((platformCalls[0] as { seo?: unknown }).seo).toBeUndefined();
+  });
+});
+
+// Owner ask 2026-07-18: "when we push to arcade from preview page, they
+// should choose a category and not arcade" — the kid's category rides along
+// to the platform; invalid/absent values are dropped (platform then keeps
+// its own default) rather than blocking a publish.
+describe("arcade publish — category forwarded", () => {
+  it("G.10 a valid category is forwarded to the platform", async () => {
+    cookieJar.ariantra_session = await sessionToken();
+    cookieJar[PARENT_SESSION_COOKIE] = await mintParentSession(FAMILY, SECRET);
+    const res = await POST(req({ name: "Fish Maze", html: HTML, category: "Puzzle" }));
+    expect(res.status).toBe(200);
+    expect(platformCalls[0]).toMatchObject({ category: "Puzzle" });
+  });
+
+  it("G.11 an unknown category is dropped, publish still succeeds", async () => {
+    cookieJar.ariantra_session = await sessionToken();
+    cookieJar[PARENT_SESSION_COOKIE] = await mintParentSession(FAMILY, SECRET);
+    const res = await POST(req({ name: "Fish Maze", html: HTML, category: "NotACategory" }));
+    expect(res.status).toBe(200);
+    expect((platformCalls[0] as { category?: unknown }).category).toBeUndefined();
+  });
+});

@@ -7,6 +7,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { nameToSlug } from "@/lib/arcade";
 import { whatsappShareUrl } from "@/lib/share-links";
+import { GAME_CATEGORIES } from "@/lib/game-categories";
+import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
 import { signIn, useSession } from "@/lib/useAriantraSession";
 
 interface Props {
@@ -82,6 +84,16 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
     };
   }, [authStatus, gamesLoadTick]);
   const [name, setName] = useState(suggestedName ?? "");
+  // Category + play-mode (owner ask 2026-07-18): the kid picks a real
+  // category (no more everything-lands-in-Arcade) and explicitly chooses
+  // single vs multiplayer. Play mode defaults to single player; it's only
+  // offered — and preselected — when the game actually carries multiplayer
+  // code (the USES_MULTIPLAYER marker), because choosing multiplayer for a
+  // single-player game would ship a dead lobby (the server enforces the
+  // same AND, route.ts).
+  const [category, setCategory] = useState<string | null>(null);
+  const hasMpCode = html.includes(MULTIPLAYER_MARKER);
+  const [playMode, setPlayMode] = useState<"single" | "friends">(hasMpCode ? "friends" : "single");
   const [check, setCheck] = useState<{ state: "idle" | "checking" | "free" | "taken" | "mine" | "copyright" | "unknown"; suggestions: string[]; matched?: string }>({ state: "idle", suggestions: [] });
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
@@ -153,6 +165,8 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
           name: target ? target.name : displayName,
           html,
           ...(target ? { slug: target.slug } : {}),
+          ...(category ? { category } : {}),
+          multiplayer: playMode === "friends",
         }),
       });
       const data = (await res.json()) as {
@@ -194,7 +208,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
       setStep("pin");
       setError("That didn't work — nothing is broken. Check the internet and try again.");
     }
-  }, [displayName, html, updateTarget]);
+  }, [displayName, html, updateTarget, category, playMode]);
 
   // PIN step: verify against /api/parent/verify-pin (which sets the HttpOnly
   // parent-session cookie), THEN publish. The PIN itself never rides on the
@@ -349,8 +363,53 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
                 🎲 give me an idea
               </button>
             </div>
+            <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-neutral-400">What kind of game is it?</p>
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {GAME_CATEGORIES.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setCategory(c)}
+                  aria-pressed={category === c}
+                  className={`rounded-full border px-3 py-1 text-xs font-bold ${
+                    category === c
+                      ? "border-orange-500 bg-orange-500 text-white"
+                      : "border-neutral-200 text-neutral-600 hover:border-orange-400"
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+            {hasMpCode && (
+              <>
+                <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-neutral-400">How is it played?</p>
+                <div className="mb-3 flex gap-1.5">
+                  {(
+                    [
+                      ["single", "🧍 Single player"],
+                      ["friends", "🎮 With friends (2–5)"],
+                    ] as const
+                  ).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setPlayMode(mode)}
+                      aria-pressed={playMode === mode}
+                      className={`flex-1 rounded-xl border px-3 py-2 text-xs font-bold ${
+                        playMode === mode
+                          ? "border-orange-500 bg-orange-500 text-white"
+                          : "border-neutral-200 text-neutral-600 hover:border-orange-400"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
             <button
-              disabled={!slug || check.state === "taken" || check.state === "copyright"}
+              disabled={!slug || !category || check.state === "taken" || check.state === "copyright"}
               // Straight to publish: if a grown-up verified the PIN within
               // the last 30 min the game just goes; otherwise the server's
               // parent_required 403 routes to the PIN step.

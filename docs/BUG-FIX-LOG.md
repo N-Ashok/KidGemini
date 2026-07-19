@@ -45,6 +45,36 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-18 — Publishing to the Arcade never told the platform the game is multiplayer — no 🎮 lobby on the live page
+
+- **Symptom (what the user saw):** owner UAT — "when i push to arcade there
+  is no way to start the multiplayer game." The published game had no 🎮
+  Play-together button at all.
+- **Surface area:** `src/app/api/arcade/publish/route.ts` (Ari's publish
+  bridge to the platform's `/api/studio/partner/publish`).
+- **Root cause:** the platform injects its lobby overlay only when
+  `seo.multiplayer` is true at publish time — and Ari's arcade publish never
+  sent any `seo` at all, so every kid-published game landed with
+  `multiplayer: false` regardless of the `<!--USES_MULTIPLAYER-->` marker in
+  its HTML. (Studio publishes pass the flag; this partner path predates the
+  flag and was never wired.)
+- **Fix:** the publish route derives `multiplayer` from the same
+  `MULTIPLAYER_MARKER` the preview's Invite button keys off, and passes
+  `seo: { multiplayer: true }` to the partner endpoint. Only ever sent as
+  true — omitted for single-player HTML, so a later republish that lost the
+  marker can't silently switch an existing game's multiplayer off. The
+  platform side then runs its normal entitlement gate (currently relaxed)
+  and injects the lobby.
+- **Result (verified):** route tests G.6 (marker → `seo.multiplayer: true`
+  forwarded) and G.7 (no marker → no seo field at all); suite 816/816,
+  typecheck clean.
+- **Impact:** needs a deploy; the already-published race game must be
+  republished once (same name/slug) to pick up the flag and the lobby.
+- **Prevention:** class = "a capability derived from content must be derived
+  at EVERY door the content enters through" — the partner path was a second
+  door that never learned about the flag.
+- **Related:** platform BUG_LOG #33/#34, marker-insurance entry below.
+
 ### 2026-07-18 — Blue-screen root cause CONFIRMED from the game's code: identical spawn point + divide-by-zero in push-apart collision → NaN position
 
 - **Symptom:** same report as the entry below — player 2 solid blue after a

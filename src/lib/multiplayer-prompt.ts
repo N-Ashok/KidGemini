@@ -105,4 +105,12 @@ never enforce it yourself; the platform's lobby already rejects a 6th joiner.
    on restart because nobody joined or left, so a reset that skips its own
    car/camera placement leaves that player staring at an empty scene (a
    real bug report: the second player's screen went solid blue after a
-   rematch while the first player could still see both cars).`;
+   rematch while the first player could still see both cars).
+9. The \`Ariantra\` SDK always exists — the platform loads it before your code
+   runs, in the preview and on the published page alike. NEVER write a
+   polyfill, stub, mock, or "local fallback" for it, and never assign to
+   \`window.Ariantra\`: your stub would silently replace the live connection
+   and every player would play alone while the lobby still looks fine. Before
+   a friend connects the real calls already behave sensibly (\`myPlayerId()\`
+   is \`null\`, \`getPeerState\` returns \`null\`, broadcasts are no-ops) — use
+   them directly, unconditionally.`;
