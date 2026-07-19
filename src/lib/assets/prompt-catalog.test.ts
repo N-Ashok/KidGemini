@@ -158,6 +158,16 @@ describe("modelsPromptSection — the catalog version-locks with the manifest (P
     expect(modelsPromptSection({ assets: [fakeModels.assets[0]!] })).toBe("");
   });
 
+  it("teaches people clips (sit/sprint/emote-yes cheer) ONLY when a people model is taught (2026-07-19: stadium humans)", () => {
+    const person = { name: "man", type: "model" as const, url: `${ASSET_HOST_ORIGIN}/man.${"d".repeat(6)}.glb`, bytes: 60_000, license: "CC0" as const, sourceUrl: "https://example.com", sha256: "d".repeat(64) };
+    const withPerson = modelsPromptSection({ assets: [...fakeModels.assets, person] });
+    expect(withPerson).toMatch(/emote-yes/);
+    expect(withPerson).toMatch(/\bsit\b/);
+    expect(withPerson).toMatch(/sprint/);
+    // No people in the manifest → no people-clip tokens.
+    expect(modelsPromptSection(fakeModels)).not.toMatch(/emote-yes/);
+  });
+
   describe("per-genre hints (Phase F) — lockstep with the manifest", () => {
     it("hints name only models the manifest carries", () => {
       // fakeModels has car + dino only: racing shows car, animals shows dino…

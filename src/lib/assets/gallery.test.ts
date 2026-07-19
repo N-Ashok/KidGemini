@@ -75,4 +75,10 @@ describe("trigger phrases — grammar edge cases", () => {
     const m: AssetManifest = { assets: [{ name: "police", type: "model", url: `${ASSET_HOST_ORIGIN}/police.${sha("e").slice(0, 6)}.glb`, bytes: 40_000, license: "CC0", sourceUrl: "https://example.com", sha256: sha("e") }] };
     expect(galleryCards(m).models[0]!.trigger).toBe("3d police");
   });
+
+  it("people pluralize like people (\"3d men\" / \"3d women\", never \"3d mans\") (2026-07-19)", () => {
+    const entry = (name: string) => ({ name, type: "model" as const, url: `${ASSET_HOST_ORIGIN}/${name}.${sha("f").slice(0, 6)}.glb`, bytes: 60_000, license: "CC0" as const, sourceUrl: "https://example.com", sha256: sha("f") });
+    const m: AssetManifest = { assets: [entry("man"), entry("woman")] };
+    expect(galleryCards(m).models.map((c) => c.trigger)).toEqual(["3d men", "3d women"]);
+  });
 });

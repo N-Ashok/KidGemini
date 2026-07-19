@@ -1025,6 +1025,60 @@
       "license": "CC0",
       "sourceUrl": "https://poly.pizza/m/3rUm1cN3yp",
       "sha256": "22db943ea21dbf7aa711e2ddd38061fed06e49c6c9b334b13601f2bff0042cb9"
+    },
+    {
+      "name": "man",
+      "type": "model",
+      "url": "https://assets.ariantra.com/man.77d7c9.glb",
+      "bytes": 63312,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/blocky-characters",
+      "sha256": "77d7c9edd97a730472ed1428f1d1382a33f4af4c420d463f86e613c727612e8a"
+    },
+    {
+      "name": "woman",
+      "type": "model",
+      "url": "https://assets.ariantra.com/woman.d05910.glb",
+      "bytes": 63588,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/blocky-characters",
+      "sha256": "d0591072f99785b69fd4e8c8736c9f99d6625553affca7e74e132950219f33a6"
+    },
+    {
+      "name": "girl",
+      "type": "model",
+      "url": "https://assets.ariantra.com/girl.95fdf7.glb",
+      "bytes": 62216,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/blocky-characters",
+      "sha256": "95fdf77d0d73bf6486ad404ce59096764c0bddf559260da5d8f432fbb533cb33"
+    },
+    {
+      "name": "scientist",
+      "type": "model",
+      "url": "https://assets.ariantra.com/scientist.6a2287.glb",
+      "bytes": 64296,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/blocky-characters",
+      "sha256": "6a228798d711d63538409314996b343014c9c4a08a29dbb5bd988db6b05acbcb"
+    },
+    {
+      "name": "police_officer",
+      "type": "model",
+      "url": "https://assets.ariantra.com/police_officer.598224.glb",
+      "bytes": 65268,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/blocky-characters",
+      "sha256": "598224738077b47e2f35ef668354f5c7d3b7e0b881a88663ee91b6b894515fb8"
+    },
+    {
+      "name": "pirate",
+      "type": "model",
+      "url": "https://assets.ariantra.com/pirate.87460c.glb",
+      "bytes": 65692,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/blocky-characters",
+      "sha256": "87460c2d2f17d1479c88e7a9c6f9ace03e4c8f22bbd734603c01e7aa38e47ef1"
     }
   ]
 }

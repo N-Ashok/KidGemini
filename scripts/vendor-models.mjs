@@ -368,6 +368,28 @@ const MODELS = [
   { name: 'grandstand', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/grandStand.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
   { name: 'pit_garage', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/pitsGarage.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
 
+  // ── People (2026-07-19, owner request: humans who cheer/walk/run/sit in
+  // stadiums "and do all types of work"). Kenney Blocky Characters 2.0 —
+  // CC0 per the License.txt in the kit zip and the kenney.nl asset page.
+  // The ONLY humanoid source that fits the 100 KB budget: every Quaternius
+  // human probed 127–154 KB even clip-trimmed + hard-quantized (skinned
+  // mesh ⇒ simplify() no-ops, same class as the Shiba Inu/horse rejections),
+  // while these land ~55 KB WITH the full crowd clip set. All 6 share one
+  // rig and the same 27 source clips; keepAnimations trims the weapon
+  // (holding-*-shoot, attack-*) and chairless wheelchair-* clips a kids'
+  // catalog shouldn't teach. Clip names are exact (dash-separated) matches.
+  // Names must stay in lockstep with PEOPLE_MODELS in
+  // src/lib/assets/model-select.ts (people genre + people-clips prompt line).
+  ...[
+    ['man', 'character-b'], ['woman', 'character-f'], ['girl', 'character-e'],
+    ['scientist', 'character-i'], ['police_officer', 'character-j'], ['pirate', 'character-p'],
+  ].map(([name, file]) => ({
+    name,
+    source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/blocky-characters/8369c0cf30-1749547469/kenney_blocky-characters_20.zip', innerPath: `Models/GLB format/${file}.glb` },
+    sourceUrl: 'https://kenney.nl/assets/blocky-characters',
+    keepAnimations: ['static', 'idle', 'walk', 'sprint', 'sit', 'drive', 'die', 'pick-up', 'emote-yes', 'emote-no', 'interact-right', 'interact-left'],
+  })),
+
   // Dragons (poly.pizza / Quaternius — CC0 confirmed on both model pages, 2026-07-14).
   {
     name: 'dragon',

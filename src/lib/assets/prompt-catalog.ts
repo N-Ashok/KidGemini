@@ -8,7 +8,7 @@
 import type { ChatMessage } from "@/types/chat.types";
 import type { AssetManifest } from "./manifest";
 import manifestJson from "./manifest.json";
-import { GENRES, selectModelNames } from "./model-select";
+import { GENRES, PEOPLE_MODELS, selectModelNames } from "./model-select";
 
 /** Names the vendored engine bundle exports — MUST stay in lockstep with
  *  THREE_EXPORTS in scripts/vendor-three.mjs (pinned by test). */
@@ -86,6 +86,7 @@ export function modelsPromptSection(
   }
   if (models.length === 0) return "";
   const names = models.map((m) => m.name).join(", ");
+  const people = models.map((m) => m.name).filter((n) => PEOPLE_MODELS.includes(n));
   const hints = genreHints(new Set(models.map((m) => m.name)));
   return `**Ready-made 3D models**: for a 3D game you may ALSO use these
 professional low-poly models from the toy box: ${names}.
@@ -111,7 +112,15 @@ professional low-poly models from the toy box: ${names}.
      || m.animations.find(a => /gallop|swim|fly|jump|attack/i.test(a.name))
      || m.animations[0];
    const mixer = new AnimationMixer(m); mixer.clipAction(clip).play();\`
-   and call \`mixer.update(delta)\` in your loop (use a Clock for delta).${hints ? `
+   and call \`mixer.update(delta)\` in your loop (use a Clock for delta).${people.length ? `
+   The people models (${people.join(", ")}) all share the same clips: idle,
+   walk, sprint (= run), sit, drive, pick-up, interact-right/left, die, and
+   emote-yes / emote-no. For a cheering stadium crowd, sit or stand them on
+   the grandstand and play "emote-yes" (add a tiny position.y bounce for
+   excitement); "sprint" is the running clip, "walk" the walking one. For a
+   crowd, call loadModel again for each person (the download is cached, so
+   extras are free) — do NOT .clone() a person: cloned characters share one
+   skeleton and animate wrong. Each person needs their own AnimationMixer.` : ""}${hints ? `
 6. Good fits by game idea (use the ones that match, skip the rest):
 ${hints}` : ""}`;
 }

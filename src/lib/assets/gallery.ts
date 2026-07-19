@@ -121,6 +121,14 @@ const EMOJI: Record<string, string> = {
   pit_garage: "🔧",
   dragon: "🐉",
   dragon_evolved: "🐲",
+
+  // People (2026-07-19: stadium humans — Kenney Blocky Characters).
+  man: "🧍",
+  woman: "🧍‍♀️",
+  girl: "👧",
+  scientist: "🧑‍🔬",
+  police_officer: "👮",
+  pirate: "🏴‍☠️",
 };
 
 /** Every card gets a face — unknown names fall back to the toy box. */
@@ -139,6 +147,8 @@ const IRREGULAR_PLURALS: Record<string, string> = {
   police: "police",
   hero: "heroes",
   "ice cream": "ice cream",
+  man: "men",
+  woman: "women",
 };
 
 function plural(name: string): string {

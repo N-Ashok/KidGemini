@@ -264,6 +264,17 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   thumbnail included (`PublishToArcade.tsx` + `/api/arcade/publish` →
   platform partner bridge). A parent verified in the last 30 min skips the
   PIN prompt entirely
+- **Category + play-mode choice at publish** (2026-07-18, owner ask): the
+  naming step now includes required category chips (`GAME_CATEGORIES` in
+  `src/lib/game-categories.ts`, hand-synced with the platform's list — no
+  more everything-lands-in-"Arcade") and, for games whose HTML carries the
+  `USES_MULTIPLAYER` marker, a "How is it played?" toggle (Single player /
+  With friends 2–5; preselected to friends since that's what the kid built,
+  defaults single everywhere else). The publish route forwards
+  `seo.multiplayer: true` only when the kid chose multiplayer AND the marker
+  exists (`route.test.ts` G.6–G.11) — choice alone would ship a dead lobby,
+  marker alone would override the kid. Admins can recategorize any game
+  later via the platform's `/internal/admin` `set-category` action
 - **🔄 Update mode**: when the kid already has games, the sheet ASKS first —
   "brand-new game" or "update one of mine" with a picker of their games
   (fetched via the partner `list` action, session-verified). Picking one
@@ -435,8 +446,8 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   game keeps running), meshopt-compressed GLBs (≤ 100 KB each), first-load
   transfer capped at 2 MB at inject time. The prompt's model catalog is
   generated from the manifest, so names can never drift; it ends with
-  per-genre hints (racing, platformer, space, animals, castle, city,
-  forest, water, food) filtered to what's being taught. **50 models**:
+  per-genre hints (people/crowd, racing, platformer, space, animals,
+  castle, city, forest, water, food) filtered to what's being taught. **56 models**:
   vehicles (car, police, firetruck, taxi, ambulance, tractor), space
   (rocket, spaceship, ufo, helicopter, alien), animals (dog, cat, fish,
   bird, chicken, bat, dolphin, bee, shark, dino), places (tower,
@@ -444,6 +455,15 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   items (coin, star, key, chest, heart, gem, bomb, spring, flag, barrel,
   crate, sword, catapult), food (burger, ice_cream, donut, apple), plus
   hero, robot, ghost, boat
+- **People** (2026-07-19): six animated humans — man, woman, girl,
+  scientist, police_officer, pirate (Kenney Blocky Characters, CC0,
+  ~55–64 KB each). One shared rig, every model carries the same 12 clips:
+  idle, walk, sprint, sit, drive, die, pick-up, emote-yes/no,
+  interact-right/left, static — so kids' games get crowds that cheer
+  (emote-yes), walk, run (sprint) and sit in stadiums (pair with
+  grandstand). The prompt teaches the clip names when a people model is
+  taught, plus the crowd rule: call `loadModel` per person (cached
+  download), never `.clone()` a skinned character (shared-skeleton bug)
 - **Retrieval-lite selection** (PRD §14, `src/lib/assets/model-select.ts`):
   the library is unbounded but each build-turn prompt teaches ≤ 30 models,
   picked by cheap regex — the iterated game's own USES_MODELS markers,

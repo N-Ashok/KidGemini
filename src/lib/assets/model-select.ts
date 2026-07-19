@@ -18,9 +18,22 @@ export interface GenreDef {
   models: readonly string[];
 }
 
+/** The human characters (Kenney Blocky Characters, 2026-07-19): one shared
+ *  rig, every model carries the same clips (idle, walk, sprint, sit, drive,
+ *  die, pick-up, emote-yes/no, interact). One source of truth — drives the
+ *  people genre below AND the people-clips prompt line (prompt-catalog.ts). */
+export const PEOPLE_MODELS: readonly string[] = [
+  "man", "woman", "girl", "scientist", "police_officer", "pirate",
+];
+
 /** One source of truth for genre → models: drives BOTH prompt selection and
  *  the in-prompt hint lines (prompt-catalog.ts), so they can never disagree. */
 export const GENRES: readonly GenreDef[] = [
+  {
+    label: "people / crowd",
+    trigger: /\b(people|humans?|persons?|crowds?|stadiums?|cheer(ing|s)?|audience|spectators?|man|men|woman|women|boys?|girls?|kids?|walk(ing)?|runn(ing|ers?)|sit(ting)?|scientists?|police\s?officers?|pirates?)\b/i,
+    models: [...PEOPLE_MODELS, "grandstand"],
+  },
   {
     label: "racing / driving",
     trigger: /\b(rac(e|ing|er)|driv(e|ing)|cars?|trucks?|police|taxis?|tractors?|ambulances?|chase|track|go-?karts?)\b/i,
@@ -54,7 +67,7 @@ export const GENRES: readonly GenreDef[] = [
     models: [
       "hero", "tower", "key", "chest", "sword", "catapult", "bridge", "ghost", "bat", "dino", "robot", "gem",
       "ballista", "trebuchet", "battering_ram", "castle_gate", "drawbridge", "siege_tower", "castle_door",
-      "dragon", "dragon_evolved",
+      "dragon", "dragon_evolved", "pirate",
     ],
   },
   {
@@ -63,6 +76,7 @@ export const GENRES: readonly GenreDef[] = [
     models: [
       "skyscraper", "house", "car", "police", "firetruck", "helicopter",
       "office_building", "apartment", "shop", "driveway", "planter", "garbage_truck",
+      "man", "woman", "girl", "police_officer",
     ],
   },
   {
@@ -76,7 +90,7 @@ export const GENRES: readonly GenreDef[] = [
   {
     label: "water / sailing",
     trigger: /\b(water|ocean|seas?|boats?|ships?|sail(ing)?|sharks?|swim(ming)?|under\s?water|pirates?|fish(ing)?|dolphins?|canoes?)\b/i,
-    models: ["boat", "fish", "shark", "dolphin", "chest", "canoe"],
+    models: ["boat", "fish", "shark", "dolphin", "chest", "canoe", "pirate"],
   },
   {
     label: "food / cooking",

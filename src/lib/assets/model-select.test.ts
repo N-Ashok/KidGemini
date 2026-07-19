@@ -100,6 +100,43 @@ describe("selectModelNames — the cap is a hard ceiling with sane priority", ()
   });
 });
 
+describe("selectModelNames — people / crowd genre (stadium humans, 2026-07-19)", () => {
+  const PEOPLE = ["man", "woman", "girl", "scientist", "police_officer", "pirate"];
+  const withPeople: AssetManifest = { assets: [...BIG_NAMES, ...PEOPLE, "grandstand"].map(entry) };
+
+  it("a stadium-crowd ask picks people models and the grandstand, not sea creatures", () => {
+    const picked = selectModelNames({ message: "a 3d stadium full of people cheering", history: [], manifest: withPeople });
+    expect(picked).toContain("man");
+    expect(picked).toContain("woman");
+    expect(picked).toContain("girl");
+    expect(picked).toContain("grandstand");
+    expect(picked).not.toContain("shark");
+  });
+
+  it("'woman' / 'boy' style words trigger the people genre", () => {
+    const picked = selectModelNames({ message: "3d game where a woman runs a race", history: [], manifest: withPeople });
+    expect(picked).toContain("woman");
+  });
+
+  it("a city ask now includes people walking around", () => {
+    const picked = selectModelNames({ message: "make me a 3d city game", history: [], manifest: withPeople });
+    expect(picked).toContain("man");
+    expect(picked).toContain("skyscraper");
+  });
+
+  it("a pirate ask surfaces the pirate person", () => {
+    const picked = selectModelNames({ message: "a 3d pirate ship adventure", history: [], manifest: withPeople });
+    expect(picked).toContain("pirate");
+    expect(picked).toContain("boat");
+  });
+
+  it("no people words → no people models (selection stays tight)", () => {
+    const picked = selectModelNames({ message: "3d game under the sea", history: [], manifest: withPeople });
+    expect(picked).not.toContain("man");
+    expect(picked).not.toContain("scientist");
+  });
+});
+
 describe("GENRES — data sanity", () => {
   it("every genre has a trigger and at least one model", () => {
     for (const g of GENRES) {
