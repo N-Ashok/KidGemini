@@ -45,6 +45,10 @@ export interface RepairDecisionInput {
   /** ms since the verify pass began (performance.now() delta). */
   elapsedMs: number;
   enabled: boolean;
+  /** Probes positively saw the game running (lib/preview-verify
+   *  `demonstrablyRunning`) — a captured-but-benign error must not "repair"
+   *  a game we watched work. Absent = unknown = repair allowed. */
+  demonstrablyRunning?: boolean;
 }
 
 /**
@@ -53,6 +57,7 @@ export interface RepairDecisionInput {
  */
 export function shouldRepair(input: RepairDecisionInput): boolean {
   if (!input.enabled) return false;
+  if (input.demonstrablyRunning) return false; // watched it run — never "repair" it
   if (!REPAIRABLE_CODES.has(input.code)) return false;
   if (input.attempt >= MAX_REPAIR_ATTEMPTS) return false;
   if (input.elapsedMs >= WALL_CLOCK_CAP_MS) return false;

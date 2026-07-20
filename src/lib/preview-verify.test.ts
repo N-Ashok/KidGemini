@@ -9,6 +9,7 @@ import {
   buildVerifyScript,
   injectPreviewInstrumentation,
   classifyVerify,
+  demonstrablyRunning,
 } from "./preview-verify";
 import type { VerifyEvidence } from "@/types/preview-verify.types";
 import type { GameConsoleMessage } from "@/types/game-console.types";
@@ -295,6 +296,43 @@ describe("verify script probes", () => {
     expect(classifyVerify({ errors: [], evidence, interrupted: false })).toEqual({ code: "clean" });
   });
 
+  // REGRESSION (BUG-FIX-LOG 2026-07-20): the parent decides the pristine
+  // reload from the click — if the RESULT is lost (game clobbered postMessage,
+  // hard timeout), the parent must still learn a click happened. The probe
+  // announces the click as its own event, BEFORE dispatching it.
+  it("announces a 'clicked' event the moment it ghost-clicks Start", () => {
+    const order: string[] = [];
+    const btn = el({
+      tagName: "BUTTON",
+      innerText: "Start",
+      rect: { left: 150, top: 200, width: 100, height: 40 },
+      click: () => order.push("dom-click"),
+    });
+    const { posted } = bootVerify({
+      clickables: [btn],
+      elementFromPoint: () => btn,
+    });
+    const clickedIdx = posted.findIndex((p) => p?.event?.type === "clicked");
+    expect(clickedIdx).toBeGreaterThan(-1);
+    expect(posted[clickedIdx].source).toBe(PREVIEW_VERIFY_SOURCE);
+    // Announced before the result, so a lost result can't hide the click.
+    expect(clickedIdx).toBeLessThan(posted.findIndex((p) => p?.event?.type === "result"));
+  });
+
+  it("a healthy game the probe never clicks posts NO 'clicked' event", () => {
+    const { posted } = bootVerify({
+      game: (w) => {
+        w.requestAnimationFrame(() => {});
+      },
+      imageData: (() => {
+        let n = 0;
+        return () => ({ data: [n++, 0, 0, 0] }); // pixels changing
+      })(),
+      canvases: [el({ tagName: "CANVAS", width: 300, height: 200 })],
+    });
+    expect(posted.some((p) => p?.event?.type === "clicked")).toBe(false);
+  });
+
   it("an interval-driven loop counts as running — no false no_loop on non-rAF games", () => {
     const { evidence } = bootVerify({
       game: (w) => {
@@ -407,5 +445,41 @@ describe("classifyVerify — error-driven rows", () => {
 
   it("missing result (verify script never finished) is inconclusive — never repair blind", () => {
     expect(classifyVerify({ errors: [], evidence: null, interrupted: false })).toEqual({ code: "inconclusive" });
+  });
+});
+
+// REGRESSION (BUG-FIX-LOG 2026-07-20, false repair of a running game): the
+// health read that gates repair spend — positive probe evidence only.
+describe("demonstrablyRunning", () => {
+  const base: VerifyEvidence = {
+    rafCountAtSettle: 5,
+    rafCountFinal: 12,
+    canvas: { width: 360, height: 240 },
+    pixel: "changing",
+    start: null,
+  };
+
+  it("running loop + changing pixels = demonstrably running", () => {
+    expect(demonstrablyRunning(base)).toBe(true);
+  });
+
+  it("running loop + no canvas at all (DOM game) = demonstrably running", () => {
+    expect(demonstrablyRunning({ ...base, canvas: null, pixel: null })).toBe(true);
+  });
+
+  it("static-title screen that came alive after the probe's click counts", () => {
+    expect(demonstrablyRunning({ ...base, pixel: "static", pixelAfterClick: "changing" })).toBe(true);
+  });
+
+  it("interval-driven loop counts as a loop", () => {
+    expect(demonstrablyRunning({ ...base, rafCountAtSettle: 0, intervalCount: 1 })).toBe(true);
+  });
+
+  it("no evidence, no loop, zero canvas, or still-static pixels are NOT proof of health", () => {
+    expect(demonstrablyRunning(null)).toBe(false);
+    expect(demonstrablyRunning({ ...base, rafCountAtSettle: 0 })).toBe(false);
+    expect(demonstrablyRunning({ ...base, canvas: { width: 0, height: 240 } })).toBe(false);
+    expect(demonstrablyRunning({ ...base, pixel: "static" })).toBe(false);
+    expect(demonstrablyRunning({ ...base, pixel: "tainted" })).toBe(false);
   });
 });

@@ -159,6 +159,28 @@ describe("PreviewVerifyController — repair continuation (the stuck-Fixing regr
     expect(h.events.find((e) => e.name === "preview_repair")?.props.success).toBe(false);
   });
 
+  // REGRESSION (BUG-FIX-LOG 2026-07-20, owner UAT on prod): a game running
+  // and drawing fine, but a benign unhandled rejection (audio autoplay is the
+  // archetype) classified async_loop → 2 Gemini "repairs" of a healthy game →
+  // "Oops — fixing it" → give-up banner + a drifted/stale document. A
+  // demonstrably-running game must pass through with NO repair spend.
+  it("benign error on a demonstrably-running game: no repair, no Oops, no question", async () => {
+    const h = harness({ repair: () => ({ patchedHtml: "<html>mangled</html>", mode: "patch" }) });
+    h.controller.start("<html>healthy but noisy</html>", "a game", false);
+    h.controller.handleMessage({
+      source: GAME_CONSOLE_SOURCE,
+      message: { level: "error", kind: "rejection", text: "Unhandled promise rejection: NotAllowedError: play() failed", stack: "" },
+    });
+    h.controller.handleMessage(CLEAN_RESULT); // loop running, pixels changing
+    await flush();
+    expect(h.repairCalls()).toBe(0); // never spent a Gemini call
+    expect(h.states.every((s) => s.phase !== "repairing")).toBe(true); // no Oops line
+    const s = h.last();
+    expect(s.phase).toBe("done");
+    expect(s.question).toBeNull();
+    expect(s.currentHtml).toBe("<html>healthy but noisy</html>"); // untouched
+  });
+
   it("probe-inference codes pass through SILENTLY — no repair call, no question (false-repair UAT)", async () => {
     const h = harness({ repair: () => ({ patchedHtml: "<html>p</html>", mode: "patch" }) });
     h.controller.start("<html>maybe fine</html>", "a game", false);
@@ -226,6 +248,60 @@ describe("PreviewVerifyController — probe-click reload & guards", () => {
     expect(h.last().phase).toBe("done");
     expect(h.last().outcome).toBe("clean"); // inconclusive → pass through
     expect(ROUND_HARD_TIMEOUT_MS).toBeLessThan(WALL_CLOCK_CAP_MS);
+  });
+
+  // REGRESSION (BUG-FIX-LOG 2026-07-20, "non-playable until the panel is
+  // reopened"): the probe ghost-clicks Start, but only the CLEAN finish path
+  // consulted the click when deciding the pristine reload. Every other finish
+  // (telemetry pass-through, lost-evidence timeout, failed repair) uncovered
+  // the already-started document — the kid landed mid-game/game-over with no
+  // start screen. Any finish after a click must reload with probes off.
+  it("telemetry pass-through AFTER a probe click still reloads pristine (canvas_static)", async () => {
+    const h = harness({});
+    h.controller.start("<html>slow first frame</html>", "a game", false);
+    // Loop runs, pixels static, Start found+clicked, still static after click.
+    h.controller.handleMessage(
+      RESULT({
+        rafCountAtSettle: 4,
+        canvas: { width: 300, height: 200 },
+        pixel: "static",
+        pixelAfterClick: "static",
+        start: { found: true, x: 1, y: 1, occluded: false, clickRafDelta: 0 },
+      }),
+    );
+    await flush();
+    const s = h.last();
+    expect(s.phase).toBe("done");
+    expect(s.question).toBeNull(); // still a silent pass-through…
+    expect(s.round).toBe(2); // …but the ghost-clicked document reloads
+    expect(s.probesEnabled).toBe(false);
+  });
+
+  it("hard timeout after the probe ANNOUNCED its click (result lost) still reloads pristine", async () => {
+    const h = harness({});
+    h.controller.start("<html>game</html>", "a game", false);
+    h.controller.handleMessage({ source: PREVIEW_VERIFY_SOURCE, event: { type: "clicked" } });
+    void h.timers[0]!(); // hard timeout — the result evidence never arrived
+    await flush();
+    const s = h.last();
+    expect(s.outcome).toBe("clean"); // inconclusive → pass through, as before
+    expect(s.round).toBe(2); // but the click means: pristine reload
+    expect(s.probesEnabled).toBe(false);
+  });
+
+  it("failed repair after a probe click reloads even when the best version IS the current one", async () => {
+    const h = harness({}); // fetchRepair throws
+    h.controller.start("<html>broken</html>", "a game", false);
+    h.controller.handleMessage(LOAD_ERROR);
+    h.controller.handleMessage(
+      RESULT({ start: { found: true, x: 1, y: 1, occluded: false, clickRafDelta: 0 } }),
+    );
+    await flush();
+    const s = h.last();
+    expect(s.phase).toBe("done");
+    expect(s.outcome).toBe("failed");
+    expect(s.currentHtml).toBe("<html>broken</html>"); // best === current
+    expect(s.round).toBe(2); // clicked → reload anyway
   });
 
   it("dispose() drops a late repair result instead of emitting into a dead UI", async () => {

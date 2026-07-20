@@ -202,3 +202,85 @@ describe("splitSpeechResults — committed-text replay guard (take 3)", () => {
     expect(r.freshSegments).toEqual(["two"]);
   });
 });
+
+describe("splitSpeechResults — Android duplicate-final artifact (take 4, 2026-07-19)", () => {
+  // Pixel phone, Chrome AND Edge (both Chromium): in continuous mode Android
+  // RE-APPENDS the same final to the results list on successive events —
+  // [A], [A,A], [A,A,A]... Each duplicate sits past the committed counter as
+  // a fresh single-segment slice, and the take-3 replay guard deliberately
+  // lets single matches through (MIN_REPLAY_RUN=2) — so every duplicate
+  // committed once more: "every 3 words captured 30 to 40 times".
+  it("regression: the growing-duplicate event sequence commits the phrase exactly once", () => {
+    const committedTexts: string[] = [];
+    let count = 0;
+    const commits: string[] = [];
+    // Simulate the caller loop over three Android events.
+    for (const results of [
+      [final("make it a race")],
+      [final("make it a race"), final("make it a race")],
+      [final("make it a race"), final("make it a race"), final("make it a race")],
+    ]) {
+      const r = splitSpeechResults(results, count, committedTexts);
+      count = r.finalCount;
+      committedTexts.push(...r.freshSegments);
+      if (r.freshFinalText) commits.push(r.freshFinalText);
+    }
+    expect(commits).toEqual(["make it a race"]);
+  });
+
+  it("a duplicate pair arriving in ONE event commits once", () => {
+    const r = splitSpeechResults([final("add a pirate"), final("add a pirate")], 0, []);
+    expect(r.freshSegments).toEqual(["add a pirate"]);
+  });
+
+  it("distinct consecutive finals are untouched", () => {
+    const r = splitSpeechResults([final("add a pirate"), final("and a dragon")], 0, []);
+    expect(r.freshSegments).toEqual(["add a pirate", "and a dragon"]);
+  });
+
+  it("a genuine repeat across a session RESTART still passes (fresh list has no predecessor)", () => {
+    // Session 1 committed "hello"; session 2's fresh list starts with "hello"
+    // again — a real kid repetition, not an adjacent-duplicate artifact.
+    const r = splitSpeechResults([final("hello")], 0, ["hello"]);
+    expect(r.freshFinalText).toBe("hello");
+  });
+
+  it("finalCount still counts dropped duplicates (slicing stays positional)", () => {
+    const r = splitSpeechResults([final("go left"), final("go left")], 0, []);
+    expect(r.finalCount).toBe(2);
+  });
+
+  // Production screenshot 2026-07-19 (Pixel): "I I want I want to I want to
+  // I want to create..." — Android ALSO finalizes the same utterance again
+  // as it GROWS, each snapshot a new list entry. A final that extends its
+  // predecessor at a word boundary is the same utterance re-finalized —
+  // commit only the newly-heard words (the delta).
+  it("regression: growing cumulative snapshots commit each word exactly once", () => {
+    const committedTexts: string[] = [];
+    let count = 0;
+    const commits: string[] = [];
+    for (const results of [
+      [final("I")],
+      [final("I"), final("I want")],
+      [final("I"), final("I want"), final("I want to")],
+      [final("I"), final("I want"), final("I want to"), final("I want to")], // dup mixed in
+      [final("I"), final("I want"), final("I want to"), final("I want to"), final("I want to create")],
+    ]) {
+      const r = splitSpeechResults(results, count, committedTexts);
+      count = r.finalCount;
+      committedTexts.push(...r.freshSegments);
+      if (r.freshFinalText) commits.push(r.freshFinalText);
+    }
+    expect(commits.join(" ")).toBe("I want to create");
+  });
+
+  it("a grown snapshot arriving in the SAME event commits only the delta", () => {
+    const r = splitSpeechResults([final("make it"), final("make it a race")], 0, []);
+    expect(r.freshSegments).toEqual(["make it", "a race"]);
+  });
+
+  it("prefix without a word boundary is NOT treated as growth ('I want' vs 'I wanted')", () => {
+    const r = splitSpeechResults([final("I want"), final("I wanted a car")], 0, []);
+    expect(r.freshSegments).toEqual(["I want", "I wanted a car"]);
+  });
+});

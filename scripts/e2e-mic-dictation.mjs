@@ -130,6 +130,47 @@ check(
   `got "${afterRace}"`,
 );
 
+// 7b) Android duplicate-final artifact (2026-07-19 take 4, Pixel Chrome+Edge):
+// the recognizer RE-APPENDS the same final on successive events — each
+// duplicate is a fresh single-segment slice past the counter, which take 3's
+// single-match allowance let through, once per event ("every 3 words captured
+// 30-40 times"). Adjacent in-list duplicates must never re-commit.
+await page.evaluate(() => window.__emit(
+  [["make me a maze game", true], ["with penguins", true], ["in 3d", true], ["please", true], ["please", true]], 0));
+await page.evaluate(() => window.__emit(
+  [["make me a maze game", true], ["with penguins", true], ["in 3d", true], ["please", true], ["please", true], ["please", true]], 0));
+const afterDupes = await box.inputValue();
+check(
+  "Android re-appended duplicate finals never re-commit",
+  afterDupes === "make me a maze game with penguins in 3d please",
+  `got "${afterDupes}"`,
+);
+
+// 7c) The take-3 allowance survives take 4: a genuine repeat as the FIRST
+// final of a fresh session (no in-list predecessor) still commits.
+await page.evaluate(() => window.__end());
+await page.waitForTimeout(350);
+await page.evaluate(() => window.__emit([["please", true]], 0));
+const afterRepeat = await box.inputValue();
+check(
+  "a real repeated phrase in a fresh session still commits (no over-dedup)",
+  afterRepeat === "make me a maze game with penguins in 3d please please",
+  `got "${afterRepeat}"`,
+);
+
+// 7d) Android growing re-finalization (take 4 shape 2, production screenshot
+// "I I want I want to..."): the same utterance re-finalized as it grows must
+// commit only the newly-heard words, never the whole snapshot again.
+await page.evaluate(() => window.__emit([["please", true], ["please and a dragon", true]], 0));
+await page.evaluate(() => window.__emit(
+  [["please", true], ["please and a dragon", true], ["please and a dragon that flies", true]], 0));
+const afterGrowth = await box.inputValue();
+check(
+  "growing re-finalized snapshots commit only their delta",
+  afterGrowth === "make me a maze game with penguins in 3d please please and a dragon that flies",
+  `got "${afterGrowth}"`,
+);
+
 // 8) Stop: pressed state clears and typing unlocks. force: the listening
 // button pulses (mic-listening animation) and never reads as "stable".
 await mic.click({ force: true });

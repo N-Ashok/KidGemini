@@ -60,6 +60,10 @@ export type VerifyCheckId = "loop" | "canvas" | "drawing" | "start";
 
 export type VerifyScriptEvent =
   | { type: "check"; check: VerifyCheckId; ok: boolean }
+  /** Posted the instant the probe ghost-clicks Start — its own event so the
+   *  parent still learns of the click when the final result is lost (the
+   *  clicked document must ALWAYS be reloaded pristine before the kid sees it). */
+  | { type: "clicked" }
   | { type: "result"; evidence: VerifyEvidence };
 
 /** postMessage envelope from the injected verify script. */

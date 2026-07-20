@@ -19,7 +19,7 @@ import type {
   VerifyOutcome,
   VerifyScriptEvent,
 } from "@/types/preview-verify.types";
-import { classifyVerify, CLICK_WAIT_MS, PIXEL_WINDOW_MS, SETTLE_MS } from "./preview-verify";
+import { classifyVerify, demonstrablyRunning, CLICK_WAIT_MS, PIXEL_WINDOW_MS, SETTLE_MS } from "./preview-verify";
 import { REPAIR_TAXONOMY, SECOND_ATTEMPT_LINE, exhaustedQuestion } from "./repair-prompt";
 import { WALL_CLOCK_CAP_MS, shouldRepair, verifyOutcome } from "./verify-policy";
 import { GAME_CONSOLE_SOURCE, PREVIEW_VERIFY_SOURCE } from "./preview-messages";
@@ -72,6 +72,11 @@ export class PreviewVerifyController {
   // Per-round capture:
   private errors: GameConsoleMessage[] = [];
   private evidence: VerifyEvidence | null = null;
+  /** The probe announced a ghost-click on Start this round (its own event,
+   *  sent before the click — survives a lost result). A clicked document is
+   *  running/started behind the cover and must NEVER be what the kid uncovers:
+   *  every finish path reloads it pristine (BUG-FIX-LOG 2026-07-20). */
+  private probeClicked = false;
   private settled = true; // no round active until start()
   private timer: unknown = null;
 
@@ -120,7 +125,9 @@ export class PreviewVerifyController {
       this.errors.push(d.message);
     } else if (d.source === PREVIEW_VERIFY_SOURCE && d.event) {
       const ev = d.event;
-      if (ev.type === "check") {
+      if (ev.type === "clicked") {
+        this.probeClicked = true;
+      } else if (ev.type === "check") {
         this.emit({
           ...this.state,
           checks: [...this.state.checks.filter((c) => c.check !== ev.check), { check: ev.check, ok: ev.ok }],
@@ -152,6 +159,7 @@ export class PreviewVerifyController {
   private beginRound(html: string): void {
     this.errors = [];
     this.evidence = null;
+    this.probeClicked = false;
     this.settled = false;
     if (this.timer !== null) this.deps.clearTimeout(this.timer);
     this.timer = this.deps.setTimeout(() => void this.settle(), ROUND_HARD_TIMEOUT_MS);
@@ -177,16 +185,21 @@ export class PreviewVerifyController {
     this.versions.push({ html: roundHtml, severity: isClean ? 0 : errors.length > 0 ? 2 : 1 });
 
     if (isClean) {
-      // The probe clicks whenever it found a start control (§6.2) — the game
-      // is then running headless behind the cover, so the finished state
-      // reloads the iframe (round bump) with probes OFF for a pristine start.
-      this.finish(c.code, false, Boolean(this.evidence?.start?.found));
+      this.finish(c.code, false);
       return;
     }
 
     const elapsedMs = this.deps.now() - this.t0;
-    if (!shouldRepair({ code: c.code, attempt: this.attempt, elapsedMs, enabled: this.deps.repairEnabled })) {
-      this.finish(c.code, elapsedMs >= WALL_CLOCK_CAP_MS, false);
+    if (
+      !shouldRepair({
+        code: c.code,
+        attempt: this.attempt,
+        elapsedMs,
+        enabled: this.deps.repairEnabled,
+        demonstrablyRunning: demonstrablyRunning(this.evidence),
+      })
+    ) {
+      this.finish(c.code, elapsedMs >= WALL_CLOCK_CAP_MS);
       return;
     }
 
@@ -219,13 +232,21 @@ export class PreviewVerifyController {
     });
     if (this.disposed) return; // adapter torn down (new html / unmount) — only NOW may we drop
     if (!patchedHtml) {
-      this.finish(c.code, false, false);
+      this.finish(c.code, false);
       return;
     }
     this.beginRound(patchedHtml); // patched — a fresh round verifies it
   }
 
-  private finish(finalCode: string, bailed: boolean, probeClicked: boolean): void {
+  private finish(finalCode: string, bailed: boolean): void {
+    // The probe clicks whenever it found a start control (§6.2) — the game is
+    // then running headless behind the cover. NOT a parameter: call-site
+    // guesses left the pass-through / lost-result / failed-repair paths
+    // uncovering a ghost-started document (the kid saw mid-game or game-over
+    // with no start screen — "non-playable until reopened", 2026-07-20).
+    // Evidence is the fallback for rounds probed before the clicked event
+    // existed in the injected script (a cached document, in principle).
+    const probeClicked = this.probeClicked || Boolean(this.evidence?.start?.found);
     const outcome = verifyOutcome({ finalCode, attempts: this.attempt, bailed });
     const clean = finalCode === "clean" || finalCode === "inconclusive";
     this.deps.track("preview_verify", {

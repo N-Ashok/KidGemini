@@ -36,6 +36,23 @@ describe("shouldRepair", () => {
     expect(repairEnabled({})).toBe(true);
   });
 
+  // REGRESSION (BUG-FIX-LOG 2026-07-20, false repair of a running game): a
+  // benign error (audio-autoplay rejection is the archetype) classified as a
+  // repairable code must NOT spend a Gemini call when the probes saw the game
+  // demonstrably running — the "repair" replaced a healthy game with a
+  // drifted patch, burned both attempts, and ended in the give-up banner.
+  it("a demonstrably-running game is never repaired, whatever the code says", () => {
+    for (const code of ["load_error", "async_loop", "resource_404", "start_occluded"]) {
+      expect(
+        shouldRepair({ code, attempt: 0, elapsedMs: 0, enabled: true, demonstrablyRunning: true }),
+      ).toBe(false);
+    }
+    // Absent/false keeps today's behavior — fail toward repairing real breaks.
+    expect(
+      shouldRepair({ code: "load_error", attempt: 0, elapsedMs: 0, enabled: true, demonstrablyRunning: false }),
+    ).toBe(true);
+  });
+
   it("only hard-evidence codes may spend a Gemini call (false-repair UAT, 2026-07-10)", () => {
     for (const code of ["load_error", "async_loop", "resource_404", "start_occluded"]) {
       expect(shouldRepair({ code, attempt: 0, elapsedMs: 0, enabled: true })).toBe(true);

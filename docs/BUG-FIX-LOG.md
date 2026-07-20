@@ -45,6 +45,160 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-20 — Take 2: repair falsely fired on a demonstrably-running game ("Oops — fixing it" on a healthy game, then the give-up banner)
+
+- **Symptom (what the user saw):** owner UAT on prod, after the ghost-click
+  fix below: still "a non playable game after fixing the issue," and — the
+  decisive detail — the 🔧 "Oops — fixing it" line, then Ari's give-up
+  question ("Hmm, that one didn't come out right…"), on games whose stored
+  HTML was fine (reopening the panel always worked).
+- **Surface area:** `src/lib/preview-verify.ts` (classification order),
+  `src/lib/verify-policy.ts` (`shouldRepair`),
+  `src/lib/preview-verify-controller.ts` (`settle`).
+- **Root cause:** `classifyVerify` checks captured errors BEFORE the probe
+  evidence — any unhandled rejection at load classifies `async_loop`, which
+  is in `REPAIRABLE_CODES`. A benign rejection on a healthy game (archetype:
+  audio autoplay — `play()` rejects `NotAllowedError` without a user
+  gesture, guaranteed in the sandboxed preview iframe; and the probe's own
+  ghost `.click()` on Start carries no user activation either, so even
+  gesture-gated audio rejects) condemned a game the probes had WATCHED
+  running and drawing. Repair then rewrote healthy HTML; the (drifted or
+  identical-still-"failing") patch failed the next round the same way, both
+  attempts burned, and `finish` uncovered a stale/mangled live document
+  while the conversation kept the good copy — the exact "broken until
+  reopened" symptom. Same class as the 2026-07-10 false-repair UAT
+  ("repaired" a game that ran perfectly): probe-inference codes were made
+  telemetry-only then, but error-driven codes kept unconditional priority
+  over evidence of health.
+- **Fix:** new pure helper `demonstrablyRunning(evidence)`
+  (`preview-verify.ts`): loop ticking AND pixels changing (or no canvas to
+  judge — DOM games; static/tainted/zero-size are NOT proof).
+  `shouldRepair` (`verify-policy.ts`) takes it as an input and refuses to
+  spend a Gemini call on a demonstrably-running game regardless of the
+  failure code; the controller passes it from the round's evidence. Absence
+  of proof never *causes* a repair — the gate only ever withholds one, so
+  genuinely broken games (no loop, static screen, crashed before reporting)
+  repair exactly as before. Telemetry keeps the raw failure code either way.
+- **Result (verified):** new `verify-policy.test.ts` case (every repairable
+  code refused when demonstrablyRunning) and `preview-verify-controller.test.ts`
+  case (running game + autoplay-style rejection → 0 repair calls, no
+  "repairing" phase, no question, html untouched) both FAILED pre-fix;
+  5 new `preview-verify.test.ts` cases pin the helper's truth table.
+  Suite 849/849, typecheck clean, `scripts/e2e-preview-pane.mjs` 10/10.
+- **Impact:** kids' games with sound (or any benign load-time rejection) no
+  longer get falsely "repaired" into a broken live preview; repair spend
+  drops. Games that error AND show no sign of life still self-heal.
+- **Prevention (class):** "never repair what you watched work" is now a
+  policy input, not an ordering accident — any future failure code added to
+  `REPAIRABLE_CODES` is automatically subject to the same health gate.
+  Registered in `docs/REGRESSION-TEST-CATALOG.md`.
+- **Related:** entry below (ghost-click uncover — the other half of this
+  UAT report); 2026-07-10 (false repair → REPAIRABLE_CODES restriction).
+
+### 2026-07-20 — Preview sometimes uncovers a non-playable game after an update; closing and reopening the panel "fixes" it
+
+- **Symptom (what the user saw):** owner UAT — "some time the preview pane
+  shows a non playable game after fixing the issue but if i close the preview
+  pane and reopen the game, it works." The game HTML itself was fine (a fresh
+  mount rendered it playable); the live iframe was the broken part.
+- **Surface area:** `src/lib/preview-verify-controller.ts` (`finish`),
+  `src/lib/preview-verify.ts` (probe script), reaches the kid via
+  `usePreviewVerify.ts` → `ArtifactFrame.tsx` (`docKey`-keyed iframe).
+- **Root cause:** the self-healing verify probe **ghost-clicks the game's
+  Start button** (`startProbe`, §6.2) while the game runs headless behind the
+  opaque cover. The pristine-reload decision (`round` bump → new `docKey` →
+  fresh iframe document, probes off) only consulted the click on the CLEAN
+  finish path — and only via `evidence.start.found`. Three finish paths
+  dropped the click and uncovered the already-started document: (1) a
+  telemetry-only pass-through code (`canvas_static`/`start_no_loop` — probe
+  clicked Start, game's first frame was slower than the 800 ms pixel window);
+  (2) the ROUND_HARD_TIMEOUT settle where the result evidence never arrived
+  (`evidence` null, so `Boolean(evidence?.start?.found)` read false even
+  though a click happened); (3) a failed/exhausted repair whose best version
+  equals the current html. In all three the kid uncovered a game that had
+  been silently started ~2–4 s earlier — mid-play or already at game-over,
+  with no start screen: "non-playable." Close/reopen remounts the frame →
+  fresh generation → fresh document → works, which is exactly the reported
+  workaround. Intermittent because it needs the probe to have found a Start
+  control AND one of those three exits. Class: **decision made from a
+  call-site guess instead of the round's own recorded facts** (cousin of the
+  2026-07-11 "round alone is not an identity" entry — the preview iframe's
+  document state must be derived from what actually happened to it).
+- **Fix:** the probe script posts a dedicated `{type:"clicked"}` event the
+  instant it dispatches the click (BEFORE `btn.click()`, so a lost result
+  can't hide it — `buildVerifyScript`); `VerifyScriptEvent` gains the
+  variant (`preview-verify.types.ts`); the controller latches `probeClicked`
+  per round (reset in `beginRound`, set in `handleMessage`) and `finish()`
+  now computes the reload from `latch || evidence.start.found` itself — the
+  call-site parameter is gone, so no finish path can forget the click.
+- **Result (verified):** 3 new `preview-verify-controller.test.ts` cases
+  (canvas_static pass-through after click, hard-timeout with lost result
+  after the clicked event, failed repair with best === current) all FAILED
+  pre-fix and pass post-fix; 2 new `preview-verify.test.ts` cases pin the
+  clicked event's existence/ordering and its absence for never-clicked
+  games; existing "clean with no probe click does NOT reload (no flash)"
+  still green. File 40/40, suite 842/842, typecheck clean.
+- **Impact:** every verify exit now hands the kid a pristine, un-ghost-clicked
+  document. No API change; one extra postMessage per probed round.
+- **Prevention (class):** "the iframe's reload decision comes from the
+  round's recorded facts, not call-site guesses" — `finish()` no longer
+  accepts a `probeClicked` argument at all, so a future finish path cannot
+  opt out. Registered in `docs/REGRESSION-TEST-CATALOG.md` (preview-pane
+  section).
+- **Related:** 2026-07-11 (round-collision — stale preview identity class);
+  PRD-SELF-HEALING-PREVIEW §6.2/§8.4.
+
+### 2026-07-19 — Repeat-mic, take 4: Android re-appends the same final — "every 3 words captured 30-40 times" on phone/tablet
+
+- **Symptom (what the user saw):** owner UAT on a Pixel, in Chrome AND Edge
+  (both Chromium): every ~3 spoken words arrived in the composer 30-40+
+  times. Desktop was fine (takes 1-3 all still pinned green).
+- **Surface area:** `src/lib/speech-transcript.ts` (`splitSpeechResults`);
+  behavior change reaches both mic surfaces via `useSpeechInput.ts`.
+- **Root cause:** Android Chromium's recognizer in continuous mode
+  re-finalizes the SAME utterance as new results-list entries, in TWO shapes
+  (both observed live): (1) re-appended verbatim — `[A]`, `[A,A]`,
+  `[A,A,A]`…; (2) re-finalized as it GROWS — `["I"]`, `["I","I want"]`,
+  `["I","I want","I want to"]`… (production screenshot: "I I want I want to
+  I want to create…"). Each new entry sits past the committed-finals
+  counter, so it arrives as a fresh ONE-segment slice — and the take-3
+  replay guard deliberately lets single matches through
+  (`MIN_REPLAY_RUN = 2`, the a-kid-may-repeat-a-phrase allowance); the
+  grown snapshots aren't even text-equal, so no guard could match them. One
+  extra commit per event × dozens of events = the 30-40x flood. Same class
+  as 2026-07-14/16/18: trusting positional accounting over content identity
+  across a browser stream.
+- **Fix:** `effectiveFreshFinals()` in `splitSpeechResults` — within ONE
+  session's list, a final identical to its predecessor is dropped (shape 1;
+  "go go" arrives as one final, not two), and a final that extends its
+  predecessor at a word boundary commits only the NEW words, the delta
+  (shape 2: "I" → "I want" commits just "want"). Applied before the take-3
+  guard, positionally aligned so the predecessor check works across the
+  committed/fresh boundary. The take-3 allowance survives: a genuine repeat
+  across a silence restart is the FIRST final of a fresh list (no
+  predecessor) and still commits — pinned by test. Non-boundary prefixes
+  ("I want" vs "I wanted…") are NOT treated as growth — pinned by test.
+- **Result (verified):** 8 new `speech-transcript.test.ts` cases (the
+  growing-duplicate sequence, the one-event pair, the cumulative-snapshot
+  sequence and the same-event grown snapshot all FAILED pre-fix,
+  reproducing both flood shapes; fresh-session repeat, distinct finals,
+  word-boundary prefix and positional finalCount pin the non-regression);
+  file 29/29, suite 837/837, typecheck clean.
+  `scripts/e2e-mic-dictation.mjs` extended with checks 7b (verbatim
+  duplicates never re-commit), 7c (real repeat still commits) and 7d
+  (grown snapshots commit only their delta) — 17/17 against the running app.
+- **Impact:** phone/tablet dictation commits each spoken word once. No API
+  change. Remaining documented trade-off: a kid saying the exact same phrase
+  twice WITHIN one unbroken session (no silence gap) is deduped, and a
+  same-session second utterance that happens to extend the previous one
+  word-for-word commits only its new words; across a pause both commit in
+  full.
+- **Prevention (class):** "identity must come from content, not position" now
+  enforced at the source list itself, not only across sessions. Any future
+  consumer of SpeechRecognition results must go through `splitSpeechResults`.
+- **Related:** 2026-07-14 repeat-mic, 2026-07-16 take 2, 2026-07-18 take 3 —
+  same class, all four now pinned in unit tests + the mic e2e.
+
 ### 2026-07-18 — Publishing to the Arcade never told the platform the game is multiplayer — no 🎮 lobby on the live page
 
 - **Symptom (what the user saw):** owner UAT — "when i push to arcade there

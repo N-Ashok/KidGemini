@@ -196,6 +196,10 @@ export function buildVerifyScript(): string {
       };
       post({ type: "check", check: "start", ok: !occluded });
       var before = rafCount;
+      // Announce the click as its own event BEFORE dispatching it: if the
+      // result never makes it back (handler clobbers postMessage, hard
+      // timeout), the parent must still know to reload this document pristine.
+      post({ type: "clicked" });
       try { btn.click(); } catch (e) { /* handler threw — the error trap has it */ }
       setTimeout(function () {
         evidence.start.clickRafDelta = rafCount - before;
@@ -329,6 +333,24 @@ export function classifyVerify(input: {
     return { code: "canvas_static", evidence, errors };
   }
   return { code: "clean" };
+}
+
+/**
+ * Positive proof of health from the probes: the loop is ticking AND the screen
+ * is visibly drawing (or the game has no canvas to judge — DOM games). Gates
+ * repair spend (verify-policy): captured errors — a benign audio-autoplay
+ * rejection is the archetype — must never send a game the probes WATCHED
+ * RUNNING to Gemini for "repair" (BUG-FIX-LOG 2026-07-20; same posture as the
+ * 2026-07-10 false-repair decision). Absence of proof is NOT failure — this
+ * only ever withholds a repair, never causes one.
+ */
+export function demonstrablyRunning(evidence: VerifyEvidence | null): boolean {
+  if (!evidence) return false;
+  const loopRan = evidence.rafCountAtSettle > 0 || (evidence.intervalCount ?? 0) > 0;
+  if (!loopRan) return false;
+  if (!evidence.canvas) return true; // DOM game — a ticking loop is all we can see
+  if (evidence.canvas.width === 0 || evidence.canvas.height === 0) return false;
+  return evidence.pixel === "changing" || evidence.pixelAfterClick === "changing";
 }
 
 function emptyEvidence(): VerifyEvidence {

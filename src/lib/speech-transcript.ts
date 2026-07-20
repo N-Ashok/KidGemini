@@ -89,6 +89,42 @@ function dropReplayedPrefix(fresh: string[], committedTexts: string[]): string[]
   return fresh;
 }
 
+/** Replay guard, take 4 (2026-07-19, owner UAT on a Pixel — Chrome AND Edge,
+ *  both Chromium). Android's recognizer in continuous mode re-finalizes the
+ *  SAME utterance as new list entries, in two shapes (both seen live):
+ *   1. re-appended verbatim — [A], [A,A], [A,A,A]…
+ *   2. re-finalized as it GROWS — ["I"], ["I","I want"], ["I","I want",
+ *      "I want to"]… (production screenshot: "I I want I want to I want to
+ *      create…")
+ *  Each new entry sits past the committed counter as a fresh single-segment
+ *  slice, and take 3's MIN_REPLAY_RUN=2 deliberately lets single matches
+ *  through — so every re-finalization committed again ("every 3 words
+ *  captured 30-40 times"). Identity from content, at the source: within ONE
+ *  session's list, a final identical to its predecessor is dropped, and a
+ *  final that extends its predecessor at a word boundary is the same
+ *  utterance re-heard — only the NEW words (the delta) commit. A kid saying
+ *  "go go" arrives as one final, and a genuine repeat across a silence
+ *  restart starts a FRESH list whose first final has no predecessor, so the
+ *  take-3 single-repeat allowance still stands (pinned by test). */
+function effectiveFreshFinals(finalTexts: string[], from: number): string[] {
+  // Positional: finalTexts is index-aligned with the session's finals list
+  // (empties NOT yet filtered), so the predecessor check works across the
+  // committed/fresh boundary too.
+  const out: string[] = [];
+  for (let i = from; i < finalTexts.length; i++) {
+    const text = finalTexts[i]!;
+    const prev = i > 0 ? finalTexts[i - 1]! : undefined;
+    if (!text) continue;
+    if (prev !== undefined && text === prev) continue; // shape 1: verbatim duplicate
+    if (prev && text.startsWith(`${prev} `)) {
+      out.push(text.slice(prev.length + 1)); // shape 2: grown snapshot → delta only
+      continue;
+    }
+    out.push(text);
+  }
+  return out;
+}
+
 export function splitSpeechResults(
   results: ArrayLike<SpeechResultLike>,
   alreadyCommitted: number | undefined,
@@ -99,9 +135,13 @@ export function splitSpeechResults(
     rs.map((r) => r[0]?.transcript?.trim() ?? "").filter(Boolean);
   const finals = all.filter((r) => r.isFinal === true);
   // Sliced by OUR OWN running count, not the browser's resultIndex (see the
-  // 2026-07-14 note), then replay-guarded by committed TEXTS (take 3 above).
+  // 2026-07-14 note); Android re-finalization artifacts collapsed to their
+  // new words (take 4 above); then replay-guarded by committed TEXTS (take 3).
   const freshSegments = dropReplayedPrefix(
-    segments(finals.slice(alreadyCommitted ?? 0)),
+    effectiveFreshFinals(
+      finals.map((r) => r[0]?.transcript?.trim() ?? ""),
+      alreadyCommitted ?? 0,
+    ),
     committedTexts,
   );
   return {
