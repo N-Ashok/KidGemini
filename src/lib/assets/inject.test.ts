@@ -110,14 +110,16 @@ describe("injectAssets — structurally zero I/O (PRD §11 structural assertion)
     }
   });
 
-  it("imports nothing that could do I/O — only server-only, the manifest rules and the manifest JSON", () => {
+  it("imports nothing that could do I/O — only server-only, the manifest rules, the manifest JSON and the pure markers module", () => {
     const imports = [...source.matchAll(/from "([^"]+)"|import "([^"]+)"/g)]
       .map((m) => m[1] ?? m[2])
       // The helper STRINGS import from "three" inside the game page — those
       // live in template literals, not module scope; filter to line starts.
       .filter((_, i, __) => true);
     const moduleImports = [...source.matchAll(/^import [^;]*?from "([^"]+)";|^import "([^"]+)";/gm)].map((m) => m[1] ?? m[2]);
-    expect(moduleImports.sort()).toEqual(["./manifest", "./manifest.json", "server-only"]);
+    // ./markers is pure string/regex (marker tokens shared with the edit-patch
+    // reconciliation) — no I/O, so it's a legitimate addition to this allowlist.
+    expect(moduleImports.sort()).toEqual(["./manifest", "./manifest.json", "./markers", "server-only"]);
     expect(imports.length).toBeGreaterThan(0);
   });
 });

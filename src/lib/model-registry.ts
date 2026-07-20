@@ -41,6 +41,33 @@ export const MODEL_CATALOG: ModelSpec[] = [
   { id: "gpt-5.6-luna", provider: "openai", tier: "frontier", inputPerMTok: 1.0, outputPerMTok: 6.0, safety: "provider-enforced" },
   { id: "gpt-5.4-mini", provider: "openai", tier: "workhorse", inputPerMTok: 0.75, outputPerMTok: 4.5, safety: "provider-enforced" },
   { id: "gpt-5.4-nano", provider: "openai", tier: "lite", inputPerMTok: 0.2, outputPerMTok: 1.25, safety: "provider-enforced" },
+
+  // ── Anthropic (Claude) ──────────────────────────────────────────────────────
+  // `prompt-only` (owner decision 2026-07-20): Claude has no per-request safety
+  // THRESHOLD knob equivalent to Gemini's safetySettings, and we chose NOT to
+  // front it with the OpenAI moderation adapter. So it keeps only layers 1 (our
+  // deterministic input rules) and 3 (the child-safety system prompt) — a real
+  // reduction in the floor, which is why the registry excludes every prompt-only
+  // model unless ALLOW_PROMPT_ONLY_SAFETY_MODELS=1 AND its provider key is set.
+  // Off by default; opt-in is an explicit, greppable act. Model ids + prices are
+  // best-effort as of 2026-07-20 — VERIFY against Anthropic's current model list
+  // and pricing before enabling for real traffic (the prompt-portability eval,
+  // docs/PRD-MODEL-FALLBACK.md, is the gate for that).
+  { id: "claude-opus-4-8", provider: "anthropic", tier: "frontier", inputPerMTok: 15.0, outputPerMTok: 75.0, safety: "prompt-only" },
+  { id: "claude-sonnet-5", provider: "anthropic", tier: "workhorse", inputPerMTok: 3.0, outputPerMTok: 15.0, safety: "prompt-only" },
+  { id: "claude-haiku-4-5-20251001", provider: "anthropic", tier: "lite", inputPerMTok: 0.8, outputPerMTok: 4.0, safety: "prompt-only" },
+
+  // ── Moonshot (Kimi) ─────────────────────────────────────────────────────────
+  // `prompt-only`, same gate as Claude. Moonshot is OpenAI-API-compatible, so it
+  // reuses the OpenAI request/stream shape (moonshot-generation.ts) with a
+  // different base URL. DATA-HANDLING NOTE: Moonshot is a China-based provider —
+  // sending a child's prompts there is a privacy/compliance decision, which is
+  // why (beyond the prompt-only gate) it stays behind MOONSHOT_API_KEY and off
+  // by default. Do not enable for real kid traffic without that review. Ids +
+  // prices best-effort 2026-07-20 — VERIFY before enabling.
+  { id: "kimi-k2", provider: "moonshot", tier: "frontier", inputPerMTok: 0.6, outputPerMTok: 2.5, safety: "prompt-only" },
+  { id: "moonshot-v1-32k", provider: "moonshot", tier: "workhorse", inputPerMTok: 0.5, outputPerMTok: 2.0, safety: "prompt-only" },
+  { id: "moonshot-v1-8k", provider: "moonshot", tier: "lite", inputPerMTok: 0.2, outputPerMTok: 0.8, safety: "prompt-only" },
 ];
 
 /** Which env var proves a provider is usable. Missing key → its models are

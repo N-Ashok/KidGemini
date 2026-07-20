@@ -8,6 +8,7 @@
 // instead of bug fixes.
 
 import { isGameBuildTurn } from "./builder-mode";
+import { arAssetsKeys, assetMarkerNames, hasAssetMarker, looksInjected, stripAssetMarkers } from "./assets/markers";
 import type { ChatMessage } from "@/types/chat.types";
 
 // Deliberately NOT importing from gemini.ts or history-trim.ts here: gemini.ts
@@ -105,6 +106,67 @@ export function looksLikeCompleteDocument(html: string): boolean {
   return /<html[\s>]/i.test(html) && /<\/html>/i.test(html);
 }
 
+/**
+ * The one KNOWN, provable cause of `inSource=false` on edit turns
+ * (BUG-FIX-LOG 2026-07-20, KNOWN_BUGS #5): injectAssets STRIPS the
+ * `<!--USES_MODELS: …-->` / `<!--USES_THREE-->` / `<!--USES_AUDIO: …-->`
+ * markers out of a delivered asset game (they become an import map + AR_ASSETS
+ * table). The model, told by the 3D/asset prompt sections to always emit those
+ * markers, re-writes them into its SEARCH block — which then can't be found in
+ * the marker-stripped stored source, so the patch fails and the turn escalates
+ * to a full, destructive regeneration.
+ *
+ * When a patch fails to apply, this returns a marker-free copy of the reply to
+ * re-run applyPatch against — reconciling the markers out of SEARCH exactly as
+ * injection removed them from the source, so a body-anchored edit ("make the
+ * car faster") matches again. Returns null (leave the regeneration path alone)
+ * whenever reconciliation could regress anything:
+ *
+ *   · the reply carries no marker (nothing to reconcile), or
+ *   · the current game was never injected (a marker in the reply is then a
+ *     genuine NEW asset request, not a re-statement), or
+ *   · a marker names an asset the game doesn't already reference (a real add
+ *     that needs full re-injection — regeneration handles it correctly).
+ *
+ * Pure — no I/O. Deliberately conservative: it can only ever turn a failed
+ * patch into a working one, never change a patch that already applied.
+ */
+export function reconcileAssetMarkers(currentHtml: string, reply: string): string | null {
+  if (!hasAssetMarker(reply)) return null;
+  if (!looksInjected(currentHtml)) return null;
+  const present = new Set(arAssetsKeys(currentHtml));
+  if (assetMarkerNames(reply).some((name) => !present.has(name))) return null;
+  return stripAssetMarkers(reply);
+}
+
+/** The model's self-declaration that the child asked for a genuinely DIFFERENT
+ *  game, not a change to the current one (PRD-RESILIENT-GENERATION §11). Emitted
+ *  ALONE on its own line when the new-game clause of GAME_EDIT_PROMPT_SECTION
+ *  fires — deliberately an ugly, unambiguous token no child would type. */
+export const NEW_GAME_SENTINEL = "NEW_GAME_REQUEST";
+
+/** Kid-facing question shown when a new-game request is detected. Says nothing
+ *  is lost either way (PRD §11 risk table) so the child never fears the choice. */
+export const NEW_GAME_PROMPT_LINE =
+  "That sounds like a whole new game! 🎮 Want to start it in a fresh chat, so this game stays exactly how you like it? Nothing gets lost either way.";
+
+/**
+ * True when the model self-declared a NEW-GAME request (PRD §11). Fail toward
+ * NOT asking: the sentinel must stand alone on its own line AND the reply must
+ * carry no real work — a patch (SEARCH markers) or a full game document means
+ * the model actually did the edit/rebuild, so honor THAT over an incidental
+ * sentinel. The prompt only fires on a high-confidence, self-declared, no-work
+ * reply — never mid-flow on a child who was really just editing.
+ */
+export function detectsNewGame(reply: string): boolean {
+  const trimmed = reply.trim();
+  if (!trimmed) return false;
+  if (!new RegExp(`(^|\\n)\\s*${NEW_GAME_SENTINEL}\\s*(\\n|$)`).test(trimmed)) return false;
+  if (/<{7} SEARCH/.test(reply)) return false; // it actually patched — that's an edit
+  if (/<!doctype html|<html[\s>]/i.test(reply)) return false; // it actually built a game
+  return true;
+}
+
 const DEFAULT_EDIT_LINE = "Added that! 🎮";
 
 /** The generic done-line for a FRESH build (extractArtifact's default when
@@ -152,6 +214,7 @@ export function editReplyProse(reply: string): string {
  *  new visible content the safety rules must still govern. Modeled on
  *  repair-prompt.ts's already-proven REPAIR_SYSTEM_PROMPT wording. */
 export const GAME_EDIT_PROMPT_SECTION = `The child already has a working game from this conversation. If this message is actually asking you to change or add something to it, this is NOT a fresh build — do not rewrite the whole file. If the message isn't about the game at all (a question, plain chat), ignore everything below and just answer normally instead.
+If — and only if — the child is clearly asking for a COMPLETELY DIFFERENT game (a brand-new game, not a change, addition, or tweak to this one), do NOT rebuild anything: reply with exactly ${NEW_GAME_SENTINEL} on its own line, and nothing else at all (no sentence, no code). When in doubt, treat it as a change to the current game, not a new game.
 First, on its own line, write ONE short, encouraging sentence about what you added (no code, no markdown fence).
 Then return the change as one or more blocks in EXACTLY this format, and nothing else after that sentence:
 <<<<<<< SEARCH
@@ -176,6 +239,16 @@ export const EDIT_STREAM_WORKING_LINE = "Making your change… ✨";
  *  catches a marker still arriving at the stream tail) and swaps in a
  *  friendly working line. */
 export function streamingDisplayText(partial: string): string {
+  // A new-game self-declaration (NEW_GAME_SENTINEL) is an internal signal, not
+  // an answer — hide it (and any prefix of it building token by token) so the
+  // ugly token never flashes in the bubble before `done` swaps in the friendly
+  // prompt. Only when the sentinel IS the whole partial (fail toward not hiding
+  // real prose that merely happens to start with the same letters is a non-issue
+  // — the token is unique and all-caps).
+  const trimmed = partial.trim();
+  if (trimmed && (NEW_GAME_SENTINEL.startsWith(trimmed) || trimmed === NEW_GAME_SENTINEL)) {
+    return EDIT_STREAM_WORKING_LINE;
+  }
   const idx = partial.search(/<{4}/);
   if (idx === -1) return partial;
   const prose = partial.slice(0, idx).trim();

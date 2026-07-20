@@ -14,11 +14,15 @@ import {
   GAME_EDIT_STRICT_RETRY_SECTION, REPEATED_REQUEST_SECTION, FRESH_GAME_LINE,
 } from "./game-edit";
 import { fallbackChain, isModelGone, shouldTryNextModel } from "./model-fallback";
-import { runOneShotChain, runStreamChain, type ProviderChunk } from "./model-runner";
+import { runOneShotChain, runStreamChain, type ProviderChunk, type FinishReason, type ProviderGenerator } from "./model-runner";
 import { chainFor, specFor } from "./model-registry";
 import { openaiAdapter } from "./providers/openai-adapter";
+import { anthropicAdapter } from "./providers/anthropic-adapter";
+import { moonshotAdapter } from "./providers/moonshot-adapter";
 import { OpenAIGenerator } from "./providers/openai-generation";
-import type { GenerationRequest } from "@/types/model-provider.types";
+import { AnthropicGenerator } from "./providers/anthropic-generation";
+import { MoonshotGenerator } from "./providers/moonshot-generation";
+import type { GenerationRequest, ProviderAdapter, ProviderId } from "@/types/model-provider.types";
 import { withRetry } from "./retry";
 
 // A single generation shouldn't exceed this; beyond it we'd rather fail gracefully
@@ -97,6 +101,11 @@ export function oneShotTimeoutMs(
 // inside this window. Env override: GEMINI_STALL_SWITCH_MS.
 const STALL_SWITCH_MS = 30_000;
 
+/** Unified one-shot result — the Google path and every non-Google generator
+ *  normalize to this, so reply()/repair()/strictEditRetry() never branch on
+ *  provider (cross-provider one-shot, E 2026-07-20). */
+type OneShotResult = { text: string; usage?: TokenUsage };
+
 /** Gemini usageMetadata fields we bill on (all optional in the SDK). */
 interface GenUsageMetadata {
   promptTokenCount?: number;
@@ -134,20 +143,47 @@ function usageChunk(u: GenUsageMetadata, model?: string): StreamChunk {
  */
 async function* toProviderChunks(
   stream: AsyncIterable<{
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> }; finishReason?: string }>;
     usageMetadata?: GenUsageMetadata;
   }>,
 ): AsyncGenerator<ProviderChunk> {
   for await (const chunk of stream) {
     const usage = chunk.usageMetadata ? usageChunk(chunk.usageMetadata).usage : undefined;
+    const finishReason = normalizeFinishReason(chunk.candidates?.[0]?.finishReason);
     const parts = chunk.candidates?.[0]?.content?.parts ?? [];
     if (parts.length === 0) {
-      // A usage-only chunk still has to reach the runner (cumulative, last wins).
-      if (usage) yield { usage };
+      // A usage- or finishReason-only chunk still has to reach the runner —
+      // the terminal chunk of a SAFETY/MAX_TOKENS block often has no parts.
+      if (usage || finishReason) yield { ...(usage ? { usage } : {}), ...(finishReason ? { finishReason } : {}) };
       continue;
     }
-    for (const p of parts) yield { text: p.text, thought: p.thought, ...(usage ? { usage } : {}) };
+    for (const p of parts) yield { text: p.text, thought: p.thought, ...(usage ? { usage } : {}), ...(finishReason ? { finishReason } : {}) };
   }
+}
+
+/**
+ * Gemini finishReason → the runner's normalized enum (KNOWN_BUGS #4). Every
+ * content-BLOCK verdict maps to `safety` and fails closed (never retried on
+ * another model) — SAFETY plus the sibling block reasons (PROHIBITED_CONTENT,
+ * BLOCKLIST, SPII), because on a product for 7-14 year olds a block is a
+ * decision, not an outage. RECITATION (copyright) stays `other` — a reword on
+ * the next model can legitimately help. MAX_TOKENS is the fixable case.
+ */
+function normalizeFinishReason(raw?: string): FinishReason | undefined {
+  if (!raw) return undefined;
+  const r = raw.toUpperCase();
+  if (r === "SAFETY" || r === "PROHIBITED_CONTENT" || r === "BLOCKLIST" || r === "SPII") return "safety";
+  if (r === "MAX_TOKENS") return "max_tokens";
+  if (r === "STOP") return "stop";
+  return "other";
+}
+
+/** Halves the thinking budget for the ONE MAX_TOKENS retry (KNOWN_BUGS #4) so
+ *  the output allowance isn't consumed by thinking. Floors at 0; leaves every
+ *  other config field (safety settings, output cap) untouched. */
+function withReducedThinkingBudget<T extends { thinkingConfig?: { thinkingBudget?: number } }>(config: T): T {
+  const current = config.thinkingConfig?.thinkingBudget ?? 0;
+  return { ...config, thinkingConfig: { ...config.thinkingConfig, thinkingBudget: Math.max(0, Math.floor(current / 2)) } };
 }
 
 // Exported so tests can pin the child-safety instruction (it replaced the
@@ -347,11 +383,27 @@ export class GeminiChatModel implements ChatModel {
     ? chainFor({ primary: this.model, tier: specFor(this.model)!.tier, env: process.env })
     : fallbackChain(this.model, process.env);
 
-  private openai = new OpenAIGenerator();
+  // Non-Google generation adapters, keyed by provider. Google stays the native
+  // path (buildContents/configFor) — it isn't in here. Each generator owns its
+  // SDK/transport + request translation; the runner never sees a provider SDK.
+  private generators: Partial<Record<ProviderId, ProviderGenerator>> = {
+    openai: new OpenAIGenerator(),
+    anthropic: new AnthropicGenerator(),
+    moonshot: new MoonshotGenerator(),
+  };
 
-  /** Is this chain slot served by OpenAI rather than Google? */
-  private isOpenAI(model: string): boolean {
-    return specFor(model)?.provider === "openai";
+  // Per-provider error classifiers (walk-vs-throw + retired-id detection).
+  private adapters: Partial<Record<ProviderId, ProviderAdapter>> = {
+    openai: openaiAdapter,
+    anthropic: anthropicAdapter,
+    moonshot: moonshotAdapter,
+  };
+
+  /** The non-Google provider serving this slot, or undefined for Google (the
+   *  native path). One choke point for every "is this an adapter model?" branch. */
+  private nonGoogleProvider(model: string): ProviderId | undefined {
+    const p = specFor(model)?.provider;
+    return p && p !== "google" ? p : undefined;
   }
 
   /** Provider-neutral view of the turn, for non-Google adapters. The Gemini
@@ -371,13 +423,18 @@ export class GeminiChatModel implements ChatModel {
     };
   }
 
-  /** Chain policy is per-provider: "overloaded" is a 503 on Google but two
-   *  opposite meanings of 429 on OpenAI (openai-adapter.ts O.2/O.3). */
+  /** Chain policy is per-provider: "overloaded" is a 503 on Google, a 429 with
+   *  two opposite meanings on OpenAI, a 529 on Anthropic. Route to the slot's
+   *  adapter, or the Google classifier when it's a native Gemini slot. */
   private chainPolicy = {
-    shouldTryNextModel: (model: string, err: unknown) =>
-      this.isOpenAI(model) ? openaiAdapter.shouldTryNextModel(err) : shouldTryNextModel(err),
-    isModelGone: (model: string, err: unknown) =>
-      this.isOpenAI(model) ? openaiAdapter.isModelGone(err) : isModelGone(err),
+    shouldTryNextModel: (model: string, err: unknown) => {
+      const p = this.nonGoogleProvider(model);
+      return p ? this.adapters[p]!.shouldTryNextModel(err) : shouldTryNextModel(err);
+    },
+    isModelGone: (model: string, err: unknown) => {
+      const p = this.nonGoogleProvider(model);
+      return p ? this.adapters[p]!.isModelGone(err) : isModelGone(err);
+    },
   };
 
   private buildContents(input: { history: ChatMessage[]; message: string; image?: ImageAttachment }) {
@@ -393,28 +450,26 @@ export class GeminiChatModel implements ChatModel {
    *  and self-healing repair both dead-ended on exactly the failures
    *  replyStream() already survives (a retired/misconfigured model id, a
    *  transient outage), even though the main streamed answer recovered fine. */
-  private async oneShotWithFallback<T>(
+  private async oneShotWithFallback(
     label: string,
     primaryRetries: number,
-    call: (model: string) => Promise<T>,
+    /** The GOOGLE path for a slot, already normalized to `{ text, usage }`. */
+    googleCall: (model: string) => Promise<OneShotResult>,
+    /** The provider-neutral request a NON-Google slot is served with. Cross-
+     *  provider one-shot (E, 2026-07-20): OpenAI slots go through
+     *  OpenAIGenerator.generateOnce (moderated), Claude/Kimi through their
+     *  generators — the same dispatch the streaming path already uses. */
+    req: GenerationRequest,
     /** Defaults to the ordinary chat deadline. A whole-game regeneration must
      *  pass BUILD_TIMEOUT_MS or it cannot finish (BUG-FIX-LOG 2026-07-20). */
     timeoutMs: number = CHAT_TIMEOUT_MS,
-  ): Promise<T> {
-    // `call` builds a GOOGLE request, so OpenAI slots are filtered OUT rather
-    // than handed to it — sending a gpt-* id to Google would 404 and be
-    // silently skipped, which is precisely the failure this refactor removes.
-    // Cross-provider one-shot (reply/repair/strictEditRetry) needs each call
-    // site to supply an adapter-neutral request; streaming — the main
-    // kid-facing path — already crosses providers. Tracked in
-    // PRD-MODEL-FALLBACK §7.
+  ): Promise<OneShotResult> {
     // Shallow ON PURPOSE — see ONESHOT_MAX_MODELS. Depth here multiplies the
     // child's wait, unlike the streaming path where the hedge races rather
-    // than queues.
-    const chain = [this.model, ...this.fallbacks]
-      .filter((m, i) => i === 0 || !this.isOpenAI(m))
-      .slice(0, ONESHOT_MAX_MODELS);
-    return runOneShotChain({
+    // than queues. Non-Google slots are NO LONGER filtered out (E): they're
+    // dispatched to their generator below, so a rescue can cross providers.
+    const chain = [this.model, ...this.fallbacks].slice(0, ONESHOT_MAX_MODELS);
+    return runOneShotChain<OneShotResult>({
       chain,
       totalBudgetMs: oneShotBudgetMs(),
       label,
@@ -423,10 +478,20 @@ export class GeminiChatModel implements ChatModel {
       // uses it to START A BACKUP rather than to kill this attempt. Wrapping a
       // timeout here again would restore the exact discard-then-degrade
       // behaviour that served children the weakest model's answer.
-      call: (model, retries) => withRetry(() => call(model), { label, retries }),
+      call: (model, retries) =>
+        withRetry(() => {
+          const provider = this.nonGoogleProvider(model);
+          return provider ? this.generators[provider]!.generateOnce(model, req) : googleCall(model);
+        }, { label, retries }),
       slotDeadlineMs: timeoutMs,
       ...this.chainPolicy,
     });
+  }
+
+  /** Normalizes a Google generateContent response to the same `{ text, usage }`
+   *  a non-Google generateOnce returns, so one-shot callers never branch. */
+  private normalizeGoogle(res: { text?: string; usageMetadata?: GenUsageMetadata }): OneShotResult {
+    return { text: res.text ?? "", usage: res.usageMetadata ? usageChunk(res.usageMetadata).usage : undefined };
   }
 
   /** Fast chat config, or the builder overrides when this turn builds a game.
@@ -466,18 +531,16 @@ export class GeminiChatModel implements ChatModel {
         "gemini.chat",
         2,
         (model) =>
-          ai.models.generateContent({
-            model,
-            contents: this.buildContents(input),
-            config: this.configFor(input),
-          }),
+          ai.models
+            .generateContent({ model, contents: this.buildContents(input), config: this.configFor(input) })
+            .then((r) => this.normalizeGoogle(r)),
+        this.toGenerationRequest(input),
         // A patch-fallback regeneration IS a full game build (thinking on,
         // 24576 output tokens). Giving it the 30s chat deadline made it fail
         // on every model, every time — BUG-FIX-LOG 2026-07-20.
         oneShotTimeoutMs(input),
       );
-      const um = (res as { usageMetadata?: GenUsageMetadata }).usageMetadata;
-      return { ...extractArtifact(res.text ?? ""), usage: um ? usageChunk(um).usage : undefined };
+      return { ...extractArtifact(res.text), usage: res.usage };
     } catch (err) {
       throw new GeminiError(`chat generation failed: ${(err as Error).message}`);
     }
@@ -492,23 +555,23 @@ export class GeminiChatModel implements ChatModel {
    *  model-fallback chain as every other call. */
   async strictEditRetry(input: { currentHtml: string; message: string }): Promise<{ text: string; usage?: TokenUsage }> {
     const ai = getClient();
+    const composed = `Current game source:\n${input.currentHtml}\n\nThe child asked: ${input.message}`;
+    const systemInstruction = `${CHILD_SYSTEM_PROMPT}\n\n${GAME_EDIT_STRICT_RETRY_SECTION}`;
     try {
-      const res = await this.oneShotWithFallback("gemini.strict-edit", 1, (model) =>
-        ai.models.generateContent({
-          model,
-          contents: [{
-            role: "user",
-            parts: [{ text: `Current game source:\n${input.currentHtml}\n\nThe child asked: ${input.message}` }],
-          }],
-          config: {
-            ...GEN_CONFIG,
-            systemInstruction: `${CHILD_SYSTEM_PROMPT}\n\n${GAME_EDIT_STRICT_RETRY_SECTION}`,
-            maxOutputTokens: 4096,
-          },
-        }),
+      const res = await this.oneShotWithFallback(
+        "gemini.strict-edit",
+        1,
+        (model) =>
+          ai.models
+            .generateContent({
+              model,
+              contents: [{ role: "user", parts: [{ text: composed }] }],
+              config: { ...GEN_CONFIG, systemInstruction, maxOutputTokens: 4096 },
+            })
+            .then((r) => this.normalizeGoogle(r)),
+        { history: [], message: composed, systemInstruction, maxOutputTokens: 4096 },
       );
-      const um = (res as { usageMetadata?: GenUsageMetadata }).usageMetadata;
-      return { text: res.text ?? "", usage: um ? usageChunk(um).usage : undefined };
+      return { text: res.text, usage: res.usage };
     } catch (err) {
       throw new GeminiError(`strict edit retry failed: ${(err as Error).message}`);
     }
@@ -526,19 +589,20 @@ export class GeminiChatModel implements ChatModel {
   async repair(input: { systemPrompt: string; prompt: string }): Promise<{ text: string; usage?: TokenUsage }> {
     const ai = getClient();
     try {
-      const res = await this.oneShotWithFallback("gemini.repair", 1, (model) =>
-        ai.models.generateContent({
-          model,
-          contents: [{ role: "user", parts: [{ text: input.prompt }] }],
-          config: {
-            ...GEN_CONFIG,
-            systemInstruction: input.systemPrompt,
-            maxOutputTokens: 4096,
-          },
-        }),
+      const res = await this.oneShotWithFallback(
+        "gemini.repair",
+        1,
+        (model) =>
+          ai.models
+            .generateContent({
+              model,
+              contents: [{ role: "user", parts: [{ text: input.prompt }] }],
+              config: { ...GEN_CONFIG, systemInstruction: input.systemPrompt, maxOutputTokens: 4096 },
+            })
+            .then((r) => this.normalizeGoogle(r)),
+        { history: [], message: input.prompt, systemInstruction: input.systemPrompt, maxOutputTokens: 4096 },
       );
-      const um = (res as { usageMetadata?: GenUsageMetadata }).usageMetadata;
-      return { text: res.text ?? "", usage: um ? usageChunk(um).usage : undefined };
+      return { text: res.text, usage: res.usage };
     } catch (err) {
       throw new GeminiError(`repair generation failed: ${(err as Error).message}`);
     }
@@ -547,26 +611,44 @@ export class GeminiChatModel implements ChatModel {
   /** Streaming reply — yields answer deltas AND thought summaries as they're
    *  generated. Thought parts (part.thought, includeThoughts in builder mode)
    *  become the kid-facing planning line; they are NOT part of the answer. */
-  async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; activeGameMessageId?: string }): AsyncGenerator<StreamChunk> {
+  async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; activeGameMessageId?: string; forceRebuild?: boolean; preferAlternateModel?: boolean }): AsyncGenerator<StreamChunk> {
     const ai = getClient();
+    // "🔄 Different one" (PRD-INSTANT-ALTERNATE, on-demand option): lead the
+    // chain with the FALLBACK model so the regeneration is a genuinely different
+    // model's take, not the same primary re-rolled. Falls back to normal order
+    // when there is no fallback configured (still non-deterministically
+    // different). The fallbacks are already safety/key-gated (chainFor), so this
+    // can never smuggle a prompt-only model past the gate.
+    const chain =
+      input.preferAlternateModel && this.fallbacks.length > 0
+        ? [...this.fallbacks, this.model]
+        : [this.model, ...this.fallbacks];
     // The hedged-race chain walk now lives in model-runner.ts so a non-Google
     // adapter can be dropped in without re-implementing it (cross-provider
     // refactor 2026-07-20). Behaviour is unchanged — gemini.fallback.test.ts
     // F.1-F.7 pins it. Gemini specifics stay HERE: how a stream is opened,
     // and how its chunk shape normalizes into ProviderChunk.
     yield* runStreamChain({
-      chain: [this.model, ...this.fallbacks],
-      openStream: async (model, retries) => {
-        // Non-Google slots hand off to their adapter, which owns request
-        // translation AND (option A) the moderation gates that stand in for
-        // Gemini's per-request safetySettings.
-        if (this.isOpenAI(model)) return this.openai.openStream(model, this.toGenerationRequest(input));
+      chain,
+      openStream: async (model, retries, opts) => {
+        // Non-Google slots hand off to their generator, which owns request
+        // translation + the SDK/transport. OpenAI additionally moderates
+        // (option A); Anthropic/Moonshot are prompt-only and stream directly.
+        const provider = this.nonGoogleProvider(model);
+        if (provider) return this.generators[provider]!.openStream(model, this.toGenerationRequest({ ...input, forceFullRegen: input.forceRebuild }));
+        // forceRebuild ("Change this one" after a new-game prompt, PRD §11):
+        // suppress the edit/new-game prompt clause so the model builds the new
+        // game fresh in place rather than re-asking or trying to patch.
+        const config = this.configFor({ ...input, forceFullRegen: input.forceRebuild });
+        // MAX_TOKENS one-shot retry (KNOWN_BUGS #4): the thinking budget ate the
+        // whole output allowance last time — halve it so the answer gets room.
+        const finalConfig = opts?.reducedThinkingBudget ? withReducedThinkingBudget(config) : config;
         return toProviderChunks(
           await withRetry(
             () => ai.models.generateContentStream({
               model,
               contents: this.buildContents(input),
-              config: this.configFor(input),
+              config: finalConfig,
             }),
             { label: "gemini.chat.stream", retries },
           ),

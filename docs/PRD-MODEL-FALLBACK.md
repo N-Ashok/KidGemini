@@ -162,12 +162,17 @@ and "games are never blocked or retracted" (CLAUDE.md §3) rules out retraction.
 The cost lands only on the rescue path; if the pause proves too long on real
 turns the fix is a faster chain model, not streaming unmoderated text.
 
-**Still Gemini-only:** the one-shot paths (`reply` / `repair` /
-`strictEditRetry`). They build a Google request directly, so OpenAI ids are
-filtered out of their chains rather than handed to Google (which would 404 and
-be silently skipped — the exact bug this work removes). Making them
-cross-provider needs each call site to supply an adapter-neutral
-`GenerationRequest`.
+**One-shot paths now cross providers too — BUILT 2026-07-20 (E).** `reply` /
+`repair` / `strictEditRetry` no longer filter non-Google ids out of their
+chains. `oneShotWithFallback` takes a normalized Google closure PLUS the
+adapter-neutral `GenerationRequest`, and dispatches per slot: a non-Google slot
+goes through that provider's `generateOnce` (OpenAI moderated; Claude/Kimi only
+if opted in), a Google slot through the native call — both normalized to
+`{ text, usage }` so callers never branch. So a failed Google build regeneration
+or a self-heal can now be rescued by OpenAI instead of dead-ending on Gemini.
+Tests: `gemini.oneshot-crossprovider.test.ts` E.1–E.3. Safety is preserved —
+OpenAI's `generateOnce` still moderates input+output; the prompt-only providers
+stay behind the opt-in flag.
 
 **⚠ Behaviour change to confirm:** the 2026-07-13 ladder escalated a *workhorse*
 primary UP to the premium `gemini-3.5-flash` as a deep fallback. `chainFor`
@@ -176,9 +181,22 @@ F.3 updated). Production is unaffected — the prod primary IS `gemini-3.5-flash
 so everything catalogued is already cheaper — but if the quality escalation was
 wanted for a cheaper primary, pin it with `MODEL_FALLBACK_CHAIN`.
 
-Anthropic and Moonshot/Kimi remain planned adapters — the registry reserves
-their provider ids and env keys. Kimi additionally needs the DATA_HANDLING
-review below before a key is added at all.
+**Anthropic (Claude) + Moonshot (Kimi) adapters — BUILT 2026-07-20** (owner
+decision "extend to Claude and Kimi"). Claude streams via `fetch`+SSE
+(`anthropic-generation.ts`, no SDK dependency); Kimi reuses the OpenAI SDK with
+a base-URL override (`moonshot-generation.ts`, OpenAI-compatible). Both have
+per-provider error classifiers (`anthropic-adapter.ts`; `moonshot-adapter.ts`
+delegates to OpenAI's taxonomy) and normalize `finishReason` for the runner
+(KNOWN_BUGS #4). `gemini.ts` now dispatches by provider (`nonGoogleProvider` →
+a generator/adapter map) instead of an `isOpenAI` special-case. Owner decision
+on safety: **both are `prompt-only`** (no moderation front) — so they stream
+directly (unlike OpenAI's buffered moderation) and stay excluded from every
+chain unless `ALLOW_PROMPT_ONLY_SAFETY_MODELS=1` AND their key is set. Tests:
+`anthropic-adapter.test.ts`, `anthropic-generation.test.ts`,
+`moonshot-adapter.test.ts`, `moonshot-generation.test.ts`,
+`model-registry.test.ts` R.20–R.24. Model ids + prices in the catalog are
+best-effort — VERIFY before enabling. Kimi is additionally gated by the
+DATA_HANDLING review below.
 
 **The feature is currently INERT, by design.** Ari's documented safety posture
 (CLAUDE.md §3) has provider-enforced thresholds as its middle layer, and only
@@ -198,6 +216,21 @@ prompt and the game-build contract are tuned on Gemini — an untested prompt on
 another model is an unmeasured quality AND safety change) and, for Moonshot/Kimi
 specifically, **data handling** — children's transcripts leaving for a new
 jurisdiction needs a `docs/DATA_HANDLING.md` review before any key is added.
+
+**Prompt-portability eval — HARNESS BUILT 2026-07-20 (H).** `src/lib/eval/`: a
+fixed prompt corpus (`prompt-corpus.ts` — safe games, vague asks, edits, the
+over-refusal genre-edge cases like "space shooter"/"sword fight", and
+safety-content cases the prompt must keep wholesome), pure scorers
+(`scorers.ts` — false-refusal detection for the chess-block class, a coarse
+harmful-content screen, and build-contract structural checks), and an injectable
+orchestrator (`run-portability.ts`) with a go/no-go `passesGate` (ZERO false
+refusals of a must-build game, ZERO hard harm hits). Offline-tested with fakes
+(`*.test.ts`, H.1–H.20). The LIVE run (`npm run eval:portability`, opt-in via
+`RUN_PORTABILITY_EVAL=1`, needs keys — makes paid calls) runs the corpus through
+every configured provider, prints a per-provider report, and fails the gate on a
+refusal/harm. **This is the gate before `ALLOW_PROMPT_ONLY_SAFETY_MODELS` is
+flipped for real traffic** — plus human review of the flagged safety-content
+cases. It does NOT replace the data-handling review for Kimi.
 
 ### Known gap opened by this change
 `pricing.config.ts` resolves prices by model id from a Gemini-only table, so a

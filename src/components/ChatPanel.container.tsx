@@ -471,6 +471,47 @@ export function ChatPanelContainer() {
     setSidebarOpen(false);
   }
 
+  // PRD-RESILIENT-GENERATION §11 — the child answered the "is this a whole new
+  // game?" prompt. Nothing was rebuilt yet, so both choices are non-destructive:
+  // "New game" opens a fresh chat (this one stays exactly as it is, still
+  // playable), "Change this one" rebuilds the new game in place, here.
+  const pendingNewChatSend = useRef<{ convoId: string; text: string } | null>(null);
+
+  function answerNewGamePrompt(replyId: string, requestText: string, choice: "new-chat" | "rebuild") {
+    if (busy) return;
+    // Clear the prompt so the buttons don't linger, and it can't re-show on reload.
+    patchActive((c) => ({
+      ...c,
+      messages: c.messages.map((m) => (m.id === replyId ? { ...m, newGamePrompt: false } : m)),
+    }));
+    if (!requestText.trim()) return;
+    if (choice === "rebuild") {
+      void handleSend(requestText, undefined, { forceRebuild: true });
+      return;
+    }
+    // Fresh chat. handleSend targets the ACTIVE conversation, which only becomes
+    // this new one after the state below commits — so queue the send and let the
+    // effect fire it once the switch has rendered (never against the old chat).
+    tts.stop();
+    const c = newConversation();
+    setConvos((list) => [c, ...list]);
+    setActiveId(c.id);
+    setArtifact(null);
+    setExpandState({ expanded: false });
+    setSidebarOpen(false);
+    pendingNewChatSend.current = { convoId: c.id, text: requestText };
+  }
+
+  useEffect(() => {
+    const pending = pendingNewChatSend.current;
+    if (pending && pending.convoId === activeId) {
+      pendingNewChatSend.current = null;
+      void handleSend(pending.text);
+    }
+    // handleSend reads the freshly-active (empty) conversation as history — a
+    // clean first build in the new chat. eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
+
   function handleSelect(id: string) {
     tts.stop();
     setArtifact(null);
@@ -525,11 +566,19 @@ export function ChatPanelContainer() {
     // silent auto-retry of THIS turn still targets the same pinned version,
     // even though the conversation's pin is cleared right after sending.
     activeGameMessageId?: string,
+    // "Change this one ✏️" after a new-game prompt (PRD §11): rebuild the new
+    // game in place, skipping new-game detection so it can't ask again.
+    forceRebuild = false,
+    // "🔄 Different one" (PRD-INSTANT-ALTERNATE): regenerate led by the fallback
+    // model, so the kid gets a genuinely different take.
+    differentVersion = false,
   ) {
-    const setReply = (t: string, artifactHtml?: string) =>
+    const setReply = (t: string, artifactHtml?: string, newGamePrompt?: boolean) =>
       patchActive((c) => ({
         ...c,
-        messages: c.messages.map((m) => (m.id === replyId ? { ...m, text: t, artifactHtml } : m)),
+        messages: c.messages.map((m) =>
+          m.id === replyId ? { ...m, text: t, artifactHtml, ...(newGamePrompt ? { newGamePrompt: true } : {}) } : m,
+        ),
       }));
 
     // Phase-aware stall guard: builder turns THINK silently before the first
@@ -570,6 +619,8 @@ export function ChatPanelContainer() {
           replyId,
           ...(image ? { image } : {}),
           ...(activeGameMessageId ? { activeGameMessageId } : {}),
+          ...(forceRebuild ? { forceRebuild: true } : {}),
+          ...(differentVersion ? { differentVersion: true } : {}),
         }),
         signal: controller.signal,
       });
@@ -615,7 +666,7 @@ export function ChatPanelContainer() {
           const line = buffer.slice(0, nl).trim();
           buffer = buffer.slice(nl + 1);
           if (!line) continue;
-          const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null };
+          const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null; newGamePrompt?: boolean };
           if (ev.type === "thinking") {
             if (ev.text) setThinkingLine(ev.text);
           } else if (ev.type === "delta") {
@@ -633,7 +684,7 @@ export function ChatPanelContainer() {
             setThinkingLine(null);
             console.warn(`[chat] ↻ fallback model restart @${Date.now() - startedAt}ms — partial reply cleared`);
           } else if (ev.type === "done") {
-            setReply(ev.text ?? acc, ev.artifactHtml ?? undefined);
+            setReply(ev.text ?? acc, ev.artifactHtml ?? undefined, ev.newGamePrompt);
             setArtifact((a) => nextArtifact({ type: "done", artifactHtml: ev.artifactHtml }, a));
             setBusy(false);
             finalized = true;
@@ -744,7 +795,7 @@ export function ChatPanelContainer() {
   async function handleSend(
     text: string,
     attachment?: Attachment,
-    opts?: { fromIdeaBag?: boolean; onSuccess?: (childId: string) => void },
+    opts?: { fromIdeaBag?: boolean; onSuccess?: (childId: string) => void; forceRebuild?: boolean },
   ) {
     const history = active.messages;
     // "Continue from here" pin (chat-rewind.ts): captured now, sent with THIS
@@ -795,6 +846,7 @@ export function ChatPanelContainer() {
       apiMessage, history, replyId, 0, image,
       opts?.onSuccess && (() => opts.onSuccess!(childId)),
       activeGameMessageId,
+      opts?.forceRebuild ?? false,
     );
   }
 
@@ -823,7 +875,14 @@ export function ChatPanelContainer() {
   }
 
   // Regenerate: re-run the last user prompt, replacing the last answer.
-  async function handleRegenerate() {
+  // `differentVersion` ("🔄 Different one") leads the chain with the fallback
+  // model so the redo is a genuinely different take, not the same primary
+  // re-rolled. Param-less wrappers below keep the MessageItem onClick handlers
+  // from passing a truthy MouseEvent into the flag.
+  function handleRegenerate() { void regenerate(false); }
+  function handleDifferentOne() { void regenerate(true); }
+
+  async function regenerate(differentVersion: boolean) {
     if (busy) return;
     const msgs = active.messages;
     let idx = -1;
@@ -851,7 +910,7 @@ export function ChatPanelContainer() {
         },
       ],
     }));
-    await runStream(userText, history, replyId, 0, sessionImagesRef.current.get(activeId), undefined, basedOnMessageId);
+    await runStream(userText, history, replyId, 0, sessionImagesRef.current.get(activeId), undefined, basedOnMessageId, false, differentVersion);
   }
 
   // "Continue from here" (an earlier game was better): pins this message as
@@ -933,6 +992,38 @@ export function ChatPanelContainer() {
                 }
                 isPinned={active.activeGameMessageId === m.id}
               />
+              {/* New-game consent prompt (PRD §11): one tap, no typing. Only on
+                  the latest reply, and only while idle. Both choices are safe —
+                  the current game is untouched until the child picks. */}
+              {m.newGamePrompt && !busy && i === active.messages.length - 1 && (
+                <div className="mt-1 flex flex-wrap gap-2 pl-1">
+                  <button
+                    onClick={() => answerNewGamePrompt(m.id, active.messages[i - 1]?.text ?? "", "new-chat")}
+                    className="rounded-full bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-500"
+                  >
+                    New game 🎮
+                  </button>
+                  <button
+                    onClick={() => answerNewGamePrompt(m.id, active.messages[i - 1]?.text ?? "", "rebuild")}
+                    className="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-50"
+                  >
+                    Change this one ✏️
+                  </button>
+                </div>
+              )}
+              {/* "Different one" (PRD-INSTANT-ALTERNATE): on the latest game reply,
+                  regenerate with the fallback model for a genuinely different take.
+                  Not shown on the new-game consent prompt (no game there). */}
+              {m.role === "assistant" && m.artifactHtml && !busy && i === active.messages.length - 1 && (
+                <div className="mt-1 pl-1">
+                  <button
+                    onClick={handleDifferentOne}
+                    className="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-50"
+                  >
+                    🔄 Different one
+                  </button>
+                </div>
+              )}
               </div>
             ))}
             {busy && active.messages[active.messages.length - 1]?.text === "" && (

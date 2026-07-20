@@ -180,3 +180,43 @@ describe("explicit MODEL_FALLBACK_CHAIN — operator intent", () => {
     expect(pin(long).length).toBeLessThanOrEqual(MAX_EXPLICIT_CHAIN);
   });
 });
+
+// Claude + Kimi (owner decision 2026-07-20, "extend to Claude and Kimi"). Both
+// are prompt-only, so they must obey the SAME fail-closed gate as any other
+// prompt-only provider: excluded unless ALLOW_PROMPT_ONLY_SAFETY_MODELS=1 AND
+// their provider key is present. Uses an explicit chain so the assertion is
+// deterministic (they're expensive, so they'd otherwise fall past MAX_CHAIN).
+describe("Claude + Kimi providers — prompt-only, doubly gated", () => {
+  const withClaude = (env: Record<string, string | undefined>) =>
+    chainFor({ primary: "gemini-3.5-flash", tier: "frontier", env: { ...env, MODEL_FALLBACK_CHAIN: "claude-sonnet-5,kimi-k2" } });
+
+  it("R.20 the catalog carries Claude + Kimi ids, all marked prompt-only", () => {
+    for (const id of ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5-20251001", "kimi-k2", "moonshot-v1-32k", "moonshot-v1-8k"]) {
+      expect(specFor(id), id).toBeDefined();
+      expect(specFor(id)!.safety, id).toBe("prompt-only");
+    }
+  });
+
+  it("R.21 excluded by default even with their keys set (the opt-in flag is missing)", () => {
+    expect(withClaude({ GEMINI_API_KEY: "g", ANTHROPIC_API_KEY: "a", MOONSHOT_API_KEY: "m" })).toEqual([]);
+  });
+
+  it("R.22 excluded when the flag is set but the provider key is missing", () => {
+    // flag on, but no ANTHROPIC/MOONSHOT keys → still dropped (key gate)
+    expect(withClaude({ GEMINI_API_KEY: "g", ALLOW_PROMPT_ONLY_SAFETY_MODELS: "1" })).toEqual([]);
+  });
+
+  it("R.23 admitted only with BOTH the opt-in flag AND the provider key", () => {
+    const chain = withClaude({
+      GEMINI_API_KEY: "g", ANTHROPIC_API_KEY: "a", MOONSHOT_API_KEY: "m", ALLOW_PROMPT_ONLY_SAFETY_MODELS: "1",
+    });
+    expect(chain).toContain("claude-sonnet-5");
+    expect(chain).toContain("kimi-k2");
+  });
+
+  it("R.24 Claude admitted but Kimi still blocked when only Anthropic's key is set", () => {
+    const chain = withClaude({ GEMINI_API_KEY: "g", ANTHROPIC_API_KEY: "a", ALLOW_PROMPT_ONLY_SAFETY_MODELS: "1" });
+    expect(chain).toContain("claude-sonnet-5");
+    expect(chain).not.toContain("kimi-k2");
+  });
+});

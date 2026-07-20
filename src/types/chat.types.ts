@@ -13,6 +13,11 @@ export interface ChatMessage {
   /** True when this child message is a bundled Idea Bag send (🎒 label in the
    *  bubble) — spoken thoughts captured during play, docs/PRD-IDEA-BUTTON.md. */
   fromIdeaBag?: boolean;
+  /** Set on an assistant reply that ASKED the child whether their request is a
+   *  whole new game (PRD-RESILIENT-GENERATION §11). The bubble renders two
+   *  choices — "New game 🎮" / "Change this one ✏️" — and nothing was rebuilt:
+   *  the current game is untouched until the child chooses. Cleared once chosen. */
+  newGamePrompt?: boolean;
   /** Set on an assistant reply generated while a "Continue from here" pin was
    *  active (chat-rewind.ts) — which message it was built on. Conversation.
    *  activeGameMessageId is cleared the instant the turn is sent, so without

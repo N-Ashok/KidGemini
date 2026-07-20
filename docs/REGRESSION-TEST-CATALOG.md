@@ -220,6 +220,64 @@ npm run typecheck            # tsc --noEmit
 | `src/lib/speech-transcript.ts` (`dropReplayedPrefix`, `freshSegments`) + `useSpeechInput.ts` committed-texts record | **`speech-transcript.test.ts`** (5 more cases, 21 total) + **`scripts/e2e-mic-dictation.mjs`** (14 real-browser checks: supported detection, listening states, live interim, final commits, both replay classes, interim flush, auto-restart, restart race, stop, error banner) | A ≥2-segment replay of already-committed finals after a counter reset is dropped; a single repeated phrase is NOT deduped (kids repeat themselves); fresh speech passes untouched; omitted committed-texts keeps old behavior; the onend interim flush is recorded so a stale list can't re-deliver it | 2026-07-18 repeat-mic take 3 ("mic is not good", Chrome/HP laptop) |
 | `src/lib/speech-transcript.ts` (`effectiveFreshFinals`) | **`speech-transcript.test.ts`** Android-duplicate describe (8 cases, 29 total) + **`scripts/e2e-mic-dictation.mjs`** checks 7b/7c/7d (17 total) | Android Chromium re-finalizes the same utterance as new list entries, verbatim (`[A]`, `[A,A]`…) AND growing (`["I"]`, `["I","I want"]`…) — verbatim duplicates never re-commit and grown snapshots commit only their delta (the cumulative sequence yields each word once); a genuine repeat as the FIRST final of a fresh session still commits (take-3 allowance intact); a prefix without a word boundary ("I want"/"I wanted…") is NOT treated as growth; distinct finals untouched; `finalCount` stays positional | 2026-07-19 repeat-mic take 4 (Pixel, Chrome + Edge, "every 3 words captured 30-40 times" + growing-prefix screenshot) |
 
+## "Different one" — on-demand alternate (2026-07-20, PRD-INSTANT-ALTERNATE)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/gemini.ts` (`replyStream` `preferAlternateModel` chain reorder) | **`gemini.different-one.test.ts`** DA.1–DA.3 (3 tests) | With the flag the FIRST model tried is a fallback (a genuinely different model's take), not the primary; without it the primary leads as usual (behaviour unchanged); the primary stays in the chain as a backup so nothing is dropped. The hedge/restart runner is untouched | PRD-INSTANT-ALTERNATE (on-demand) |
+| `src/app/api/chat/route.ts` (`differentVersion` → `preferAlternateModel`) + `ChatPanel.container.tsx` (🔄 button, `regenerate(true)`) | **`route.test.ts`** Different-one (2 tests) | `differentVersion:true` reaches `replyStream` as `preferAlternateModel:true`; a normal turn sets it false. Client button appears only on the latest game reply | 2026-07-20 |
+
+## Prompt-portability eval (2026-07-20, PRD-MODEL-FALLBACK — H, the gate before non-Gemini serves kids)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/eval/scorers.ts` | **`scorers.test.ts`** H.1–H.11 (11 tests) | Game detection (fence/doctype, not prose); the chess-block over-refusal class (decline + no game, incl. "too violent → how about X instead"); harm screen is word-boundary matched so "bloodless" doesn't false-trip while stems like "tortur*" do; structural build-contract flags (#score, vh-not-dvh, non-CDN external script); safety-content ALWAYS needs human review and a harm hit fails it | 2026-07-09 (chess-block over-refusal), CLAUDE.md §3 |
+| `src/lib/eval/run-portability.ts` | **`run-portability.test.ts`** H.12–H.16 (5 tests) | A clean provider passes the gate (safety cases still flagged for a human); an over-refuser and a gore-emitter FAIL the gate; a generation error is counted and never a pass (even a safety case), never a crash; a subset can be run | 2026-07-20 |
+| `src/lib/eval/prompt-corpus.ts` | **`prompt-corpus.test.ts`** H.17–H.20 (4 tests) | Unique ids, every case has prompt+expectation; the corpus covers the burned classes (genre-edge over-refusal AND safety-content); edit cases ship their prior game; safety-content is not a must-build (a built game there isn't an auto-pass) | 2026-07-20 |
+| `src/lib/eval/portability.eval.test.ts` (LIVE, opt-in) | **`portability.eval.test.ts`** (wiring guard always on; live gate `RUN_PORTABILITY_EVAL=1`) | The live request carries the REAL child-safety system prompt (not a stub); the live gate runs the corpus through every keyed provider and fails on refusal/harm — the go/no-go before flipping `ALLOW_PROMPT_ONLY_SAFETY_MODELS` | 2026-07-20 |
+
+## Cross-provider one-shot (2026-07-20, PRD-MODEL-FALLBACK §7 — E)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/gemini.ts` (`oneShotWithFallback` dispatch, `normalizeGoogle`, reply/repair/strictEditRetry) | **`gemini.oneshot-crossprovider.test.ts`** E.1–E.3 (3 tests) | A failed Google primary is rescued by an OpenAI slot via `generateOnce` (dispatched with the model id + a provider-neutral GenerationRequest), not a 404; `repair()` crosses providers too (self-heal no longer Google-only); when Google succeeds first, NO cross-provider call is made. Guarded by the existing `gemini.oneshot-fallback.test.ts` (Google-path fallback unchanged) | 2026-07-20 |
+
+## Claude + Kimi provider adapters (2026-07-20, PRD-MODEL-FALLBACK — "extend to Claude and Kimi")
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/model-registry.ts` (Claude + Kimi catalog entries) | **`model-registry.test.ts`** R.20–R.24 (5 tests) | Both providers carry catalogued ids marked `prompt-only`; they're EXCLUDED by default, excluded with the flag but no key, excluded with the key but no flag, and admitted ONLY with both the opt-in flag AND the provider key; Claude can be on while Kimi stays off when only Anthropic's key is set (doubly gated, fail closed) | PRD-MODEL-FALLBACK safety gate |
+| `src/lib/providers/anthropic-adapter.ts` | **`anthropic-adapter.test.ts`** AN.1–AN.6 (6 tests) | 429/529/5xx/404 walk the chain; 401/400 and a content refusal throw (fail closed); an unknown failure returns false so a real defect isn't laundered across models | 2026-07-20 |
+| `src/lib/providers/anthropic-generation.ts` | **`anthropic-generation.test.ts`** AG.1–AG.8 (8 tests) | System prompt is a TOP-LEVEL field (not a message); roles map child→user/assistant→assistant; images ride as base64 blocks; streams token-by-token (prompt-only → no buffer); merges input(start)+output(delta)+cached usage without one event clobbering another; `refusal`→safety, `max_tokens`→max_tokens finishReason | 2026-07-20 (usage-merge clobber caught by AG.5) |
+| `src/lib/providers/moonshot-adapter.ts` + `moonshot-generation.ts` | **`moonshot-adapter.test.ts`** MA.1–MA.3, **`moonshot-generation.test.ts`** MG.1–MG.4 (7 tests) | Identity tracks MOONSHOT_API_KEY and delegates the OpenAI-compatible error taxonomy; streams delta content directly, surfaces usage + cached tokens, `content_filter`→safety / `length`→max_tokens; generateOnce concatenates | 2026-07-20 |
+
+## Cheap strict-edit rung before full rebuild (2026-07-20, PRD-RESILIENT-GENERATION §6, Option 6)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/app/api/chat/route.ts` (failed-patch branch: strict rung before regeneration) | **`route.test.ts`** DR.1–DR.3 (3 tests) | A clean strict-rung patch (4096 tokens) rescues the game and the 24576-token full rebuild is NEVER called; when the rung declines (`NEEDS_FULL_REBUILD`) it falls through to exactly ONE `forceFullRegen` rebuild; a rung patch that introduces an unknown three import is rejected and also falls through — the rung can only ever preserve the game, never degrade it | PRD §6 (whole-file regeneration is slow, expensive, and regresses untouched parts) |
+
+## finishReason handling — SAFETY fails closed, MAX_TOKENS retries (2026-07-20, KNOWN_BUGS #4)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/model-runner.ts` (`FinishReason`, `SafetyBlockedError`, empty-completion branch, `openStream` reduced-budget opt) + `src/lib/gemini.ts` (`normalizeFinishReason`, `withReducedThinkingBudget`) | **`gemini.finish-reason.test.ts`** FR.1–FR.5 (5 tests) | A SAFETY finish (and sibling PROHIBITED_CONTENT) throws `SafetyBlockedError` and tries NO other model — you never route around a safety verdict; a MAX_TOKENS finish reopens the SAME model once with a halved thinking budget and that answer wins; the reduced-budget retry happens at most once then walks the chain; an unrelated/OTHER empty still walks with no same-model retry. Class: safety verdict must fail closed, not fall back | 2026-07-20 (a SAFETY block read as an outage and walked the whole chain) |
+| `src/app/api/chat/route.ts` (SAFETY catch → blocked + model alert) | **`route.test.ts`** model-safety-block (1 test) | A `SafetyBlockedError` from the stream becomes a `blocked` kind-redirect event — never a scary `error`, never a `done` — the same treatment an input block gets | 2026-07-20 |
+
+## New-game consent prompt (2026-07-20, PRD-RESILIENT-GENERATION §11)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/game-edit.ts` (`detectsNewGame`, `NEW_GAME_SENTINEL`, `NEW_GAME_PROMPT_LINE`, `streamingDisplayText` sentinel-hide, `GAME_EDIT_PROMPT_SECTION` new-game clause) | **`game-edit.test.ts`** NG.1–NG.6 (6 tests) | Detection is true ONLY for a sentinel-alone reply and false when the reply also carries a real patch or full game (fail toward not asking) or is prose/blank; the friendly line reassures nothing is lost; the sentinel (and any token-by-token prefix of it) never streams into the bubble | PRD §11 (consent before a destructive rebuild) |
+| `src/app/api/chat/route.ts` (new-game branch, `forceRebuild`) + `ChatPanel.container.tsx` (two-button prompt, deferred new-chat send) | **`route.test.ts`** N.1–N.3 (3 tests) | A self-declared new game returns `newGamePrompt:true` with a null artifact and makes NO destructive regeneration call — the current game is untouched; `forceRebuild:true` ("Change this one") skips detection and builds the new game in place, threading the flag to the model; a reply that also patches is treated as an edit, never a prompt | PRD §11 |
+
+## Asset-marker patch reconciliation (2026-07-20, BUG-FIX-LOG class fix — inSource=false)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/assets/markers.ts` (`stripAssetMarkers`, `hasAssetMarker`, `assetMarkerNames`, `arAssetsKeys`, `looksInjected`) + `src/lib/assets/inject.ts` (shared marker tokens) | **`markers.test.ts`** (9 tests) | `stripAssetMarkers` removes USES_THREE/MODELS/AUDIO leaving surrounding whitespace **byte-for-byte the way `injectAssets` does** (M.2 ties the two together — a future injection change can't silently desync); name collection is lower-cased/de-duped with no leaked regex `lastIndex`; `arAssetsKeys`/`looksInjected` tell an injected asset game from a plain 2D one | 2026-07-20 (`inSource=false` on every 3D/asset edit) |
+| `src/lib/game-edit.ts` (`reconcileAssetMarkers`) + `src/app/api/chat/route.ts` (edit branch `search_not_found` rescue, `afterMarkerStrip=` diagnostic) | **`game-edit.reconcile.test.ts`** (7 tests) | Reproduces the prod shape — a direct patch fails `search_not_found` because the model re-emitted a marker injection had stripped; reconciliation strips it and the patch then applies **without regenerating**; guarded to null on a NEW asset (needs real re-injection), on a plain 2D game (marker is a genuine add), and on a marker-free reply; a genuinely-absent SEARCH still fails honestly after reconciliation (no rubber-stamp). Class: stored-vs-seen source divergence | 2026-07-20 (`inSource=false`; the upstream trigger of the 225s incidents) |
+
 ## Multiplayer marker insurance (2026-07-18, BUG-FIX-LOG class fix)
 
 | When to run | Test | What it pins | Bug-fix ref |

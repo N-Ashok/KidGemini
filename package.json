@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval:portability": "RUN_PORTABILITY_EVAL=1 vitest run src/lib/eval/portability.eval.test.ts",
     "assets:vendor-three": "node scripts/vendor-three.mjs",
     "assets:check": "node scripts/assets-contract-check.mjs"
   },

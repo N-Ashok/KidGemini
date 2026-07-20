@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // Real (unmocked) module — the honest kid-facing lines the route substitutes
 // when a whole-game rebuild happened (penguin-maze hardening, 2026-07-18).
 import { REBUILT_GAME_LINE, FRESH_GAME_LINE } from "@/lib/game-edit";
+import { SafetyBlockedError } from "@/lib/model-runner";
 
 // getAriantraSession() — toggled per test (SSO session).
 const authMock = vi.fn();
@@ -920,5 +921,170 @@ describe("POST /api/chat — three-import lint", () => {
     expect(replyMock).toHaveBeenCalledTimes(1);
     expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
     expect(done.artifactHtml).toBe(CLEAN_GAME); // never the import-crashing patch result
+  });
+});
+
+describe("POST /api/chat — new-game consent prompt (PRD-RESILIENT-GENERATION §11)", () => {
+  const CURRENT_GAME = '<!doctype html><html><body><div id="score">0</div><div>RACING</div></body></html>';
+  const historyWithGame = [
+    { id: "1", role: "child" as const, text: "make me a racing game", createdAt: 1 },
+    {
+      id: "2", role: "assistant" as const,
+      text: "Here!\n```html\n" + CURRENT_GAME + "\n```",
+      artifactHtml: CURRENT_GAME,
+      createdAt: 2,
+    },
+  ];
+
+  beforeEach(() => {
+    authMock.mockResolvedValue(null);
+  });
+
+  const done = (text: string) => JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+  it("N.1 a self-declared new game asks instead of rebuilding — nothing is touched", async () => {
+    replyStreamMock.mockReturnValue(one("NEW_GAME_REQUEST"));
+
+    const res = await POST(makeReq({ message: "now make a football game", history: historyWithGame }));
+    const d = done(await res.text());
+
+    expect(d.newGamePrompt).toBe(true);
+    expect(d.text).toContain("whole new game"); // the friendly consent line
+    expect(d.artifactHtml).toBeNull(); // nothing rebuilt — current game untouched
+    expect(replyMock).not.toHaveBeenCalled(); // no destructive regeneration
+    expect(strictEditRetryMock).not.toHaveBeenCalled();
+  });
+
+  it("N.2 forceRebuild ('Change this one') skips detection and builds the new game in place", async () => {
+    const NEW_GAME = "<!doctype html><html><body>FOOTBALL</body></html>";
+    extractArtifactMock.mockImplementation(() => ({ text: "Here's your game! 🎮", artifactHtml: NEW_GAME }));
+    replyStreamMock.mockReturnValue(one("Here!\n```html\n" + NEW_GAME + "\n```"));
+
+    const res = await POST(makeReq({ message: "now make a football game", history: historyWithGame, forceRebuild: true }));
+    const d = done(await res.text());
+
+    expect(d.newGamePrompt).toBeUndefined(); // never asked again
+    expect(d.artifactHtml).toBe(NEW_GAME); // the new game delivered in place
+    // the stream request carried forceRebuild through to the model
+    expect(replyStreamMock.mock.calls[0]![0]).toMatchObject({ forceRebuild: true });
+  });
+
+  it("N.3 a reply that ALSO patches is treated as an edit, never a new-game prompt (fail toward not asking)", async () => {
+    // A stray sentinel next to a real SEARCH/REPLACE must not hijack the edit.
+    const patchReply = "Sure!\nNEW_GAME_REQUEST\n<<<<<<< SEARCH\nRACING\n=======\nRACING_FAST\n>>>>>>> REPLACE";
+    replyStreamMock.mockReturnValue(one(patchReply));
+
+    const res = await POST(makeReq({ message: "make it faster", history: historyWithGame }));
+    const d = done(await res.text());
+
+    expect(d.newGamePrompt).toBeUndefined();
+    expect(d.artifactHtml).toBe(CURRENT_GAME.replace("RACING", "RACING_FAST")); // the patch applied
+  });
+});
+
+describe("POST /api/chat — model output safety block (finishReason SAFETY, KNOWN_BUGS #4)", () => {
+  beforeEach(() => {
+    authMock.mockResolvedValue(null);
+  });
+
+  it("a SAFETY-blocked stream sends a kind redirect (blocked), never a scary error", async () => {
+    replyStreamMock.mockReturnValue((async function* (): AsyncGenerator<never> {
+      throw new SafetyBlockedError("gemini-3-flash-preview");
+    })());
+
+    const res = await POST(makeReq({ message: "make me a game", history: [] }));
+    const text = await res.text();
+    const events = text.trim().split("\n").map((l) => JSON.parse(l));
+
+    expect(events.some((e) => e.type === "blocked")).toBe(true);
+    expect(events.some((e) => e.type === "error")).toBe(false);
+    expect(events.some((e) => e.type === "done")).toBe(false);
+  });
+});
+
+describe("POST /api/chat — cheap strict-edit rung before full rebuild (PRD-RESILIENT-GENERATION §6, Option 6)", () => {
+  const CURRENT_GAME = '<!doctype html><html><body><div id="score">0</div><div>OLD_FEATURE</div></body></html>';
+  const historyWithGame = [
+    { id: "1", role: "child" as const, text: "make me a game", createdAt: 1 },
+    {
+      id: "2", role: "assistant" as const,
+      text: "Here!\n```html\n" + CURRENT_GAME + "\n```",
+      artifactHtml: CURRENT_GAME,
+      createdAt: 2,
+    },
+  ];
+  // A first patch attempt that can't apply (SEARCH text absent) → the failed-patch path.
+  const badPatchReply = "Trying!\n<<<<<<< SEARCH\nTHIS_IS_NOT_IN_THE_SOURCE\n=======\nX\n>>>>>>> REPLACE";
+  const done = (text: string) => JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+  beforeEach(() => {
+    authMock.mockResolvedValue(null);
+  });
+
+  it("DR.1 a clean strict-rung patch rescues the game WITHOUT the expensive full rebuild", async () => {
+    replyStreamMock.mockReturnValue(one(badPatchReply));
+    strictEditRetryMock.mockResolvedValue({
+      text: "Got it now!\n<<<<<<< SEARCH\nOLD_FEATURE\n=======\nNEW_FEATURE\n>>>>>>> REPLACE",
+    });
+
+    const res = await POST(makeReq({ message: "add a medic kit", history: historyWithGame }));
+    const d = done(await res.text());
+
+    expect(strictEditRetryMock).toHaveBeenCalledTimes(1);
+    expect(replyMock).not.toHaveBeenCalled(); // the 24576-token rebuild was avoided
+    expect(d.artifactHtml).toBe(CURRENT_GAME.replace("OLD_FEATURE", "NEW_FEATURE")); // patched in place
+  });
+
+  it("DR.2 when the strict rung declines (NEEDS_FULL_REBUILD), it falls through to ONE full regeneration", async () => {
+    replyStreamMock.mockReturnValue(one(badPatchReply));
+    strictEditRetryMock.mockResolvedValue({ text: "NEEDS_FULL_REBUILD" });
+    replyMock.mockResolvedValue({ text: "Here you go!", artifactHtml: "<html>REBUILT GAME</html>", wasFenced: true });
+
+    const res = await POST(makeReq({ message: "add a medic kit", history: historyWithGame }));
+    const d = done(await res.text());
+
+    expect(strictEditRetryMock).toHaveBeenCalledTimes(1); // tried the cheap rung first…
+    expect(replyMock).toHaveBeenCalledTimes(1); // …then the rebuild, exactly once
+    expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
+    expect(d.artifactHtml).toBe("<html>REBUILT GAME</html>");
+  });
+
+  it("DR.3 a rung patch that introduces a broken import is rejected — still falls through to rebuild", async () => {
+    replyStreamMock.mockReturnValue(one(badPatchReply));
+    // The rung 'applies' but swaps in a bad three import; the guard must reject it.
+    strictEditRetryMock.mockResolvedValue({
+      text: '<<<<<<< SEARCH\nOLD_FEATURE\n=======\n<script type="module">import { FakeNonexistentThing } from "three";</script>\n>>>>>>> REPLACE',
+    });
+    replyMock.mockResolvedValue({ text: "Rebuilt!", artifactHtml: "<html>REBUILT</html>", wasFenced: true });
+
+    const res = await POST(makeReq({ message: "make it 3d", history: historyWithGame }));
+    const d = done(await res.text());
+
+    // rung patch rejected for the bad import → full rebuild
+    expect(replyMock).toHaveBeenCalledTimes(1);
+    expect(d.artifactHtml).toBe("<html>REBUILT</html>");
+  });
+});
+
+describe("POST /api/chat — Different one (PRD-INSTANT-ALTERNATE, on-demand)", () => {
+  beforeEach(() => {
+    authMock.mockResolvedValue(null);
+  });
+
+  it("passes differentVersion through to replyStream as preferAlternateModel", async () => {
+    replyStreamMock.mockReturnValue(one("A different game!"));
+
+    await POST(makeReq({ message: "make me a game", history: [], differentVersion: true }));
+
+    expect(replyStreamMock).toHaveBeenCalledTimes(1);
+    expect(replyStreamMock.mock.calls[0]![0]).toMatchObject({ preferAlternateModel: true });
+  });
+
+  it("a normal turn does not set preferAlternateModel", async () => {
+    replyStreamMock.mockReturnValue(one("Normal game!"));
+
+    await POST(makeReq({ message: "make me a game", history: [] }));
+
+    expect(replyStreamMock.mock.calls[0]![0]).toMatchObject({ preferAlternateModel: false });
   });
 });

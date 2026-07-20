@@ -9,10 +9,12 @@
 import "@/lib/logger"; // tees all server console output to logs/app.log
 import { NextRequest, NextResponse } from "next/server";
 import { GeminiChatModel, extractArtifact } from "@/lib/gemini";
+import { SafetyBlockedError } from "@/lib/model-runner";
 import {
   isGameEditTurn, currentGameHtml, editReplyProse, looksLikeAttemptedEdit, looksLikeCompleteDocument,
-  regenReplyProse, REBUILT_GAME_LINE, FRESH_GAME_LINE,
+  regenReplyProse, reconcileAssetMarkers, detectsNewGame, NEW_GAME_PROMPT_LINE, REBUILT_GAME_LINE, FRESH_GAME_LINE,
 } from "@/lib/game-edit";
+import { stripAssetMarkers } from "@/lib/assets/markers";
 import { applyPatch } from "@/lib/repair-prompt";
 import { injectAssets } from "@/lib/assets/inject";
 import { newUnknownThreeImports, unknownThreeImports } from "@/lib/assets/three-import-lint";
@@ -46,7 +48,7 @@ const estTokens = (t: string) => Math.ceil(t.length / 4);
 
 export async function POST(req: NextRequest) {
   const geo = resolveGeo(req);
-  let body: { message?: string; history?: ChatMessage[]; image?: unknown; replyId?: unknown; activeGameMessageId?: unknown };
+  let body: { message?: string; history?: ChatMessage[]; image?: unknown; replyId?: unknown; activeGameMessageId?: unknown; forceRebuild?: unknown; differentVersion?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -74,6 +76,13 @@ export async function POST(req: NextRequest) {
   // message to build on instead of the newest one, for exactly this turn —
   // it clears its own pin once sent, so there's nothing to persist here.
   const activeGameMessageId = typeof body.activeGameMessageId === "string" ? body.activeGameMessageId : undefined;
+  // "Change this one ✏️" after a new-game prompt (PRD-RESILIENT-GENERATION §11):
+  // the child consented to rebuild in place, so skip new-game detection and the
+  // edit-patch path — build the new game fresh, here, this turn.
+  const forceRebuild = body.forceRebuild === true;
+  // "🔄 Different one" (PRD-INSTANT-ALTERNATE, on-demand): regenerate this turn
+  // led by the fallback model, so the child gets a genuinely different take.
+  const preferAlternateModel = body.differentVersion === true;
   // Trim what the MODEL sees (stale game versions stripped + sliding window,
   // see history-trim.ts) — the client's stored conversation is untouched.
   const history = trimHistory(body.history ?? [], activeGameMessageId);
@@ -254,7 +263,7 @@ export async function POST(req: NextRequest) {
     if (replyId) trackTurn(() => turnResults.start(replyId, userId, Date.now()));
     try {
       console.log(`[api/chat] streaming… @${ms()}ms`);
-      for await (const chunk of chatModel.replyStream({ history, message, image, activeGameMessageId })) {
+      for await (const chunk of chatModel.replyStream({ history, message, image, activeGameMessageId, forceRebuild, preferAlternateModel })) {
         if (chunk.kind === "thought") {
           // Thought summaries drive the kid-facing planning line during the
           // silent thinking phase. kidThoughtLine fails closed (null = drop):
@@ -285,6 +294,17 @@ export async function POST(req: NextRequest) {
         send({ type: "delta", text: chunk.text });
       }
     } catch (err) {
+      // A model SAFETY block (finishReason SAFETY, KNOWN_BUGS #4) is a VERDICT,
+      // not an outage: the runner fails closed rather than trying to route around
+      // it. Show the kind redirect (never a scary error), and log a model-origin
+      // alert so a parent can see it — the same treatment as an input block.
+      if (err instanceof SafetyBlockedError) {
+        console.warn(`[api/chat] ⛔ model output safety-blocked @${ms()}ms — redirecting (fail closed)`);
+        alert("model", full || message, { category: null, severity: "high", action: "hard_block", reason: "model output blocked by the provider (finishReason SAFETY)" });
+        if (replyId) trackTurn(() => turnResults.fail(replyId, userId, Date.now()));
+        send({ type: "blocked", text: KIND_REDIRECT });
+        return;
+      }
       console.error(`[api/chat] ✖ stream error @${ms()}ms: ${(err as Error).message}`);
       if (replyId) trackTurn(() => turnResults.fail(replyId, userId, Date.now()));
       send({ type: "error", text: "Oops! Something went wrong. Let's try again." });
@@ -316,8 +336,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    let displayText: string;
-    let deliverableHtml: string | null;
+    // Initialised (never actually used unset — every branch below assigns): the
+    // cheap-rung path (Option 6) assigns inside a try guarded by `rescued`, which
+    // TS can't correlate with definite assignment.
+    let displayText = "";
+    let deliverableHtml: string | null = null;
+    // Set when the model self-declared a whole-new-game request (PRD §11): the
+    // done event carries it so the client shows the two-button consent prompt.
+    let newGamePrompt = false;
 
     // Patch-based feature edits (BUG-FIX-LOG class fix, 2026-07-18): a
     // follow-up request on an already-good game is answered with a targeted
@@ -325,7 +351,10 @@ export async function POST(req: NextRequest) {
     // repair flow already uses (repair-prompt.ts's applyPatch) — instead of a
     // full-file regeneration, so parts the child never asked to change can't
     // silently regress.
-    if (isGameEditTurn(message, history, activeGameMessageId)) {
+    // forceRebuild ("Change this one ✏️", PRD §11) skips this whole path — the
+    // child already consented to rebuild the new game in place, so it takes the
+    // ordinary fresh-build branch below.
+    if (!forceRebuild && isGameEditTurn(message, history, activeGameMessageId)) {
       const currentHtml = currentGameHtml(history, activeGameMessageId)!; // isGameEditTurn guarantees a game exists
       // Debug trail (2026-07-18 search_not_found class): make it obvious from
       // the log alone WHICH source a patch was applied against, and — on a
@@ -339,9 +368,31 @@ export async function POST(req: NextRequest) {
         const firstSearch = reply.match(/<{7} SEARCH\n([\s\S]*?)\n={7}/)?.[1];
         if (firstSearch === undefined) return;
         const head = firstSearch.slice(0, 80).replace(/\n/g, "\\n");
-        console.warn(`[api/chat]   first SEARCH head: "${head}" inSource=${currentHtml.includes(firstSearch)}`);
+        // inSource: does the SEARCH text exist in the source we patch? afterMarkerStrip:
+        // would it match once asset markers are removed as injection removed them?
+        // afterMarkerStrip=true on an inSource=false miss CONFIRMS KNOWN_BUGS #5's
+        // asset-marker mechanism as the cause (vs the model quoting a version we
+        // never held). The reconciliation below already handles the safe subset;
+        // this line pins WHICH cause each remaining miss is, from the log alone.
+        const inSource = currentHtml.includes(firstSearch);
+        const afterMarkerStrip = !inSource && stripAssetMarkers(currentHtml).includes(stripAssetMarkers(firstSearch));
+        console.warn(`[api/chat]   first SEARCH head: "${head}" inSource=${inSource} afterMarkerStrip=${afterMarkerStrip}`);
       };
-      const applied = applyPatch(currentHtml, full);
+      let applied = applyPatch(currentHtml, full);
+      // inSource=false rescue (KNOWN_BUGS #5): the model re-emitted asset markers
+      // injectAssets had stripped from the stored game, so its SEARCH can't be
+      // found. Reconcile them out (guarded — only when it can't regress a new
+      // asset) and re-apply BEFORE escalating to a full regeneration.
+      if (!applied.ok && applied.reason === "search_not_found") {
+        const reconciled = reconcileAssetMarkers(currentHtml, full);
+        if (reconciled) {
+          const retry = applyPatch(currentHtml, reconciled);
+          if (retry.ok) {
+            applied = retry;
+            console.log(`[api/chat] ✓ edit patch after asset-marker reconciliation @${ms()}ms`);
+          }
+        }
+      }
       // Three-import lint (BUG-FIX-LOG 2026-07-20 "DoubleSide"): a patch that
       // INTRODUCES an import the vendored bundle doesn't export would kill
       // the whole game on its import line — that's a failed patch, not a
@@ -351,7 +402,16 @@ export async function POST(req: NextRequest) {
       if (patchBadImports.length) {
         console.warn(`[api/chat] ⛔ patch introduces unknown three imports: ${patchBadImports.join(", ")} @${ms()}ms`);
       }
-      if (applied.ok && applied.mode === "patch" && patchBadImports.length === 0) {
+      if (detectsNewGame(full)) {
+        // The model self-declared this is a whole NEW game, not an edit (PRD §11).
+        // Ask before any destructive rebuild — nothing is touched: the current
+        // game stays in the preview (done carries a null artifact, which
+        // nextArtifact keeps) until the child picks "New game" or "Change this one".
+        console.log(`[api/chat] 🎮 new-game request self-declared — offering fresh chat @${ms()}ms`);
+        displayText = NEW_GAME_PROMPT_LINE;
+        deliverableHtml = null;
+        newGamePrompt = true;
+      } else if (applied.ok && applied.mode === "patch" && patchBadImports.length === 0) {
         console.log(`[api/chat] ✓ edit patch @${ms()}ms`);
         displayText = editReplyProse(full); // the kid-facing sentence only — never the raw hunks
         deliverableHtml = toDeliverable(applied.html);
@@ -412,6 +472,40 @@ export async function POST(req: NextRequest) {
             ? `incomplete ${applied.mode} output`
             : applied.reason;
         logSearchMiss(full);
+
+        // Option 6 (PRD-RESILIENT-GENERATION §6): try ONE cheap strict-edit rung
+        // (4096 tokens) BEFORE the expensive full rebuild (24576 tokens, which
+        // regresses parts the child never touched). It's a fresh, small patch
+        // against the same source — when it lands cleanly the child keeps their
+        // exact game. Anything but a clean, import-safe patch falls through to
+        // the unchanged regeneration below. Capped at this single attempt.
+        let rescued = false;
+        try {
+          const rung = await chatModel.strictEditRetry({ currentHtml, message });
+          trackTurn(() => recordUsage("chat", servedModel, message, rung.text, false, rung.usage));
+          const rungApplied = applyPatch(currentHtml, rung.text);
+          const rungBadImports =
+            rungApplied.ok && rungApplied.mode === "patch" ? newUnknownThreeImports(currentHtml, rungApplied.html) : [];
+          if (rungApplied.ok && rungApplied.mode === "patch" && rungBadImports.length === 0) {
+            console.log(`[api/chat] ✓ edit patch (cheap strict rung, before rebuild) @${ms()}ms`);
+            displayText = editReplyProse(rung.text);
+            deliverableHtml = toDeliverable(rungApplied.html);
+            rescued = true;
+          } else {
+            const why = rungApplied.ok
+              ? rungBadImports.length
+                ? `bad_imports:${rungBadImports.join("+")}`
+                : `mode=${rungApplied.mode}`
+              : rungApplied.reason;
+            console.log(`[api/chat] cheap strict rung declined (${why}) — full regeneration @${ms()}ms`);
+          }
+        } catch (err) {
+          console.warn(`[api/chat] cheap strict rung unavailable (${(err as Error).message}) — full regeneration @${ms()}ms`);
+        }
+
+        if (rescued) {
+          // Kept the child's game with a small patch — no rebuild needed.
+        } else {
         console.warn(`[api/chat] patch failed (${reason}) — falling back to full regeneration @${ms()}ms`);
         try {
           const fallback = await chatModel.reply({ history, message, image, forceFullRegen: true });
@@ -431,6 +525,7 @@ export async function POST(req: NextRequest) {
           send({ type: "error", text: "Oops! Something went wrong. Let's try again." });
           if (replyId) trackTurn(() => turnResults.fail(replyId, userId, Date.now()));
           return;
+        }
         }
       }
     } else {
@@ -484,7 +579,7 @@ export async function POST(req: NextRequest) {
         }
       }
     }
-    send({ type: "done", text: displayText, artifactHtml: deliverableHtml });
+    send({ type: "done", text: displayText, artifactHtml: deliverableHtml, ...(newGamePrompt ? { newGamePrompt: true } : {}) });
     // Keep the finished result server-side even if nobody is listening — a
     // disconnected client polls /api/chat/result instead of re-generating.
     if (replyId) trackTurn(() => turnResults.complete(replyId, userId, displayText, deliverableHtml, Date.now()));

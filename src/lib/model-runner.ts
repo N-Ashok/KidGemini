@@ -19,6 +19,28 @@
 // file and must keep passing untouched.
 
 import type { StreamChunk, TokenUsage } from "@/types/chat.types";
+import type { GenerationRequest, NormalizedUsage } from "@/types/model-provider.types";
+
+/**
+ * What a non-Google generation adapter exposes to gemini.ts's dispatch. Every
+ * provider (OpenAI, Anthropic, Moonshot) implements this so the streaming AND
+ * one-shot paths can route by provider without knowing any SDK. `openStream`
+ * feeds runStreamChain; `generateOnce` feeds runOneShotChain (cross-provider
+ * one-shot, PRD-MODEL-FALLBACK §7).
+ */
+export interface ProviderGenerator {
+  openStream(model: string, req: GenerationRequest): Promise<AsyncIterable<ProviderChunk>>;
+  generateOnce(model: string, req: GenerationRequest): Promise<{ text: string; usage?: NormalizedUsage }>;
+}
+
+/**
+ * Why a provider ended a stream, normalized across SDKs (KNOWN_BUGS #4). The
+ * runner treats these differently: `safety` is a VERDICT (fail closed — never
+ * retry on another model to bypass it), `max_tokens` is FIXABLE (retry the same
+ * model once with a smaller thinking budget), everything else is a plain dud
+ * slot that walks the chain.
+ */
+export type FinishReason = "safety" | "max_tokens" | "stop" | "other";
 
 /** One normalized piece of provider output. Adapters translate their own SDK
  *  shape into these, so the runner never sees a `candidates[0].content.parts`
@@ -28,6 +50,8 @@ export interface ProviderChunk {
   /** A thought/reasoning summary, NOT part of the answer. */
   thought?: boolean;
   usage?: TokenUsage;
+  /** Set on the terminal chunk when the provider reports why it stopped. */
+  finishReason?: FinishReason;
 }
 
 export interface StreamChainDeps {
@@ -35,8 +59,11 @@ export interface StreamChainDeps {
   chain: string[];
   /** Open a stream for `model`. `retries` is the caller's retry budget for
    *  this slot — the primary keeps its normal retries, fallbacks get 0 so a
-   *  full incident walks the chain in ~a handful of tries, not 15. */
-  openStream: (model: string, retries: number) => Promise<AsyncIterable<ProviderChunk>>;
+   *  full incident walks the chain in ~a handful of tries, not 15. `opts`
+   *  carries the ONE MAX_TOKENS retry signal: reopen the same model with a
+   *  smaller thinking budget so the output allowance isn't eaten by thinking
+   *  (KNOWN_BUGS #4). A 2-arg adapter that ignores it is fine. */
+  openStream: (model: string, retries: number, opts?: { reducedThinkingBudget?: boolean }) => Promise<AsyncIterable<ProviderChunk>>;
   /** Per-model, because "overloaded" differs by provider (Google 503 vs
    *  OpenAI's two opposite meanings for 429). */
   shouldTryNextModel: (model: string, err: unknown) => boolean;
@@ -76,6 +103,21 @@ export class EmptyCompletionError extends Error {
   constructor(model: string) {
     super(`empty completion: ${model} finished the stream without any answer text`);
     this.name = "EmptyCompletionError";
+  }
+}
+
+/**
+ * Internal marker: a stream ended with finishReason SAFETY — the provider
+ * BLOCKED the candidate (KNOWN_BUGS #4). This is a VERDICT, not an outage, so
+ * it is TERMINAL: the chain must NOT walk to another model to get around a
+ * child-safety block. It propagates raw (never wrapped, never
+ * shouldTryNextModel'd) so the route can turn it into a friendly "let's talk
+ * about something else" redirect instead of an error or a blank bubble.
+ */
+export class SafetyBlockedError extends Error {
+  constructor(model: string) {
+    super(`safety block: ${model} finished the stream with finishReason SAFETY`);
+    this.name = "SafetyBlockedError";
   }
 }
 
@@ -126,6 +168,10 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
       it: AsyncIterator<ProviderChunk>;
       pending?: Promise<{ src: Src; res?: IteratorResult<ProviderChunk>; err?: unknown }>;
       usage?: TokenUsage;
+      /** Last finishReason this source reported — decides SAFETY vs MAX_TOKENS. */
+      finish?: FinishReason;
+      /** True once this model's ONE reduced-budget MAX_TOKENS retry has run. */
+      budgetRetried?: boolean;
     }
     let srcs: Src[] = [{ model, it: stream[Symbol.asyncIterator]() }];
     /** Which source produced the answer tokens yielded so far. */
@@ -189,12 +235,29 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
             srcs = srcs.filter((s) => s !== src);
             continue;
           }
-          // Finished, but with NOTHING to show: treat as a dud slot and walk
-          // the chain rather than handing the child a blank bubble (see
-          // EmptyCompletionError). Checked against answerSrc, not just
-          // answerStarted, so a slot that produced nothing after an EARLIER
-          // model's text was wiped still counts as empty.
-          if (!answerStarted || answerSrc !== src) throw new EmptyCompletionError(src.model);
+          // Finished, but with NOTHING to show. WHY decides what happens
+          // (KNOWN_BUGS #4): a SAFETY block is a verdict (fail closed, terminal);
+          // a MAX_TOKENS finish is fixable (retry THIS model once with a smaller
+          // thinking budget so it isn't eaten by thinking); anything else is a
+          // plain dud slot that walks the chain rather than handing the child a
+          // blank bubble. Checked against answerSrc, not just answerStarted, so a
+          // slot that produced nothing after an EARLIER model's text was wiped
+          // still counts as empty.
+          if (!answerStarted || answerSrc !== src) {
+            if (src.finish === "safety") throw new SafetyBlockedError(src.model);
+            if (src.finish === "max_tokens" && !src.budgetRetried && srcs.length === 1) {
+              try {
+                const reopened = await openStream(model, 0, { reducedThinkingBudget: true });
+                console.warn(`[model-runner] ${model} hit MAX_TOKENS — retrying once with a smaller thinking budget`);
+                srcs = [{ model, it: reopened[Symbol.asyncIterator](), budgetRetried: true }];
+                continue; // pump the reopened stream; a real answer this time wins
+              } catch (reErr) {
+                // Reopen refused: fall through to the ordinary dud-slot walk.
+                if (!shouldTryNextModel(model, reErr)) throw reErr;
+              }
+            }
+            throw new EmptyCompletionError(src.model);
+          }
           // Real billed counts, tagged with the model that ACTUALLY served.
           if (src.usage) yield { kind: "usage", text: "", model: src.model, usage: src.usage };
           return; // the (sole/committed) stream finished cleanly
@@ -202,6 +265,7 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
 
         const part = won.res!.value;
         if (part.usage) src.usage = part.usage;
+        if (part.finishReason) src.finish = part.finishReason;
         if (!part.text) continue;
 
         if (part.thought) {
@@ -245,6 +309,14 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
       // Stalls and empty completions are OUR markers for a dud slot, not
       // provider errors — the per-provider classifier would not recognise
       // them, so they bypass it and always walk.
+      // A SAFETY block is a verdict, not an outage: fail closed. Abandon every
+      // stream and propagate raw — never walk to another model to bypass it,
+      // never wrap it (the route needs the type to send a friendly redirect).
+      if (err instanceof SafetyBlockedError) {
+        for (const s of srcs) abandon(s);
+        console.warn(`[model-runner] ${model} was safety-blocked — failing closed (no fallback)`);
+        throw err;
+      }
       const stalled = err instanceof StallSwitchError;
       const empty = err instanceof EmptyCompletionError;
       for (const s of srcs) abandon(s);

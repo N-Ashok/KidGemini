@@ -45,6 +45,98 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-20 — a model SAFETY block read as an outage: `finishReason` was never inspected, so a blocked candidate walked the whole chain and ended in a blank bubble / error
+
+- **Symptom:** a stream that ended with no answer text was treated as an
+  undifferentiated dud slot (the 2026-07-20 empty-completion fix). A Gemini
+  `finishReason: SAFETY` (candidate blocked) was indistinguishable from
+  `MAX_TOKENS` (thinking ate the output) — both burned a chain slot, and a
+  genuine child-safety block silently walked every fallback model trying to get
+  an answer, ending in an error or blank bubble instead of a safe redirect.
+- **Surface area:** `src/lib/model-runner.ts` (ProviderChunk `finishReason`,
+  `SafetyBlockedError`, empty-completion branch), `src/lib/gemini.ts`
+  (`normalizeFinishReason`, `withReducedThinkingBudget`, `openStream` opts),
+  `src/app/api/chat/route.ts` (SAFETY → blocked + alert).
+- **Root cause:** nothing read `finishReason`, so the runner could not tell a
+  verdict from an outage from a fixable truncation.
+- **Fix:** surface a normalized `finishReason` (`safety` | `max_tokens` |
+  `stop` | `other`) on every terminal chunk. The runner now branches on it when
+  a stream ends empty: **SAFETY** (and PROHIBITED_CONTENT/BLOCKLIST/SPII) →
+  `SafetyBlockedError`, which is TERMINAL — it never walks the chain (you don't
+  route around a safety block) and propagates raw so the route sends the kind
+  redirect + logs a model-origin parent alert (fail closed). **MAX_TOKENS** →
+  reopen the SAME model once with a halved thinking budget (KNOWN_BUGS #4's
+  "smaller budget would fix it"), then walk if it's still empty. Everything else
+  walks unchanged.
+- **Result (verified):** `gemini.finish-reason.test.ts` FR.1–FR.5 (SAFETY and
+  a sibling reason fail closed with NO second model tried; MAX_TOKENS retries
+  the same model at a lower budget and its answer wins; the retry happens at
+  most once then walks; unrelated empties still walk). `route.test.ts` proves a
+  SAFETY-blocked stream emits `blocked` (kind redirect), never `error`/`done`.
+  The load-bearing `gemini.fallback.test.ts` F.1–F.7 and
+  `model-runner.oneshot.test.ts` B.1–B.7 pass UNTOUCHED. Full suite green (1000).
+- **Impact:** a blocked candidate is now a safe, honest redirect instead of a
+  fake outage; a truncated build gets one cheaper retry before degrading.
+  **Safety posture strengthened** — the chain can no longer try to bypass a
+  provider safety verdict.
+- **Prevention:** FR.1/FR.2 pin "no chain walk on SAFETY"; the F/B suites guard
+  the default paths. **Class: safety verdict must fail closed, not fall back.**
+- **Related:** the empty-completion fix (entry below), KNOWN_BUGS #4.
+- **Residual:** the MAX_TOKENS reduced-budget heuristic (halve) is unproven
+  against real traffic — MAX_TOKENS was invisible before this — so the log line
+  it emits is the signal to tune it once it actually fires.
+
+### 2026-07-20 — `inSource=false`: asset injection strips `<!--USES_MODELS-->` markers from stored games, but the model re-emits them in SEARCH, so every 3D/asset edit patch missed
+
+- **Symptom (what prod logs showed):** on edit turns for 3D/asset games,
+  `patch failed (search_not_found)` with
+  `first SEARCH head: "<!--USES_MODELS: car, finish_line, tree, checkered_flag-->" inSource=false`,
+  every time — escalating to a full, expensive regeneration (the trigger behind
+  the 225s incidents in the entry below).
+- **Surface area:** `src/lib/assets/inject.ts` (line 236, marker strip),
+  `src/lib/assets/markers.ts` (new), `src/lib/game-edit.ts`
+  (`reconcileAssetMarkers`), `src/app/api/chat/route.ts` (edit branch).
+- **Root cause (confirmed from code, not a guess):** `injectAssets` REMOVES the
+  `<!--USES_MODELS: …-->` / `<!--USES_THREE-->` / `<!--USES_AUDIO: …-->` markers
+  from the delivered game — they resolve into an import map + `AR_ASSETS` table.
+  So the game STORED in history (and re-shown to the model on the next edit) has
+  no markers. But the 3D/asset prompt sections tell the model to always emit
+  those markers, so it re-writes `<!--USES_MODELS: …-->` into its SEARCH block.
+  That SEARCH text is by construction absent from the marker-stripped source, so
+  `applyPatch` can never match it. **The two prior hypotheses in KNOWN_BUGS #5
+  (history-trim dropping the current game; `source=newest` racing a pin) were
+  wrong** — the divergence is injection mutating the stored source, not history.
+- **Fix:** a new pure `markers.ts` (the marker tokens, now the single source of
+  truth, shared with `inject.ts`). On a `search_not_found` patch failure the
+  route calls `reconcileAssetMarkers(currentHtml, reply)`: it strips the markers
+  out of the reply — byte-for-byte the way injection stripped them from the
+  source — and re-applies. Guarded so it can only ever turn a FAILED patch into a
+  working one: it bails unless the game was actually injected AND every asset the
+  markers name is already in the game's `AR_ASSETS` (a marker naming a NEW asset
+  is a real add that still takes the regeneration path). Injection stays
+  idempotent because the reconciled patch output has no markers either.
+- **Result (verified):** `game-edit.reconcile.test.ts` A.1–A.7 reproduce the
+  production shape — a direct patch fails `search_not_found`, reconciliation
+  makes it apply cleanly without regenerating — and pin the guards (new asset →
+  null, plain 2D → null, genuinely-absent SEARCH still fails honestly).
+  `markers.test.ts` M.1–M.9 pin marker-strip byte-parity with `injectAssets`.
+  Full suite green; typecheck clean.
+- **Impact:** the common asset-game edit ("make the car faster") now patches in
+  place instead of triggering a whole-game rebuild — cheaper, faster, and it
+  stops silently regressing parts the child liked. New-asset edits are unchanged.
+- **Prevention:** the byte-parity test (M.2) ties `stripAssetMarkers` to
+  `injectAssets`, so a future change to how injection removes markers can't
+  silently desync the reconciliation. **Class: stored-vs-seen source divergence.**
+- **Related:** the 225s timeout entry below (this is its upstream trigger, P3 in
+  `PRD-RESILIENT-GENERATION.md`); KNOWN_BUGS #5; the 2026-07-18 history-trim
+  `search_not_found` fix (same *symptom*, different mechanism).
+- **Residual (needs prod signal):** a SEARCH block that also spans the injected
+  `<head>` region (import map / AR_ASSETS scripts the model never wrote) won't
+  match on marker-strip alone. The new `afterMarkerStrip=` debug flag on the
+  miss line tells us, from the log, whether each remaining miss is the marker
+  mechanism (rescuable) or something else. Kept open in KNOWN_BUGS #5 until a
+  prod streak confirms the marker fix cleared the bulk.
+
 ### 2026-07-20 — 225 seconds, then nothing: the one-shot deadline (30s) was SHORTER than the work it wrapped, so every model in the chain timed out identically
 
 - **Symptom (what the user reported):** "there are many incidents it went four

@@ -124,10 +124,50 @@ Tests: `model-runner.oneshot.test.ts` B.1–B.7. B.1 reproduces the production
 shape directly — a primary that lands after its deadline still beats a freshly
 started fallback, and the chain never degrades to the third model.
 
-**Not yet done:** options 5 (fix the `inSource=false` trigger — still the
-highest-value item), 6 (cheap strict-edit rung before a full rebuild), and 4
-(quality-preferring hedge for the streaming path, which still commits on first
-token rather than best tier).
+**Option 5 — DIAGNOSED + fixed for the common case (2026-07-20).** The
+`inSource=false` trigger is now understood from code (not a guess):
+`injectAssets` strips the `<!--USES_MODELS-->`/`USES_THREE`/`USES_AUDIO` markers
+out of the delivered game, but the model re-emits them in its SEARCH block, so
+the SEARCH can't be found in the marker-stripped stored source. The two earlier
+hypotheses (history-trim, pin race) were wrong. `reconcileAssetMarkers`
+(game-edit.ts) strips those markers out of the reply the same way injection did
+and re-applies before escalating — guarded so it can only rescue a failed patch,
+never regress a new-asset add (`game-edit.reconcile.test.ts`, `markers.test.ts`;
+`BUG-FIX-LOG.md` 2026-07-20). Residual (a SEARCH spanning the injected `<head>`)
+still needs a prod streak to size — the new `afterMarkerStrip=` log flag will
+tell us. Tracked in KNOWN_BUGS #5 (now WATCHING).
+
+**Option 6 — SHIPPED (2026-07-20).** On a failed edit patch the route now tries
+ONE cheap `strictEditRetry` (4096 tokens) BEFORE the full 24576-token rebuild
+(`api/chat/route.ts` failed-patch branch). A clean, import-safe patch keeps the
+child's exact game; anything else (declined, `NEEDS_FULL_REBUILD`, a bad three
+import, a throw) falls through to the unchanged regeneration. Capped at the one
+attempt. Tests `route.test.ts` DR.1–DR.3.
+
+**Option 4 — DEFERRED pending the H eval (owner decision 2026-07-20).** A closer
+read of the streaming runner (all of `gemini.fallback.test.ts` F.1–F.22) found
+its premise is weaker than this doc assumed:
+
+- The hedge fires only on TRUE silence — the stall timer resets on every chunk,
+  including thought summaries — so it triggers only when the primary emits
+  nothing at all for 30s. When a lower-tier hedge then wins, the higher-tier
+  primary has been dead-silent 30s+, so "prefer the higher-tier" usually means
+  "wait for a probably-dead model." Option 4's core win rarely applies here.
+- `chainFor` already orders tier-then-price, so the hedge is usually the SAME
+  tier as the primary — much of the quality drop Option 4 targets is already zero.
+- §5's own risk row ("'best tier' is a guess, not a measurement — validate with
+  the prompt-portability eval before letting tier decide quality outcomes") is a
+  hard precondition: Option 4 makes tier decide quality outcomes. The H harness
+  exists (`src/lib/eval/`, `npm run eval:portability`) but has NOT been RUN.
+- The faithful "best-tier-wins / grace even for a stalled primary" version edits
+  F.10/F.11-style "first-answer-wins" behaviour and delays every hedge rescue —
+  a sign-off-gated behaviour change.
+
+**Precondition to revisit:** run H with real keys. If it shows tier actually
+predicts game quality, build F then WITH that evidence (and a sign-off on any
+F-test edit). If it does not, tier is noise and F should be dropped, not built.
+Until then the streaming path keeps committing on first token — which, given the
+silence-only hedge trigger, is very close to optimal already.
 
 
 ---
@@ -164,7 +204,31 @@ unaffected: it RACES rather than queues, so depth there does not add wait.
 
 ---
 
-## 11. New-game detection → "start a new chat?" prompt (owner decision 2026-07-20, APPROVED, not yet built)
+## 11. New-game detection → "start a new chat?" prompt (owner decision 2026-07-20 — BUILT 2026-07-20)
+
+**Status: SHIPPED.** All three build-order steps done, test-first:
+1. **Detection + decision** — `detectsNewGame(reply)` (game-edit.ts): the model
+   self-declares with a `NEW_GAME_REQUEST` sentinel via the new clause in
+   `GAME_EDIT_PROMPT_SECTION`; detection fails toward NOT asking (sentinel must
+   stand alone, no patch/no full game in the reply). Tests `game-edit.test.ts`
+   NG.1–NG.6.
+2. **Stream event** — the route's edit branch returns the friendly
+   `NEW_GAME_PROMPT_LINE` with `newGamePrompt: true` on the `done` event and a
+   NULL artifact, so the child's current game stays untouched in the preview
+   (nothing rebuilt — consent BEFORE destruction). Backward-compatible: old
+   clients ignore the field. `route.test.ts` N.1–N.3.
+3. **Two-button UI** — `ChatPanel.container.tsx`: "New game 🎮" opens a fresh
+   chat and builds there (this one stays exactly as it is); "Change this one ✏️"
+   re-sends with `forceRebuild: true`, which the route uses to skip detection and
+   rebuild the new game in place. One tap, no typing. Visual pass done.
+
+The `inSource=false` diagnosis (§8, KNOWN_BUGS #5) is separate and also landed;
+this prompt reduces how often the destructive rebuild path is reached and makes
+it consensual when it is.
+
+---
+
+### Original design notes (kept for rationale)
 
 **The idea (owner):** when a child in a game chat actually asks for a *different*
 game ("now make a football game"), don't silently rebuild in place — recognise

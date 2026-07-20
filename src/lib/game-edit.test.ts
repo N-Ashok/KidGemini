@@ -13,6 +13,7 @@ import {
   patchEditsEnabled, isRepeatedRequest, regenReplyProse,
   REPEATED_REQUEST_SECTION, GAME_EDIT_STRICT_RETRY_SECTION, REBUILT_GAME_LINE,
   streamingDisplayText, EDIT_STREAM_WORKING_LINE,
+  detectsNewGame, NEW_GAME_SENTINEL, NEW_GAME_PROMPT_LINE,
 } from "./game-edit";
 import type { ChatMessage } from "@/types/chat.types";
 
@@ -285,5 +286,40 @@ describe("streamingDisplayText — raw patch hunks never reach the bubble mid-st
 
   it("shows only the working line when the reply starts straight with hunks", () => {
     expect(streamingDisplayText("<<<<<<< SEARCH\nold")).toBe(EDIT_STREAM_WORKING_LINE);
+  });
+});
+
+describe("detectsNewGame — self-declared new game (PRD-RESILIENT-GENERATION §11)", () => {
+  it("NG.1 true when the reply is ONLY the sentinel (own line, trimmed)", () => {
+    expect(detectsNewGame(NEW_GAME_SENTINEL)).toBe(true);
+    expect(detectsNewGame(`\n  ${NEW_GAME_SENTINEL}  \n`)).toBe(true);
+  });
+
+  it("NG.2 false when the reply ALSO carries a real patch — that's an edit, honor it", () => {
+    const reply = `${NEW_GAME_SENTINEL}\n<<<<<<< SEARCH\nA\n=======\nB\n>>>>>>> REPLACE`;
+    expect(detectsNewGame(reply)).toBe(false);
+  });
+
+  it("NG.3 false when the reply ALSO carries a full game document", () => {
+    expect(detectsNewGame(`${NEW_GAME_SENTINEL}\n<!doctype html><html></html>`)).toBe(false);
+  });
+
+  it("NG.4 false for ordinary prose that merely mentions the words, and for blank", () => {
+    expect(detectsNewGame("Do you want a whole new game request?")).toBe(false);
+    expect(detectsNewGame("")).toBe(false);
+    expect(detectsNewGame("   ")).toBe(false);
+  });
+
+  it("NG.5 the friendly prompt line reassures nothing is lost", () => {
+    expect(NEW_GAME_PROMPT_LINE.toLowerCase()).toContain("new game");
+    expect(NEW_GAME_PROMPT_LINE.toLowerCase()).toMatch(/nothing|lost/);
+  });
+
+  it("NG.6 the sentinel never streams into the bubble (hidden as it builds token by token)", () => {
+    expect(streamingDisplayText(NEW_GAME_SENTINEL)).toBe(EDIT_STREAM_WORKING_LINE);
+    expect(streamingDisplayText("NEW_")).toBe(EDIT_STREAM_WORKING_LINE); // partial prefix
+    expect(streamingDisplayText("NEW_GAME_REQ")).toBe(EDIT_STREAM_WORKING_LINE);
+    // ordinary prose is untouched
+    expect(streamingDisplayText("Making it blue!")).toBe("Making it blue!");
   });
 });

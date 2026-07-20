@@ -9,18 +9,12 @@
 import "server-only";
 import type { AssetEntry, AssetManifest } from "./manifest";
 import manifestJson from "./manifest.json";
+import { THREE_MARKER, MODELS_MARKER_RE, AUDIO_MARKER_RE } from "./markers";
 
-/** The system prompt (assets/prompt-catalog.ts) tells Gemini to emit this as
- *  the very first thing in <body> when it chooses to build with Three.js. */
-export const THREE_MARKER = "<!--USES_THREE-->";
-
-/** `<!--USES_MODELS: car, tree-->` — names resolve through the manifest into
- *  the AR_ASSETS url table; unknown names drop fail-soft (§5b). */
-const MODELS_MARKER_RE = /<!--USES_MODELS:([a-z0-9_,\s]*)-->/gi;
-
-/** `<!--USES_AUDIO: coin_pickup, bg_loop_upbeat-->` — same resolution rules;
- *  audio needs no engine, so 2D games get sound too. */
-const AUDIO_MARKER_RE = /<!--USES_AUDIO:([a-z0-9_,\s]*)-->/gi;
+// Markers are defined in ./markers (pure, non-server) so the edit-patch
+// reconciliation can share them without importing this server-only module.
+// Re-exported here for existing importers (prompt-catalog + inject tests).
+export { THREE_MARKER } from "./markers";
 
 /** Per-game first-load transfer cap, cold cache (PRD §8, Decision J). */
 export const FIRST_LOAD_BUDGET_BYTES = 2_000_000;
