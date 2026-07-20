@@ -75,6 +75,14 @@ await page.addInitScript(() => {
   };
   window.__end = () => state.instance?.onend?.();
   window.__error = (code) => state.instance?.onerror?.({ error: code });
+  // Mic-permission stub (2026-07-20 recovery cards): "granted" by default so
+  // the dictation flows skip the pre-ask coach; scenarios flip it to
+  // "denied"/"prompt" to drive the device-aware recovery cards.
+  state.permission = "granted";
+  Object.defineProperty(navigator, "permissions", {
+    value: { query: async () => ({ state: state.permission }) },
+    configurable: true,
+  });
 });
 
 console.log(`mic dictation e2e against ${BASE}`);
@@ -177,13 +185,76 @@ await mic.click({ force: true });
 check("stop returns the button to idle", await mic.getAttribute("aria-pressed") === "false");
 check("composer editable again after stop", await box.getAttribute("readonly") === null);
 
-// 9) Fatal error path: permission denied mid-listen → kid-friendly banner,
+// 9) Fatal error path: permission denied mid-listen → recovery card,
 // listening ends (no silent "nothing happened").
 await mic.click();
 await page.evaluate(() => window.__error("not-allowed"));
-const banner = await page.locator("text=/microphone|mic/i").first().textContent().catch(() => "");
-check("permission error shows a kid-friendly message", Boolean(banner && banner.trim()), "no error banner found");
+await page.locator("text=The mic is switched off for Ari").waitFor({ timeout: 5_000 }).catch(() => {});
+check(
+  "permission error shows the site-blocked recovery card",
+  await page.locator("text=The mic is switched off for Ari").count() === 1,
+);
 check("error ends the listening state", await mic.getAttribute("aria-pressed") === "false");
+
+// 10) Device-aware recovery cards (BUG-FIX-LOG 2026-07-20 "laptop told to
+// fix Siri"). Headless Chromium on this box reports a Mac desktop — the
+// exact device class the bug hit.
+console.log("recovery cards:");
+
+// 10a) Site-blocked card: lock-icon steps + Try again, and NEVER Siri.
+check("site-blocked card has the lock-icon step", await page.locator("text=/lock next to the web address/i").count() === 1);
+const tryAgainBtn = page.locator('button:has-text("Try again")');
+check("site-blocked card offers Try again", await tryAgainBtn.count() === 1);
+check("laptop card never mentions Siri", await page.locator("text=/siri/i").count() === 0);
+
+// 10b) Try again re-attempts the mic (card clears, a new session starts).
+const startsBefore = await page.evaluate(() => window.__mic.startCalls);
+await tryAgainBtn.click();
+check("Try again starts a fresh session", await page.evaluate(() => window.__mic.startCalls) === startsBefore + 1);
+check("Try again clears the card", await page.locator("text=The mic is switched off for Ari").count() === 0);
+
+// 10c) OS-blocked on a LAPTOP (the incident): System Settings steps, the
+// grown-up chip, and never Siri/phone wording.
+await page.evaluate(() => { window.__mic.permission = "denied"; });
+await page.evaluate(() => window.__error("service-not-allowed"));
+await page.locator("text=/System Settings/").waitFor({ timeout: 5_000 }).catch(() => {});
+check("os-blocked laptop card names System Settings", await page.locator("text=/System Settings/").count() >= 1);
+check("os-blocked card flags a grown-up", await page.locator("span:has-text('Ask a grown-up')").count() === 1);
+check("os-blocked laptop card never mentions Siri", await page.locator("text=/siri/i").count() === 0);
+// Visual pass artifact (§8 gate 9): the card at mobile width.
+await page.setViewportSize({ width: 375, height: 720 });
+await page.screenshot({ path: process.env.MIC_CARD_SHOT ?? "/tmp/mic-recovery-card.png" });
+await page.setViewportSize({ width: 1280, height: 720 });
+await page.locator('button[aria-label="Dismiss"]').click();
+
+// 10d) Pre-ask coach: a fresh page with permission still at "prompt" — the
+// first mic tap coaches instead of firing the browser prompt blind.
+const page2 = await browser.newPage();
+await page2.addInitScript(() => {
+  const state = { instance: null, startCalls: 0, permission: "prompt" };
+  window.__mic = state;
+  window.SpeechRecognition = class {
+    constructor() { state.instance = this; this.onresult = null; this.onend = null; this.onerror = null; }
+    start() { state.startCalls += 1; }
+    stop() {}
+    abort() {}
+  };
+  Object.defineProperty(navigator, "permissions", {
+    value: { query: async () => ({ state: state.permission }) },
+    configurable: true,
+  });
+});
+await page2.goto(BASE, { waitUntil: "networkidle", timeout: 60_000 });
+const mic2 = page2.locator('button[aria-label="Talk"], button[aria-label="Stop listening"]');
+await mic2.waitFor({ timeout: 15_000 });
+await mic2.click();
+await page2.locator("text=Your browser will ask about the microphone").waitFor({ timeout: 5_000 }).catch(() => {});
+check("first tap at state=prompt shows the coach, not the raw prompt",
+  await page2.locator("text=Your browser will ask about the microphone").count() === 1);
+check("coach did not start a session yet", await page2.evaluate(() => window.__mic.startCalls) === 0);
+await page2.locator('button:has-text("Okay, ask me!")').click();
+check("coach's Okay starts the real session", await page2.evaluate(() => window.__mic.startCalls) === 1);
+await page2.close();
 
 await browser.close();
 console.log(failures ? `\n${failures} CHECK(S) FAILED` : "\nall checks passed");

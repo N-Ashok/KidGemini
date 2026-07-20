@@ -45,6 +45,108 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-20 — Multiplayer games could NEVER load in the preview: the prompt promises an SDK the preview didn't provide
+
+- **Symptom (what the user saw):** owner UAT, days of struggle on one game —
+  "repair done but game is still not loading", and "every code change goes
+  into 'something is wrong, fixing it'… very often 3 times or more." Prod
+  log: repeated `[api/repair] ▶ code=load_error` on the same game, patches
+  ping-ponging between two versions (23949 ↔ 23957 chars), plus a stack of
+  `✖ patch not applicable` failures.
+- **Surface area:** `src/components/ArtifactFrame.tsx` (preview srcDoc),
+  new `src/lib/preview-sdk-stub.ts`; contract in
+  `src/lib/multiplayer-prompt.ts` rule 9.
+- **Root cause:** rule 9 of the multiplayer prompt tells the model "the
+  `Ariantra` SDK always exists — in the preview and on the published page
+  alike. NEVER write a polyfill, stub, or fallback… use the calls directly,
+  unconditionally." The platform keeps that promise on published/invite
+  pages by loading the real SDK before game code. Ari's sandboxed preview
+  iframe was the one surface that DIDN'T — `Ariantra` was undefined, so
+  every rule-following multiplayer game threw `ReferenceError` at load.
+  Verify classified it `load_error` (a real crash — correctly repairable),
+  repair "fixed" a correct game (any true fix would violate rule 9, so
+  patches guessed and ping-ponged), and every subsequent edit re-entered the
+  same doom loop. Class: **a cross-surface contract promised in a prompt but
+  implemented on only one of the two surfaces.**
+- **Fix:** `injectPreviewSdkStub()` — a preview-ONLY stub simulating a SOLO
+  SESSION (owner decision 2026-07-20 after "waiting for host" UAT: a
+  waiting screen that can never end reads as "still broken"): the kid is
+  player 1 and host (`myPlayerId()` → "preview-solo"; `onPlayers` fires
+  once, async, with `[{playerId, isHost: true, joinedAt: 0, displayName:
+  "You"}]`), so roster-gated games START and every change is instantly
+  playable alone. Peer-facing calls stay inert (broadcasts no-ops,
+  `getPeerState` null, `onMessage` never fires). Injected into the srcDoc
+  chain in `ArtifactFrame` ahead of game code, only when the html references
+  `Ariantra` (single-player passes byte-identical), only-if-undefined so it
+  can never shadow a real SDK, idempotent via marker. Publish/Invite still
+  send `state.currentHtml` untouched — the platform's real SDK owns those.
+- **Result (verified):** `preview-sdk-stub.test.ts` (6 tests — the crash
+  reproduced sans stub, loads with it, solo-session semantics, never
+  overwrites a real SDK, injection order/idempotency, single-player
+  byte-identical); real-browser check: a rule-9, roster-gated multiplayer
+  game uncovers in the preview with NO "Oops — fixing it", no give-up
+  banner, 🎮 Invite intact, and its waiting screen replaced by the started
+  game ("GO, You!"). Suite 872/872, typecheck clean.
+- **Impact:** multiplayer games load AND start solo in the preview; the
+  per-edit repair spam and its Gemini spend stop; kids stop "fixing" games
+  that were never broken. Trade-off (documented): solo preview can't show
+  true peer behavior — that stays on 🎮 Invite / Publish where the real
+  SDK + lobby run.
+- **Prevention (class):** any capability the build prompt promises the game
+  must exist on EVERY surface the game renders on — the stub's tests pin the
+  preview side of rule 9; `multiplayer-prompt.test.ts` pins the prompt side.
+- **Related:** same-day repair-loop entries below (ghost-click, false
+  repair) — this was the third and biggest contributor to the "endless
+  fixing" UAT reports; PRD-MULTIPLAYER.md Phase 4.
+
+### 2026-07-20 — "Laptop told to fix Siri": mic-blocked errors were device-blind and step-less, so a family switched devices
+
+- **Symptom (what the user saw):** owner UAT — on a **laptop**, tapping the
+  mic said "Your phone's dictation is switched off — ask a grown-up to
+  enable Siri & Dictation in Settings." Wrong device, a setting that doesn't
+  exist there, no steps that could work — the family changed devices to get
+  voice at all.
+- **Surface area:** `src/lib/mic-errors.ts` (`micErrorMessage`), reaching
+  both mic surfaces (`Composer.tsx`, `IdeaMicTab.tsx`) via
+  `useSpeechInput.ts`.
+- **Root cause:** the mic goes through TWO doors — the site's browser
+  permission (error `not-allowed`) and the OS's permission for the browser
+  app itself (typically `service-not-allowed`; on a laptop that's macOS
+  Privacy & Security / Windows Privacy blocking Chrome). `micErrorMessage`
+  collapsed each error code to ONE hardcoded string; `service-not-allowed`'s
+  string assumed iOS. Class: **one-size-fits-all copy for a
+  platform-dependent fix** — and a dead end (no action, no retry, no typed
+  fallback).
+- **Fix:** device-aware recovery cards. Types first
+  (`src/types/mic.types.ts`); `src/lib/platform.ts` (pure detection:
+  platform incl. iPad-as-Mac touch check, browser, plus guarded
+  `permissions.query` reader); `src/lib/mic-recovery.ts` (pure: error code ×
+  platform × browser × permission state → card with numbered steps and
+  who-fixes); `MicRecoveryCard.tsx` (shared presentational card: 👋
+  grown-up chip on OS-level fixes, **Try again** re-checks + restarts,
+  **I'll type instead** where a composer is visible). `useSpeechInput`
+  queries the permission state on fatal errors and intercepts the FIRST mic
+  tap at state `prompt` with a pre-ask coach card so the browser's dialog is
+  expected, not dismissed. `micErrorMessage` deleted — nothing can fall back
+  to the device-blind string.
+- **Result (verified):** 20 new unit tests (`platform.test.ts`,
+  `mic-recovery.test.ts` — S1–S10 matrix; the incident pinned: a Mac/Windows
+  `service-not-allowed` card names System Settings / the desktop-apps
+  toggle and NEVER matches /siri/ or /\bphone\b/); mic e2e extended from 17
+  to 28 checks (site-blocked card + Try again restart, os-blocked laptop
+  card + grown-up chip, pre-ask coach gating the first session); suite
+  866/866, typecheck clean; visual pass at 375px and desktop.
+- **Impact:** blocked-mic kids now get steps that exist on their actual
+  device, a grown-up handoff signal, and always an exit (retry / type).
+  Hook API change: `useSpeechInput().error` is now a `MicRecoveryCard`
+  object, not a string.
+- **Prevention (class):** device-dependent copy must be derived from
+  detected signals, never hardcoded — enforced by the matrix tests; any new
+  error code falls back to a retry card, never a blank or a wrong-device
+  guess.
+- **Related:** 2026-07-07 (mic errors swallowed — this surface's copy was
+  born there); PRD §5a; design wireframes artifact (2026-07-20).
+
 ### 2026-07-20 — Take 2: repair falsely fired on a demonstrably-running game ("Oops — fixing it" on a healthy game, then the give-up banner)
 
 - **Symptom (what the user saw):** owner UAT on prod, after the ghost-click

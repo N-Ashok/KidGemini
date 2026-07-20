@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { composeDictation } from "@/lib/speech-transcript";
+import { MicRecoveryCard } from "./MicRecoveryCard";
 import { useSpeechInput } from "./useSpeechInput";
 
 export type Attachment =
@@ -39,6 +40,7 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
     error: micError,
     interim,
     clearError: clearMicError,
+    tryAgain: micTryAgain,
     toggle,
     discardAndStop,
   } = useSpeechInput((text) => setValue((v) => (v ? `${v} ${text}` : text)));
@@ -116,9 +118,16 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pb-4">
       {micError && !isListening && (
-        <div className="mb-2 flex items-center justify-between rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2">
-          <span className="text-sm font-medium text-amber-800">{micError}</span>
-          <button type="button" onClick={clearMicError} aria-label="Dismiss" className="rounded-full px-2 text-amber-800 hover:bg-amber-100">✕</button>
+        <div className="mb-2">
+          <MicRecoveryCard
+            card={micError}
+            onPrimary={micTryAgain}
+            onDismiss={clearMicError}
+            onTypeInstead={() => {
+              clearMicError();
+              textareaRef.current?.focus();
+            }}
+          />
         </div>
       )}
       {isListening && (

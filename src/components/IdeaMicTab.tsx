@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from "react";
 import { composeDictation } from "@/lib/speech-transcript";
 import { nextMicTabState, TAB_AUTO_TUCK_MS, type MicTabState } from "@/lib/idea-mic";
 import { COACH_LINE } from "@/lib/idea-coach";
+import { MicRecoveryCard } from "./MicRecoveryCard";
 import { useSpeechInput } from "./useSpeechInput";
 import { useTextToSpeech } from "./useTextToSpeech";
 import type { BagIdea } from "./IdeaBag";
@@ -72,6 +73,7 @@ export function IdeaMicTab({ onIdea, ideas, onMakeBetter, busy, coach, onCoachDo
     error: micError,
     interim,
     clearError,
+    tryAgain,
     start,
     discardAndStop,
   } = useSpeechInput((text) => setDraft((v) => (v ? `${v} ${text}` : text)));
@@ -300,23 +302,25 @@ export function IdeaMicTab({ onIdea, ideas, onMakeBetter, busy, coach, onCoachDo
         </div>
       )}
 
-      {/* Friendly mic error, next to the tab (grown-up help copy from mic-errors). */}
+      {/* Device-aware recovery card next to the tab (lib/mic-recovery.ts —
+          the "laptop told to fix Siri" fix). No "type instead" here: the
+          composer may be hidden (full screen / mobile), so the exits are
+          Try again or dismiss. */}
       {micError && tab !== "tucked" && (
-        /* z-30: above the bag chip — while the bar/error owns the bottom edge
-           the chip must not swallow taps on ✅ (caught in the visual pass). */
-        <div className="absolute inset-x-3 bottom-3 z-30 flex items-center justify-between gap-2 rounded-kid border border-amber-200 bg-amber-50 px-4 py-2 shadow-md">
-          <span className="text-sm font-medium text-amber-800">{micError}</span>
-          <button
-            type="button"
-            onClick={() => {
+        /* z-30: above the bag chip — while the card owns the bottom edge
+           the chip must not swallow taps (caught in the visual pass). */
+        <div className="absolute inset-x-3 bottom-3 z-30 mx-auto max-w-md">
+          <MicRecoveryCard
+            card={micError}
+            onPrimary={() => {
+              tryAgain();
+              setTab("listening");
+            }}
+            onDismiss={() => {
               clearError();
               setTab("tucked");
             }}
-            aria-label="Dismiss"
-            className="rounded-full px-2 text-amber-800 hover:bg-amber-100"
-          >
-            ✕
-          </button>
+          />
         </div>
       )}
 

@@ -72,6 +72,15 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   the session so nothing re-appears as a stray draft. Session ends (silence
   timeout, browser hard cap, kid's stop) flush the pending interim, so long
   monologues keep every word
+- **Device-aware mic recovery** (2026-07-20): when the mic can't listen, a
+  card — not a one-line error — explains what's wrong for THIS device and
+  browser and how to fix it: numbered settings steps (lock-icon site
+  permission vs. macOS/Windows/iOS/Android system permission), a
+  "👋 Ask a grown-up" chip on OS-level fixes, and always two exits — **Try
+  again** (re-checks and restarts) and **I'll type instead**. A pre-ask
+  coach primes the browser's permission prompt so kids don't reflexively
+  dismiss it (`src/lib/mic-recovery.ts`, `src/lib/platform.ts`,
+  `MicRecoveryCard.tsx`; PRD §5a)
 - **Anchor scroll** (2026-07-09, Gemini behaviour): on send (and regenerate) the
   child's request pins to the TOP of the view and the reply streams in below —
   the screen never chases a long code stream (replaced stick-to-bottom).

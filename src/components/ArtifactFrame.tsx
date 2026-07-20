@@ -18,6 +18,7 @@ import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
 import { GAME_CONSOLE_SOURCE, injectConsoleCapture } from "@/lib/game-console";
 import { DEVICE_PRESETS, deviceById, fitScale, orientedSize } from "@/lib/device-preview";
 import { injectPreviewInstrumentation } from "@/lib/preview-verify";
+import { injectPreviewSdkStub } from "@/lib/preview-sdk-stub";
 import { keyToPanelAction, UPDATING_LINE } from "@/lib/preview-pane";
 import { usePreviewVerify } from "./usePreviewVerify";
 import { IdeaMicTab } from "./IdeaMicTab";
@@ -129,12 +130,15 @@ export function ArtifactFrame({
   // finish, and letting srcDoc change without a docKey bump would reload
   // (flash) a game we decided NOT to reload. A new docKey = new document;
   // anything else stays put.
+  // The SDK stub keeps multiplayer-prompt rule 9's promise ("Ariantra always
+  // exists, in the preview too") for the PREVIEW ONLY — publish/invite send
+  // state.currentHtml untouched, where the platform loads the real SDK.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const srcDoc = useMemo(
     () =>
       state.probesEnabled
-        ? injectPreviewInstrumentation(state.currentHtml)
-        : injectConsoleCapture(state.currentHtml),
+        ? injectPreviewInstrumentation(injectPreviewSdkStub(state.currentHtml))
+        : injectConsoleCapture(injectPreviewSdkStub(state.currentHtml)),
     [docKey],
   );
   const covered = state.phase !== "done";

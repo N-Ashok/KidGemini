@@ -150,6 +150,30 @@ Full detail lives in `CLAUDE.md` (§ Architecture) and `docs/DESIGN_SYSTEM.md`.
 
 ---
 
+## 5a. Mic permission recovery (2026-07-20)
+
+**Problem.** The mic goes through two doors — the site's permission in the
+browser (`not-allowed`) and the OS's permission for the browser app itself
+(`service-not-allowed`) — and the fix for each differs per OS and browser.
+One hardcoded string per error told a laptop family to enable Siri; they
+switched devices ("laptop told to fix Siri", BUG-FIX-LOG 2026-07-20).
+
+**Product intent.** When the mic can't listen, Ari shows a *recovery card*
+chosen from (error code × platform × browser × permission state) — the
+scenario matrix S1–S10 lives in `src/lib/mic-recovery.test.ts` and the
+wireframes in the design artifact. Owner decisions (2026-07-20, kid-first):
+1. **Card with numbered steps**, not a one-line banner — one big idea per
+   screen, an action to press.
+2. **"👋 Ask a grown-up" chip** on OS-level fixes — a kid should hand off,
+   not fail alone at System Settings.
+3. **Pre-ask coach** before the browser's first permission prompt — kids
+   reflexively dismiss surprise dialogs, and repeated dismissals escalate to
+   a saved block (prevention beats recovery; Chrome measured ~47% fewer
+   mic/cam failures with this pattern).
+Every card ends in **Try again** (re-checks state, restarts the mic) and,
+where a composer is visible, **I'll type instead**. Browsers with a broken/
+absent SpeechRecognition never render a mic button at all.
+
 ## 6. Safety & privacy principles
 
 - **Fail closed:** if the classifier errors or is uncertain, block and log — never show by default.

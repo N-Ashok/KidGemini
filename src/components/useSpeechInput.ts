@@ -44,8 +44,11 @@
 // actually succeeded.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isFatalMicError, micErrorMessage } from "@/lib/mic-errors";
+import { isFatalMicError } from "@/lib/mic-errors";
+import { micAskCoachCard, micRecoveryCard } from "@/lib/mic-recovery";
+import { detectBrowser, detectPlatform, queryMicPermission, readPlatformSignals } from "@/lib/platform";
 import { committedCountAfterRestart, splitSpeechResults } from "@/lib/speech-transcript";
+import type { MicRecoveryCard } from "@/types/mic.types";
 
 // Minimal typing for the non-standard SpeechRecognition API.
 type SpeechRecognition = {
@@ -83,7 +86,10 @@ function getRecognition(): SpeechRecognition | null {
 export function useSpeechInput(onTranscript: (text: string) => void) {
   const [isListening, setIsListening] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Device-aware recovery card (BUG-FIX-LOG 2026-07-20 "laptop told to fix
+  // Siri") — a structured card, not a string, so the surface can render
+  // steps + a Try again action instead of a dead-end sentence.
+  const [error, setError] = useState<MicRecoveryCard | null>(null);
   // Live recognized-but-not-final speech, exposed so the composer can "type"
   // words as the kid says them. Committed via onTranscript when finalized.
   const [interim, setInterim] = useState("");
@@ -163,8 +169,21 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
       const code = e?.error ?? "";
       if (!isFatalMicError(code)) return; // pause in speech — onend restarts
       wantListeningRef.current = false;
-      setError(micErrorMessage(code));
       setIsListening(false);
+      // Permission state distinguishes "kid dismissed the ask" (just re-ask)
+      // from "saved block" (settings steps). The query is fast; failure is
+      // "unknown" and falls through to the plainest card — never blocks.
+      const signals = readPlatformSignals();
+      void queryMicPermission().then((permission) => {
+        setError(
+          micRecoveryCard({
+            code,
+            platform: detectPlatform(signals),
+            browser: detectBrowser(signals),
+            permission,
+          }),
+        );
+      });
     };
     recRef.current = rec;
   }, []);
@@ -176,7 +195,9 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
     recRef.current?.stop();
   }, []);
 
-  const start = useCallback(() => {
+  // The actual session start — shared by start(), the coach's "Okay, ask
+  // me!" and every card's Try again.
+  const beginListening = useCallback(() => {
     const rec = recRef.current;
     if (!rec) return;
     setError(null);
@@ -187,6 +208,33 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
     committedFinalsRef.current = committedCountAfterRestart(started, committedFinalsRef.current);
     if (started) setIsListening(true);
   }, []);
+
+  // Pre-ask coach (wireframe A): the FIRST mic tap while the browser hasn't
+  // been answered yet ("prompt") shows a friendly heads-up so the permission
+  // dialog is expected — kids reflexively dismiss surprise popups, and on
+  // Chrome repeated dismissals escalate to a saved block. Intercepts at most
+  // once per mount; granted/denied/unknown all skip straight to listening.
+  const coachCheckedRef = useRef(false);
+
+  const start = useCallback(() => {
+    if (!recRef.current) return;
+    if (!coachCheckedRef.current) {
+      coachCheckedRef.current = true;
+      void queryMicPermission().then((state) => {
+        if (state === "prompt") setError(micAskCoachCard(detectPlatform(readPlatformSignals())));
+        else beginListening();
+      });
+      return;
+    }
+    beginListening();
+  }, [beginListening]);
+
+  /** Card primary action: clears the card and starts listening — if the fix
+   *  worked the mic just turns on; if not, the (re-queried) card returns. */
+  const tryAgain = useCallback(() => {
+    setError(null);
+    beginListening();
+  }, [beginListening]);
 
   const stop = useCallback(() => {
     wantListeningRef.current = false;
@@ -226,6 +274,7 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
     error,
     interim,
     clearError: () => setError(null),
+    tryAgain,
     toggle,
     start,
     stop,
