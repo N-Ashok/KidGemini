@@ -3,8 +3,29 @@
 
 import "server-only";
 
+/**
+ * OUR deadline expired — distinct from an upstream DEADLINE_EXCEEDED.
+ *
+ * BUG-FIX-LOG 2026-07-20: this used to be a plain Error whose message
+ * contained "deadline", which `isRetryable` matched — so a call that blew its
+ * budget was retried against the SAME budget, twice, guaranteeing two more
+ * full-length waits. A typed error lets us say "not retryable" without
+ * changing how a genuine upstream deadline is treated.
+ */
+export class TimeoutError extends Error {
+  constructor(label: string, ms: number) {
+    super(`${label} timed out after ${ms}ms (deadline)`);
+    this.name = "TimeoutError";
+  }
+}
+
 /** Status codes / signals worth retrying — transient, not caller error. */
 function isRetryable(err: unknown): boolean {
+  // Our own budget expiring is deterministic, not transient: an identical call
+  // with an identical deadline expires identically. Model DIVERSITY can help
+  // here (a different model may be faster) — that is the fallback chain's job,
+  // one attempt each — but repeating the same call is pure dead time.
+  if (err instanceof TimeoutError || (err as { name?: string } | null)?.name === "TimeoutError") return false;
   const msg = (err as Error)?.message ?? "";
   return (
     /status:\s*(429|500|502|503|504)/.test(msg) ||
@@ -16,9 +37,7 @@ function isRetryable(err: unknown): boolean {
 export async function withTimeout<T>(fn: () => Promise<T>, ms: number, label = "upstream"): Promise<T> {
   return Promise.race([
     fn(),
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms (deadline)`)), ms),
-    ),
+    new Promise<T>((_, reject) => setTimeout(() => reject(new TimeoutError(label, ms)), ms)),
   ]);
 }
 

@@ -45,6 +45,103 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-20 — 225 seconds, then nothing: the one-shot deadline (30s) was SHORTER than the work it wrapped, so every model in the chain timed out identically
+
+- **Symptom (what the user reported):** "there are many incidents it went four
+  fallback and returned nothing." Confirmed from prod pm2 logs (kidgemini-error).
+- **The log that cracked it:**
+  ```
+  [api/chat] patch failed (search_not_found) — falling back to full regeneration @43953ms
+  [retry] gemini.chat attempt 1 failed; retrying in 400ms
+  [retry] gemini.chat attempt 2 failed; retrying in 800ms
+  [gemini] overloaded — falling back to gemini-2.5-flash (gemini.chat)
+  [gemini] overloaded — falling back to gemini-3.5-flash (gemini.chat)
+  [gemini] overloaded — falling back to gemini-2.5-flash-lite (gemini.chat)
+  [api/chat] ✖ fallback regeneration failed @225170ms: chat generation failed:
+            gemini.chat timed out after 30000ms (deadline)
+  ```
+- **Root cause — NOT capacity, despite what the log said.** Every failure was
+  OUR OWN 30s deadline. A patch-fallback regeneration is a full game build
+  (thinking on, `maxOutputTokens` 24576), and the same repo's successful
+  STREAMS finished at 31166ms and 46371ms — both past 30s. So `reply()` could
+  never finish inside `CHAT_TIMEOUT_MS`, on any model, ever. This was
+  deterministic, not intermittent, which is why it happened "many" times.
+  Streaming was immune because `replyStream` has **no wall-clock cap at all**:
+  its watchdog is a per-chunk stall timer that resets on every chunk, so a 46s
+  stream is fine. The asymmetry was invisible because both paths share a chain.
+  Arithmetic check: primary 3 attempts × 30s (the retry layer treats a deadline
+  as retryable) + 3 fallbacks × 30s + the 44s patch attempt = **224s predicted
+  vs 225.170s observed.**
+- **Two amplifiers made it much worse than one timeout:**
+  1. `isRetryable` matched the substring "deadline", so our own timeout was
+     RETRIED twice against the identical budget — 90s on the primary alone,
+     guaranteed to expire all three times.
+  2. The chain's fallback log printed `"overloaded"` for every non-404 failure,
+     so a self-inflicted timeout was reported as a Google capacity incident.
+     That single wrong word pointed the investigation at the wrong system.
+- **Fix:**
+  - `oneShotTimeoutMs()` in `gemini.ts` — a game-BUILD one-shot now gets
+    `BUILD_TIMEOUT_MS` (120s, `GEMINI_BUILD_TIMEOUT_MS`-overridable), sized off
+    the 31–46s measured builds. Ordinary chat keeps 30s so no child waits two
+    minutes for a sentence.
+  - `TimeoutError` in `retry.ts` — a typed error so `isRetryable` can refuse
+    OUR deadline (deterministic) while still retrying an upstream
+    DEADLINE_EXCEEDED (may be transient).
+  - `reasonFor()` in `model-runner.ts` — the fallback log now names the real
+    cause: "OUR deadline expired (raise the timeout, not the chain)",
+    "returned nothing", "went silent", "model gone", or "overloaded".
+- **Regression tests:** `retry.test.ts` T.1–T.7 (new file; T.4 pins one attempt
+  instead of three), `gemini.fallback.test.ts` F.17–F.19 (build deadline
+  exceeds the slowest observed build; chat keeps 30s; env-tunable with garbage
+  falling back to the default rather than disabling the timeout).
+- **Correction to an earlier diagnosis today:** the empty-completion bug fixed
+  in the entry below is real and separately proven, but it is NOT what caused
+  these incidents. The logs show timeouts, not empty completions. Both are now
+  fixed; only this one explains the 225s turns.
+- **Still open:** the *trigger* is unfixed — `patch failed (search_not_found)`
+  with `inSource=false` means the model patched against a different version
+  than we hold (the 2026-07-18 history-trim class). Every one of these
+  incidents began there; the expensive regeneration is only the fallback. See
+  `KNOWN_BUGS.md`.
+
+### 2026-07-20 — "Walked four fallbacks and returned nothing": a clean-but-empty stream was counted as SUCCESS, so the chain stopped dead and the child got a blank bubble
+
+- **Symptom (what the user reported):** "there are many incidents it went four
+  fallback and returned nothing." Repeated turns where the logs showed the
+  model-fallback chain walking, and the child ended up with nothing usable.
+- **Root cause:** the chain runner treated *any* clean stream end as a served
+  answer. A provider can finish a stream with no answer text at all — Gemini
+  `finishReason: MAX_TOKENS` (a builder turn whose thinking budget consumed the
+  whole output allowance), `finishReason: SAFETY` (candidate blocked), or an
+  empty candidate list. **Nothing in the codebase reads `finishReason`**
+  (verified by grep across `src/lib` and `src/app/api`), so that arrived as a
+  plain `done`. The runner returned having emitted zero deltas and — the real
+  damage — **never tried the next model**, because it had not seen an error.
+  The fallback chain's entire purpose was defeated at whichever slot came back
+  empty. When earlier slots had genuinely failed first, the logs showed a full
+  fallback walk ending in silence, which is exactly the reported shape.
+  Thought summaries made it worse: a model that emitted only planning lines and
+  then stopped also counted as "served".
+- **Fix:** `EmptyCompletionError` in `src/lib/model-runner.ts`. A stream that
+  ends without answer text is now modelled as a failed slot and walks the chain
+  like any other dud. It bypasses the per-provider error classifier (it is our
+  marker, not a provider error) alongside `StallSwitchError`. Thought summaries
+  explicitly do NOT count as output. If EVERY model comes back empty the turn
+  now throws, so the route shows "let's try again" instead of an empty bubble —
+  an honest error beats silence the child cannot act on.
+- **Regression tests:** `gemini.fallback.test.ts` F.14 (empty completion walks
+  the chain), F.15 (thoughts alone are not an answer), F.16 (all-empty fails
+  loudly and every slot is tried). All three fail before the fix.
+- **Impact / blast radius:** every streamed chat and game-build turn, on both
+  providers — OpenAI can likewise return a completion with empty content. This
+  defect predates the 2026-07-20 cross-provider refactor; the runner extraction
+  faithfully preserved it, and writing the failing test is what exposed it.
+- **Still open:** `finishReason` is *still* never inspected, so we cannot yet
+  distinguish "blocked by safety" from "ran out of output tokens" in logs —
+  they look identical. Reading it would let a MAX_TOKENS slot retry with a
+  smaller thinking budget instead of burning a whole chain slot. Tracked in
+  `docs/KNOWN_BUGS.md`.
+
 ### 2026-07-20 — No way to copy an error when a game breaks: the debug-gating of the console left grown-ups blind too
 
 - **Symptom (what the user reported):** "when something unexpected happens,

@@ -14,11 +14,79 @@ import {
   GAME_EDIT_STRICT_RETRY_SECTION, REPEATED_REQUEST_SECTION, FRESH_GAME_LINE,
 } from "./game-edit";
 import { fallbackChain, isModelGone, shouldTryNextModel } from "./model-fallback";
-import { withRetry, withTimeout } from "./retry";
+import { runOneShotChain, runStreamChain, type ProviderChunk } from "./model-runner";
+import { chainFor, specFor } from "./model-registry";
+import { openaiAdapter } from "./providers/openai-adapter";
+import { OpenAIGenerator } from "./providers/openai-generation";
+import type { GenerationRequest } from "@/types/model-provider.types";
+import { withRetry } from "./retry";
 
 // A single generation shouldn't exceed this; beyond it we'd rather fail gracefully
-// than leave a child staring at "Thinking…".
+// than leave a child staring at "Thinking…". Applies to ordinary one-shot calls
+// (plain chat, repairs) — a full game BUILD gets BUILD_TIMEOUT_MS below.
 const CHAT_TIMEOUT_MS = 30_000;
+
+/**
+ * Deadline for a one-shot call that BUILDS A WHOLE GAME (the patch-fallback
+ * regeneration in api/chat/route.ts). BUG-FIX-LOG 2026-07-20 — the root cause
+ * of "walked four fallbacks and returned nothing":
+ *
+ * A builder turn runs with thinking ON and maxOutputTokens 24576, and prod logs
+ * show successful game streams finishing at 31.2s and 46.4s. The one-shot path
+ * gave that same work 30s — BELOW the observed median — so every model timed
+ * out, deterministically, and the chain burned 225s before failing. Streaming
+ * never hit this because it has no wall-clock cap at all: its watchdog is a
+ * per-chunk stall timer that resets on every chunk, so a 46s stream is fine.
+ *
+ * Sized off those measurements with headroom. Env-overridable so an operator
+ * can tune it against real turns without a deploy.
+ */
+// 60s, not 120s (owner decision 2026-07-20): with the one-shot chain no longer
+// DISCARDING attempts, a shorter slot deadline is strictly better. It starts a
+// backup sooner while the primary keeps running — and the primary, already 60s
+// into its work, still beats a backup starting from zero. A long serial
+// deadline only delays the backup without protecting the good answer.
+const BUILD_TIMEOUT_MS = 60_000;
+
+/**
+ * How many models a ONE-SHOT turn may involve, and the hard ceiling on the
+ * child's wait (2026-07-20 guard-rail).
+ *
+ * Keeping attempts alive is right, but it makes DEPTH dangerous: the auto
+ * chain is up to 5 models, and at a 60s slot each that is a 360s worst case —
+ * worse than the 225s incident the change was fixing. A child waiting six
+ * minutes is a failure no matter how good the answer eventually is.
+ *
+ * Depth 2 (primary + one backup) covers both real cases: a SLOW primary still
+ * wins because it keeps running, and a DEAD primary is covered by the backup.
+ * A third backup would start around 120s and land near 160s — past the point
+ * where anyone is still waiting — so it only adds cost and risk.
+ *
+ * The budget must stay ≥ one slot plus the slowest observed build (60s +
+ * 46.4s), or we would start a backup and then kill it before it can finish:
+ * precisely the discard-the-nearly-done waste this work exists to remove.
+ */
+export const ONESHOT_MAX_MODELS = 2;
+export const ONESHOT_TOTAL_BUDGET_MS = 150_000;
+
+export function oneShotBudgetMs(env: Record<string, string | undefined> = process.env): number {
+  const override = Number(env.GEMINI_ONESHOT_BUDGET_MS);
+  return Number.isFinite(override) && override > 0 ? override : ONESHOT_TOTAL_BUDGET_MS;
+}
+
+/**
+ * Which deadline a one-shot call gets. Exported pure so the choice is testable
+ * without mocking timers — the incident was a *value* being wrong, not the
+ * timeout machinery.
+ */
+export function oneShotTimeoutMs(
+  input: { message: string; history: ChatMessage[] },
+  env: Record<string, string | undefined> = process.env,
+): number {
+  if (!isGameBuildTurn(input.message, input.history)) return CHAT_TIMEOUT_MS;
+  const override = Number(env.GEMINI_BUILD_TIMEOUT_MS);
+  return Number.isFinite(override) && override > 0 ? override : BUILD_TIMEOUT_MS;
+}
 
 // Hedged generation (owner decision 2026-07-13): a model that emits NO chunks
 // at all — not even thought summaries — for this long gets a HEDGE: the next
@@ -53,11 +121,32 @@ function usageChunk(u: GenUsageMetadata, model?: string): StreamChunk {
   };
 }
 
-/** Internal marker: every live stream went silent past the watchdog window. */
-class StallSwitchError extends Error {
-  constructor(model: string, ms: number) {
-    super(`stall-switch: ${model} produced no chunks for ${ms}ms`);
-    this.name = "StallSwitchError";
+/**
+ * Gemini stream → normalized ProviderChunk stream (cross-provider refactor
+ * 2026-07-20). One chunk can carry several parts, and `chunk.text` would
+ * silently DROP thought parts, so walk parts explicitly — the kid-facing
+ * planning line is built from them.
+ *
+ * `for await` (not a manual iterator) is deliberate: it propagates an early
+ * `return()` to the underlying SDK stream, which is what makes the runner's
+ * hedge-loser `abandon()` actually close the abandoned Google stream instead
+ * of leaking it for the rest of the turn.
+ */
+async function* toProviderChunks(
+  stream: AsyncIterable<{
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
+    usageMetadata?: GenUsageMetadata;
+  }>,
+): AsyncGenerator<ProviderChunk> {
+  for await (const chunk of stream) {
+    const usage = chunk.usageMetadata ? usageChunk(chunk.usageMetadata).usage : undefined;
+    const parts = chunk.candidates?.[0]?.content?.parts ?? [];
+    if (parts.length === 0) {
+      // A usage-only chunk still has to reach the runner (cumulative, last wins).
+      if (usage) yield { usage };
+      continue;
+    }
+    for (const p of parts) yield { text: p.text, thought: p.thought, ...(usage ? { usage } : {}) };
   }
 }
 
@@ -250,7 +339,46 @@ export class GeminiChatModel implements ChatModel {
   // capacity refusals and retired model ids walk down the chain; anything
   // else throws at once. Slightly older code quality for a few minutes >>
   // "Oops! Something went wrong." for every kid.
-  private fallbacks = fallbackChain(this.model, process.env);
+  // Cross-provider chain (2026-07-20): quality tier first, cheapest within the
+  // tier, across every configured provider. Falls back to the Gemini-only
+  // ladder when the primary isn't catalogued — an operator can still point
+  // GEMINI_CHAT_MODEL at a brand-new Google id and keep working fallback.
+  private fallbacks = specFor(this.model)
+    ? chainFor({ primary: this.model, tier: specFor(this.model)!.tier, env: process.env })
+    : fallbackChain(this.model, process.env);
+
+  private openai = new OpenAIGenerator();
+
+  /** Is this chain slot served by OpenAI rather than Google? */
+  private isOpenAI(model: string): boolean {
+    return specFor(model)?.provider === "openai";
+  }
+
+  /** Provider-neutral view of the turn, for non-Google adapters. The Gemini
+   *  path keeps using buildContents/configFor directly — translating to
+   *  GenerationRequest and back would only lose fidelity (thinking budgets,
+   *  harm thresholds) that Gemini alone supports. */
+  private toGenerationRequest(
+    input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean; activeGameMessageId?: string },
+  ): GenerationRequest {
+    const config = this.configFor(input) as { systemInstruction: string; maxOutputTokens?: number };
+    return {
+      history: input.history.map((m) => ({ role: m.role === "child" ? "child" : "assistant", text: m.text })),
+      message: input.message,
+      ...(input.image ? { image: { mimeType: input.image.mimeType, data: input.image.data } } : {}),
+      systemInstruction: config.systemInstruction,
+      maxOutputTokens: config.maxOutputTokens ?? 8192,
+    };
+  }
+
+  /** Chain policy is per-provider: "overloaded" is a 503 on Google but two
+   *  opposite meanings of 429 on OpenAI (openai-adapter.ts O.2/O.3). */
+  private chainPolicy = {
+    shouldTryNextModel: (model: string, err: unknown) =>
+      this.isOpenAI(model) ? openaiAdapter.shouldTryNextModel(err) : shouldTryNextModel(err),
+    isModelGone: (model: string, err: unknown) =>
+      this.isOpenAI(model) ? openaiAdapter.isModelGone(err) : isModelGone(err),
+  };
 
   private buildContents(input: { history: ChatMessage[]; message: string; image?: ImageAttachment }) {
     return buildChatContents(input);
@@ -269,27 +397,36 @@ export class GeminiChatModel implements ChatModel {
     label: string,
     primaryRetries: number,
     call: (model: string) => Promise<T>,
+    /** Defaults to the ordinary chat deadline. A whole-game regeneration must
+     *  pass BUILD_TIMEOUT_MS or it cannot finish (BUG-FIX-LOG 2026-07-20). */
+    timeoutMs: number = CHAT_TIMEOUT_MS,
   ): Promise<T> {
-    const chain = [this.model, ...this.fallbacks];
-    let lastErr: unknown;
-    for (let i = 0; i < chain.length; i++) {
-      const model = chain[i]!;
-      if (i > 0) {
-        console.warn(
-          `[gemini] ${isModelGone(lastErr) ? "model gone (CHECK CONFIG)" : "overloaded"} — falling back to ${model} (${label})`,
-        );
-      }
-      try {
-        return await withRetry(
-          () => withTimeout(() => call(model), CHAT_TIMEOUT_MS, label),
-          { label, retries: i === 0 ? primaryRetries : 0 },
-        );
-      } catch (err) {
-        lastErr = err;
-        if (i === chain.length - 1 || !shouldTryNextModel(err)) throw err;
-      }
-    }
-    throw lastErr; // unreachable — chain always has at least the primary
+    // `call` builds a GOOGLE request, so OpenAI slots are filtered OUT rather
+    // than handed to it — sending a gpt-* id to Google would 404 and be
+    // silently skipped, which is precisely the failure this refactor removes.
+    // Cross-provider one-shot (reply/repair/strictEditRetry) needs each call
+    // site to supply an adapter-neutral request; streaming — the main
+    // kid-facing path — already crosses providers. Tracked in
+    // PRD-MODEL-FALLBACK §7.
+    // Shallow ON PURPOSE — see ONESHOT_MAX_MODELS. Depth here multiplies the
+    // child's wait, unlike the streaming path where the hedge races rather
+    // than queues.
+    const chain = [this.model, ...this.fallbacks]
+      .filter((m, i) => i === 0 || !this.isOpenAI(m))
+      .slice(0, ONESHOT_MAX_MODELS);
+    return runOneShotChain({
+      chain,
+      totalBudgetMs: oneShotBudgetMs(),
+      label,
+      primaryRetries,
+      // NO withTimeout here any more: the deadline belongs to the chain, which
+      // uses it to START A BACKUP rather than to kill this attempt. Wrapping a
+      // timeout here again would restore the exact discard-then-degrade
+      // behaviour that served children the weakest model's answer.
+      call: (model, retries) => withRetry(() => call(model), { label, retries }),
+      slotDeadlineMs: timeoutMs,
+      ...this.chainPolicy,
+    });
   }
 
   /** Fast chat config, or the builder overrides when this turn builds a game.
@@ -325,12 +462,19 @@ export class GeminiChatModel implements ChatModel {
   async reply(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean }) {
     const ai = getClient();
     try {
-      const res = await this.oneShotWithFallback("gemini.chat", 2, (model) =>
-        ai.models.generateContent({
-          model,
-          contents: this.buildContents(input),
-          config: this.configFor(input),
-        }),
+      const res = await this.oneShotWithFallback(
+        "gemini.chat",
+        2,
+        (model) =>
+          ai.models.generateContent({
+            model,
+            contents: this.buildContents(input),
+            config: this.configFor(input),
+          }),
+        // A patch-fallback regeneration IS a full game build (thinking on,
+        // 24576 output tokens). Giving it the 30s chat deadline made it fail
+        // on every model, every time — BUG-FIX-LOG 2026-07-20.
+        oneShotTimeoutMs(input),
       );
       const um = (res as { usageMetadata?: GenUsageMetadata }).usageMetadata;
       return { ...extractArtifact(res.text ?? ""), usage: um ? usageChunk(um).usage : undefined };
@@ -405,186 +549,32 @@ export class GeminiChatModel implements ChatModel {
    *  become the kid-facing planning line; they are NOT part of the answer. */
   async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; activeGameMessageId?: string }): AsyncGenerator<StreamChunk> {
     const ai = getClient();
-    // Primary keeps its normal retries; each fallback gets ONE attempt so a
-    // full incident walks the whole chain in ~a handful of tries, not 15
-    // (latency the kid feels). The chain covers EVERY transient failure shape:
-    // refused at open, died-while-THINKING, and (2026-07-13 incident) died
-    // MID-ANSWER — the partial code is only a "system is working" signal
-    // (owner decision), so a mid-answer death moves to the next model and a
-    // `restart` chunk is emitted right before that model's first output, so
-    // the client wipes the partial chat bubble and relays fresh.
-    const open = (model: string, retries: number) =>
-      withRetry(
-        () => ai.models.generateContentStream({
-          model,
-          contents: this.buildContents(input),
-          config: this.configFor(input),
-        }),
-        { label: "gemini.chat.stream", retries },
-      );
-    const chain = [this.model, ...this.fallbacks];
-    let answerStarted = false;
-    // Set when a model died after visible answer text; the NEXT model that
-    // actually produces output is prefixed with one `restart` chunk. Survives
-    // models that fail at open (no output → nothing new to wipe).
-    let pendingRestart = false;
-    // At most ONE hedge per TURN (not per chain slot) — no thundering herd
-    // exactly when Google is overloaded.
-    let hedged = false;
-    let lastErr: unknown = null;
-    for (let i = 0; i < chain.length; i++) {
-      const model = chain[i]!;
-      if (i > 0) {
-        console.warn(
-          `[gemini] ${isModelGone(lastErr) ? "model gone (CHECK CONFIG)" : "overloaded"} — falling back to ${model}`,
-        );
-      }
-      let stream;
-      try {
-        stream = await open(model, i === 0 ? 2 : 0);
-      } catch (err) {
-        lastErr = err;
-        if (!shouldTryNextModel(err)) throw new GeminiError(`chat stream failed: ${(err as Error).message}`);
-        continue;
-      }
-      // Hedged pump: consume this model, and if EVERY live stream goes silent
-      // past the window, race the next chain model in parallel. First answer
-      // token commits the winner; the loser is abandoned unconsumed.
-      const stallMs = Number(process.env.GEMINI_STALL_SWITCH_MS) || STALL_SWITCH_MS;
-      interface Src {
-        model: string;
-        it: AsyncIterator<unknown>;
-        pending?: Promise<{ src: Src; res?: IteratorResult<unknown>; err?: unknown }>;
-        /** Latest usageMetadata seen on this source (cumulative; last wins). */
-        usage?: GenUsageMetadata;
-      }
-      let srcs: Src[] = [{ model, it: stream[Symbol.asyncIterator]() }];
-      /** Which source produced the answer tokens yielded so far (restart bookkeeping). */
-      let answerSrc: Src | null = null;
-      const abandon = (s: Src) => void s.it.return?.(undefined as never); // fire-and-forget
-      try {
-        pump: while (true) {
-          for (const s of srcs) {
-            if (!s.pending) {
-              s.pending = s.it.next().then(
-                (res) => ({ src: s, res: res as IteratorResult<unknown> }),
-                (err) => ({ src: s, err }),
-              );
-            }
-          }
-          let timer: ReturnType<typeof setTimeout> | undefined;
-          const won = await Promise.race<{ src?: Src; res?: IteratorResult<unknown>; err?: unknown; timeout?: true }>([
-            ...srcs.map((s) => s.pending!),
-            new Promise<{ timeout: true }>((resolve) => {
-              timer = setTimeout(() => resolve({ timeout: true }), stallMs);
+    // The hedged-race chain walk now lives in model-runner.ts so a non-Google
+    // adapter can be dropped in without re-implementing it (cross-provider
+    // refactor 2026-07-20). Behaviour is unchanged — gemini.fallback.test.ts
+    // F.1-F.7 pins it. Gemini specifics stay HERE: how a stream is opened,
+    // and how its chunk shape normalizes into ProviderChunk.
+    yield* runStreamChain({
+      chain: [this.model, ...this.fallbacks],
+      openStream: async (model, retries) => {
+        // Non-Google slots hand off to their adapter, which owns request
+        // translation AND (option A) the moderation gates that stand in for
+        // Gemini's per-request safetySettings.
+        if (this.isOpenAI(model)) return this.openai.openStream(model, this.toGenerationRequest(input));
+        return toProviderChunks(
+          await withRetry(
+            () => ai.models.generateContentStream({
+              model,
+              contents: this.buildContents(input),
+              config: this.configFor(input),
             }),
-          ]).finally(() => clearTimeout(timer));
-
-          if (won.timeout) {
-            const hedgeModel = chain[i + 1];
-            if (!hedged && hedgeModel) {
-              hedged = true;
-              console.warn(`[gemini] ${srcs.map((s) => s.model).join("+")} silent ${stallMs}ms — hedging with ${hedgeModel} (race, first answer wins)`);
-              try {
-                const hedgeStream = await open(hedgeModel, 0);
-                srcs.push({ model: hedgeModel, it: hedgeStream[Symbol.asyncIterator]() });
-              } catch (err) {
-                // Hedge refused to open — keep waiting on the original; a real
-                // defect still surfaces rather than being masked.
-                if (!shouldTryNextModel(err)) throw err;
-                console.warn(`[gemini] hedge ${hedgeModel} refused to open — staying with ${model}`);
-              }
-              continue;
-            }
-            // Already hedged (or nothing left to hedge with) and STILL silent:
-            // give up on this slot and let the outer chain walk continue.
-            throw new StallSwitchError(srcs.map((s) => s.model).join("+"), stallMs);
-          }
-
-          const src = won.src!;
-          src.pending = undefined;
-          if (won.err) {
-            // One racer died. With another racer alive, just drop the dead one;
-            // alone, apply the normal chain policy in the outer catch.
-            if (srcs.length > 1 && shouldTryNextModel(won.err)) {
-              console.warn(`[gemini] hedge racer ${src.model} died — continuing with the other`);
-              srcs = srcs.filter((s) => s !== src);
-              continue;
-            }
-            throw won.err;
-          }
-          if (won.res!.done) {
-            if (srcs.length > 1 && src !== answerSrc) {
-              // An uncommitted racer ended without ever answering — drop it.
-              srcs = srcs.filter((s) => s !== src);
-              continue;
-            }
-            // Surface the REAL billed token counts (usageMetadata) so the cost
-            // dashboard records what Google charges, not a char/4 estimate.
-            if (src.usage) yield usageChunk(src.usage, src.model);
-            return; // the (sole/committed) stream finished cleanly
-          }
-
-          const chunk = won.res!.value as {
-            candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
-            usageMetadata?: GenUsageMetadata;
-          };
-          if (chunk.usageMetadata) src.usage = chunk.usageMetadata;
-          // chunk.text would silently drop thought parts — walk the parts instead.
-          const parts = chunk.candidates?.[0]?.content?.parts ?? [];
-          for (const p of parts) {
-            if (!p.text) continue;
-            if (p.thought) {
-              // Thoughts from either racer feed the kid's planning line. A
-              // pending restart flushes here too (the new model has started
-              // responding → wipe the stale partial) — but never while a race
-              // is undecided: the wipe must wait for a committed winner.
-              if (pendingRestart && srcs.length === 1) {
-                pendingRestart = false;
-                answerStarted = false;
-                yield { kind: "restart", text: "" };
-              }
-              yield { kind: "thought", text: p.text };
-              continue;
-            }
-            // First ANSWER token commits this source and settles the race.
-            if (srcs.length > 1) {
-              for (const s of srcs) if (s !== src) abandon(s);
-              srcs = [src];
-              console.warn(`[gemini] race won by ${src.model}`);
-            }
-            if (answerStarted && answerSrc !== src) {
-              // A different model had already streamed answer text (pre-hedge
-              // partial): wipe it rather than stitching two answers.
-              pendingRestart = true;
-            }
-            if (pendingRestart) {
-              pendingRestart = false;
-              answerStarted = false;
-              yield { kind: "restart", text: "" };
-            }
-            answerStarted = true;
-            answerSrc = src;
-            yield { kind: "delta", text: p.text };
-          }
-        }
-      } catch (err) {
-        // Mid-stream death: real defects surface; transient failures AND
-        // silence past the hedge window walk the chain. If answer text
-        // already went out, flag a restart so the next producing model wipes
-        // it clean instead of stitching two answers.
-        const stalled = err instanceof StallSwitchError;
-        for (const s of srcs) abandon(s);
-        if (!stalled && !shouldTryNextModel(err)) throw err;
-        lastErr = err;
-        if (answerStarted) {
-          pendingRestart = true;
-          console.warn(`[gemini] ${model} ${stalled ? "went silent" : "died"} mid-answer — restarting fresh on the next model`);
-        } else {
-          console.warn(`[gemini] ${model} ${stalled ? "went silent" : "died"} mid-thinking — trying the next model`);
-        }
-      }
-    }
-    throw new GeminiError(`chat stream failed: ${(lastErr as Error).message}`);
+            { label: "gemini.chat.stream", retries },
+          ),
+        );
+      },
+      ...this.chainPolicy,
+      stallMs: Number(process.env.GEMINI_STALL_SWITCH_MS) || STALL_SWITCH_MS,
+      wrapError: (err) => new GeminiError(`chat stream failed: ${(err as Error).message}`),
+    });
   }
 }

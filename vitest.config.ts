@@ -10,6 +10,13 @@ export default defineConfig({
     include: ["src/**/*.test.ts"],
   },
   resolve: {
-    alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+      // `server-only` is a build-time guard with no runtime export, so it
+      // can't resolve in a plain node test process. Stubbing it lets
+      // server-side modules (the safety gate, provider adapters) be unit
+      // tested directly; the real guard still applies to next build.
+      "server-only": fileURLToPath(new URL("./src/test/server-only-stub.ts", import.meta.url)),
+    },
   },
 });

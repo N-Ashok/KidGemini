@@ -108,11 +108,106 @@ never dead-end prod (`src/lib/model-fallback.ts`).
 - **Phase 3 (proposed):** repair-call fallback (lite), retry-on-fallback for
   mid-stream drops, auto-retry countdown copy.
 
-## 7. Non-goals
+> **See also `docs/PRD-RESILIENT-GENERATION.md`** (2026-07-20, proposed): the
+> chain currently ABANDONS in-flight work at each deadline and then serves a
+> weaker model's answer, even though the better model's answer had almost
+> certainly already arrived. That is a quality problem, not a cost one, and it
+> is tracked there with a decision table.
 
-- Cross-provider fallback (Claude/OpenAI): different SDK, prompt-portability
-  and child-safety posture review — out of scope until Gemini reliability
-  proves chronically insufficient.
+## 7. Cross-provider fallback — NOW A GOAL (owner decision 2026-07-20)
+
+Supersedes the previous non-goal ("different SDK, prompt-portability and
+child-safety posture review — out of scope"). The SDK objection is answered by
+an adapter per provider; the other two are NOT, and are tracked below.
+
+**Routing rule (owner):** models of the same capability tier are treated as
+interchangeable, so the chain orders by **quality tier first, then price within
+that tier**, crossing providers freely. Pure cheapest-first was tried and
+rejected in implementation — it filled all four slots with the cheapest models,
+so a failed game-BUILD turn fell straight to a lite model and shipped a
+visibly worse game (`model-registry.test.ts` R.14 pins this).
+
+Shipped (2026-07-20), owner chose **option A** (moderation adapter):
+
+| Piece | File | Tests |
+|---|---|---|
+| Provider abstraction | `src/types/model-provider.types.ts` | — |
+| Catalog + price-ordered `chainFor()` | `src/lib/model-registry.ts` | 15 |
+| OpenAI error taxonomy | `src/lib/providers/openai-adapter.ts` | 9 |
+| OpenAI moderation (the option-A safety layer) | `src/lib/providers/openai-moderation.ts` | 12 |
+| Provider-agnostic chain runner | `src/lib/model-runner.ts` | via F.1–F.7 |
+| Billing derived from one price source | `src/lib/pricing.config.ts` | 2 |
+
+The runner is the hedged-race state machine lifted verbatim out of
+`GeminiChatModel.replyStream`; `gemini.fallback.test.ts` passes untouched,
+which is the proof the extraction changed no behaviour.
+
+**Live as of 2026-07-20** — streaming chat turns now fail over to OpenAI. With
+`OPENAI_API_KEY` set, the production chain (primary `gemini-3.5-flash`) is:
+
+```
+gpt-5.6-luna  →  gemini-2.5-flash  →  gemini-3-flash-preview  →  gpt-5.4-mini
+```
+
+`gpt-5.6-luna` leads because it is the only other **frontier**-tier model and
+is cheaper than the primary ($1/$6 vs $1.5/$9) — quality tier first, price
+within the tier. Without the OpenAI key the chain is unchanged Gemini-only.
+`gpt-*` entries are `provider-enforced` because every OpenAI generation goes
+through `OpenAIGenerator`, which moderates the child's message before the model
+sees it and the answer before the child sees it.
+
+**OpenAI turns do not token-stream.** The answer is buffered, moderated, then
+emitted — there is no way to un-send text a post-hoc moderation pass rejects,
+and "games are never blocked or retracted" (CLAUDE.md §3) rules out retraction.
+The cost lands only on the rescue path; if the pause proves too long on real
+turns the fix is a faster chain model, not streaming unmoderated text.
+
+**Still Gemini-only:** the one-shot paths (`reply` / `repair` /
+`strictEditRetry`). They build a Google request directly, so OpenAI ids are
+filtered out of their chains rather than handed to Google (which would 404 and
+be silently skipped — the exact bug this work removes). Making them
+cross-provider needs each call site to supply an adapter-neutral
+`GenerationRequest`.
+
+**⚠ Behaviour change to confirm:** the 2026-07-13 ladder escalated a *workhorse*
+primary UP to the premium `gemini-3.5-flash` as a deep fallback. `chainFor`
+never climbs to a richer tier, so that escalation is gone (`gemini.fallback.test.ts`
+F.3 updated). Production is unaffected — the prod primary IS `gemini-3.5-flash`,
+so everything catalogued is already cheaper — but if the quality escalation was
+wanted for a cheaper primary, pin it with `MODEL_FALLBACK_CHAIN`.
+
+Anthropic and Moonshot/Kimi remain planned adapters — the registry reserves
+their provider ids and env keys. Kimi additionally needs the DATA_HANDLING
+review below before a key is added at all.
+
+**The feature is currently INERT, by design.** Ari's documented safety posture
+(CLAUDE.md §3) has provider-enforced thresholds as its middle layer, and only
+Gemini exposes them per request (`safetySettings`). Every non-Gemini model is
+marked `prompt-only` and excluded from every chain unless
+`ALLOW_PROMPT_ONLY_SAFETY_MODELS=1` is set. So nothing routes off Google until
+one of these is chosen:
+
+| Option | What it means | Cost |
+|---|---|---|
+| **A. Moderation adapter** | Each non-Gemini adapter runs an explicit moderation pass (e.g. OpenAI's moderation endpoint) pre/post generation, then legitimately claims `provider-enforced` | Real work per provider; extra call adds latency to the rescue path |
+| **B. Accept prompt-only for rescue** | Flip the flag: during an outage a kid may get a reply with only input rules + system prompt guarding it | Free; lowers the safety floor exactly when volume is highest |
+| **C. Stay Gemini-only for kid-facing** | Cross-provider used only for non-kid-facing calls (verify/repair on generated CODE, classifiers) | Keeps the floor; much smaller resilience win |
+
+Open items regardless of choice: **prompt portability** (the child-safety system
+prompt and the game-build contract are tuned on Gemini — an untested prompt on
+another model is an unmeasured quality AND safety change) and, for Moonshot/Kimi
+specifically, **data handling** — children's transcripts leaving for a new
+jurisdiction needs a `docs/DATA_HANDLING.md` review before any key is added.
+
+### Known gap opened by this change
+`pricing.config.ts` resolves prices by model id from a Gemini-only table, so a
+non-Gemini turn would bill on the admin dashboard at the unknown-model fallback
+rate ($1.5/$9) — same class as BUG-FIX-LOG 2026-07-13's "$0 dashboard". Not
+live (nothing routes off Google yet). Fix = derive `MODEL_PRICING` from
+`MODEL_CATALOG` so there is one price source; own change, own tests.
+
+## 7b. Non-goals
+
 - Cost-based routing of easy turns to cheap models on healthy days: adjacent
   but different feature; revisit with usage data.
 

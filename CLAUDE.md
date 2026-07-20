@@ -39,6 +39,12 @@ A kids-safe, Gemini-quality chat app (text + voice) with a **server-enforced saf
 - **Next.js 14 (App Router)** + **TypeScript (strict)** — frontend and secure backend in one repo.
 - **Tailwind CSS** wired to design tokens (`docs/DESIGN_SYSTEM.md`).
 - **@google/genai** for Gemini (chat model + Flash-Lite safety model).
+- **openai** — cross-provider fallback, LIVE for streaming chat turns
+  (2026-07-20, `docs/PRD-MODEL-FALLBACK.md` §7). Engages only when the Gemini
+  primary fails; requires `OPENAI_API_KEY`. Every OpenAI call goes through
+  `OpenAIGenerator`, which moderates input and output — that wrapper is what
+  makes the `provider-enforced` claim in `MODEL_CATALOG` true. One-shot paths
+  (`reply`/`repair`/`strictEditRetry`) remain Gemini-only.
 - **better-sqlite3** for local storage (alerts, settings, transcripts).
 - **Web Speech API** for speech-to-text (browser-native, no key).
 
@@ -60,6 +66,15 @@ src/types/             shared TypeScript types
    child-safety system prompt (age 7–14). The Flash-Lite output monitor is REMOVED from
    `/api/chat` — it retracted harmless games (chess); **games are never blocked or retracted**
    (`route.test.ts` R.1). Re-enable path: PRD §F2.
+   **The middle layer is provider-specific.** It is Gemini's per-request
+   `safetySettings`, which no other provider exposes — so cross-provider
+   fallback (2026-07-20) may only route to a model that carries an equivalent
+   guard. `SafetyPosture` in `src/types/model-provider.types.ts` makes each
+   model declare this and `model-registry.ts` fails closed on it: a
+   `prompt-only` model is excluded from every chain unless
+   `ALLOW_PROMPT_ONLY_SAFETY_MODELS=1`. Never mark a model
+   `provider-enforced` to unlock cheaper routing — that flag is a claim that a
+   real guard runs, and the gate trusts it.
 3. **Fail closed where a classifier decides.** The input rules block on match; `/api/safety`
    (which still uses the Flash-Lite classifier) blocks + logs on error, never shows.
 4. **Generated HTML is sandboxed.** Always `<iframe srcdoc sandbox="allow-scripts">` — never inject into the parent DOM.

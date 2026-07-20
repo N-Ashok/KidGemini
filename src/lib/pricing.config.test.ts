@@ -6,6 +6,7 @@
 // thinking / cached) + the USD→INR conversion the admin dashboard renders.
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { estimateCostUsd, inrPerUsd, MODEL_PRICING } from "./pricing.config";
+import { MODEL_CATALOG } from "./model-registry";
 
 const OLD_RATE = process.env.USD_INR_RATE;
 afterAll(() => {
@@ -88,5 +89,24 @@ describe("inrPerUsd", () => {
     expect(d).toBeGreaterThan(0);
     process.env.USD_INR_RATE = "-5";
     expect(inrPerUsd()).toBe(d);
+  });
+});
+
+// Cross-provider refactor 2026-07-20: MODEL_PRICING is now DERIVED from
+// MODEL_CATALOG. Before this, any non-Gemini model fell through to
+// FALLBACK_PRICE and billed at $1.5/$9 on the dashboard regardless of its real
+// cost — silently wrong numbers, the same class as the 2026-07-13 "$0" bug.
+describe("MODEL_PRICING is derived from the catalog (one price source)", () => {
+  it("P.10 every catalogued model is priced, including non-Gemini providers", () => {
+    for (const m of MODEL_CATALOG) {
+      expect(MODEL_PRICING[m.id], `${m.id} missing from MODEL_PRICING`).toBeDefined();
+      expect(MODEL_PRICING[m.id]!.inputPerMTok).toBe(m.inputPerMTok);
+      expect(MODEL_PRICING[m.id]!.outputPerMTok).toBe(m.outputPerMTok);
+    }
+  });
+
+  it("P.11 an OpenAI model bills at ITS OWN rate, not the Gemini fallback rate", () => {
+    const usd = estimateCostUsd("gpt-5.4-nano", { prompt: 1_000_000, output: 1_000_000 });
+    expect(usd).toBeCloseTo(0.2 + 1.25, 6); // not 1.5 + 9.0
   });
 });

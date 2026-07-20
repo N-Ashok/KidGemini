@@ -1,0 +1,163 @@
+# PRD — Resilient Generation: stop discarding good answers (decision doc)
+
+2026-07-20 · Status: **Option 3 SHIPPED** (owner decision same day: "60s + keeping
+the results of the 1st call"). Options 4/5/6 still proposed — see §4.
+Trigger: owner observation on the 225s incidents (`BUG-FIX-LOG.md` 2026-07-20):
+
+> "it is not the loss that i am worried. we are changing the whole script and
+> regenerating… the first call must have given an answer by the time we went to
+> the third call, then we should have used the first one which is much better
+> quality. all these are wasted opportunity and resource."
+
+That is the correct diagnosis. The timeout fix already shipped stops the
+*failure*; it does not stop the *waste*. This doc is about the waste.
+
+---
+
+## 1. Three distinct problems, currently conflated
+
+| # | Problem | What it costs | Where it lives |
+|---|---|---|---|
+| **P1** | **Abandonment.** `withTimeout` is a `Promise.race` with no cancellation, so an in-flight generation is dropped, not stopped. It completes, resolves into nothing, and bills. | Up to 6 complete generations per incident, none recorded (`recordUsage` runs on success only → invisible spend) | `retry.ts`, `gemini.ts` one-shot path |
+| **P2** | **Quality inversion.** The chain is strictly serial. The *primary* (best model) is abandoned at the deadline; by the time the *lite* model answers, the primary's better answer has almost certainly already landed unheard. We then serve the worst output we generated. | The child gets a measurably worse game than one we already paid to produce | `model-runner.ts` chain walk |
+| **P3** | **Whole-script regeneration.** A failed edit patch escalates to rebuilding the ENTIRE game (24576 tokens, 30–46s). Patches exist precisely because a regeneration can silently regress parts the child never asked to change. | Slow, expensive, and risks losing work the child liked | `api/chat/route.ts` patch-fallback path |
+
+**P3 is upstream of the other two.** Every logged incident began with
+`patch failed (search_not_found) … inSource=false`. Fix P3 and most P1/P2
+occurrences never happen.
+
+## 2. What "properly" looks like
+
+The current model is **serial-abandon-degrade**: try, give up, discard, try
+something worse. The target model is **overlap-and-prefer**: overlap attempts,
+never discard, serve the best answer that arrives inside the child's patience.
+
+Two independent levers:
+
+- **Never discard** — an attempt that is still running is an asset, not a
+  liability. Either let it finish and use it, or cancel it so it stops billing.
+  Doing neither (today) is the worst of both.
+- **Prefer quality, not arrival order** — when several answers land, serve the
+  highest-tier one, not the first. The existing stream hedge commits on *first
+  token*, which is a latency rule, not a quality rule.
+
+## 3. Options
+
+| # | Option | How it works | Advantages | Disadvantages | Risk mitigation |
+|---|---|---|---|---|---|
+| **1** | **Longer deadline only** *(shipped today)* | Build turns get 120s instead of 30s | Trivial; already done; removes the deterministic failure | Still serial — a genuinely dead primary makes the child wait 120s before anything else starts. Still discards on eventual timeout | Keep as the floor under every other option. Tune via `GEMINI_BUILD_TIMEOUT_MS` against real turns |
+| **2** | **Cancel on give-up** | Pass an `AbortSignal`; abandoning actually stops generation | Stops invisible billing; honest resource use | Throws away work that was nearly done — fixes P1's cost but makes P2 *worse* | Only cancel once another attempt has definitively won; never cancel the highest-tier attempt first |
+| **3** ✅ | **Late-arrival buffer** *(SHIPPED 2026-07-20)* | Don't cancel; keep the abandoned promise. If it resolves before the turn is answered, use it | Cheap (~30 lines); directly catches the observed "arrived at 31s after a 30s cut" case; no extra generations | Doesn't help when the primary is genuinely dead; result can arrive after the child gave up | Bound the buffer to the turn's lifetime; discard on client disconnect |
+| **4** | **Quality-preferring hedged race** ⭐ | At a hedge point (not a hard deadline) start the next model *in parallel*, keep earlier ones running. When one completes, hold briefly (grace ~5s) for a higher-tier attempt still in flight. Serve the best that lands | Solves P1 **and** P2 properly. Latency ≈ fastest model; quality ≈ best model. Extends the hedge mechanism already proven in `replyStream` | 2–3 concurrent generations per rescued turn (cost). Most complex option. Grace window adds a small tail latency | Hedge only on build turns; cap concurrency at 2; one hedge per turn (already the rule); circuit breaker so a real outage doesn't fan out (PRD-MODEL-FALLBACK §5.2) |
+| **5** | **Fix the trigger (patch reliability)** ⭐ | Find why `inSource=false` — the model patches against a version we don't hold — and stop the escalation happening at all | Removes the whole problem class rather than making failure affordable. Cheapest turn is the one that never regenerates | Doesn't help genuine provider outages; needs real diagnosis first (KNOWN_BUGS #5) | The `inSource=` debug line already ships; a persistent false streak confirms the cause before any code changes |
+| **6** | **Escalate cheaper before regenerating** | On patch failure try `strictEditRetry` (4096 tokens) *before* a full 24576-token rebuild | Much cheaper/faster middle rung; preserves the child's existing game | One more round trip when it fails too | Cap at one attempt; fall through to regeneration unchanged. Partially exists already (route.ts:372) — needs to run on *this* failure path too |
+
+⭐ = recommended pair.
+
+## 4. Recommendation
+
+**Do 5 first, then 4, keeping 1 as the floor.**
+
+1. **Option 5** — diagnose `inSource=false`. Every incident started there. This
+   is diagnosis before code, and it may remove 80%+ of occurrences.
+2. **Option 6** — cheap insurance while 5 is investigated: try the small
+   strict-edit retry before committing to a whole-game rebuild.
+3. **Option 4** — the real architectural fix for genuine outages. Build it on
+   `model-runner.ts`, which is now extracted and covered by F.1–F.19, so the
+   delicate hedge/restart logic has a regression net.
+4. **Option 2** last, and *narrowly*: cancel only attempts that have definitively
+   lost. Cancelling eagerly would re-create P2.
+
+**Explicitly not recommended alone:** Option 2 by itself. It fixes the money and
+worsens the thing the owner actually cares about.
+
+## 5. Risks of the recommended path
+
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| Concurrent generations multiply spend during a long outage | Medium | Medium | Circuit breaker (PRD-MODEL-FALLBACK §5.2): once the primary is known-bad, go straight to the fallback with no hedge. Cap concurrency at 2 |
+| Grace window makes fast turns feel slower | Low | Low | Only wait when a higher-tier attempt is genuinely in flight; cap at ~5s; skip grace entirely if the completed answer is already top-tier |
+| Refactoring the hedge breaks restart semantics (2026-07-11/13 incidents) | Medium | **High** | `gemini.fallback.test.ts` F.1–F.19 must pass untouched; any change that needs a test edited is a behaviour change requiring sign-off |
+| A hedged OpenAI answer bypasses moderation | Low | **Critical** | `OpenAIGenerator` gates input and output; a raced result must go through the same gate before it can win. Add an explicit test |
+| "Best tier" is a guess, not a measurement | Medium | Medium | Tier is currently editorial. Validate with the prompt-portability eval before letting tier decide quality outcomes |
+
+## 6. Scale ceilings
+
+Hedging multiplies upstream calls per turn. At current volume this is
+comfortable; the trigger to revisit is either a sustained provider incident
+(where the circuit breaker must carry the load instead) or concurrent users
+high enough that 2× calls approaches a rate limit. Breaker state is per-process
+memory — a second app instance needs shared state first.
+
+## 7. Open question for the owner
+
+How long is a child actually willing to wait for a game? Every option above is
+really a trade of *wait* against *quality*, and that number is currently
+implicit (30s, then 120s, both picked from system constraints rather than from
+what a 7-year-old tolerates). A real answer here would let the grace window and
+the whole chain budget be derived rather than guessed.
+
+
+---
+
+## 8. Shipped: option 3 (2026-07-20)
+
+`runOneShotChain` no longer discards. `slotDeadlineMs` now only ADVANCES the
+chain — when it passes we start the next model as a **backup** and keep every
+earlier attempt running. The first attempt to succeed wins, whoever it is, and
+after the chain is exhausted any still-running attempt keeps its remaining
+budget rather than the turn being failed seconds before its answer lands.
+
+The build deadline came DOWN from 120s to **60s** as part of this, which is
+counter-intuitive but correct: a shorter deadline now means "start a backup
+sooner", not "throw work away sooner". The primary keeps running either way,
+and at 60s in it is far closer to done than a backup starting from zero.
+
+`withTimeout` is deliberately no longer used on the one-shot path. Re-adding it
+would restore the exact discard-then-degrade behaviour that served children the
+weakest model's answer.
+
+Bounded by `totalBudgetMs` (default: one slot per model plus one) so a hung
+provider cannot strand a turn — B.7 pins it.
+
+Tests: `model-runner.oneshot.test.ts` B.1–B.7. B.1 reproduces the production
+shape directly — a primary that lands after its deadline still beats a freshly
+started fallback, and the chain never degrades to the third model.
+
+**Not yet done:** options 5 (fix the `inSource=false` trigger — still the
+highest-value item), 6 (cheap strict-edit rung before a full rebuild), and 4
+(quality-preferring hedge for the streaming path, which still commits on first
+token rather than best tier).
+
+
+---
+
+## 9. Ruled out by observation (2026-07-20)
+
+**Multi-game chats are NOT a cause of the regeneration failures.** The
+hypothesis was that a chat holding several complete games made the model quote
+SEARCH text from the wrong one, producing `inSource=false`. The owner, who runs
+the live sessions, reports this is not what is happening. Recorded here so it is
+not re-proposed: it is a plausible-sounding theory that the evidence does not
+support, and `inSource=false` still needs a real diagnosis.
+
+The one-chat-one-game prompt (§10) is still wanted, but on its own merits —
+consent before a destructive rebuild, and a clean record — not as a fix for
+this bug.
+
+## 10. Guard-rail added with the option-3 work
+
+Keeping attempts alive made chain DEPTH dangerous. The auto chain is up to 5
+models; at a 60s slot each that is a **360s worst case — worse than the 225s
+incident the change was fixing.** A child waiting six minutes is a failure
+however good the eventual answer is.
+
+- `ONESHOT_MAX_MODELS = 2` — primary plus one backup. A slow primary still wins
+  (it keeps running); a dead primary is covered by the backup. A third would
+  start near 120s and land near 160s, past the point anyone is still waiting.
+- `ONESHOT_TOTAL_BUDGET_MS = 150_000` (`GEMINI_ONESHOT_BUDGET_MS`) — a hard
+  ceiling, deliberately ≥ one slot plus the slowest observed build (60s +
+  46.4s) so a started backup is never killed just before finishing.
+
+Pinned by `gemini.fallback.test.ts` F.20–F.22. Note the streaming path is
+unaffected: it RACES rather than queues, so depth there does not add wait.
