@@ -844,3 +844,81 @@ describe("POST /api/chat — patch-based feature edits", () => {
     expect(replyMock).not.toHaveBeenCalled();
   });
 });
+
+// Deterministic three-import lint (BUG-FIX-LOG 2026-07-20 "DoubleSide"): a
+// game importing a name the vendored bundle doesn't export dies on its
+// import line. The route must catch this server-side — a patch that
+// introduces one is a FAILED patch, and a fresh build gets ONE corrective
+// retry — so a dead-on-arrival game never reaches the kid.
+describe("POST /api/chat — three-import lint", () => {
+  const BAD_IMPORT_GAME =
+    '<!doctype html><html><body><script type="module">import { Scene, TubeGeometry } from "three";</script></body></html>';
+  const CLEAN_GAME =
+    '<!doctype html><html><body><script type="module">import { Scene } from "three";</script></body></html>';
+
+  beforeEach(() => {
+    authMock.mockResolvedValue(null);
+  });
+
+  it("L.1 a fresh build with an unknown three import gets ONE corrective retry, and the clean retry is served", async () => {
+    replyStreamMock.mockReturnValue(one("Here!\n```html\n" + BAD_IMPORT_GAME + "\n```"));
+    extractArtifactMock.mockImplementation((t: string) => ({
+      text: "Here!",
+      artifactHtml: t.includes("TubeGeometry") ? BAD_IMPORT_GAME : undefined,
+      wasFenced: true,
+    }));
+    replyMock.mockResolvedValue({ text: "Fixed!", artifactHtml: CLEAN_GAME, wasFenced: true });
+
+    const res = await POST(makeReq({ message: "make me a 3d game", history: [] }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(replyMock).toHaveBeenCalledTimes(1);
+    expect(replyMock.mock.calls[0]![0].message).toContain("TubeGeometry"); // told exactly what crashed
+    expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
+    expect(done.artifactHtml).toBe(CLEAN_GAME);
+  });
+
+  it("L.2 if the corrective retry fails, the original is still served — floor stays 'no worse', never a dead end", async () => {
+    replyStreamMock.mockReturnValue(one("Here!\n```html\n" + BAD_IMPORT_GAME + "\n```"));
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: BAD_IMPORT_GAME, wasFenced: true }));
+    replyMock.mockRejectedValue(new Error("overloaded"));
+
+    const res = await POST(makeReq({ message: "make me a 3d game", history: [] }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(done.artifactHtml).toBe(BAD_IMPORT_GAME); // served, visible, repairable — not dropped
+  });
+
+  it("L.3 a clean fresh build costs NO extra Gemini call", async () => {
+    replyStreamMock.mockReturnValue(one("Here!\n```html\n" + CLEAN_GAME + "\n```"));
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: CLEAN_GAME, wasFenced: true }));
+
+    const res = await POST(makeReq({ message: "make me a 3d game", history: [] }));
+    await res.text();
+
+    expect(replyMock).not.toHaveBeenCalled();
+  });
+
+  it("L.4 an edit patch that INTRODUCES an unknown three import is a failed patch — falls back to full regeneration", async () => {
+    const GAME = '<!doctype html><html><body><div>OLD_FEATURE</div></body></html>';
+    const history = [
+      { id: "1", role: "child" as const, text: "make me a game", createdAt: 1 },
+      { id: "2", role: "assistant" as const, text: "Here!\n```html\n" + GAME + "\n```", artifactHtml: GAME, createdAt: 2 },
+    ];
+    const patchReply =
+      "Added a track! 🎮\n<<<<<<< SEARCH\n<div>OLD_FEATURE</div>\n=======\n" +
+      '<script type="module">import { TubeGeometry } from "three";</script>\n>>>>>>> REPLACE';
+    replyStreamMock.mockReturnValue(one(patchReply));
+    replyMock.mockResolvedValue({ text: "Rebuilt!", artifactHtml: CLEAN_GAME, wasFenced: true });
+
+    const res = await POST(makeReq({ message: "add a tube track", history }));
+    const text = await res.text();
+    const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(replyMock).toHaveBeenCalledTimes(1);
+    expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
+    expect(done.artifactHtml).toBe(CLEAN_GAME); // never the import-crashing patch result
+  });
+});

@@ -11,13 +11,20 @@ import manifestJson from "./manifest.json";
 import { GENRES, PEOPLE_MODELS, selectModelNames } from "./model-select";
 
 /** Names the vendored engine bundle exports — MUST stay in lockstep with
- *  THREE_EXPORTS in scripts/vendor-three.mjs (pinned by test). */
-const CURATED_IMPORTS =
-  "Scene, PerspectiveCamera, WebGLRenderer, Clock, Color, Fog, Group, " +
-  "Vector3, Box3, BoxGeometry, SphereGeometry, ConeGeometry, CylinderGeometry, " +
-  "PlaneGeometry, TorusGeometry, CapsuleGeometry, RingGeometry, " +
-  "MeshStandardMaterial, MeshBasicMaterial, Mesh, AmbientLight, " +
-  "DirectionalLight, PointLight, HemisphereLight, AnimationMixer";
+ *  THREE_EXPORTS in scripts/vendor-three.mjs (pinned by test). Exported as
+ *  an array so the server-side import lint (three-import-lint.ts) checks
+ *  against the SAME list the prompt teaches. */
+export const CURATED_IMPORT_NAMES = [
+  "Scene", "PerspectiveCamera", "WebGLRenderer", "Clock", "Color", "Fog",
+  "Group", "Vector3", "Box3",
+  "BoxGeometry", "SphereGeometry", "ConeGeometry", "CylinderGeometry",
+  "PlaneGeometry", "TorusGeometry", "CapsuleGeometry", "RingGeometry",
+  "Shape", "ShapeGeometry", "DoubleSide",
+  "MeshStandardMaterial", "MeshBasicMaterial", "Mesh",
+  "AmbientLight", "DirectionalLight", "PointLight", "HemisphereLight",
+  "AnimationMixer",
+];
+const CURATED_IMPORTS = CURATED_IMPORT_NAMES.join(", ");
 
 export const THREE_PROMPT_SECTION = `**Optional 3D graphics**: for games that would look better in 3D (racing,
 flying, exploring, a rolling-ball maze), you MAY build the scene with

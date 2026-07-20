@@ -15,6 +15,8 @@ import {
 } from "@/lib/game-edit";
 import { applyPatch } from "@/lib/repair-prompt";
 import { injectAssets } from "@/lib/assets/inject";
+import { newUnknownThreeImports, unknownThreeImports } from "@/lib/assets/three-import-lint";
+import { CURATED_IMPORT_NAMES } from "@/lib/assets/prompt-catalog";
 import { ensureMultiplayerMarker } from "@/lib/multiplayer-gate";
 import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
@@ -340,7 +342,16 @@ export async function POST(req: NextRequest) {
         console.warn(`[api/chat]   first SEARCH head: "${head}" inSource=${currentHtml.includes(firstSearch)}`);
       };
       const applied = applyPatch(currentHtml, full);
-      if (applied.ok && applied.mode === "patch") {
+      // Three-import lint (BUG-FIX-LOG 2026-07-20 "DoubleSide"): a patch that
+      // INTRODUCES an import the vendored bundle doesn't export would kill
+      // the whole game on its import line — that's a failed patch, not a
+      // success, so it takes the same fallback-regeneration path below.
+      const patchBadImports =
+        applied.ok && applied.mode === "patch" ? newUnknownThreeImports(currentHtml, applied.html) : [];
+      if (patchBadImports.length) {
+        console.warn(`[api/chat] ⛔ patch introduces unknown three imports: ${patchBadImports.join(", ")} @${ms()}ms`);
+      }
+      if (applied.ok && applied.mode === "patch" && patchBadImports.length === 0) {
         console.log(`[api/chat] ✓ edit patch @${ms()}ms`);
         displayText = editReplyProse(full); // the kid-facing sentence only — never the raw hunks
         deliverableHtml = toDeliverable(applied.html);
@@ -395,7 +406,11 @@ export async function POST(req: NextRequest) {
         // full-regeneration call rather than showing raw garbage or a
         // corrupted game. Floor stays "no worse than before this feature
         // existed."
-        const reason = applied.ok ? `incomplete ${applied.mode} output` : applied.reason;
+        const reason = patchBadImports.length
+          ? `bad_three_imports:${patchBadImports.join("+")}`
+          : applied.ok
+            ? `incomplete ${applied.mode} output`
+            : applied.reason;
         logSearchMiss(full);
         console.warn(`[api/chat] patch failed (${reason}) — falling back to full regeneration @${ms()}ms`);
         try {
@@ -435,6 +450,39 @@ export async function POST(req: NextRequest) {
       displayText = artifactHtml && !wasFenced
         ? `${prose}\n\n\`\`\`html\n${artifactHtml}\n\`\`\``.trim()
         : full;
+
+      // Three-import lint (BUG-FIX-LOG 2026-07-20 "DoubleSide"): a name the
+      // vendored bundle doesn't export kills the game on its import line —
+      // dead on arrival, unrepairable by patching. ONE corrective retry
+      // naming the exact violation; if it can't produce a clean game, the
+      // original is still served (visible + repairable beats dropped).
+      const badImports = artifactHtml ? unknownThreeImports(artifactHtml) : [];
+      if (badImports.length && artifactHtml) {
+        console.warn(`[api/chat] ⛔ unknown three imports: ${badImports.join(", ")} — corrective retry @${ms()}ms`);
+        try {
+          const corrective = await chatModel.reply({
+            history,
+            message:
+              `${message}\n\n(IMPORTANT: your previous version crashed because it imported ` +
+              `${badImports.join(", ")} from "three" — those exports do not exist in this platform's ` +
+              `three bundle. Rebuild the game importing ONLY these names from "three": ${CURATED_IMPORT_NAMES.join(", ")}.)`,
+            image,
+            forceFullRegen: true,
+          });
+          trackTurn(() => recordUsage("chat", servedModel, message, corrective.text, false, corrective.usage));
+          if (corrective.artifactHtml && unknownThreeImports(corrective.artifactHtml).length === 0) {
+            console.log(`[api/chat] ✓ import-lint corrective retry @${ms()}ms`);
+            displayText = !corrective.wasFenced
+              ? `${corrective.text}\n\n\`\`\`html\n${corrective.artifactHtml}\n\`\`\``.trim()
+              : corrective.text;
+            deliverableHtml = toDeliverable(corrective.artifactHtml);
+          } else {
+            console.warn(`[api/chat] import-lint retry did not come back clean — serving the original @${ms()}ms`);
+          }
+        } catch (err) {
+          console.warn(`[api/chat] import-lint retry unavailable (${(err as Error).message}) — serving the original @${ms()}ms`);
+        }
+      }
     }
     send({ type: "done", text: displayText, artifactHtml: deliverableHtml });
     // Keep the finished result server-side even if nobody is listening — a

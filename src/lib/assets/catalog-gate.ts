@@ -19,10 +19,15 @@ const THREE_TRIGGER = /\b3d\b/i;
 const AUDIO_TRIGGER = /\b(sounds?|music|songs?|sfx)\b/i;
 
 // Iteration insurance: a game already built WITH library assets keeps its
-// catalogs on follow-up turns even when the keyword text has scrolled away —
-// the injected/authored markers survive inside artifactHtml.
-const THREE_ARTIFACT = /USES_THREE|USES_MODELS/;
-const AUDIO_ARTIFACT = /USES_AUDIO/;
+// catalogs on follow-up turns even when the keyword text has scrolled away.
+// Markers first — but ALSO the game's structure (an import from "three", the
+// importmap entry, loadModel/playSound calls): a generation that forgot its
+// marker otherwise iterated with the catalog OFF, and the untaught model
+// imported three names outside the curated bundle, killing the whole game on
+// its import line (BUG-FIX-LOG 2026-07-20 "DoubleSide"). Err toward
+// unlocking, per §9.
+const THREE_ARTIFACT = /USES_THREE|USES_MODELS|from\s*['"]three['"]|['"]three['"]\s*:|loadModel\s*\(/;
+const AUDIO_ARTIFACT = /USES_AUDIO|playSound\s*\(|playMusic\s*\(/;
 
 /** The §9 decision tree: build turn? → paid: both · free: keyword scan over
  *  the message AND the child's prior messages AND prior artifacts. Paid is

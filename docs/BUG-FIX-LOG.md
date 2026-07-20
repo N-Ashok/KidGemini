@@ -45,6 +45,110 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-20 — No way to copy an error when a game breaks: the debug-gating of the console left grown-ups blind too
+
+- **Symptom (what the user reported):** "when something unexpected happens,
+  earlier I used to have a console to copy the error, now it is removed."
+  Confirmed: the self-healing preview work hid the console tab behind
+  `localStorage["kidgemini:debug"]="1"` (PRD G1 — a nine-year-old must never
+  meet a stack trace), which also removed the ONLY way an adult could copy a
+  failure out of the app. Diagnosing the "DoubleSide" bug below needed the
+  owner to export the game html and me to run it in a browser by hand —
+  exactly the friction this closes.
+- **Surface area:** `src/components/ArtifactFrame.tsx` (console tab gate,
+  §9.1 failure banner), new `src/lib/error-report.ts`.
+- **Root cause:** the kid-safety fix used a single global switch (debug on/
+  off) where the real requirement has two axes: *who* is looking and
+  *whether anything actually broke*. Hiding on both axes at once made real
+  failures undiagnosable in-product.
+- **Fix:** details are gated on the FAILURE, not on a debug flag.
+  `hasExtremeError({outcome, errors})` (pure) is true only when the game
+  threw a hard error or verify ended failed/bailed; then (a) the §9.1
+  banner gains a **📋 Copy error details** button that puts a formatted
+  report on the clipboard in one tap — no stack trace rendered to the kid —
+  and (b) the 🛠 Console tab becomes reachable (still hidden on every
+  healthy game, so PRD G1's "a kid never meets a console" holds for normal
+  play). `buildErrorReport` (pure) formats title, verify verdict, numbered
+  errors with stacks + resource URLs, and the browser string; bounded to
+  4 000 chars so an error flood stays pasteable, and deliberately EXCLUDES
+  the game source (reports get pasted into chats/tickets). Clipboard
+  failure (permissions/older browser) falls back to opening the console tab
+  so the text is selectable — never a dead end.
+- **Result (verified):** 8 `error-report.test.ts` cases (gate truth table
+  incl. log/warn noise not counting, formatting, 404 URLs, no-errors
+  wording, bounded output, no source leak); real-browser run of a
+  deliberately broken game with `/api/repair` forced to 502: banner shown,
+  Copy button offered, Console tab back with its error badge, and the
+  clipboard verified to contain the real report (both the thrown TypeError
+  and the module-resolution failure). Suite 894/894, typecheck clean.
+- **Impact:** any adult can hand over a complete diagnosis in one tap;
+  healthy games are visually unchanged for kids.
+- **Prevention (class):** "kid-safe" must mean *contextual* hiding, not
+  global removal — pinned by the gate tests (a healthy game must never
+  offer the affordance; a failed one always must).
+- **Related:** PRD G1 (console hidden from kids); the "DoubleSide" entry
+  below, whose diagnosis this would have shortened to one paste.
+
+### 2026-07-20 — "DoubleSide": a marker-less 3D game iterated with the 3D catalog OFF — the model imported outside the curated three bundle and killed the game on its import line
+
+- **Symptom (what the user saw):** the racing game stayed dead ("Waiting for
+  the host to start…", no canvas, dead buttons) through days of edits and
+  repairs, even after the preview SDK stub shipped. Running the actual game
+  html (owner-provided file) in a sandboxed iframe surfaced the real error:
+  `The requested module 'three' does not provide an export named
+  'DoubleSide'` — the game's entire module dies on
+  `import { Shape, ShapeGeometry, DoubleSide } from "three"`, so no game
+  code ever runs (broken in preview AND published alike).
+- **Surface area:** `src/lib/assets/catalog-gate.ts` (`THREE_ARTIFACT`,
+  `AUDIO_ARTIFACT`); root contract between `scripts/vendor-three.mjs`
+  (curated `THREE_EXPORTS`) and the prompt catalog.
+- **Root cause (chain):** (1) the game html carried `USES_MULTIPLAYER` but
+  NOT `USES_THREE`/`USES_MODELS` — the model forgot the markers; (2) the
+  catalog gate's iteration insurance matched markers ONLY, so every edit
+  turn ran `3d=false` (visible in the prod log) — the model edited a
+  three.js game without the "only import these names" vocabulary; (3)
+  untaught, it imported `Shape`/`ShapeGeometry`/`DoubleSide` — standard
+  three exports absent from the tree-shaken bundle; (4) the import throws,
+  classified `load_error`, and repair ping-ponged forever (an import-
+  vocabulary violation is not patchable within the vocabulary). Class:
+  **opt-in markers as the only carrier of a structural fact** — one
+  forgotten comment silently degraded every subsequent turn.
+- **Fix:** the gate now also reads the game's STRUCTURE: `THREE_ARTIFACT`
+  additionally matches `from "three"`, the importmap `"three":` entry, or a
+  `loadModel(` call; `AUDIO_ARTIFACT` additionally matches `playSound(` /
+  `playMusic(`. A marker-less 3D/audio game keeps its catalogs on every
+  iteration (err-toward-unlocking, §9).
+- **Result (verified):** 3 new `catalog-gate.test.ts` cases (marker-less
+  three-importing game, marker-less loadModel game, marker-less
+  playSound/playMusic game — all keep their catalogs); suite 875/875,
+  typecheck clean. The owner's actual game html matches the new
+  THREE_ARTIFACT on both signals (import + importmap).
+- **Impact:** edit turns on 3D/audio games always carry the curated
+  vocabulary, ending this class of self-inflicted import crashes. The
+  stuck game itself needs one edit (drop the bad import, rebuild the track
+  with RingGeometry, re-add markers) — done via chat.
+- **Prevention (class):** structural detection over marker trust (pinned by
+  the new tests) — PLUS both follow-ups, built same day:
+  (a) **deterministic import lint** (`src/lib/assets/three-import-lint.ts`,
+  checked against the SAME `CURATED_IMPORT_NAMES` the prompt teaches): an
+  edit patch that INTRODUCES an unknown three import is a FAILED patch
+  (takes the existing fallback-regeneration path; reason
+  `bad_three_imports:*` in the log), and a fresh build with one gets ONE
+  corrective retry naming the exact violation — retry-fails ⇒ the original
+  is still served (visible + repairable beats dropped). Route tests
+  L.1–L.4; lint truth table in `three-import-lint.test.ts` (aliases,
+  multiline, namespace imports exempt, introduced-vs-preexisting).
+  (b) **vocabulary grown**: `Shape`, `ShapeGeometry`, `DoubleSide` added to
+  `THREE_EXPORTS` (vendor-three.mjs) + `CURATED_IMPORT_NAMES`
+  (prompt-catalog.ts, now the exported single source the lint shares);
+  new bundle `three.97d632.js` (618 KB, budget 650 KB) built → uploaded →
+  CDN-verified → manifest entry written, contract tests green. Cost: +24 KB
+  on the immutable engine bundle, ~10 extra prompt tokens on 3D turns, and
+  one corrective generation ONLY when a violation is caught.
+- **Related:** same-day preview-SDK-stub entry (the crash this one hid
+  behind); PRD-3D-GAMES-AND-ASSETS §9; `scripts/vendor-three.mjs` comment
+  ("Add a name here AND to the prompt together").
+
 ### 2026-07-20 — Multiplayer games could NEVER load in the preview: the prompt promises an SDK the preview didn't provide
 
 - **Symptom (what the user saw):** owner UAT, days of struggle on one game —

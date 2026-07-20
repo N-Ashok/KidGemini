@@ -52,6 +52,10 @@ const THREE_EXPORTS = [
   'Group', 'Vector3', 'Box3',
   'BoxGeometry', 'SphereGeometry', 'ConeGeometry', 'CylinderGeometry',
   'PlaneGeometry', 'TorusGeometry', 'CapsuleGeometry', 'RingGeometry',
+  // 2026-07-20 ("DoubleSide" incident): custom flat outlines — tracks, roads,
+  // stars. The model reached for these untaught and killed a game on its
+  // import line; now they're vendored AND taught.
+  'Shape', 'ShapeGeometry', 'DoubleSide',
   'MeshStandardMaterial', 'MeshBasicMaterial', 'Mesh',
   'AmbientLight', 'DirectionalLight', 'PointLight', 'HemisphereLight',
   'AnimationMixer', // animated library models (dino walks) — Phase C

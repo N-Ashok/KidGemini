@@ -73,6 +73,31 @@ describe("catalogGates — iteration turns keep the catalog (history scan, §9 e
     expect(catalogGates({ message: "make the car red", history, paid: false })).toEqual({ three: true, audio: false });
   });
 
+  // REGRESSION (BUG-FIX-LOG 2026-07-20, "DoubleSide" — days-long UAT
+  // struggle): a three.js game whose generation FORGOT the <!--USES_THREE-->
+  // marker ran every edit turn with 3d=false; untaught, the model imported
+  // names outside the curated bundle (Shape/ShapeGeometry/DoubleSide) and
+  // the whole game died on its import line. The gate must also read the
+  // game's STRUCTURE — an import from "three", the importmap entry, or a
+  // loadModel() call — not just the marker the model remembered to write.
+  it("a marker-less game that IMPORTS three still keeps the 3D catalog (structural evidence)", () => {
+    const noMarker =
+      '<html><head><script type="importmap">{"imports":{"three":"https://assets.ariantra.com/three.07fb80.js"}}</script></head>' +
+      '<body><!--USES_MULTIPLAYER--><script type="module">import { Scene } from "three";</script></body></html>';
+    expect(catalogGates({ message: "add an oval track", history: [msg("assistant", "Here! 🌟", noMarker)], paid: false }))
+      .toEqual({ three: true, audio: false });
+  });
+
+  it("a marker-less game calling loadModel() keeps the 3D catalog", () => {
+    const history = [msg("assistant", "Here! 🌟", '<html><script>loadModel("car").then(m => {});</script></html>')];
+    expect(catalogGates({ message: "make the car red", history, paid: false })).toEqual({ three: true, audio: false });
+  });
+
+  it("a marker-less game calling playSound()/playMusic() keeps the audio catalog", () => {
+    const history = [msg("assistant", "Here! 🌟", '<html><script>playSound("win"); playMusic("bg_loop_chill");</script></html>')];
+    expect(catalogGates({ message: "add a second level", history, paid: false })).toEqual({ three: false, audio: true });
+  });
+
   it("iterating on a plain 2D silent game stays locked (no keyword anywhere)", () => {
     const history = [msg("child", "make me a maze game"), msg("assistant", "Here's your game! 🎮", "<html><canvas></canvas></html>")];
     expect(catalogGates({ message: "add more walls", history, paid: false })).toEqual({ three: false, audio: false });

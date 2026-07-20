@@ -20,6 +20,7 @@ import { DEVICE_PRESETS, deviceById, fitScale, orientedSize } from "@/lib/device
 import { injectPreviewInstrumentation } from "@/lib/preview-verify";
 import { injectPreviewSdkStub } from "@/lib/preview-sdk-stub";
 import { keyToPanelAction, UPDATING_LINE } from "@/lib/preview-pane";
+import { buildErrorReport, hasExtremeError } from "@/lib/error-report";
 import { usePreviewVerify } from "./usePreviewVerify";
 import { IdeaMicTab } from "./IdeaMicTab";
 import { IdeaBag, type BagIdea } from "./IdeaBag";
@@ -90,6 +91,7 @@ export function ArtifactFrame({
   const [publishing, setPublishing] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [consoleMessages, setConsoleMessages] = useState<GameConsoleMessage[]>([]);
+  const [copied, setCopied] = useState(false);
   // Console tab is debug-only now (PRD G1: a kid never sees a console tab).
   const [debug, setDebug] = useState(false);
   useEffect(() => {
@@ -196,6 +198,31 @@ export function ArtifactFrame({
   if (!html) return null;
 
   const errorCount = consoleMessages.filter((m) => m.level === "error").length;
+  // "Something unexpected happened" — the game threw, or verify gave up.
+  // Only then are grown-up details reachable (owner request 2026-07-20): the
+  // console came back for real failures, still never on a healthy game.
+  const extremeError = hasExtremeError({ outcome: state.outcome, errors: consoleMessages });
+  const consoleAvailable = debug || extremeError;
+
+  const copyErrorReport = async () => {
+    const report = buildErrorReport({
+      gameTitle: titleOf(state.currentHtml) || undefined,
+      outcome: state.outcome,
+      failureCode: state.question ? "verify_failed" : null,
+      errors: consoleMessages,
+      userAgent: typeof navigator === "undefined" ? undefined : navigator.userAgent,
+      at: new Date().toISOString(),
+    });
+    try {
+      await navigator.clipboard.writeText(report);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2_000);
+    } catch {
+      // Clipboard blocked (permissions/older browser): open the console tab
+      // so the details are at least selectable by hand — never a dead end.
+      setTab("console");
+    }
+  };
 
   const tabBtn = (t: Tab) =>
     `rounded-full px-3 py-1 text-sm font-medium ${
@@ -224,7 +251,7 @@ export function ArtifactFrame({
           <button onClick={() => setTab("code")} className={tabBtn("code")} disabled={covered}>
             {"</>"} Code
           </button>
-          {debug && (
+          {consoleAvailable && (
             <button onClick={() => setTab("console")} className={`relative ${tabBtn("console")}`} disabled={covered}>
               🛠 <span className="hidden sm:inline">Console</span>
               {errorCount > 0 && (
@@ -358,8 +385,18 @@ export function ArtifactFrame({
 
       {/* §9.1 — repair exhausted: a question, never an apology + stack trace. */}
       {state.question && tab === "preview" && (
-        <div className="border-b border-orange-100 bg-orange-50 px-4 py-2 text-sm text-orange-800">
-          {state.question}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-orange-100 bg-orange-50 px-4 py-2 text-sm text-orange-800">
+          <span>{state.question}</span>
+          {/* Grown-up escape hatch (owner request 2026-07-20): one tap puts
+              the whole diagnosis on the clipboard — no stack trace shown to
+              the kid unless they open the console tab themselves. */}
+          <button
+            onClick={copyErrorReport}
+            className="shrink-0 rounded-full border border-orange-300 px-3 py-1 text-xs font-semibold text-orange-800 hover:bg-orange-100"
+            title="Copy the technical details for a grown-up"
+          >
+            {copied ? "✓ Copied" : "📋 Copy error details"}
+          </button>
         </div>
       )}
 
@@ -489,7 +526,20 @@ export function ArtifactFrame({
           <code>{state.currentHtml}</code>
         </pre>
       )}
-      {tab === "console" && debug && (
+      {tab === "console" && consoleAvailable && (
+        <div className="flex items-center justify-between gap-2 border-b border-neutral-800 bg-neutral-950 px-3 py-2">
+          <span className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">
+            Error details · for a grown-up
+          </span>
+          <button
+            onClick={copyErrorReport}
+            className="rounded-full border border-neutral-700 px-3 py-1 text-xs font-semibold text-neutral-200 hover:bg-neutral-800"
+          >
+            {copied ? "✓ Copied" : "📋 Copy all"}
+          </button>
+        </div>
+      )}
+      {tab === "console" && consoleAvailable && (
         <div className="min-h-0 flex-1 overflow-auto bg-neutral-950 p-3 font-mono text-[12px] leading-5">
           {consoleMessages.length === 0 ? (
             <p className="text-neutral-500">No console output yet — play the game to see logs and errors here.</p>
