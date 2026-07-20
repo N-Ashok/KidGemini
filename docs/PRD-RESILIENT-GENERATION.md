@@ -161,3 +161,55 @@ however good the eventual answer is.
 
 Pinned by `gemini.fallback.test.ts` F.20–F.22. Note the streaming path is
 unaffected: it RACES rather than queues, so depth there does not add wait.
+
+---
+
+## 11. New-game detection → "start a new chat?" prompt (owner decision 2026-07-20, APPROVED, not yet built)
+
+**The idea (owner):** when a child in a game chat actually asks for a *different*
+game ("now make a football game"), don't silently rebuild in place — recognise
+it and ask: *"That sounds like a whole new game — want to start a fresh chat for
+it?"* Two payoffs: (1) explicit consent before a destructive full rebuild, and
+(2) one chat stays one game, so the record is clean and history-trim can't mix
+versions.
+
+This does NOT replace fixing `inSource=false` (§9, KNOWN_BUGS #5). It reduces how
+often the destructive path is reached and makes it consensual when it is. A
+patch can still misfire inside a single-game chat, so the diagnosis is still owed.
+
+**Why regeneration is genuinely needed — the decision table:**
+
+| Case | Patch works? | Handled today |
+|---|---|---|
+| No game yet ("make a racing game") | Nothing to patch | ✅ `lastGameIndex === -1` |
+| A DIFFERENT game ("now a football game") | Patch would be the whole file | ❌ treated as an edit → full-file reply → strictEditRetry → regeneration. Right outcome, wasteful path — **this prompt targets it** |
+| Structural change ("make it 3D"/"two-player") | Touches ~every line | ❌ same. (3D + multiplayer already have gates — the system half-knows) |
+| Base unusable (blank/dead imports) | Patching a corpse yields a corpse | ⚠️ partial: import-lint corrective retry (`route.ts:461`) |
+| Accumulated drift after many patches | speculative — no evidence in logs | ignore until observed |
+
+Regeneration should follow the CHILD'S INTENT, never our machinery failing. Today
+the ONLY regeneration trigger that fires in practice is patch *failure*, which is
+backwards.
+
+**Detection — chosen approach: model self-declares, corroborated.** The edit
+prompt (`GAME_EDIT_PROMPT_SECTION`) already asks for one sentence before the
+patch; add "if this is really a different game, not a change to this one, say so
+instead." It sees both the request and the current game, costs nothing extra, and
+is corroborated by the signal we already compute (model returned a full file, not
+a patch). Rejected alternatives: keyword heuristics ("add a football" false-
+positives), and a separate classifier call (latency + cost on every edit turn to
+catch a rare case).
+
+**Risks + mitigations:**
+
+| Risk | Mitigation |
+|---|---|
+| False positive interrupts a child mid-flow | Fail toward NOT asking — only prompt on high confidence; ambiguity stays an edit |
+| Choice friction | One tap, no typing: "New game 🎮" / "Change this one ✏️" |
+| Child fears losing work | Nothing is lost either way — old game stays in the old chat, playable. Say so in the copy |
+| Prompt ignored/dismissed | Default to edit — the safe path never destroys |
+| In-place rebuild hides regressions | If "change this one", it IS a real regeneration → fire `REBUILT_GAME_LINE` (already exists) |
+
+**Build order (test-first):** (1) detection signal + decision logic — pure,
+testable, no UI; (2) the stream event; (3) the two-button UI. Prove the risky
+judgment before it reaches a child's screen.
