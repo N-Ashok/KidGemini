@@ -45,6 +45,17 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-21 — a provider false-positive safety block told a mid-build kid to "talk about something else", same as a real content block
+
+- **Symptom (what the user saw):** a valid game-edit request (e.g. "put the score below the car") occasionally hit the provider's own safety layer (finishReason SAFETY) and the kid got the gentle topic-change line — "Let's talk about something else!" — even though they'd done nothing wrong and were mid-build. It read as "Ari refused my game."
+- **Surface area:** `src/app/api/chat/route.ts` (the `finishReason SAFETY` / `SafetyBlockedError` output-block path), `src/app/api/chat/route.test.ts`, new `src/lib/chat-copy.ts`.
+- **Root cause:** a single `KIND_REDIRECT` string served BOTH block classes — a genuine INPUT block (the child typed something the rules refuse: profanity/self-harm/PII) AND a MODEL false-positive (the request was allowed, the provider glitched on generation). The topic-change copy is right for the former and wrong/confusing for the latter. Class: **one message conflating two distinct outcomes.**
+- **Fix:** distinct copy per case. `MODEL_GLITCH_RETRY` ("Oops, that one tangled me up! Say it another way and I'll keep building your game. ✨") is sent on the provider-safety output block; `KIND_REDIRECT` still serves genuine input blocks. Fail-closed posture is UNCHANGED — the generation is still blocked, still parent-alerted, still logged; only the kid-facing wording differs. **Both constants moved into `src/lib/chat-copy.ts`** (owner call 2026-07-21): a Next App Router route file may only export request handlers/config, so exporting them from `route.ts` for the test broke the build (`.next/types` `OmitWithTag`) — a lib module is their correct home.
+- **Result (verified):** `route.test.ts` +2 cases — a model glitch gets `MODEL_GLITCH_RETRY` not `KIND_REDIRECT`; a hard input block still gets `KIND_REDIRECT` (and never calls Gemini). 55/55 in that file; full suite green; typecheck clean (the route-export build error is resolved by the lib move).
+- **Impact:** kids no longer read a topic-change deflection after a provider hiccup on a perfectly fine game edit — they're invited to rephrase and continue. No safety-posture change (blocks still block + alert).
+- **Prevention:** the two messages are now separate, named constants with tests asserting each block class maps to the correct one — the "one string, two meanings" conflation can't silently return. Shared kid-facing copy lives in `lib/`, never exported from a route file.
+- **Related:** the `finishReason SAFETY` fail-closed handling (BUG-FIX-LOG 2026-07-20, "a model SAFETY block read as an outage").
+
 ### 2026-07-21 — "✨ Make my game better!" was dead while Ari was building: the button couldn't send ideas mid-generation, and there was no way to queue them
 
 - **Symptom (what the user saw):** while a game was still generating, opening the 🎒 Idea Bag and tapping "✨ Make my game better!" did nothing useful — it closed the panel but the ideas stayed bagged and nothing went to Ari. The button read "🛠️ Still building the last one…" and was greyed out. Owner ask (three messages): the ideas "need to send to Ari and make the game better", and "I should be allowed to send ideas and it should be queued and worked upon after that response lands."

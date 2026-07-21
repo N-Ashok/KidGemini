@@ -25,6 +25,7 @@ import { ensureMultiplayerMarker } from "@/lib/multiplayer-gate";
 import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
 import { RulesClassifier } from "@/lib/safety.rules";
+import { KIND_REDIRECT, MODEL_GLITCH_RETRY } from "@/lib/chat-copy";
 import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore, SqliteTurnResultStore, SqliteScreenTimeStore } from "@/lib/db";
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
@@ -42,9 +43,6 @@ const alerts = new SqliteAlertStore();
 const usage = new SqliteUsageStore();
 const rateLimit = new SqliteRateLimitStore();
 const turnResults = new SqliteTurnResultStore();
-
-const KIND_REDIRECT =
-  "Let's talk about something else! How about a fun fact, a story, or a game? 🌟";
 
 const estTokens = (t: string) => Math.ceil(t.length / 4);
 
@@ -348,7 +346,7 @@ export async function POST(req: NextRequest) {
         console.warn(`[api/chat] ⛔ model output safety-blocked @${ms()}ms — redirecting (fail closed)`);
         alert("model", full || message, { category: null, severity: "high", action: "hard_block", reason: "model output blocked by the provider (finishReason SAFETY)" });
         if (replyId) trackTurn(() => turnResults.fail(replyId, userId, Date.now()));
-        send({ type: "blocked", text: KIND_REDIRECT });
+        send({ type: "blocked", text: MODEL_GLITCH_RETRY });
         return;
       }
       console.error(`[api/chat] ✖ stream error @${ms()}ms: ${(err as Error).message}`);

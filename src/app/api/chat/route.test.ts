@@ -17,6 +17,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // when a whole-game rebuild happened (penguin-maze hardening, 2026-07-18).
 import { REBUILT_GAME_LINE, FRESH_GAME_LINE } from "@/lib/game-edit";
 import { SafetyBlockedError } from "@/lib/model-runner";
+import { KIND_REDIRECT, MODEL_GLITCH_RETRY } from "@/lib/chat-copy";
 
 // getAriantraSession() — toggled per test (SSO session).
 const authMock = vi.fn();
@@ -56,13 +57,17 @@ vi.mock("@/lib/assets/inject", () => ({
   injectAssets: (html: string) => injectMock(html),
 }));
 
-// Input rules classifier — always allow (we're testing the gate, not safety).
+// Input rules classifier — defaults to allow (we're testing the gate, not
+// safety), but the verdict is mutable so the input-block path can be exercised.
 // The Flash-Lite classifier is gone from this route entirely (2026-07-09):
 // output safety = Gemini built-in blocking + child-safety system prompt.
+let ruleVerdict: { category: string | null; severity: string; action: string; reason: string } = {
+  category: null, severity: "low", action: "allow", reason: "",
+};
 vi.mock("@/lib/safety.rules", () => ({
   RulesClassifier: class {
     classifySync() {
-      return { category: null, severity: "low", action: "allow", reason: "" };
+      return ruleVerdict;
     }
   },
 }));
@@ -184,6 +189,7 @@ beforeEach(() => {
   usedByIp.mockReturnValue(0);
   usedByUserSince.mockReturnValue(0);
   rateHit.mockReturnValue({ state: "ok" });
+  ruleVerdict = { category: null, severity: "low", action: "allow", reason: "" };
 });
 
 afterEach(() => {
@@ -999,6 +1005,41 @@ describe("POST /api/chat — model output safety block (finishReason SAFETY, KNO
     expect(events.some((e) => e.type === "blocked")).toBe(true);
     expect(events.some((e) => e.type === "error")).toBe(false);
     expect(events.some((e) => e.type === "done")).toBe(false);
+  });
+
+  // A model false-positive (the child's request was fine, the provider glitched)
+  // must NOT tell the kid to "talk about something else" — they were mid-build
+  // and did nothing wrong. It owns the hiccup and invites a retry instead
+  // (owner call 2026-07-21; BUG-FIX-LOG false-positive-on-valid-edit).
+  it("uses the retry copy — NOT the topic-change redirect — for a model glitch", async () => {
+    replyStreamMock.mockReturnValue((async function* (): AsyncGenerator<never> {
+      throw new SafetyBlockedError("gemini-3-flash-preview");
+    })());
+
+    const res = await POST(makeReq({ message: "put the score below the car", history: [] }));
+    const text = await res.text();
+    const blocked = text.trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.type === "blocked");
+
+    expect(blocked?.text).toBe(MODEL_GLITCH_RETRY);
+    expect(blocked?.text).not.toBe(KIND_REDIRECT);
+  });
+});
+
+describe("POST /api/chat — genuine input block keeps the gentle topic-change redirect", () => {
+  beforeEach(() => {
+    authMock.mockResolvedValue(null);
+  });
+
+  it("a hard-blocked INPUT still gets KIND_REDIRECT (not the model-glitch retry), and never calls Gemini", async () => {
+    ruleVerdict = { category: "profanity", severity: "high", action: "hard_block", reason: "Matched blocked term (rule)." };
+
+    const res = await POST(makeReq({ message: "something the rules block", history: [] }));
+    const text = await res.text();
+    const blocked = text.trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.type === "blocked");
+
+    expect(blocked?.text).toBe(KIND_REDIRECT);
+    expect(blocked?.text).not.toBe(MODEL_GLITCH_RETRY);
+    expect(replyStreamMock).not.toHaveBeenCalled();
   });
 });
 
