@@ -32,6 +32,16 @@ Today a kid must abandon the game to say anything; most just give up.
    loop — one generation for N ideas, full history context, regenerate works,
    parents can read exactly what was asked. Full screen collapses (desktop) /
    panel flips to chat (mobile) so the kid watches it land.
+   **Queue-while-busy (2026-07-21, BUG-FIX-LOG):** ✨ is ALWAYS enabled. Tapping
+   it while a build is still streaming QUEUES the bundle (button reads "✨ Send
+   these — Ari builds them next!", a "⏳ Ari will add your ideas next!" pill
+   shows by the 🎒 chip) and it fires automatically the moment that turn lands.
+   The old behaviour (`disabled={busy}` + a `busy` early-return in
+   `handleMakeBetter`) left the button dead mid-build. The send-now-vs-queue
+   and flush decisions are pure helpers (`makeBetterOnClick`/`ideaQueueAction`
+   in `idea-bag.ts`); the queue self-clears if every queued idea is discarded
+   while waiting, and ideas still flip to `sent` only on `done` (a failed
+   queued send keeps them bagged).
 4. **↔ Pull-to-resize panel** (`PanelResizeHandle.tsx`): the fixed 440px
    desktop pane now resizes (min 360, max 70vw, persisted), CSS-var driven so
    the iframe never remounts.
@@ -130,7 +140,10 @@ U9. Deny mic permission → existing grown-up-help copy, no crash
 U10. ⤢ full screen → tab + chip present and working; Esc returns
 U11. Drag panel edge → clamped resize; reload → width remembered; mobile unaffected
 U12. Mobile: tab mid-edge, bar at bottom; ✨ flips to the chat screen
-U13. While busy: capture still works; ✨ disabled until done
+U13. While busy: capture still works; ✨ stays enabled and QUEUES — tap it mid-
+     build → "⏳ Ari will add your ideas next!" pill by the 🎒 chip → the bundle
+     sends automatically when the current turn lands (bag empties on that
+     success only); discard every queued idea while waiting → queue self-clears
 U14. Fresh device (clear localStorage): first playable preview → dim + tab
      wiggle + bubble, NO voice; 🔊 Hear it reads the line (⏹ Stop while
      speaking); OK dismisses (and silences); reload → gone

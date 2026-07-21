@@ -46,6 +46,9 @@ interface ArtifactFrameProps {
   onDiscardIdea?: (id: string) => void;
   onEditIdea?: (id: string, text: string) => void;
   onMakeBetter?: () => void;
+  /** ✨ was tapped while Ari was building — the bundle is queued to send when
+      the current turn lands (2026-07-21). Drives the "lined up" affordance. */
+  makeBetterQueued?: boolean;
   /** First-run coach + one-time re-nudge (policy in the container; the tab
       renders them, so covered/unsupported states are enforced structurally). */
   coach?: boolean;
@@ -82,6 +85,7 @@ export function ArtifactFrame({
   onDiscardIdea,
   onEditIdea,
   onMakeBetter,
+  makeBetterQueued,
   coach,
   onCoachDone,
   nudgeMic,
@@ -468,6 +472,7 @@ export function ArtifactFrame({
                   onIdea={onCaptureIdea}
                   ideas={ideas}
                   onMakeBetter={onMakeBetter}
+                  makeBetterQueued={makeBetterQueued}
                   busy={busy}
                   coach={coach}
                   onCoachDone={onCoachDone}
@@ -479,6 +484,7 @@ export function ArtifactFrame({
                 <IdeaBag
                   ideas={ideas}
                   busy={busy}
+                  queued={makeBetterQueued}
                   onDiscard={onDiscardIdea}
                   onEditIdea={onEditIdea}
                   onMakeBetter={onMakeBetter}

@@ -23,6 +23,7 @@ import {
   baggedFor,
   composeIdeaBundle,
   discardIdea,
+  ideaQueueAction,
   loadIdeas,
   markSent,
   saveIdeas,
@@ -853,12 +854,26 @@ export function ChatPanelContainer() {
   // ✨ Make my game better! — the whole bag becomes ONE visible chat message
   // (no hidden side-channel); ideas flip to `sent` only when the generation
   // finishes, so failures keep every thought safely bagged.
-  async function handleMakeBetter() {
-    if (busy) return;
-    const bagged = baggedFor(ideas, activeId);
-    const bundle = composeIdeaBundle(bagged.map((i) => i.text));
-    if (!bundle) return;
+  //
+  // Queue-governed ✨ (owner asks 2026-07-21, BUG-FIX-LOG). EVERY tap just sets
+  // this flag — the effect below decides send/wait/clear via `ideaQueueAction`.
+  // Why not send synchronously: (a) a tap while Ari builds must QUEUE, not die
+  // ("disabled={busy}" made it dead); (b) the mic bar commits a just-spoken
+  // idea (setIdeas) and taps ✨ in the SAME event — a synchronous read would
+  // see the pre-commit empty bag and send nothing ("first tap did nothing,
+  // second worked"). Deferring to an effect lets React's batched commit land
+  // the idea first, so the send always sees the complete bag.
+  const [queuedMakeBetter, setQueuedMakeBetter] = useState(false);
+
+  function handleMakeBetter() {
+    setQueuedMakeBetter(true);
+  }
+
+  // The actual compose-and-send — reads the freshly-committed bag.
+  async function sendMakeBetter() {
     const convoId = activeId;
+    const bundle = composeIdeaBundle(baggedFor(ideas, convoId).map((i) => i.text));
+    if (!bundle) return;
     setExpandState({ expanded: false }); // watch the send land in chat (desktop split view)
     // Mobile: the panel covers the whole screen — flip to the chat so the kid
     // SEES the bundle post; the updated game re-opens the panel via `done`.
@@ -868,6 +883,23 @@ export function ChatPanelContainer() {
       onSuccess: (childId) => setIdeas((list) => markSent(list, convoId, childId)),
     });
   }
+
+  // Resolve a queued ✨: send once Ari is idle WITH ideas bagged (a just-spoken
+  // idea has committed by now — the race fix), keep waiting while a turn is
+  // still building, and self-clear a queue that has no ideas so it can never
+  // fire empty. When it sends, busy flips true and the action drops to "wait" —
+  // no re-fire loop; onSuccess empties the bag on `done` alone.
+  useEffect(() => {
+    const action = ideaQueueAction({ queued: queuedMakeBetter, busy, hasBaggedIdeas: baggedIdeas.length > 0 });
+    if (action === "send") {
+      setQueuedMakeBetter(false);
+      void sendMakeBetter();
+    } else if (action === "clear") {
+      setQueuedMakeBetter(false);
+    }
+    // sendMakeBetter reads fresh state from the render closure each pass.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, queuedMakeBetter, baggedIdeas]);
 
   function handleStop() {
     manualStopRef.current = true;
@@ -1110,6 +1142,9 @@ export function ChatPanelContainer() {
             onDiscardIdea={(id) => setIdeas((list) => discardIdea(list, id))}
             onEditIdea={(id, text) => setIdeas((list) => updateIdeaText(list, id, text))}
             onMakeBetter={handleMakeBetter}
+            // Only the "waiting for the current build" case shows the ⏳ pill —
+            // an idle tap resolves within a tick, so gating on busy avoids a flash.
+            makeBetterQueued={queuedMakeBetter && busy}
             // micSupported is enforced structurally: IdeaMicTab renders
             // nothing (tab OR coach) when Web Speech is unavailable.
             coach={shouldShowCoach({ seen: coachStore.seen, busy, micSupported: true })}

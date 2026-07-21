@@ -23,8 +23,11 @@ export interface BagIdea {
 
 interface IdeaBagProps {
   ideas: BagIdea[];
-  /** Streaming in progress — capture stays open, but ✨ waits its turn. */
+  /** Streaming in progress — ✨ still works; it QUEUES the send (2026-07-21). */
   busy?: boolean;
+  /** ✨ was tapped mid-build: the bundle is lined up to send when this turn
+   *  finishes. Shows a reassuring "up next" affordance instead of silence. */
+  queued?: boolean;
   onDiscard: (id: string) => void;
   /** ✏️ Fix a typo on an already-bagged idea (2026-07-16) — the row's own
    *  textarea is always editable (no separate edit-mode tap), so this just
@@ -33,7 +36,7 @@ interface IdeaBagProps {
   onMakeBetter: () => void;
 }
 
-export function IdeaBag({ ideas, busy, onDiscard, onEditIdea, onMakeBetter }: IdeaBagProps) {
+export function IdeaBag({ ideas, busy, queued, onDiscard, onEditIdea, onMakeBetter }: IdeaBagProps) {
   const [open, setOpen] = useState(false);
   const tts = useTextToSpeech();
   const count = ideas.length;
@@ -58,6 +61,17 @@ export function IdeaBag({ ideas, busy, onDiscard, onEditIdea, onMakeBetter }: Id
           </span>
         )}
       </button>
+
+      {/* Queued reassurance (2026-07-21): the kid tapped ✨ mid-build — tell
+          them it's lined up, so a busy send never looks like it did nothing. */}
+      {queued && !open && (
+        <div
+          role="status"
+          className="absolute bottom-3 left-16 z-20 flex min-h-[44px] items-center gap-1.5 rounded-full bg-brand-600 px-3.5 py-2 text-sm font-extrabold text-white shadow-md"
+        >
+          ⏳ Ari will add your ideas next!
+        </div>
+      )}
 
       {/* The panel — a bottom sheet on mobile, a small centered card on
           desktop; the game stays visible around it either way. */}
@@ -128,6 +142,9 @@ export function IdeaBag({ ideas, busy, onDiscard, onEditIdea, onMakeBetter }: Id
               </li>
             ))}
           </ul>
+          {/* Always enabled (2026-07-21): tapping while Ari builds QUEUES the
+              send rather than sitting dead — the container fires it when the
+              current turn lands. Label tells the kid which will happen. */}
           <button
             type="button"
             onClick={() => {
@@ -135,10 +152,9 @@ export function IdeaBag({ ideas, busy, onDiscard, onEditIdea, onMakeBetter }: Id
               setOpen(false);
               onMakeBetter();
             }}
-            disabled={busy}
-            className="rounded-kid bg-brand-500 px-4 py-3 text-base font-extrabold text-white shadow-md shadow-brand-500/20 hover:bg-brand-600 disabled:opacity-40"
+            className="rounded-kid bg-brand-500 px-4 py-3 text-base font-extrabold text-white shadow-md shadow-brand-500/20 hover:bg-brand-600"
           >
-            {busy ? "🛠️ Still building the last one…" : "✨ Make my game better!"}
+            {busy ? "✨ Send these — Ari builds them next!" : "✨ Make my game better!"}
           </button>
           <button
             type="button"

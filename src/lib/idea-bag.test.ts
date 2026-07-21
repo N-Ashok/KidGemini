@@ -8,6 +8,7 @@ import {
   baggedFor,
   composeIdeaBundle,
   discardIdea,
+  ideaQueueAction,
   IDEA_BUNDLE_LABEL,
   loadIdeas,
   markSent,
@@ -200,5 +201,34 @@ describe("persistence — same never-throw contract as chat-store", () => {
       throw new Error("QuotaExceededError");
     };
     expect(() => saveIdeas(storage, [idea()])).not.toThrow();
+  });
+});
+
+// ✨ Make my game better! (BUG-FIX-LOG 2026-07-21). Two defects, one fix:
+//  (1) the button was `disabled={busy}` and handleMakeBetter early-returned on
+//      busy — dead mid-build, ideas stuck. Owner: "I should be allowed to send
+//      ideas and it should be queued and worked upon after that response lands."
+//  (2) tapping ✨ right after speaking an idea sent NOTHING the first time
+//      (worked the second): the mic bar commits the idea (setIdeas) and taps ✨
+//      in the SAME event, so a synchronous send read the pre-commit, empty bag.
+// Fix: EVERY tap sets a queued flag; `ideaQueueAction` (below) is evaluated by
+// an effect AFTER React's batched commit — so it always sees the complete bag,
+// and naturally waits out a busy turn too. This truth table is the contract.
+describe("ideaQueueAction — the sole governor of a queued ✨ send", () => {
+  it("waits while nothing is queued", () => {
+    expect(ideaQueueAction({ queued: false, busy: false, hasBaggedIdeas: true })).toBe("wait");
+  });
+
+  it("waits while the current turn is still building", () => {
+    expect(ideaQueueAction({ queued: true, busy: true, hasBaggedIdeas: true })).toBe("wait");
+  });
+
+  it("SENDS the moment Ari is idle with ideas bagged — incl. a just-spoken idea now committed (race fix)", () => {
+    expect(ideaQueueAction({ queued: true, busy: false, hasBaggedIdeas: true })).toBe("send");
+  });
+
+  it("clears a queue with no ideas — pre-commit empty OR all discarded while waiting (never fires empty)", () => {
+    expect(ideaQueueAction({ queued: true, busy: true, hasBaggedIdeas: false })).toBe("clear");
+    expect(ideaQueueAction({ queued: true, busy: false, hasBaggedIdeas: false })).toBe("clear");
   });
 });

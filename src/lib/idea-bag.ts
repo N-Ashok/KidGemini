@@ -90,6 +90,29 @@ export function composeIdeaBundle(texts: string[]): string {
   return `${IDEA_BUNDLE_LABEL}\n${texts.map((t) => `- ${t}`).join("\n")}`;
 }
 
+/** Once a ✨ send is queued, what the queue should do as state changes: hold
+ *  while a turn is still building, fire the moment Ari goes idle WITH ideas
+ *  bagged, and drop itself if every queued idea got discarded while waiting (so
+ *  it can never fire an empty bundle).
+ *
+ *  EVERY ✨ tap routes through this queue, not just busy-time taps — that's
+ *  what fixes the "first tap does nothing" race (BUG-FIX-LOG 2026-07-21): the
+ *  mic bar commits a freshly-spoken idea (`onIdea` → `setIdeas`) and taps ✨ in
+ *  the same event; a synchronous send would read the PRE-commit bag and see
+ *  nothing. Setting a queued flag instead lets React's batched commit land the
+ *  idea first, so the effect that calls this evaluates the COMPLETE bag. */
+export type IdeaQueueAction = "send" | "clear" | "wait";
+export function ideaQueueAction(args: {
+  queued: boolean;
+  busy: boolean;
+  hasBaggedIdeas: boolean;
+}): IdeaQueueAction {
+  if (!args.queued) return "wait";
+  if (!args.hasBaggedIdeas) return "clear";
+  if (args.busy) return "wait";
+  return "send";
+}
+
 export function saveIdeas(storage: Storage, ideas: IdeaRecord[]): void {
   try {
     storage.setItem(KEY, JSON.stringify(ideas));

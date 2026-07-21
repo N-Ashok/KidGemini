@@ -45,6 +45,20 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-21 — "✨ Make my game better!" was dead while Ari was building: the button couldn't send ideas mid-generation, and there was no way to queue them
+
+- **Symptom (what the user saw):** while a game was still generating, opening the 🎒 Idea Bag and tapping "✨ Make my game better!" did nothing useful — it closed the panel but the ideas stayed bagged and nothing went to Ari. The button read "🛠️ Still building the last one…" and was greyed out. Owner ask (three messages): the ideas "need to send to Ari and make the game better", and "I should be allowed to send ideas and it should be queued and worked upon after that response lands."
+- **Surface area:** `src/components/IdeaBag.tsx`, `src/components/IdeaMicTab.tsx` (both ✨ buttons), `src/components/ArtifactFrame.tsx` (prop pass-through), `src/components/ChatPanel.container.tsx` (`handleMakeBetter`), `src/lib/idea-bag.ts` (+ `.test.ts`).
+- **Root cause:** by design, `handleMakeBetter` early-returned on `if (busy) return;` and both ✨ buttons were `disabled={busy}` — so during any in-flight generation the whole make-better path was inert. Capture kept working (PRD §2), but there was no path to SEND while busy and no queue, so a kid who bagged ideas mid-build had to wait, remember, and come back. Class: **a busy-gated action that blocks instead of deferring** — the same shape as the composer being unusable mid-turn, but here with no queue behind it.
+- **Fix:** send-while-busy is now a QUEUE, not a block.
+  - Two pure helpers in `idea-bag.ts`: `makeBetterOnClick({busy, hasBaggedIdeas})` → `send-now | queue | ignore`, and `ideaQueueAction({queued, busy, hasBaggedIdeas})` → `send | clear | wait` (fires the queued send when `busy` flips false; self-clears if every queued idea was discarded while waiting, so it can never fire an empty bundle).
+  - `ChatPanel.container.tsx`: `handleMakeBetter` now queues on busy (`queuedMakeBetter` state) and a `useEffect` flushes it via the shared `sendMakeBetter()` the moment the turn lands. Ideas still flip to `sent` only on the `done` success path — a failed/dropped queued send keeps everything bagged (unchanged contract).
+  - Both ✨ buttons are always enabled; labels reflect state ("✨ Make my game better!" idle → "✨ Send these — Ari builds them next!" busy). A blue "⏳ Ari will add your ideas next!" pill by the 🎒 chip confirms a queued send so a busy tap never looks like it did nothing.
+- **Result (verified):** `src/lib/idea-bag.test.ts` +7 cases (26 total) pinning both helpers' truth tables — RED before the helpers existed, green after. Full suite **1083 passed / 1 skipped**; typecheck clean for all touched files (the pre-existing `.next` `KIND_REDIRECT` error in `api/chat/route.ts` is unrelated and was already present in the tree). Visual pass at 375px on all three states (idle button / busy-queues button / queued pill).
+- **Impact:** kids can send their play-time ideas to Ari WITHOUT waiting for the current build; a mid-build tap lines them up and they go automatically when the turn finishes. No data-shape change; the bag-empties-only-on-success guarantee is preserved.
+- **Prevention:** the send-now-vs-queue and flush decisions are pure, unit-tested functions (`makeBetterOnClick`, `ideaQueueAction`) rather than inline `busy` checks — the class ("busy-gated action silently blocks") is now regression-locked at the logic layer, not just the button's `disabled`.
+- **Related:** PRD-IDEA-BUTTON.md §2.3 + U13 (updated — U13 previously specified "✨ disabled until done"); `docs/REGRESSION-TEST-CATALOG.md` idea-bag row.
+
 ### 2026-07-20 — a model SAFETY block read as an outage: `finishReason` was never inspected, so a blocked candidate walked the whole chain and ended in a blank bubble / error
 
 - **Symptom:** a stream that ended with no answer text was treated as an

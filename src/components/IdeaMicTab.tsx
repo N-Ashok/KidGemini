@@ -37,8 +37,11 @@ interface IdeaMicTabProps {
    *  sending it don't require a separate trip through the bag chip. Absent
    *  prop = hidden, matching the rest of this file's optional-prop pattern. */
   onMakeBetter?: () => void;
-  /** A generation is already streaming — mirrors IdeaBag's own CTA disable. */
+  /** A generation is already streaming — ✨ still works, it QUEUES the send
+   *  (2026-07-21), mirroring the Idea Bag panel's own button. */
   busy?: boolean;
+  /** ✨ tapped mid-build: a send is queued for when this turn lands. */
+  makeBetterQueued?: boolean;
   /** First-run coach (docs/PRD-IDEA-BUTTON.md §coach): the tab introduces
       itself with a silent bubble + animation; voice only on the 🔊 Hear it
       button. Policy lives in the container; mic support is enforced HERE
@@ -57,7 +60,7 @@ const NUDGE_MS = 5000;
 // The wiggle-only reminder runs two wiggle cycles (globals.css) then rests.
 const RENUDGE_ANIM_MS = 3000;
 
-export function IdeaMicTab({ onIdea, ideas, onMakeBetter, busy, coach, onCoachDone, nudge, onNudgeShown }: IdeaMicTabProps) {
+export function IdeaMicTab({ onIdea, ideas, onMakeBetter, makeBetterQueued, busy, coach, onCoachDone, nudge, onNudgeShown }: IdeaMicTabProps) {
   const [tab, setTab] = useState<MicTabState>("tucked");
   // Committed (finalized) speech for the CURRENT capture; interim rides on top.
   const [draft, setDraft] = useState("");
@@ -393,10 +396,13 @@ export function IdeaMicTab({ onIdea, ideas, onMakeBetter, busy, coach, onCoachDo
             <button
               type="button"
               onClick={handleMakeBetterFromMic}
-              disabled={busy}
-              className="mt-2 w-full rounded-full bg-brand-500 px-4 py-2.5 text-sm font-extrabold text-white shadow-md shadow-brand-500/20 hover:bg-brand-600 disabled:opacity-40"
+              className="mt-2 w-full rounded-full bg-brand-500 px-4 py-2.5 text-sm font-extrabold text-white shadow-md shadow-brand-500/20 hover:bg-brand-600"
             >
-              {busy ? "🛠️ Still building the last one…" : "✨ Make my game better!"}
+              {makeBetterQueued
+                ? "⏳ Lined up — Ari builds these next!"
+                : busy
+                  ? "✨ Send these — Ari builds them next!"
+                  : "✨ Make my game better!"}
             </button>
           )}
           <div className="mt-2 flex gap-2">

@@ -391,6 +391,11 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   sheet (mobile) / 420px centered card (desktop) with its own corner ✕, and
   every bagged idea is now directly editable (an always-on textarea per row,
   commits on blur via `updateIdeaText`) — no separate edit-mode tap.
+  **Queue-while-busy** (2026-07-21, BUG-FIX-LOG): ✨ is always enabled — tapping
+  it while Ari is still building QUEUES the bundle ("⏳ Ari will add your ideas
+  next!" pill by the 🎒 chip) and it sends automatically when that turn lands;
+  decision in pure helpers `makeBetterOnClick`/`ideaQueueAction`, bag still
+  empties on `done` success only.
   **First-run coach** (same day): the very first playable preview dims and the
   tab introduces itself — wiggle + glow, speech bubble read ALOUD by the buddy
   voice (pre-readers), mini demo, "OK got it". Once per device; tapping the
