@@ -77,6 +77,19 @@ now over-estimate at the top flash rate, never $0).
    PARKED. Patch-mode iteration (like the repair flow's minimal-patch
    contract) is the biggest remaining lever but risks broken games from
    misapplied patches. Revisit at real customer volume.
+7. **Losing calls from a fan-out went unbilled** — ✅ fixed 2026-07-21 (owner
+   ask). The one-shot chain (`runOneShotChain`, used by patch-regen / strict
+   edit retry / repair) keeps earlier attempts ALIVE as it adds backups, so a
+   single request can fire several billable calls while only the winner was
+   recorded. A losing backup that finishes after the winner is now captured
+   (`onLoserResult` → real billed usage) and recorded as **`kind:"fallback"`**:
+   COUNTED in the dashboard cost total, but EXEMPT from the child's quota (our
+   race waste, not their request — same treatment as `repair`). Per-request
+   call visibility lives in `logs/model-decisions.jsonl` (PRD-MODEL-FALLBACK §4).
+   STILL OPEN (smaller): the STREAMING hedge loser is cancelled mid-race
+   (`it.return()`), so it never delivers a usage count — its output is ≈0
+   (it lost by not answering first), leaving only an unbilled input cost. See
+   the note below.
 
 ## Next instrumentation step (before any further optimization)
 
@@ -90,8 +103,14 @@ slash the guest trial severalfold. Cost is now priced from the 4 real types
 (cached at the cached-input rate, thinking at the output rate). The admin
 dashboard adds today/week/month/year/all-time rollups (IST calendar) and ₹
 (via `USD_INR_RATE`). Rows before 2026-07-14 have billed=estimate backfill.
-STILL OPEN: failed attempts (kind `chat-failed`) are not recorded — a stream
-that dies before `usageMetadata` still costs money we don't meter.
+STILL OPEN: attempts that die/lose on the STREAMING path are not billed — a
+stream that dies before `usageMetadata`, or a hedge loser cancelled mid-race,
+still costs (mostly input) money we don't meter. The one-shot fan-out losers
+ARE now billed (`kind:"fallback"`, 2026-07-21 — see Waste ledger #7); the
+streaming remainder is the last open metering gap and is small (hedge is rare;
+loser output ≈0). Fix if it ever matters: estimate the loser's input cost from
+the turn's prompt at the loser model's rate (the ledger already lists every
+`abandoned` loser in `logs/model-decisions.jsonl`).
 
 ## Monitoring runbook
 

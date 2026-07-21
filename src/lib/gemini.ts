@@ -4,6 +4,7 @@
 import "server-only";
 import { GoogleGenAI, HarmBlockThreshold, HarmCategory } from "@google/genai";
 import type { ChatMessage, ChatModel, ImageAttachment, StreamChunk, TokenUsage } from "@/types/chat.types";
+import type { ChainSummary } from "@/types/model-ledger.types";
 import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
 import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection, type PromptTurnContext } from "./assets/prompt-catalog";
 import { catalogGates, type CatalogGates } from "./assets/catalog-gate";
@@ -463,6 +464,14 @@ export class GeminiChatModel implements ChatModel {
     /** Defaults to the ordinary chat deadline. A whole-game regeneration must
      *  pass BUILD_TIMEOUT_MS or it cannot finish (BUG-FIX-LOG 2026-07-20). */
     timeoutMs: number = CHAT_TIMEOUT_MS,
+    /** Per-request decision-ledger sink (owner ask 2026-07-21) — records every
+     *  concurrent call this one-shot fan-out made + the winner. */
+    onLedger?: (summary: ChainSummary) => void,
+    /** LOSING-call cost sink (owner ask 2026-07-21). A one-shot backup that
+     *  finished after the winner is real, already-paid work: this fires with
+     *  its model + real billed usage (+ its text, so the route can estimate if
+     *  the provider reported no usage) so the route bills it as fallback cost. */
+    onLoserCost?: (model: string, usage: TokenUsage | undefined, outputText: string) => void,
   ): Promise<OneShotResult> {
     // Shallow ON PURPOSE — see ONESHOT_MAX_MODELS. Depth here multiplies the
     // child's wait, unlike the streaming path where the hedge races rather
@@ -485,6 +494,13 @@ export class GeminiChatModel implements ChatModel {
         }, { label, retries }),
       slotDeadlineMs: timeoutMs,
       ...this.chainPolicy,
+      onLedger,
+      // Map the losing attempt's settled OneShotResult → its billed usage. Only
+      // value-bearing settlements are billed; an errored backup produced no
+      // usable completion, so there's nothing to charge.
+      onLoserResult: onLoserCost
+        ? (model, result) => { if (result.value) onLoserCost(model, result.value.usage, result.value.text); }
+        : undefined,
     });
   }
 
@@ -524,7 +540,7 @@ export class GeminiChatModel implements ChatModel {
    *  same model-fallback chain replyStream() uses (oneShotWithFallback) —
    *  this is the SAFETY NET for a mismatched patch, so it must not itself be
    *  a dead end on a single bad/unavailable model. */
-  async reply(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean }) {
+  async reply(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean; onLedger?: (summary: ChainSummary) => void; onLoserCost?: (model: string, usage: TokenUsage | undefined, outputText: string) => void }) {
     const ai = getClient();
     try {
       const res = await this.oneShotWithFallback(
@@ -539,6 +555,8 @@ export class GeminiChatModel implements ChatModel {
         // 24576 output tokens). Giving it the 30s chat deadline made it fail
         // on every model, every time — BUG-FIX-LOG 2026-07-20.
         oneShotTimeoutMs(input),
+        input.onLedger,
+        input.onLoserCost,
       );
       return { ...extractArtifact(res.text), usage: res.usage };
     } catch (err) {
@@ -553,7 +571,7 @@ export class GeminiChatModel implements ChatModel {
    *  disobeyed the patch contract once already. Child-safety base prompt
    *  stays: an edit can introduce new visible content. Walks the same
    *  model-fallback chain as every other call. */
-  async strictEditRetry(input: { currentHtml: string; message: string }): Promise<{ text: string; usage?: TokenUsage }> {
+  async strictEditRetry(input: { currentHtml: string; message: string; onLedger?: (summary: ChainSummary) => void; onLoserCost?: (model: string, usage: TokenUsage | undefined, outputText: string) => void }): Promise<{ text: string; usage?: TokenUsage }> {
     const ai = getClient();
     const composed = `Current game source:\n${input.currentHtml}\n\nThe child asked: ${input.message}`;
     const systemInstruction = `${CHILD_SYSTEM_PROMPT}\n\n${GAME_EDIT_STRICT_RETRY_SECTION}`;
@@ -570,6 +588,9 @@ export class GeminiChatModel implements ChatModel {
             })
             .then((r) => this.normalizeGoogle(r)),
         { history: [], message: composed, systemInstruction, maxOutputTokens: 4096 },
+        CHAT_TIMEOUT_MS,
+        input.onLedger,
+        input.onLoserCost,
       );
       return { text: res.text, usage: res.usage };
     } catch (err) {
@@ -586,7 +607,7 @@ export class GeminiChatModel implements ChatModel {
    * call failing outright on a bad/unavailable model must not cost the kid
    * the auto-heal (BUG-FIX-LOG 2026-07-18).
    */
-  async repair(input: { systemPrompt: string; prompt: string }): Promise<{ text: string; usage?: TokenUsage }> {
+  async repair(input: { systemPrompt: string; prompt: string; onLedger?: (summary: ChainSummary) => void }): Promise<{ text: string; usage?: TokenUsage }> {
     const ai = getClient();
     try {
       const res = await this.oneShotWithFallback(
@@ -601,6 +622,8 @@ export class GeminiChatModel implements ChatModel {
             })
             .then((r) => this.normalizeGoogle(r)),
         { history: [], message: input.prompt, systemInstruction: input.systemPrompt, maxOutputTokens: 4096 },
+        CHAT_TIMEOUT_MS,
+        input.onLedger,
       );
       return { text: res.text, usage: res.usage };
     } catch (err) {
@@ -611,7 +634,7 @@ export class GeminiChatModel implements ChatModel {
   /** Streaming reply — yields answer deltas AND thought summaries as they're
    *  generated. Thought parts (part.thought, includeThoughts in builder mode)
    *  become the kid-facing planning line; they are NOT part of the answer. */
-  async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; activeGameMessageId?: string; forceRebuild?: boolean; preferAlternateModel?: boolean }): AsyncGenerator<StreamChunk> {
+  async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; activeGameMessageId?: string; forceRebuild?: boolean; preferAlternateModel?: boolean; onLedger?: (summary: ChainSummary) => void }): AsyncGenerator<StreamChunk> {
     const ai = getClient();
     // "🔄 Different one" (PRD-INSTANT-ALTERNATE, on-demand option): lead the
     // chain with the FALLBACK model so the regeneration is a genuinely different
@@ -657,6 +680,7 @@ export class GeminiChatModel implements ChatModel {
       ...this.chainPolicy,
       stallMs: Number(process.env.GEMINI_STALL_SWITCH_MS) || STALL_SWITCH_MS,
       wrapError: (err) => new GeminiError(`chat stream failed: ${(err as Error).message}`),
+      onLedger: input.onLedger,
     });
   }
 }

@@ -9,6 +9,8 @@
 import "@/lib/logger"; // tees all server console output to logs/app.log
 import { NextRequest, NextResponse } from "next/server";
 import { GeminiChatModel, extractArtifact } from "@/lib/gemini";
+import { writeDecision } from "@/lib/model-ledger";
+import type { ChainSummary } from "@/types/model-ledger.types";
 import { SafetyBlockedError } from "@/lib/model-runner";
 import {
   isGameEditTurn, currentGameHtml, editReplyProse, looksLikeAttemptedEdit, looksLikeCompleteDocument,
@@ -210,6 +212,21 @@ export async function POST(req: NextRequest) {
   const ms = () => Date.now() - t0;
   console.log(`[api/chat] ▶ start userId=${userId} chars=${message.length} image=${image ? image.mimeType : "no"} chatModel=${chatModelName}`);
 
+  // Per-request model-decision ledger (owner ask 2026-07-21). Each model-call
+  // EPISODE this turn fires — the streamed answer, plus any strict-edit retry or
+  // patch-fallback regeneration — writes its own line to logs/model-decisions.jsonl,
+  // all sharing this request's id, tagged by `kind`. That makes "one request,
+  // N model calls, this one won" answerable long after the fact — the piece
+  // usage_events (winner-only) and app.log (fallback lines only) can't give.
+  const mkLedger = (kind: string) => (summary: ChainSummary) =>
+    writeDecision({
+      ts: new Date().toISOString(),
+      reqId: replyId ?? "no-reply-id",
+      userId, kind,
+      chain: summary.chain, attempts: summary.attempts, winner: summary.winner,
+      calls: summary.attempts.length,
+    });
+
   // Gemini bills a small fixed token count per image tile (~258 for our ≤1024px
   // uploads) — count it so the guest gate can't be bypassed with picture spam.
   const IMAGE_PROMPT_TOKENS = 258;
@@ -242,6 +259,35 @@ export async function POST(req: NextRequest) {
   function alert(origin: "child" | "model", triggerText: string, v: SafetyVerdict) {
     alerts.record({ origin, category: v.category, severity: v.severity, action: v.action, triggerText, reason: v.reason });
   }
+  // A LOSING call from a one-shot fan-out (a backup that finished after the
+  // winner) — owner ask 2026-07-21. It's real, already-paid work, so record it
+  // as kind:"fallback": COUNTED in the dashboard cost total, but EXEMPT from the
+  // child's quota (our race waste isn't their spend — see db.ts gate queries).
+  // Fires asynchronously, AFTER the response has streamed; fail-safe like every
+  // other bookkeeping write. Real billed usage when the provider reported it;
+  // otherwise output is estimated from the loser's own text.
+  function recordLoser(model: string, real: TokenUsage | undefined, outputText: string) {
+    try {
+      const promptTokens = estTokens(message) + (image ? IMAGE_PROMPT_TOKENS : 0);
+      const outputTokens = real?.outputTokens ?? estTokens(outputText);
+      usage.record({
+        userId, userLabel, model, kind: "fallback", promptTokens, outputTokens,
+        userAgent: req.headers.get("user-agent"),
+        billedPromptTokens: real?.promptTokens,
+        billedOutputTokens: real?.outputTokens,
+        thoughtTokens: real?.thoughtTokens,
+        cachedTokens: real?.cachedTokens,
+        costUsd: estimateCostUsd(model, {
+          prompt: real?.promptTokens ?? promptTokens,
+          output: real?.outputTokens ?? outputTokens,
+          thoughts: real?.thoughtTokens,
+          cached: real?.cachedTokens,
+        }),
+        geo, requestText: message, outputText, blocked: false,
+      });
+      console.log(`[api/chat] 💸 billed losing call ${model} (kind=fallback, ${outputTokens} out tok) @${ms()}ms`);
+    } catch { /* bookkeeping must never break a turn */ }
+  }
 
   // ── 1. INPUT: instant deterministic check (no LLM latency) ────────────────
   const inRules = rules.classifySync({ text: message, origin: "child" });
@@ -263,7 +309,7 @@ export async function POST(req: NextRequest) {
     if (replyId) trackTurn(() => turnResults.start(replyId, userId, Date.now()));
     try {
       console.log(`[api/chat] streaming… @${ms()}ms`);
-      for await (const chunk of chatModel.replyStream({ history, message, image, activeGameMessageId, forceRebuild, preferAlternateModel })) {
+      for await (const chunk of chatModel.replyStream({ history, message, image, activeGameMessageId, forceRebuild, preferAlternateModel, onLedger: mkLedger("chat") })) {
         if (chunk.kind === "thought") {
           // Thought summaries drive the kid-facing planning line during the
           // silent thinking phase. kidThoughtLine fails closed (null = drop):
@@ -429,7 +475,7 @@ export async function POST(req: NextRequest) {
         displayText = regenReplyProse(full);
         deliverableHtml = toDeliverable(applied.html);
         try {
-          const retry = await chatModel.strictEditRetry({ currentHtml, message });
+          const retry = await chatModel.strictEditRetry({ currentHtml, message, onLedger: mkLedger("strict-edit"), onLoserCost: recordLoser });
           trackTurn(() => recordUsage("chat", servedModel, message, retry.text, false, retry.usage));
           const retryApplied = applyPatch(currentHtml, retry.text);
           if (retryApplied.ok && retryApplied.mode === "patch") {
@@ -481,7 +527,7 @@ export async function POST(req: NextRequest) {
         // the unchanged regeneration below. Capped at this single attempt.
         let rescued = false;
         try {
-          const rung = await chatModel.strictEditRetry({ currentHtml, message });
+          const rung = await chatModel.strictEditRetry({ currentHtml, message, onLedger: mkLedger("strict-edit"), onLoserCost: recordLoser });
           trackTurn(() => recordUsage("chat", servedModel, message, rung.text, false, rung.usage));
           const rungApplied = applyPatch(currentHtml, rung.text);
           const rungBadImports =
@@ -508,7 +554,7 @@ export async function POST(req: NextRequest) {
         } else {
         console.warn(`[api/chat] patch failed (${reason}) — falling back to full regeneration @${ms()}ms`);
         try {
-          const fallback = await chatModel.reply({ history, message, image, forceFullRegen: true });
+          const fallback = await chatModel.reply({ history, message, image, forceFullRegen: true, onLedger: mkLedger("regen"), onLoserCost: recordLoser });
           trackTurn(() => recordUsage("chat", servedModel, message, fallback.text, false, fallback.usage));
           // Honest messaging (penguin-maze hardening): this path REPLACED the
           // child's game — the bare fresh-build default would read as a small
@@ -563,6 +609,7 @@ export async function POST(req: NextRequest) {
               `three bundle. Rebuild the game importing ONLY these names from "three": ${CURATED_IMPORT_NAMES.join(", ")}.)`,
             image,
             forceFullRegen: true,
+            onLedger: mkLedger("regen"),
           });
           trackTurn(() => recordUsage("chat", servedModel, message, corrective.text, false, corrective.usage));
           if (corrective.artifactHtml && unknownThreeImports(corrective.artifactHtml).length === 0) {
@@ -605,7 +652,7 @@ export async function POST(req: NextRequest) {
         console.warn(`[api/chat] screen-time tracking failed (ignored): ${(err as Error).message}`);
       }
     }
-    console.log(`[api/chat] ✓ shown @${ms()}ms`);
+    console.log(`[api/chat] ✓ shown by ${servedModel}${servedModel === chatModelName ? "" : " (fallback)"} @${ms()}ms`);
   }, guestCookieHeader(setGuestCookie));
 }
 

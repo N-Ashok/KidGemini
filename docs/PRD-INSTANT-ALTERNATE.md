@@ -3,6 +3,14 @@
 2026-07-20 · Status: **On-demand variant SHIPPED; saved-runner-up variant
 DEFERRED** (owner decisions same day).
 
+**2026-07-21 — button hidden (code kept).** The owner found the "🔄 Different
+one" copy misleading, so the button's JSX in `ChatPanel.container.tsx` is
+commented out (UI removed). The whole path behind it is intact —
+`handleDifferentOne` → `regenerate(true)` → `preferAlternateModel` chain reorder,
+the `differentVersion` API field, and `gemini.different-one.test.ts` DA.1–DA.3 —
+so it can be resurfaced via a clearer entry point later. The `preferAlternateModel`
+path is currently only reachable via a direct API call with `differentVersion:true`.
+
 ## Status update (2026-07-20)
 
 The owner asked whether the second LLM response is saved and usable. It is NOT —

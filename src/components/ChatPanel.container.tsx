@@ -1011,9 +1011,10 @@ export function ChatPanelContainer() {
                   </button>
                 </div>
               )}
-              {/* "Different one" (PRD-INSTANT-ALTERNATE): on the latest game reply,
-                  regenerate with the fallback model for a genuinely different take.
-                  Not shown on the new-game consent prompt (no game there). */}
+              {/* "Different one" (PRD-INSTANT-ALTERNATE): button intentionally
+                  hidden for now — the copy read as misleading. The regenerate
+                  path (handleDifferentOne → regenerate(true)) is kept intact so
+                  we can resurface it via a clearer entry point later.
               {m.role === "assistant" && m.artifactHtml && !busy && i === active.messages.length - 1 && (
                 <div className="mt-1 pl-1">
                   <button
@@ -1024,6 +1025,7 @@ export function ChatPanelContainer() {
                   </button>
                 </div>
               )}
+              */}
               </div>
             ))}
             {busy && active.messages[active.messages.length - 1]?.text === "" && (

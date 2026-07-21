@@ -15,8 +15,13 @@ export interface UsageEvent {
   userLabel: string | null; // friendly name shown in the dashboard
   model: string;
   /** "repair" = self-healing preview fix call — recorded for cost visibility
-   *  but EXEMPT from the guest/daily token gates (PRD §12 decision). */
-  kind: "chat" | "safety" | "repair";
+   *  but EXEMPT from the guest/daily token gates (PRD §12 decision).
+   *  "fallback" = a LOSING/superseded model call from a fan-out (a one-shot
+   *  backup that finished after the winner, owner ask 2026-07-21). We still
+   *  paid for it, so it's recorded and COUNTED IN THE DASHBOARD COST — but,
+   *  like repair, EXEMPT from the child's quota (our race waste isn't their
+   *  spend). Carries the loser's model + real billed usage. */
+  kind: "chat" | "safety" | "repair" | "fallback";
   /** CHAR-ESTIMATE of the visible request text. The guest/daily gates are
    *  tuned to these two estimate fields — billed* below carry the real counts. */
   promptTokens: number;

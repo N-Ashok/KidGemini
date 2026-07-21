@@ -250,16 +250,19 @@ export class SqliteUsageStore implements UsageStore {
     return event;
   }
 
-  // Gate tallies exclude kind:'repair' — self-healing repair calls are exempt
-  // from the guest/daily budgets by decision (PRD-SELF-HEALING-PREVIEW §12,
-  // 2026-07-10): the kid didn't ask for the bug. Repair rows are still
-  // recorded, so admin cost dashboards (summarizeSince) see them in full.
+  // Gate tallies exclude kind:'repair' AND kind:'fallback' — neither is spend
+  // the child chose. Repair: self-healing fix calls, exempt by decision
+  // (PRD-SELF-HEALING-PREVIEW §12, 2026-07-10 — the kid didn't ask for the
+  // bug). Fallback: a LOSING model call from a fan-out (owner ask 2026-07-21 —
+  // our race/backup waste, not the child's request). Both are still RECORDED
+  // so admin cost dashboards (summarizeSince/totalsSince) see them in full.
+  private static readonly GATE_EXCLUDED_KINDS = "('repair','fallback')";
 
   tokensUsedByUser(userId: string, sinceMs = 0): number {
     const row = getDb()
       .prepare(
         `SELECT COALESCE(SUM(promptTokens + outputTokens), 0) AS total
-         FROM usage_events WHERE userId = ? AND createdAt >= ? AND kind != 'repair'`,
+         FROM usage_events WHERE userId = ? AND createdAt >= ? AND kind NOT IN ${SqliteUsageStore.GATE_EXCLUDED_KINDS}`,
       )
       .get(userId, sinceMs) as { total: number };
     return row.total;
@@ -269,7 +272,7 @@ export class SqliteUsageStore implements UsageStore {
     const row = getDb()
       .prepare(
         `SELECT COALESCE(SUM(promptTokens + outputTokens), 0) AS total
-         FROM usage_events WHERE ip = ? AND userId LIKE 'guest:%' AND createdAt >= ? AND kind != 'repair'`,
+         FROM usage_events WHERE ip = ? AND userId LIKE 'guest:%' AND createdAt >= ? AND kind NOT IN ${SqliteUsageStore.GATE_EXCLUDED_KINDS}`,
       )
       .get(ip, sinceMs) as { total: number };
     return row.total;
@@ -279,7 +282,7 @@ export class SqliteUsageStore implements UsageStore {
     const row = getDb()
       .prepare(
         `SELECT COALESCE(SUM(promptTokens + outputTokens), 0) AS total
-         FROM usage_events WHERE userId = ? AND createdAt >= ? AND kind != 'repair'`,
+         FROM usage_events WHERE userId = ? AND createdAt >= ? AND kind NOT IN ${SqliteUsageStore.GATE_EXCLUDED_KINDS}`,
       )
       .get(userId, sinceMs) as { total: number };
     return row.total;

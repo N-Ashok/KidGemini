@@ -99,3 +99,34 @@ describe("failures still behave", () => {
     await expect(run(call, { totalBudgetMs: 60 })).rejects.toThrow(/gave up|timed out|budget/i);
   });
 });
+
+describe("losing-call capture (onLoserResult) — owner ask 2026-07-21", () => {
+  it("B.8 a backup that finishes AFTER the winner is REPORTED, so its real cost can be billed", async () => {
+    // best wins at 30ms; the slot deadline (20ms) has already started ok-model,
+    // which keeps running and resolves at 70ms — a real, already-paid call that
+    // must not vanish. It is NOT the returned value, but it IS reported.
+    const call = (model: string) =>
+      model === "best-model" ? after(30, "winner build") : after(70, "loser build");
+    const losers: Array<{ model: string; result: { value?: unknown; err?: unknown } }> = [];
+
+    const out = await run(call, {
+      onLoserResult: (model: string, result: { value?: unknown; err?: unknown }) => losers.push({ model, result }),
+    });
+    expect(out).toBe("winner build"); // winner unchanged — capture is side-effect only
+    await after(120, null); // let the orphaned backup settle and report
+
+    const ok = losers.find((l) => l.model === "ok-model");
+    expect(ok, "the losing backup is reported once it finishes").toBeDefined();
+    expect(ok!.result.value).toBe("loser build"); // real result → real usage to bill
+    // weak-model never started (we returned before its slot) → not reported.
+    expect(losers.some((l) => l.model === "weak-model")).toBe(false);
+  });
+
+  it("B.9 the winner is never reported as a loser", async () => {
+    const call = (model: string) => (model === "best-model" ? after(10, "winner") : new Promise<string>(() => {}));
+    const losers: string[] = [];
+    await run(call, { onLoserResult: (model: string) => losers.push(model) });
+    await after(40, null);
+    expect(losers).not.toContain("best-model");
+  });
+});

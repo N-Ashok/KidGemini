@@ -95,8 +95,47 @@ never dead-end prod (`src/lib/model-fallback.ts`).
    busy right now — I'll keep trying! 🤖" + ONE automatic client retry after
    ~30s (visible countdown keeps it honest). Never an infinite loop.
 4. **Operator visibility** — `model_fallback` Mixpanel event
-   `{from, to, reason, call: chat|build|repair}` + the existing console log.
+   `{from, to, reason, call: chat|build|repair}` + the console log.
    A spike of these = incident dashboard for free.
+   - **Elapsed + served-by in the log (2026-07-21).** Every chain-walk line now
+     names the chain position and the elapsed time since the chain opened
+     (`— falling back to model #2/4 gemini-2.5-flash @21403ms`), the hedge and
+     `race won by` lines are stamped the same way, and a clean finish logs
+     `✓ served by <model> (model #n/N) @<t>ms`. `route.ts` closes each turn with
+     `[api/chat] ✓ shown by <model>[ (fallback)] @<t>ms` — the definitive
+     "what the child actually saw" line after any patch/regen handling. All of
+     it lands in `logs/app.log` via the console tee (`src/lib/logger.ts`).
+     Pinned by `model-runner.logging.test.ts` L.1–L.3.
+   - **Per-request decision ledger (2026-07-21).** app.log is prose and only
+     shows a fallback line when one fired — it can't answer "for THIS one
+     request, how many model calls did we make, why, and which won." That
+     matters most for the one-shot BUILD chain, which fans out (earlier
+     attempts stay alive as backups are added) so a single request can fire
+     several *billable* calls while `usage_events` records only the winner.
+     The runner (`runStreamChain`/`runOneShotChain`) now emits a `ChainSummary`
+     via an injected `onLedger` sink (side-effect only — never alters the walk);
+     `route.ts` writes one JSON line per model-call episode (kind = chat /
+     strict-edit / regen, all sharing the request's `replyId`) to
+     **`logs/model-decisions.jsonl`** (`src/lib/model-ledger.ts`, 10MB cap,
+     fail-safe). Each line: `{ts, reqId, userId, kind, chain, attempts[{model,
+     role, outcome, atMs, chars?}], winner, calls}`. **Metadata only** —
+     response bodies are NOT stored (the winner's body already lives in
+     `turn_results`; storing losers' bodies is the deferred "saved runner-up",
+     see PRD-INSTANT-ALTERNATE §1). Query with `jq`, e.g. requests that fired
+     >1 call: `jq 'select(.calls>1)' logs/model-decisions.jsonl`. Pinned by
+     `model-ledger.test.ts` M.1–M.4 and `model-runner.logging.test.ts` L.4–L.6.
+   - **Losing-call cost is billed (2026-07-21).** The ledger exposed that a
+     fan-out fires several *billable* calls while only the winner hit
+     `usage_events`. Now a one-shot backup that finishes after the winner is
+     captured (`runOneShotChain` `onLoserResult` → `gemini` maps its
+     `OneShotResult` to billed usage → `route` `recordLoser`) and recorded as
+     **`kind:"fallback"`**: added to the admin dashboard cost total, but EXEMPT
+     from the child's quota gates (our race waste, not their request — same as
+     `repair`; see `db.ts` `GATE_EXCLUDED_KINDS`). The winner is unchanged —
+     capture is side-effect only. Known remaining gap: the STREAMING hedge
+     loser is cancelled mid-race so it never reports usage (output ≈0); see
+     COST_TOKEN_BUDGET.md. Pinned by `model-runner.oneshot.test.ts` B.8–B.9 and
+     `db.fallback-exempt.test.ts`.
 
 ## 6. Phases
 

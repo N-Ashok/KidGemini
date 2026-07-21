@@ -20,6 +20,7 @@
 
 import type { StreamChunk, TokenUsage } from "@/types/chat.types";
 import type { GenerationRequest, NormalizedUsage } from "@/types/model-provider.types";
+import type { AttemptEvent, ChainSummary } from "@/types/model-ledger.types";
 
 /**
  * What a non-Google generation adapter exposes to gemini.ts's dispatch. Every
@@ -72,6 +73,12 @@ export interface StreamChainDeps {
   stallMs: number;
   /** Wraps the final throw in the caller's own error type. */
   wrapError: (err: unknown) => Error;
+  /** Per-request decision ledger sink (owner ask 2026-07-21). Called EXACTLY
+   *  once when the chain settles (win or total failure) with every call made
+   *  for this request + the winner. Side-effect only — the caller writes it to
+   *  logs/model-decisions.jsonl; a throw here is swallowed so it can never
+   *  break a turn. */
+  onLedger?: (summary: ChainSummary) => void;
 }
 
 /** Internal marker: every live stream went silent past the watchdog window. */
@@ -140,9 +147,28 @@ function reasonFor(model: string, err: unknown, isModelGone: (m: string, e: unkn
 }
 
 export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<StreamChunk> {
-  const { chain, openStream, shouldTryNextModel, isModelGone, stallMs, wrapError } = deps;
+  const { chain, openStream, shouldTryNextModel, isModelGone, stallMs, wrapError, onLedger } = deps;
+
+  // Elapsed since the chain opened, stamped on every trigger/win line so the
+  // operator log makes it OBVIOUS when the 2nd/3rd model kicked in and which
+  // one served (owner ask 2026-07-21). The file logger tees these to app.log.
+  const t0 = Date.now();
+  const at = () => `@${Date.now() - t0}ms`;
+  const depth = chain.length;
+
+  // Per-request decision ledger: one record per model call, flushed to onLedger
+  // when the chain settles. `role` explains WHY each call was made; the sink
+  // turns it into a line in logs/model-decisions.jsonl.
+  const attempts: AttemptEvent[] = [];
+  let winner: string | null = null;
+  const roleAt = (i: number) => (i === 0 ? "primary" : `fallback#${i + 1}`);
+  const rec = (model: string, role: string, outcome: string, chars?: number) =>
+    attempts.push({ model, role, outcome, atMs: Date.now() - t0, ...(chars !== undefined ? { chars } : {}) });
 
   let answerStarted = false;
+  // Answer chars committed by the current winner — reset whenever a partial is
+  // wiped, so the ledger's `chars` reflects what was actually served.
+  let answerChars = 0;
   // Set when a model died after visible answer text; the NEXT model that
   // actually produces output is prefixed with one `restart` chunk. Survives
   // models that fail at open (no output → nothing new to wipe).
@@ -151,20 +177,23 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
   let hedged = false;
   let lastErr: unknown = null;
 
+  try {
   for (let i = 0; i < chain.length; i++) {
     const model = chain[i]!;
-    if (i > 0) console.warn(`[model-runner] ${reasonFor(model, lastErr, isModelGone)} — falling back to ${model}`);
+    if (i > 0) console.warn(`[model-runner] ${reasonFor(model, lastErr, isModelGone)} — falling back to model #${i + 1}/${depth} ${model} ${at()}`);
     let stream: AsyncIterable<ProviderChunk>;
     try {
       stream = await openStream(model, i === 0 ? 2 : 0);
     } catch (err) {
       lastErr = err;
+      rec(model, roleAt(i), reasonFor(model, err, isModelGone));
       if (!shouldTryNextModel(model, err)) throw wrapError(err);
       continue;
     }
 
     interface Src {
       model: string;
+      role: string;
       it: AsyncIterator<ProviderChunk>;
       pending?: Promise<{ src: Src; res?: IteratorResult<ProviderChunk>; err?: unknown }>;
       usage?: TokenUsage;
@@ -173,7 +202,7 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
       /** True once this model's ONE reduced-budget MAX_TOKENS retry has run. */
       budgetRetried?: boolean;
     }
-    let srcs: Src[] = [{ model, it: stream[Symbol.asyncIterator]() }];
+    let srcs: Src[] = [{ model, role: roleAt(i), it: stream[Symbol.asyncIterator]() }];
     /** Which source produced the answer tokens yielded so far. */
     let answerSrc: Src | null = null;
     const abandon = (s: Src) => void s.it.return?.(undefined as never); // fire-and-forget
@@ -200,10 +229,10 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
           const hedgeModel = chain[i + 1];
           if (!hedged && hedgeModel) {
             hedged = true;
-            console.warn(`[model-runner] ${srcs.map((s) => s.model).join("+")} silent ${stallMs}ms — hedging with ${hedgeModel} (race, first answer wins)`);
+            console.warn(`[model-runner] ${srcs.map((s) => s.model).join("+")} silent ${stallMs}ms — hedging with model #${i + 2}/${depth} ${hedgeModel} (race, first answer wins) ${at()}`);
             try {
               const hedgeStream = await openStream(hedgeModel, 0);
-              srcs.push({ model: hedgeModel, it: hedgeStream[Symbol.asyncIterator]() });
+              srcs.push({ model: hedgeModel, role: "hedge", it: hedgeStream[Symbol.asyncIterator]() });
             } catch (err) {
               // Hedge refused to open — keep waiting on the original; a real
               // defect still surfaces rather than being masked.
@@ -224,6 +253,7 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
           // apply the normal chain policy in the outer catch.
           if (srcs.length > 1 && shouldTryNextModel(src.model, won.err)) {
             console.warn(`[model-runner] hedge racer ${src.model} died — continuing with the other`);
+            rec(src.model, src.role, "died (hedge racer)");
             srcs = srcs.filter((s) => s !== src);
             continue;
           }
@@ -249,7 +279,7 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
               try {
                 const reopened = await openStream(model, 0, { reducedThinkingBudget: true });
                 console.warn(`[model-runner] ${model} hit MAX_TOKENS — retrying once with a smaller thinking budget`);
-                srcs = [{ model, it: reopened[Symbol.asyncIterator](), budgetRetried: true }];
+                srcs = [{ model, role: roleAt(i), it: reopened[Symbol.asyncIterator](), budgetRetried: true }];
                 continue; // pump the reopened stream; a real answer this time wins
               } catch (reErr) {
                 // Reopen refused: fall through to the ordinary dud-slot walk.
@@ -260,6 +290,12 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
           }
           // Real billed counts, tagged with the model that ACTUALLY served.
           if (src.usage) yield { kind: "usage", text: "", model: src.model, usage: src.usage };
+          // Name the winner + elapsed so the log says WHICH model produced the
+          // answer, on every turn (not only fallbacks). route.ts logs the final
+          // "shown to the user" line after any patch/regen handling.
+          console.log(`[model-runner] ✓ served by ${src.model} (model #${chain.indexOf(src.model) + 1}/${depth}) ${at()}`);
+          winner = src.model;
+          rec(src.model, src.role, "won", answerChars);
           return; // the (sole/committed) stream finished cleanly
         }
 
@@ -276,6 +312,7 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
           if (pendingRestart && srcs.length === 1) {
             pendingRestart = false;
             answerStarted = false;
+            answerChars = 0;
             yield { kind: "restart", text: "" };
           }
           yield { kind: "thought", text: part.text };
@@ -284,9 +321,9 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
 
         // First ANSWER token commits this source and settles the race.
         if (srcs.length > 1) {
-          for (const s of srcs) if (s !== src) abandon(s);
+          for (const s of srcs) if (s !== src) { rec(s.model, s.role, "abandoned (lost race)"); abandon(s); }
           srcs = [src];
-          console.warn(`[model-runner] race won by ${src.model}`);
+          console.warn(`[model-runner] race won by ${src.model} ${at()}`);
         }
         if (answerStarted && answerSrc !== src) {
           // A different model had already streamed answer text (pre-hedge
@@ -296,10 +333,12 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
         if (pendingRestart) {
           pendingRestart = false;
           answerStarted = false;
+          answerChars = 0;
           yield { kind: "restart", text: "" };
         }
         answerStarted = true;
         answerSrc = src;
+        answerChars += part.text.length;
         yield { kind: "delta", text: part.text };
       }
     } catch (err) {
@@ -314,24 +353,31 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
       // never wrap it (the route needs the type to send a friendly redirect).
       if (err instanceof SafetyBlockedError) {
         for (const s of srcs) abandon(s);
+        rec(model, roleAt(i), "safety");
         console.warn(`[model-runner] ${model} was safety-blocked — failing closed (no fallback)`);
         throw err;
       }
       const stalled = err instanceof StallSwitchError;
       const empty = err instanceof EmptyCompletionError;
       for (const s of srcs) abandon(s);
-      if (!stalled && !empty && !shouldTryNextModel(model, err)) throw err;
+      if (!stalled && !empty && !shouldTryNextModel(model, err)) { rec(model, roleAt(i), "error"); throw err; }
       lastErr = err;
       const how = stalled ? "went silent" : empty ? "returned nothing" : "died";
+      rec(model, roleAt(i), how);
       if (answerStarted) {
         pendingRestart = true;
-        console.warn(`[model-runner] ${model} ${how} mid-answer — restarting fresh on the next model`);
+        console.warn(`[model-runner] ${model} ${how} mid-answer — restarting fresh on the next model ${at()}`);
       } else {
-        console.warn(`[model-runner] ${model} ${how} mid-thinking — trying the next model`);
+        console.warn(`[model-runner] ${model} ${how} mid-thinking — trying the next model ${at()}`);
       }
     }
   }
   throw wrapError(lastErr);
+  } finally {
+    // Flush the per-request ledger exactly once, whether we won or exhausted the
+    // chain. Swallow any sink error — bookkeeping must never break a turn.
+    if (onLedger) { try { onLedger({ chain, attempts, winner }); } catch { /* never breaks a turn */ } }
+  }
 }
 
 /**
@@ -366,10 +412,42 @@ export async function runOneShotChain<T>(deps: {
   slotDeadlineMs: number;
   /** Hard ceiling for the whole turn. Defaults to a slot per model plus one. */
   totalBudgetMs?: number;
+  /** Per-request decision ledger sink — same contract as runStreamChain's:
+   *  fired once with every concurrent call made + the winner (owner ask
+   *  2026-07-21). This chain FANS OUT (earlier attempts stay alive as backups
+   *  are added), so the ledger is where "we made N billable calls, one won"
+   *  becomes visible — usage_events records only the winner. */
+  onLedger?: (summary: ChainSummary) => void;
+  /** Fired for every LOSING attempt still in flight when the winner returns —
+   *  once each settles (owner ask 2026-07-21). The chain keeps losers running,
+   *  so this is REAL, already-paid work: the caller maps the settled result to
+   *  its billed usage and records it as `kind:"fallback"` cost. Fire-and-forget
+   *  (fires after this function has already returned the winner); a throw in the
+   *  sink is swallowed so it can never affect the turn. Errored settlements are
+   *  reported too (with `err`) — the caller bills only value-bearing ones. */
+  onLoserResult?: (model: string, result: { value?: T; err?: unknown }) => void;
 }): Promise<T> {
-  const { chain, label, primaryRetries, call, shouldTryNextModel, isModelGone, slotDeadlineMs } = deps;
+  const { chain, label, primaryRetries, call, shouldTryNextModel, isModelGone, slotDeadlineMs, onLedger, onLoserResult } = deps;
+  // Attach observers to every attempt still running when the winner is returned.
+  // The promises are already in flight (this chain never cancels a laggard), so
+  // observing them just means their real result/usage isn't thrown away.
+  const observeLosers = () => {
+    if (!onLoserResult) return;
+    for (const a of inflight) {
+      void a.p.then((s) => { try { onLoserResult(s.model, { value: s.value, err: s.err }); } catch { /* never breaks a turn */ } });
+    }
+  };
   const totalBudgetMs = deps.totalBudgetMs ?? slotDeadlineMs * (chain.length + 1);
-  const deadline = Date.now() + totalBudgetMs;
+  const t0 = Date.now();
+  const deadline = t0 + totalBudgetMs;
+  const at = () => `@${Date.now() - t0}ms`;
+  const depth = chain.length;
+
+  // Decision ledger for this request. role explains WHY each call was fired.
+  const attempts: AttemptEvent[] = [];
+  let winner: string | null = null;
+  const roleOf = (m: string) => { const i = chain.indexOf(m); return i === 0 ? "primary" : `backup#${i + 1}`; };
+  const rec = (model: string, outcome: string) => attempts.push({ model, role: roleOf(model), outcome, atMs: Date.now() - t0 });
 
   interface Attempt { model: string; p: Promise<{ model: string; value?: T; err?: unknown }> }
   const inflight: Attempt[] = [];
@@ -385,9 +463,10 @@ export async function runOneShotChain<T>(deps: {
     ),
   });
 
+  try {
   for (let i = 0; i < chain.length; i++) {
     const model = chain[i]!;
-    if (i > 0) console.warn(`[model-runner] ${reasonFor(model, lastErr, isModelGone)} — adding ${model} as a backup (${label}); earlier attempts stay alive`);
+    if (i > 0) console.warn(`[model-runner] ${reasonFor(model, lastErr, isModelGone)} — adding model #${i + 1}/${depth} ${model} as a backup (${label}); earlier attempts stay alive ${at()}`);
     inflight.push(start(model, i));
 
     // Wait for a winner, a fatal error, or this slot's deadline.
@@ -405,8 +484,15 @@ export async function runOneShotChain<T>(deps: {
       const done = settled as { model: string; value?: T; err?: unknown };
       const idx = inflight.findIndex((a) => a.model === done.model);
       if (idx >= 0) inflight.splice(idx, 1);
-      if (done.err === undefined) return done.value as T; // FIRST success wins
+      if (done.err === undefined) { // FIRST success wins
+        console.log(`[model-runner] ✓ ${label} served by ${done.model} (model #${chain.indexOf(done.model) + 1}/${depth}) ${at()}`);
+        winner = done.model;
+        rec(done.model, "won");
+        observeLosers(); // bill the backups still running (they're already paid for)
+        return done.value as T;
+      }
       lastErr = done.err;
+      rec(done.model, reasonFor(done.model, done.err, isModelGone));
       // A real defect surfaces immediately — fallback must never mask one.
       if (!shouldTryNextModel(done.model, done.err)) throw done.err;
       console.warn(`[model-runner] ${done.model} failed (${label}): ${(done.err as Error)?.message ?? done.err}`);
@@ -427,11 +513,25 @@ export async function runOneShotChain<T>(deps: {
     const done = settled as { model: string; value?: T; err?: unknown };
     const idx = inflight.findIndex((a) => a.model === done.model);
     if (idx >= 0) inflight.splice(idx, 1);
-    if (done.err === undefined) return done.value as T;
+    if (done.err === undefined) {
+      console.log(`[model-runner] ✓ ${label} served by ${done.model} (model #${chain.indexOf(done.model) + 1}/${depth}, past the chain) ${at()}`);
+      winner = done.model;
+      rec(done.model, "won");
+      observeLosers();
+      return done.value as T;
+    }
     lastErr = done.err;
+    rec(done.model, reasonFor(done.model, done.err, isModelGone));
     if (!shouldTryNextModel(done.model, done.err)) throw done.err;
   }
 
   if (lastErr !== undefined) throw lastErr;
   throw new Error(`${label}: gave up after ${totalBudgetMs}ms — no model produced an answer within the budget`);
+  } finally {
+    // Any attempt still running when we settled is a real call that was left to
+    // finish (or was cut by the budget) — record it so the ledger's call count
+    // matches how many model calls this request actually fired.
+    for (const a of inflight) rec(a.model, "inflight (running at settle)");
+    if (onLedger) { try { onLedger({ chain, attempts, winner }); } catch { /* never breaks a turn */ } }
+  }
 }
