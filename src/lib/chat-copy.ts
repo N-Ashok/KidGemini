@@ -11,11 +11,13 @@
 export const KIND_REDIRECT =
   "Let's talk about something else! How about a fun fact, a story, or a game? 🌟";
 
-// A MODEL false-positive — the child's request was fine (input rules allowed it)
-// but the provider's own safety layer blocked the generation (finishReason
-// SAFETY). Here the topic-change redirect is wrong and confusing: the kid was
-// mid-build and did nothing wrong, so we own the hiccup and invite a retry
-// instead of telling them to go do "something else" (owner call, 2026-07-21;
-// BUG-FIX-LOG: false-positive safety block on a valid game edit).
+// A MODEL false-positive — the request was fine (input rules allowed it) but the
+// provider's own safety layer blocked the generation (finishReason SAFETY). We
+// own the hiccup AND give an actionable HINT: adding a little context (what the
+// game is about + who it's for) is exactly what clears these false-positives —
+// verified live 2026-07-22, "add Jesus…" blocked bare but generated with "for a
+// kids educational game" framing. So we guide the user to rephrase productively
+// instead of a vague "say it another way" (owner call 2026-07-22; keeps the
+// strict safety threshold — the fix is guidance, not a weaker filter).
 export const MODEL_GLITCH_RETRY =
-  "Oops, that one tangled me up! Say it another way and I'll keep building your game. ✨";
+  "Hmm, that one tangled me up! Try telling me a bit more — what your game is about and who it's for — and I'll build it. ✨";
