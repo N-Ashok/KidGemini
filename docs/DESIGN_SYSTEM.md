@@ -68,7 +68,10 @@ Status colors are **semantic and fixed** — never reuse `danger` for decoration
 ## 8. Voice & tone (copy)
 
 - Warm, simple, encouraging. Short sentences.
-- Blocked content → kind redirect, never scary: *"Let's talk about something else! How about a game?"*
+- Block/failure copy is split by CAUSE — never one message for all (source of truth: `src/lib/chat-copy.ts`):
+  - **Genuine input block** (`KIND_REDIRECT`) — child typed something we won't engage with (profanity/self-harm/PII) → gentle topic change, never scary: *"Let's talk about something else! How about a fun fact, a story, or a game? 🌟"* — don't invite a rephrase of the blocked thing.
+  - **Model false-positive** (`MODEL_GLITCH_RETRY`) — request was fine, the provider's own safety glitched mid-build → own the hiccup and give an *actionable* hint (adding "what it's about + who it's for" clears these), never a topic change: *"Hmm, that one tangled me up! Try telling me a bit more — what your game is about and who it's for — and I'll build it. ✨"*
+  - **Build cut off** (`BUILD_INCOMPLETE_RETRY`) — the model returned "done" on a truncated game and the corrective retry couldn't finish it → never ship a blank/dead artifact; invite a retry and nudge toward a smaller, two-step ask.
 - Parent-facing copy is plain and factual.
 
 ---
