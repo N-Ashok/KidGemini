@@ -371,12 +371,19 @@ const GEN_CONFIG = {
   // budget + more output headroom (middle path, 2026-07-09 — see builder-mode.ts).
   thinkingConfig: { thinkingBudget: 0 },
   safetySettings: [
+    // Thresholds are pinned + explained in gemini.safety-config.test.ts.
     // DANGEROUS_CONTENT at LOW blocked ordinary game-genre requests ("make me a
     // shooting game") — kids' arcade staples. MEDIUM still blocks real-world
     // dangerous content, and the deterministic input rules run on top.
-    // Other categories stay at the strictest setting.
+    // HATE_SPEECH relaxed LOW→MEDIUM (owner call 2026-07-22, BUG-FIX-LOG): a
+    // church pastor's Sunday-school Bible game was blocked SOLELY by
+    // HATE_SPEECH:LOW (proven by the safety-block attribution log; every other
+    // category NEGLIGIBLE) — religion is a protected attribute, so benign faith
+    // content trips a LOW flag. MEDIUM+ still blocks genuine hate. HARASSMENT +
+    // SEXUALLY_EXPLICIT stay at the STRICTEST — the attribution showed they were
+    // NEGLIGIBLE here, not the culprit, and there's no reason to loosen them.
     { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
-    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
+    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
     { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
     { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
   ],

@@ -45,6 +45,17 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-22 — SAFETY-POSTURE CHANGE: HATE_SPEECH relaxed LOW→MEDIUM (benign faith content was blocked)
+
+- **Symptom (what the user saw):** a church pastor's Sunday-school Bible game ("100 New Testament names + 80 followers of Jesus, sort follower/not") was repeatedly hard-blocked by Gemini's OUTPUT safety layer (`finishReason: SAFETY`) → the "tangled up" retry, never a game.
+- **Surface area:** `src/lib/gemini.ts` (`GEN_CONFIG.safetySettings`), `src/lib/gemini.safety-config.test.ts` (new).
+- **Root cause (proven, not guessed):** the safety-block attribution logging shipped earlier the same day (`summarizeSafetyRatings`) named the culprit on the live block: `[HARASSMENT:NEGLIGIBLE, HATE_SPEECH:LOW, SEXUALLY_EXPLICIT:NEGLIGIBLE, DANGEROUS_CONTENT:NEGLIGIBLE]`. So the block came **solely from HATE_SPEECH at LOW confidence** — the classifier is only faintly suspicious of benign faith content (religion is a protected attribute), but HATE_SPEECH was set to `BLOCK_LOW_AND_ABOVE`, so even a LOW flag blocked. Every other category was NEGLIGIBLE.
+- **Fix (owner-approved threshold change):** HATE_SPEECH `BLOCK_LOW_AND_ABOVE → BLOCK_MEDIUM_AND_ABOVE` — the same level `DANGEROUS_CONTENT` already uses. `MEDIUM+` still blocks content Gemini is moderately-or-more confident is genuine hate; a LOW-confidence flag (benign faith/cultural content) now passes. **Nothing else loosened:** HARASSMENT + SEXUALLY_EXPLICIT stay at the strictest `LOW` (the attribution showed they were NEGLIGIBLE — not the culprit), the deterministic input rules (`safety.rules.ts`) and the child-safety system prompt are unchanged, and the fail-closed behavior on a MEDIUM+ block is unchanged.
+- **Result (verified):** `gemini.safety-config.test.ts` pins the posture — HATE_SPEECH=MEDIUM, HARASSMENT=LOW, SEXUALLY_EXPLICIT=LOW, DANGEROUS=MEDIUM — so it can never drift silently. RED before the change (HATE_SPEECH was LOW), green after. Full suite **1095 pass / 1 skip**, typecheck clean.
+- **Impact:** legitimate faith/Bible/cultural educational content (Sunday-school games) now generates; genuine hate speech (MEDIUM+) is still blocked, and every other guard is intact. This is a documented, evidence-based loosening of ONE category by ONE step — not a blanket relaxation.
+- **Prevention:** the four thresholds are now unit-pinned; any future change to the kids' safety posture fails a test unless it's deliberate. Decision made from the attribution log (real block data), not a guess.
+- **Related:** the safety-block attribution logging (BUG-FIX-LOG 2026-07-22, same day — the tool that identified the category), `MODEL_GLITCH_RETRY` copy (the earlier "guide, don't loosen" step that context alone couldn't rescue for heavy generation), CLAUDE.md §3 (safety posture).
+
 ### 2026-07-22 — provider safety blocks were un-attributable: `category: null` hid WHICH filter fired
 
 - **Symptom (what the user saw):** benign faith content kept getting "hard blocked" — a church pastor's Sunday-school Bible game ("a pool of 100 New Testament names + 80 followers of Jesus, sort follower/not") is blocked by Gemini's OUTPUT safety layer (`finishReason: SAFETY`). We could NOT tell which category (HATE_SPEECH vs HARASSMENT vs DANGEROUS) was misfiring — the parent alert logged `category: null` — so we couldn't decide which threshold to relax.
