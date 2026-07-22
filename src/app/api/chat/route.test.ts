@@ -17,7 +17,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // when a whole-game rebuild happened (penguin-maze hardening, 2026-07-18).
 import { REBUILT_GAME_LINE, FRESH_GAME_LINE } from "@/lib/game-edit";
 import { SafetyBlockedError } from "@/lib/model-runner";
-import { KIND_REDIRECT, MODEL_GLITCH_RETRY } from "@/lib/chat-copy";
+import { KIND_REDIRECT, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY } from "@/lib/chat-copy";
 
 // getAriantraSession() — toggled per test (SSO session).
 const authMock = vi.fn();
@@ -395,6 +395,76 @@ describe("POST /api/chat — asset injection can never cost the child the game (
     await res.text();
 
     expect(injectMock).not.toHaveBeenCalled();
+  });
+});
+
+// Completeness guard (BUG-FIX-LOG 2026-07-22): the model can end a build with
+// finishReason STOP ("done") on a TRUNCATED game — it wrote the intro + CSS and
+// quit mid-file (owner's "30 New Testament characters" prompt stopped ~5K chars
+// three runs straight, then published blank). Nothing verified the HTML closed.
+// The guard: a build whose document opened <html> but never reached </html> is
+// never shipped — one corrective regen; if it still can't finish, a friendly
+// retry, NEVER a blank artifact.
+describe("POST /api/chat — never publish a truncated/blank build", () => {
+  const TRUNCATED = "<!doctype html><html><head><style>body{margin:0}"; // opened <html>, NO </html>
+  const WHOLE = "<!doctype html><html><head></head><body>WHOLE GAME</body></html>";
+
+  beforeEach(() => {
+    authMock.mockResolvedValue(null);
+    replyStreamMock.mockReturnValue(one("Here's your game!\n```html" + TRUNCATED + "```"));
+    extractArtifactMock.mockImplementation(() => ({ text: "Here's your game!", artifactHtml: TRUNCATED, wasFenced: false }));
+  });
+
+  const doneOf = (text: string) => JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+  it("CG.1 a truncated build is NOT shipped — one corrective retry produces a whole game", async () => {
+    replyMock.mockResolvedValue({ text: "Here it is, complete!", artifactHtml: WHOLE, wasFenced: false });
+
+    const res = await POST(makeReq({ message: "make a big game with 30 characters", history: [] }));
+    const done = doneOf(await res.text());
+
+    expect(replyMock).toHaveBeenCalledTimes(1); // exactly one corrective retry
+    expect(done.artifactHtml).toContain("WHOLE GAME"); // the complete game shipped
+    expect(done.artifactHtml).not.toContain("margin:0}"); // never the truncated one
+  });
+
+  it("CG.2 truncated build AND a still-truncated retry → NO artifact, a friendly retry (never a blank game)", async () => {
+    replyMock.mockResolvedValue({ text: "cut off again", artifactHtml: "<!doctype html><html><body>still cut", wasFenced: false });
+
+    const res = await POST(makeReq({ message: "make a big game with 30 characters", history: [] }));
+    const done = doneOf(await res.text());
+
+    expect(done.artifactHtml == null).toBe(true); // nothing blank published
+    expect(done.text).toBe(BUILD_INCOMPLETE_RETRY); // friendly next step instead
+  });
+
+  it("CG.3 a COMPLETE build ships as-is, with NO corrective retry (guard never misfires)", async () => {
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: WHOLE, wasFenced: false }));
+
+    const res = await POST(makeReq({ message: "make me a game", history: [] }));
+    const done = doneOf(await res.text());
+
+    expect(replyMock).not.toHaveBeenCalled(); // no completeness retry needed
+    expect(done.artifactHtml).toContain("WHOLE GAME");
+  });
+
+  it("CG.4 an EDIT turn whose rebuild fallback is truncated is ALSO guarded — never ships the partial (old-chat parity)", async () => {
+    // History with an existing game → routes to the EDIT path, not fresh build.
+    // The patch can't apply → full-regeneration fallback; that rebuild (and the
+    // completeness retry) come back truncated → the guard must bail, never ship
+    // the partial. This is the old-chat gap ("new chat built a game, old didn't").
+    const history = [
+      { id: "1", role: "child", text: "make a game", createdAt: 1 },
+      { id: "2", role: "assistant", text: "Here!", artifactHtml: WHOLE, createdAt: 2 },
+    ];
+    extractArtifactMock.mockImplementation(() => ({ text: "edit", artifactHtml: TRUNCATED, wasFenced: false }));
+    replyMock.mockResolvedValue({ text: "still cut", artifactHtml: TRUNCATED, wasFenced: false }); // every rung truncated
+
+    const res = await POST(makeReq({ message: "add 30 characters", history }));
+    const done = doneOf(await res.text());
+
+    expect(done.artifactHtml == null).toBe(true); // the truncated rebuild is NEVER published
+    expect(done.text).toBe(BUILD_INCOMPLETE_RETRY); // friendly retry instead
   });
 });
 

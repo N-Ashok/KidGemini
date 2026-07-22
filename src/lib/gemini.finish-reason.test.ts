@@ -26,7 +26,7 @@ vi.mock("./retry", () => ({
   withTimeout: (fn: () => unknown) => fn(),
 }));
 
-import { GeminiChatModel } from "./gemini";
+import { GeminiChatModel, summarizeSafetyRatings } from "./gemini";
 import { SafetyBlockedError } from "./model-runner";
 
 /** A normal answer stream. */
@@ -37,6 +37,11 @@ async function* answer(text: string) {
 async function* emptyWith(finishReason: string) {
   yield { candidates: [{ content: { parts: [{ text: "planning…", thought: true }] } }] };
   yield { candidates: [{ finishReason }], usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 0 } };
+}
+/** A SAFETY finish that also reports per-category ratings (attribution). */
+async function* safetyWithRatings(ratings: Array<{ category?: string; probability?: string; blocked?: boolean }>) {
+  yield { candidates: [{ content: { parts: [{ text: "planning…", thought: true }] } }] };
+  yield { candidates: [{ finishReason: "SAFETY", safetyRatings: ratings }], usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 0 } };
 }
 
 const calledModels = () => generateContentStream.mock.calls.map((c) => (c[0] as { model: string }).model);
@@ -68,6 +73,45 @@ describe("finishReason — SAFETY fails closed", () => {
     const model = new GeminiChatModel();
     await expect(collect(model)).rejects.toBeInstanceOf(SafetyBlockedError);
     expect(generateContentStream).toHaveBeenCalledTimes(1);
+  });
+
+  it("FR.6 a SAFETY block carries the offending category+confidence for attribution (owner ask 2026-07-22)", async () => {
+    generateContentStream.mockResolvedValueOnce(
+      safetyWithRatings([
+        { category: "HARM_CATEGORY_HATE_SPEECH", probability: "MEDIUM", blocked: true },
+        { category: "HARM_CATEGORY_HARASSMENT", probability: "LOW" },
+      ]),
+    );
+    const model = new GeminiChatModel();
+    const err = await collect(model).then(() => null, (e) => e as SafetyBlockedError);
+    expect(err).toBeInstanceOf(SafetyBlockedError);
+    // The route logs this so a pastor's benign-content block is attributable.
+    expect(err!.safetyInfo).toBe("HATE_SPEECH:MEDIUM(blocked)");
+  });
+});
+
+describe("summarizeSafetyRatings — attribution string (BUG-FIX-LOG 2026-07-22)", () => {
+  it("prefers the explicitly-blocked category", () => {
+    expect(
+      summarizeSafetyRatings([
+        { category: "HARM_CATEGORY_HARASSMENT", probability: "LOW" },
+        { category: "HARM_CATEGORY_HATE_SPEECH", probability: "MEDIUM", blocked: true },
+      ]),
+    ).toBe("HATE_SPEECH:MEDIUM(blocked)");
+  });
+
+  it("falls back to anything above NEGLIGIBLE/LOW when nothing is flagged blocked", () => {
+    expect(
+      summarizeSafetyRatings([
+        { category: "HARM_CATEGORY_HARASSMENT", probability: "NEGLIGIBLE" },
+        { category: "HARM_CATEGORY_HATE_SPEECH", probability: "HIGH" },
+      ]),
+    ).toBe("HATE_SPEECH:HIGH");
+  });
+
+  it("is undefined when there are no ratings", () => {
+    expect(summarizeSafetyRatings(undefined)).toBeUndefined();
+    expect(summarizeSafetyRatings([])).toBeUndefined();
   });
 });
 

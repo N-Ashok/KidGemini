@@ -9,7 +9,7 @@ vi.mock("server-only", () => ({}));
 
 import {
   isGameEditTurn, currentGameHtml, editReplyProse, GAME_EDIT_PROMPT_SECTION,
-  looksLikeAttemptedEdit, looksLikeCompleteDocument,
+  looksLikeAttemptedEdit, looksLikeCompleteDocument, looksTruncatedDocument,
   patchEditsEnabled, isRepeatedRequest, regenReplyProse,
   REPEATED_REQUEST_SECTION, GAME_EDIT_STRICT_RETRY_SECTION, REBUILT_GAME_LINE,
   streamingDisplayText, EDIT_STREAM_WORKING_LINE,
@@ -259,6 +259,21 @@ describe("looksLikeCompleteDocument — guards applyPatch's regeneration fallbac
 
   it("is false when the closing </html> is missing (truncated output)", () => {
     expect(looksLikeCompleteDocument("<html><body>cut off mid")).toBe(false);
+  });
+});
+
+describe("looksTruncatedDocument — the completeness-guard fingerprint (BUG-FIX-LOG 2026-07-22)", () => {
+  it("is TRUE for a build that opened <html> but was cut off before </html>", () => {
+    expect(looksTruncatedDocument("<!doctype html><html><head><style>body{margin:0}")).toBe(true);
+  });
+
+  it("is FALSE for a complete document (has both <html> and </html>)", () => {
+    expect(looksTruncatedDocument("<!doctype html><html><body>game</body></html>")).toBe(false);
+  });
+
+  it("is FALSE for a bare fragment with no <html> at all — never false-fire on a fragment game", () => {
+    expect(looksTruncatedDocument("<div>just a widget</div>")).toBe(false);
+    expect(looksTruncatedDocument("")).toBe(false);
   });
 });
 

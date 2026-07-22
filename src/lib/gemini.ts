@@ -144,21 +144,28 @@ function usageChunk(u: GenUsageMetadata, model?: string): StreamChunk {
  */
 async function* toProviderChunks(
   stream: AsyncIterable<{
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> }; finishReason?: string }>;
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string; thought?: boolean }> };
+      finishReason?: string;
+      safetyRatings?: Array<{ category?: string; probability?: string; blocked?: boolean }>;
+    }>;
     usageMetadata?: GenUsageMetadata;
   }>,
 ): AsyncGenerator<ProviderChunk> {
   for await (const chunk of stream) {
     const usage = chunk.usageMetadata ? usageChunk(chunk.usageMetadata).usage : undefined;
     const finishReason = normalizeFinishReason(chunk.candidates?.[0]?.finishReason);
+    // Only carry safety ratings on a SAFETY finish — that's the block we want to
+    // attribute; on a normal turn they're just noise.
+    const safetyInfo = finishReason === "safety" ? summarizeSafetyRatings(chunk.candidates?.[0]?.safetyRatings) : undefined;
     const parts = chunk.candidates?.[0]?.content?.parts ?? [];
     if (parts.length === 0) {
       // A usage- or finishReason-only chunk still has to reach the runner —
       // the terminal chunk of a SAFETY/MAX_TOKENS block often has no parts.
-      if (usage || finishReason) yield { ...(usage ? { usage } : {}), ...(finishReason ? { finishReason } : {}) };
+      if (usage || finishReason) yield { ...(usage ? { usage } : {}), ...(finishReason ? { finishReason } : {}), ...(safetyInfo ? { safetyInfo } : {}) };
       continue;
     }
-    for (const p of parts) yield { text: p.text, thought: p.thought, ...(usage ? { usage } : {}), ...(finishReason ? { finishReason } : {}) };
+    for (const p of parts) yield { text: p.text, thought: p.thought, ...(usage ? { usage } : {}), ...(finishReason ? { finishReason } : {}), ...(safetyInfo ? { safetyInfo } : {}) };
   }
 }
 
@@ -177,6 +184,27 @@ function normalizeFinishReason(raw?: string): FinishReason | undefined {
   if (r === "MAX_TOKENS") return "max_tokens";
   if (r === "STOP") return "stop";
   return "other";
+}
+
+/** Compact, human-readable summary of a candidate's per-category safety ratings,
+ *  so a SAFETY block logs WHICH category fired at what confidence — the info a
+ *  parent alert / cost dashboard needs to tell a genuine block from a
+ *  false-positive on benign content (owner ask 2026-07-22: a pastor's Bible game
+ *  keeps getting blocked; we can't tell HATE_SPEECH from HARASSMENT today). No
+ *  posture change — this only surfaces what Gemini already reports. Prefers the
+ *  explicitly-blocked category, else anything above NEGLIGIBLE/LOW, else all.
+ *  e.g. "HATE_SPEECH:MEDIUM(blocked)". Returns undefined when there's nothing. */
+export function summarizeSafetyRatings(
+  ratings?: Array<{ category?: string; probability?: string; blocked?: boolean }>,
+): string | undefined {
+  if (!ratings?.length) return undefined;
+  const label = (c?: string) => (c ?? "?").replace(/^HARM_CATEGORY_/, "");
+  const blocked = ratings.filter((r) => r.blocked);
+  const notable = blocked.length
+    ? blocked
+    : ratings.filter((r) => r.probability && !["NEGLIGIBLE", "LOW"].includes(r.probability.toUpperCase()));
+  const show = notable.length ? notable : ratings;
+  return show.map((r) => `${label(r.category)}:${r.probability ?? "?"}${r.blocked ? "(blocked)" : ""}`).join(", ") || undefined;
 }
 
 /** Halves the thinking budget for the ONE MAX_TOKENS retry (KNOWN_BUGS #4) so

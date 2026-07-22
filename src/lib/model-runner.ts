@@ -53,6 +53,10 @@ export interface ProviderChunk {
   usage?: TokenUsage;
   /** Set on the terminal chunk when the provider reports why it stopped. */
   finishReason?: FinishReason;
+  /** On a SAFETY finish only: a compact per-category ratings summary (e.g.
+   *  "HATE_SPEECH:MEDIUM(blocked)") so a block can be attributed to a category.
+   *  Provider-agnostic string — the adapter normalizes its own shape. */
+  safetyInfo?: string;
 }
 
 export interface StreamChainDeps {
@@ -122,9 +126,14 @@ export class EmptyCompletionError extends Error {
  * about something else" redirect instead of an error or a blank bubble.
  */
 export class SafetyBlockedError extends Error {
-  constructor(model: string) {
+  /** Compact per-category ratings summary (e.g. "HATE_SPEECH:MEDIUM(blocked)")
+   *  when the provider reported them — lets the route LOG which category fired,
+   *  to tell a genuine block from a false-positive (owner ask 2026-07-22). */
+  readonly safetyInfo?: string;
+  constructor(model: string, safetyInfo?: string) {
     super(`safety block: ${model} finished the stream with finishReason SAFETY`);
     this.name = "SafetyBlockedError";
+    this.safetyInfo = safetyInfo;
   }
 }
 
@@ -199,6 +208,8 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
       usage?: TokenUsage;
       /** Last finishReason this source reported — decides SAFETY vs MAX_TOKENS. */
       finish?: FinishReason;
+      /** Per-category ratings summary on a SAFETY finish (attribution logging). */
+      safetyInfo?: string;
       /** True once this model's ONE reduced-budget MAX_TOKENS retry has run. */
       budgetRetried?: boolean;
     }
@@ -274,7 +285,7 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
           // slot that produced nothing after an EARLIER model's text was wiped
           // still counts as empty.
           if (!answerStarted || answerSrc !== src) {
-            if (src.finish === "safety") throw new SafetyBlockedError(src.model);
+            if (src.finish === "safety") throw new SafetyBlockedError(src.model, src.safetyInfo);
             if (src.finish === "max_tokens" && !src.budgetRetried && srcs.length === 1) {
               try {
                 const reopened = await openStream(model, 0, { reducedThinkingBudget: true });
@@ -302,6 +313,7 @@ export async function* runStreamChain(deps: StreamChainDeps): AsyncGenerator<Str
         const part = won.res!.value;
         if (part.usage) src.usage = part.usage;
         if (part.finishReason) src.finish = part.finishReason;
+        if (part.safetyInfo) src.safetyInfo = part.safetyInfo;
         if (!part.text) continue;
 
         if (part.thought) {

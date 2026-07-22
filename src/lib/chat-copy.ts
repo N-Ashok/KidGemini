@@ -21,3 +21,10 @@ export const KIND_REDIRECT =
 // strict safety threshold — the fix is guidance, not a weaker filter).
 export const MODEL_GLITCH_RETRY =
   "Hmm, that one tangled me up! Try telling me a bit more — what your game is about and who it's for — and I'll build it. ✨";
+
+// The build was CUT OFF before it finished (the model returned "done" on a
+// half-written game) AND a corrective retry couldn't finish it either. We never
+// publish a blank/truncated game (BUG-FIX-LOG 2026-07-22) — so instead of a dead
+// artifact, invite a retry and nudge toward a smaller ask that won't overflow.
+export const BUILD_INCOMPLETE_RETRY =
+  "Oof — that one got too big for me to finish in one go! 😅 Tap try again, or ask for it in two steps: the game first, then the details (like the full list of characters).";

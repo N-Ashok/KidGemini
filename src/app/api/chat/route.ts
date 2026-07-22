@@ -13,7 +13,7 @@ import { writeDecision } from "@/lib/model-ledger";
 import type { ChainSummary } from "@/types/model-ledger.types";
 import { SafetyBlockedError } from "@/lib/model-runner";
 import {
-  isGameEditTurn, currentGameHtml, editReplyProse, looksLikeAttemptedEdit, looksLikeCompleteDocument,
+  isGameEditTurn, currentGameHtml, editReplyProse, looksLikeAttemptedEdit, looksLikeCompleteDocument, looksTruncatedDocument,
   regenReplyProse, reconcileAssetMarkers, detectsNewGame, NEW_GAME_PROMPT_LINE, REBUILT_GAME_LINE, FRESH_GAME_LINE,
 } from "@/lib/game-edit";
 import { stripAssetMarkers } from "@/lib/assets/markers";
@@ -25,7 +25,7 @@ import { ensureMultiplayerMarker } from "@/lib/multiplayer-gate";
 import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
 import { RulesClassifier } from "@/lib/safety.rules";
-import { KIND_REDIRECT, MODEL_GLITCH_RETRY } from "@/lib/chat-copy";
+import { KIND_REDIRECT, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY } from "@/lib/chat-copy";
 import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore, SqliteTurnResultStore, SqliteScreenTimeStore } from "@/lib/db";
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
@@ -343,8 +343,12 @@ export async function POST(req: NextRequest) {
       // it. Show the kind redirect (never a scary error), and log a model-origin
       // alert so a parent can see it — the same treatment as an input block.
       if (err instanceof SafetyBlockedError) {
-        console.warn(`[api/chat] ⛔ model output safety-blocked @${ms()}ms — redirecting (fail closed)`);
-        alert("model", full || message, { category: null, severity: "high", action: "hard_block", reason: "model output blocked by the provider (finishReason SAFETY)" });
+        // Log WHICH provider safety category fired (attribution, owner ask
+        // 2026-07-22) — the info to tell a genuine block from a false-positive
+        // on benign content (a pastor's Bible game). No posture change.
+        const ratings = err.safetyInfo ?? "no ratings reported";
+        console.warn(`[api/chat] ⛔ model output safety-blocked @${ms()}ms [${ratings}] — redirecting (fail closed)`);
+        alert("model", full || message, { category: null, severity: "high", action: "hard_block", reason: `model output blocked by the provider (finishReason SAFETY) — ${ratings}` });
         if (replyId) trackTurn(() => turnResults.fail(replyId, userId, Date.now()));
         send({ type: "blocked", text: MODEL_GLITCH_RETRY });
         return;
@@ -377,6 +381,48 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         console.error(`[api/chat] ✖ asset injection failed @${ms()}ms (serving raw artifact): ${(err as Error).message}`);
         return ensureMultiplayerMarker(rawHtml);
+      }
+    }
+
+    // Completeness guard, shared by the fresh-build AND edit-fallback delivery
+    // paths (BUG-FIX-LOG 2026-07-22). The model can return finishReason STOP
+    // ("done") on a TRUNCATED game (opened <html>, no </html>) — proven: the
+    // owner's "30 New Testament characters" prompt stopped ~5K chars run after
+    // run. Nothing verified the HTML closed, so the partial shipped blank. Don't
+    // trust "done": on a truncated build, ONE corrective regen demanding a
+    // COMPLETE + COMPACT document. Returns the recovered reply, `null` if the
+    // build was fine (nothing to do), or "incomplete" when even the retry was
+    // cut off — the caller must then show BUILD_INCOMPLETE_RETRY, never a blank
+    // artifact. (An EDIT that falls back to a full rebuild goes through this too,
+    // so an old chat gets the same protection a new chat does.)
+    async function completeTruncatedBuild(
+      art: string | undefined,
+    ): Promise<Awaited<ReturnType<typeof chatModel.reply>> | null | "incomplete"> {
+      if (!art || !looksTruncatedDocument(art)) return null;
+      console.warn(`[api/chat] ⚠ build output incomplete (opened <html>, no </html>, ${art.length} chars) — corrective retry @${ms()}ms`);
+      try {
+        const retry = await chatModel.reply({
+          history,
+          message:
+            `${message}\n\n(IMPORTANT: your previous attempt was CUT OFF before it finished — ` +
+            `it did not end with </html>. Output the COMPLETE, self-contained HTML document ` +
+            `this time, ending with </html>. Keep it COMPACT so the whole thing fits in one ` +
+            `response: store repeated data such as lists of characters/items in a JavaScript ` +
+            `array and loop over it instead of writing each one out by hand. Do not truncate.)`,
+          image,
+          forceFullRegen: true,
+          onLedger: mkLedger("regen"),
+        });
+        trackTurn(() => recordUsage("chat", servedModel, message, retry.text, false, retry.usage));
+        if (retry.artifactHtml && !looksTruncatedDocument(retry.artifactHtml)) {
+          console.log(`[api/chat] ✓ completeness corrective retry produced a whole game @${ms()}ms`);
+          return retry;
+        }
+        console.warn(`[api/chat] build STILL incomplete after retry — NOT shipping a blank game @${ms()}ms`);
+        return "incomplete";
+      } catch (err) {
+        console.warn(`[api/chat] completeness retry unavailable (${(err as Error).message}) — NOT shipping a blank game @${ms()}ms`);
+        return "incomplete";
       }
     }
 
@@ -554,16 +600,29 @@ export async function POST(req: NextRequest) {
         try {
           const fallback = await chatModel.reply({ history, message, image, forceFullRegen: true, onLedger: mkLedger("regen"), onLoserCost: recordLoser });
           trackTurn(() => recordUsage("chat", servedModel, message, fallback.text, false, fallback.usage));
-          // Honest messaging (penguin-maze hardening): this path REPLACED the
-          // child's game — the bare fresh-build default would read as a small
-          // targeted change and hide the rebuild that just happened.
-          const fallbackProse = fallback.artifactHtml && (!fallback.text.trim() || fallback.text.trim() === FRESH_GAME_LINE)
-            ? REBUILT_GAME_LINE
-            : fallback.text;
-          displayText = fallback.artifactHtml && !fallback.wasFenced
-            ? `${fallbackProse}\n\n\`\`\`html\n${fallback.artifactHtml}\n\`\`\``.trim()
-            : fallbackProse;
-          deliverableHtml = toDeliverable(fallback.artifactHtml);
+          // Same completeness guard as the fresh-build path (BUG-FIX-LOG
+          // 2026-07-22): an EDIT that falls back to a full rebuild can be
+          // truncated too (owner UAT — "a new chat developed a game but the old
+          // chat did not": the old chat was an edit turn, unguarded). If the
+          // rebuild is cut off, one compact-complete retry; if it STILL can't
+          // finish, never ship a blank game — a friendly retry instead.
+          const editGuard = await completeTruncatedBuild(fallback.artifactHtml);
+          if (editGuard === "incomplete") {
+            deliverableHtml = null;
+            displayText = BUILD_INCOMPLETE_RETRY;
+          } else {
+            const whole = editGuard ?? fallback;
+            // Honest messaging (penguin-maze hardening): this path REPLACED the
+            // child's game — the bare fresh-build default would read as a small
+            // targeted change and hide the rebuild that just happened.
+            const fallbackProse = whole.artifactHtml && (!whole.text.trim() || whole.text.trim() === FRESH_GAME_LINE)
+              ? REBUILT_GAME_LINE
+              : whole.text;
+            displayText = whole.artifactHtml && !whole.wasFenced
+              ? `${fallbackProse}\n\n\`\`\`html\n${whole.artifactHtml}\n\`\`\``.trim()
+              : fallbackProse;
+            deliverableHtml = toDeliverable(whole.artifactHtml);
+          }
         } catch (err) {
           console.error(`[api/chat] ✖ fallback regeneration failed @${ms()}ms: ${(err as Error).message}`);
           send({ type: "error", text: "Oops! Something went wrong. Let's try again." });
@@ -573,8 +632,17 @@ export async function POST(req: NextRequest) {
         }
       }
     } else {
-      const { text: prose, artifactHtml, wasFenced } = extractArtifact(full);
-      deliverableHtml = toDeliverable(artifactHtml);
+      let { text: prose, artifactHtml, wasFenced } = extractArtifact(full);
+      let displaySource = full; // the raw text the wasFenced display path echoes
+
+      // Never ship a game the model reported "done" on but left truncated.
+      const guard = await completeTruncatedBuild(artifactHtml);
+      if (guard === "incomplete") {
+        deliverableHtml = null;
+        displayText = BUILD_INCOMPLETE_RETRY;
+      } else {
+        if (guard) { prose = guard.text; artifactHtml = guard.artifactHtml; wasFenced = guard.wasFenced ?? false; displaySource = guard.text; }
+        deliverableHtml = toDeliverable(artifactHtml);
       // Send the FULL text (code block kept inline, Gemini-style) for the chat,
       // and the extracted HTML for the side panel preview. When the model didn't
       // produce one clean ```html fence (truncated mid-fence, or no fence at all
@@ -588,7 +656,7 @@ export async function POST(req: NextRequest) {
       // including any trailing prose after the closing fence.
       displayText = artifactHtml && !wasFenced
         ? `${prose}\n\n\`\`\`html\n${artifactHtml}\n\`\`\``.trim()
-        : full;
+        : displaySource;
 
       // Three-import lint (BUG-FIX-LOG 2026-07-20 "DoubleSide"): a name the
       // vendored bundle doesn't export kills the game on its import line —
@@ -622,6 +690,7 @@ export async function POST(req: NextRequest) {
         } catch (err) {
           console.warn(`[api/chat] import-lint retry unavailable (${(err as Error).message}) — serving the original @${ms()}ms`);
         }
+      }
       }
     }
     send({ type: "done", text: displayText, artifactHtml: deliverableHtml, ...(newGamePrompt ? { newGamePrompt: true } : {}) });

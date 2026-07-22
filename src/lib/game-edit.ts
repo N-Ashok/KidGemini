@@ -106,6 +106,18 @@ export function looksLikeCompleteDocument(html: string): boolean {
   return /<html[\s>]/i.test(html) && /<\/html>/i.test(html);
 }
 
+/** A document that STARTED but never finished — an opening `<html` with no
+ *  closing `</html>`. This is the fingerprint of a truncated build: the model
+ *  returned `finishReason: STOP` ("done") on a half-written game (BUG-FIX-LOG
+ *  2026-07-22, "30 New Testament characters" stopped ~5K chars three times).
+ *  Deliberately NARROWER than `!looksLikeCompleteDocument`: a game with no
+ *  `<html>` tag at all (a bare fragment) is NOT flagged — only a document that
+ *  clearly began and was cut off — so the completeness guard never false-fires
+ *  on a legitimately-fragment game. */
+export function looksTruncatedDocument(html: string): boolean {
+  return /<html[\s>]/i.test(html) && !/<\/html>/i.test(html);
+}
+
 /**
  * The one KNOWN, provable cause of `inSource=false` on edit turns
  * (BUG-FIX-LOG 2026-07-20, KNOWN_BUGS #5): injectAssets STRIPS the
