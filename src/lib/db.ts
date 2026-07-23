@@ -49,7 +49,6 @@ export function getDb(): Database.Database {
       triggerText TEXT NOT NULL,
       reason TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_alerts_account ON alerts(accountId, createdAt DESC);
     CREATE TABLE IF NOT EXISTS usage_events (
       id TEXT PRIMARY KEY,
       createdAt INTEGER NOT NULL,
@@ -206,11 +205,15 @@ export function getDb(): Database.Database {
   // safe outcome (an un-owned global alert stops leaking across families).
   const alertCols = db.prepare(`PRAGMA table_info(alerts)`).all() as Array<{ name: string }>;
   if (!alertCols.some((c) => c.name === "accountId")) {
-    db.exec(`
-      ALTER TABLE alerts ADD COLUMN accountId TEXT;
-      CREATE INDEX IF NOT EXISTS idx_alerts_account ON alerts(accountId, createdAt DESC);
-    `);
+    db.exec(`ALTER TABLE alerts ADD COLUMN accountId TEXT;`);
   }
+  // Index built HERE — not in the base CREATE block — because on a pre-existing DB
+  // the column is added by the ALTER just above. Indexing alerts(accountId) in the
+  // base schema would run BEFORE this migration and throw "no such column: accountId",
+  // aborting getDb() and taking parent-PIN/chat-save/alerts down with it (regression
+  // fixed 2026-07-23, BUG-FIX-LOG). IF NOT EXISTS is idempotent, so fresh DBs — where
+  // the column comes from CREATE TABLE above — get the index here too.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_alerts_account ON alerts(accountId, createdAt DESC);`);
   return db;
 }
 
