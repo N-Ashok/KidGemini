@@ -45,7 +45,13 @@ export function sanitizeConversation(input: unknown): Conversation | null {
     if (!m) return null;
     messages.push(m);
   }
-  const convo: Conversation = { id: c.id, title: c.title || "New chat", messages };
+  const convo: Conversation = {
+    id: c.id, title: c.title || "New chat", messages,
+    // Preserve the surface tag (PRD-BIBLE-TEACHER) so a bible-teacher thread
+    // round-trips into its own workspace; anything but the known value drops to
+    // the kid default (fail safe — never leak a teacher chat into the kid list).
+    ...(c.workspace === "bible-teacher" ? { workspace: "bible-teacher" as const } : {}),
+  };
   if (JSON.stringify(convo).length > MAX_CONVO_BYTES) return null;
   return convo;
 }

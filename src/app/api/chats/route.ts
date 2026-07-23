@@ -38,7 +38,10 @@ export async function GET(req: NextRequest) {
   const beforeAt = Number(q.get("before")) || undefined;
   const beforeId = q.get("beforeId") ?? undefined;
   const before = beforeAt !== undefined && beforeId ? { updatedAt: beforeAt, id: beforeId } : undefined;
-  return NextResponse.json({ chats: store.list(userId, limit, before) });
+  // Surface-scoped recents (PRD-BIBLE-TEACHER): the bible-teacher list is
+  // separate from the kid default. Unknown/absent → 'default' (fail safe).
+  const workspace = q.get("workspace") === "bible-teacher" ? "bible-teacher" : "default";
+  return NextResponse.json({ chats: store.list(userId, limit, before, workspace) });
 }
 
 export async function POST(req: NextRequest) {

@@ -11,7 +11,7 @@ import { ArtifactFrame } from "./ArtifactFrame";
 import { MessageItem } from "./MessageItem";
 import { LoginGate } from "./LoginGate";
 import { useTextToSpeech } from "./useTextToSpeech";
-import type { ChatMessage, Conversation } from "@/types/chat.types";
+import type { ChatMessage, Conversation, Workspace } from "@/types/chat.types";
 import type { IdeaRecord } from "@/types/idea-bag.types";
 import { loadChats, saveChats } from "@/lib/chat-store";
 import { canContinueFromHere } from "@/lib/chat-rewind";
@@ -63,7 +63,7 @@ import { RenameNoticeBanner } from "./RenameNoticeBanner";
 
 const KIND_FALLBACK = "Let's talk about something else! How about a game? 🌟";
 
-function newConversation(): Conversation {
+function newConversation(workspace: Workspace = "default"): Conversation {
   return {
     id: crypto.randomUUID(),
     title: "New chat",
@@ -71,10 +71,16 @@ function newConversation(): Conversation {
       {
         id: crypto.randomUUID(),
         role: "assistant",
-        text: "Hi! I'm your buddy. Ask me anything, or say **make me a game**! 🌟",
+        text:
+          workspace === "bible-teacher"
+            ? "Hi! I'm Ari. Tell me the Bible story or lesson, and I'll build a game for your class. 📖"
+            : "Hi! I'm your buddy. Ask me anything, or say **make me a game**! 🌟",
         createdAt: Date.now(),
       },
     ],
+    // Tag the thread's surface so it lands in the right recents list
+    // (PRD-BIBLE-TEACHER) — omit for the kid default to keep rows clean.
+    ...(workspace === "bible-teacher" ? { workspace } : {}),
   };
 }
 
@@ -98,7 +104,10 @@ export interface ChatPanelContainerProps {
 
 export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   const { status: authStatus } = useSession();
-  const [convos, setConvos] = useState<Conversation[]>([newConversation()]);
+  // This surface's workspace (PRD-BIBLE-TEACHER): the teacher surface keeps its
+  // own recents list + localStorage bucket, separate from the kid default.
+  const workspace: Workspace = persona === "bible-teacher" ? "bible-teacher" : "default";
+  const [convos, setConvos] = useState<Conversation[]>([newConversation(workspace)]);
   const [activeId, setActiveId] = useState(convos[0]!.id);
   const [busy, setBusy] = useState(false);
   // Latest kid-safe thought summary from the model's thinking phase — shown in
@@ -193,7 +202,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   useEffect(() => {
     if (hydratedFromStore.current) return;
     hydratedFromStore.current = true;
-    const saved = loadChats(window.localStorage);
+    const saved = loadChats(window.localStorage, workspace);
     if (saved) {
       setConvos(saved.convos);
       setActiveId(saved.activeId);
@@ -206,7 +215,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
-    if (hydratedFromStore.current) saveChats(window.localStorage, convos, activeId);
+    if (hydratedFromStore.current) saveChats(window.localStorage, convos, activeId, workspace);
   }, [convos, activeId]);
 
   // Auth-interruption recovery (BUG-FIX-LOG 2026-07-14): a sign-in wall mid-turn
@@ -244,8 +253,10 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     remoteLoadingRef.current = true;
     try {
       const cursor = !reset ? remoteIndexRef.current.at(-1) : undefined;
-      const qs = cursor ? `?before=${cursor.updatedAt}&beforeId=${encodeURIComponent(cursor.id)}` : "";
-      const res = await fetch(`/api/chats${qs}`, { cache: "no-store" });
+      // Surface-scoped recents (PRD-BIBLE-TEACHER): only this workspace's chats.
+      const params = new URLSearchParams({ workspace });
+      if (cursor) { params.set("before", String(cursor.updatedAt)); params.set("beforeId", cursor.id); }
+      const res = await fetch(`/api/chats?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) {
         setRecentsError(true);
         return undefined;
@@ -320,7 +331,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         /* recovery is best-effort — never block the app load */
       }
       try {
-        const saved = loadChats(window.localStorage);
+        const saved = loadChats(window.localStorage, workspace);
         if (saved?.convos.length && !window.localStorage.getItem(SYNC_FLAG)) {
           const res = await fetch("/api/chats", {
             method: "POST",
@@ -472,7 +483,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
 
   function handleNewChat() {
     tts.stop();
-    const c = newConversation();
+    const c = newConversation(workspace);
     setConvos((list) => [c, ...list]);
     setActiveId(c.id);
     setArtifact(null);
@@ -503,7 +514,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     // this new one after the state below commits — so queue the send and let the
     // effect fire it once the switch has rendered (never against the old chat).
     tts.stop();
-    const c = newConversation();
+    const c = newConversation(workspace);
     setConvos((list) => [c, ...list]);
     setActiveId(c.id);
     setArtifact(null);

@@ -21,7 +21,7 @@ import { utcDayStart, deriveActiveMinutes } from "./screen-time";
 import type { PaymentRecord, PaymentStore } from "@/types/billing.types";
 import type { ChatHistoryStore, ConvoSummary } from "@/types/chat-history.types";
 import type { TurnResult, TurnResultStore } from "@/types/turn-result.types";
-import type { Conversation } from "@/types/chat.types";
+import type { Conversation, Workspace } from "@/types/chat.types";
 import { evaluate } from "./rate-limit";
 
 let db: Database.Database | null = null;
@@ -110,6 +110,9 @@ function getDb(): Database.Database {
       userId TEXT NOT NULL,
       title TEXT NOT NULL,
       messages TEXT NOT NULL,
+      -- Which surface owns this thread (PRD-BIBLE-TEACHER): 'default' kid app
+      -- vs 'bible-teacher' — the recents list is filtered by it.
+      workspace TEXT NOT NULL DEFAULT 'default',
       createdAt INTEGER NOT NULL,
       updatedAt INTEGER NOT NULL
     );
@@ -186,6 +189,12 @@ function getDb(): Database.Database {
   }
   if (!usageCols.some((c) => c.name === "userAgent")) {
     db.exec(`ALTER TABLE usage_events ADD COLUMN userAgent TEXT;`);
+  }
+  // Workspace column for pre-2026-07-23 DBs (PRD-BIBLE-TEACHER): existing rows
+  // default to the kid 'default' surface, so nothing moves out of the main app.
+  const convoCols = db.prepare(`PRAGMA table_info(conversations)`).all() as Array<{ name: string }>;
+  if (!convoCols.some((c) => c.name === "workspace")) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN workspace TEXT NOT NULL DEFAULT 'default';`);
   }
   return db;
 }
@@ -714,13 +723,16 @@ export class SqliteChatHistoryStore implements ChatHistoryStore {
   upsert(userId: string, convo: Conversation, now: number): void {
     getDb()
       .prepare(
-        `INSERT INTO conversations (id, userId, title, messages, createdAt, updatedAt)
-         VALUES (@id, @userId, @title, @messages, @now, @now)
+        // workspace is set on INSERT and left untouched on UPDATE — a thread's
+        // surface is fixed at creation (a bible-teacher chat can't migrate into
+        // the kid app by being re-saved).
+        `INSERT INTO conversations (id, userId, title, messages, workspace, createdAt, updatedAt)
+         VALUES (@id, @userId, @title, @messages, @workspace, @now, @now)
          ON CONFLICT(id) DO UPDATE SET
            title = excluded.title, messages = excluded.messages, updatedAt = excluded.updatedAt
          WHERE conversations.userId = excluded.userId`,
       )
-      .run({ id: convo.id, userId, title: convo.title, messages: JSON.stringify(convo.messages), now });
+      .run({ id: convo.id, userId, title: convo.title, messages: JSON.stringify(convo.messages), workspace: convo.workspace ?? "default", now });
   }
 
   bulkUpsert(userId: string, convos: Conversation[], now: number): number {
@@ -734,32 +746,32 @@ export class SqliteChatHistoryStore implements ChatHistoryStore {
     return n;
   }
 
-  list(userId: string, limit: number, before?: { updatedAt: number; id: string }): ConvoSummary[] {
+  list(userId: string, limit: number, before?: { updatedAt: number; id: string }, workspace: Workspace = "default"): ConvoSummary[] {
     const rows = (
       before === undefined
         ? getDb()
-            .prepare(`SELECT id, title, updatedAt FROM conversations WHERE userId = ? ORDER BY updatedAt DESC, id LIMIT ?`)
-            .all(userId, limit)
+            .prepare(`SELECT id, title, updatedAt FROM conversations WHERE userId = ? AND workspace = ? ORDER BY updatedAt DESC, id LIMIT ?`)
+            .all(userId, workspace, limit)
         : getDb()
             .prepare(
               // Composite cursor: strictly older, OR same-ms rows after the
               // prior page's last id (ORDER BY ... id ASC ties the order).
               `SELECT id, title, updatedAt FROM conversations
-               WHERE userId = @userId AND (updatedAt < @u OR (updatedAt = @u AND id > @i))
+               WHERE userId = @userId AND workspace = @workspace AND (updatedAt < @u OR (updatedAt = @u AND id > @i))
                ORDER BY updatedAt DESC, id LIMIT @limit`,
             )
-            .all({ userId, u: before.updatedAt, i: before.id, limit })
+            .all({ userId, workspace, u: before.updatedAt, i: before.id, limit })
     ) as ConvoSummary[];
     return rows;
   }
 
   get(userId: string, id: string): Conversation | null {
     const row = getDb()
-      .prepare(`SELECT id, title, messages FROM conversations WHERE id = ? AND userId = ?`)
-      .get(id, userId) as { id: string; title: string; messages: string } | undefined;
+      .prepare(`SELECT id, title, messages, workspace FROM conversations WHERE id = ? AND userId = ?`)
+      .get(id, userId) as { id: string; title: string; messages: string; workspace?: string } | undefined;
     if (!row) return null;
     try {
-      return { id: row.id, title: row.title, messages: JSON.parse(row.messages) };
+      return { id: row.id, title: row.title, messages: JSON.parse(row.messages), ...(row.workspace && row.workspace !== "default" ? { workspace: row.workspace as Workspace } : {}) };
     } catch {
       return null; // corrupt row — treat as missing, never throw into a route
     }

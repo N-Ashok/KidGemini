@@ -75,6 +75,24 @@ describe("chat-store — chats survive navigation", () => {
     expect(loaded.activeId).toBe("c39");
   });
 
+  // PRD-BIBLE-TEACHER: the teacher surface keeps its chats in a separate
+  // bucket, so the two recents lists never bleed into each other on one device.
+  it("isolates workspaces — bible-teacher chats are separate from the default app", () => {
+    const s = fakeStorage();
+    saveChats(s, [convo("kid1")] as never, "kid1"); // default workspace
+    saveChats(s, [convo("bt1")] as never, "bt1", "bible-teacher");
+
+    expect(loadChats(s)!.convos.map((c) => c.id)).toEqual(["kid1"]);
+    expect(loadChats(s, "bible-teacher")!.convos.map((c) => c.id)).toEqual(["bt1"]);
+  });
+
+  it("the default workspace keeps the original storage key (no migration for existing devices)", () => {
+    const s = fakeStorage();
+    saveChats(s, [convo("a")] as never, "a"); // default
+    expect(s.getItem("kidgemini:chats:v1")).toContain('"a"');
+    expect(s.getItem("kidgemini:chats:v1:bible-teacher")).toBeNull();
+  });
+
   it("degrades to null on corrupt data or quota errors (never throws)", () => {
     const s = fakeStorage();
     s.setItem("kidgemini:chats:v1", "{not json");

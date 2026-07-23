@@ -1,7 +1,7 @@
 // Server-side chat history (TECH_DEBT #26): conversations keyed by the same
 // identity as usage_events (user:<email> or guest:<cookie-uuid>).
 
-import type { Conversation } from "./chat.types";
+import type { Conversation, Workspace } from "./chat.types";
 
 /** Sidebar-weight row: no message payloads (those can be ~200KB per game chat). */
 export interface ConvoSummary {
@@ -18,7 +18,7 @@ export interface ChatHistoryStore {
   /** Newest-first summaries. `before` = the LAST row of the prior page —
    *  a composite (updatedAt, id) cursor, so rows sharing a timestamp
    *  (rapid same-ms saves) are never skipped. */
-  list(userId: string, limit: number, before?: { updatedAt: number; id: string }): ConvoSummary[];
+  list(userId: string, limit: number, before?: { updatedAt: number; id: string }, workspace?: Workspace): ConvoSummary[];
   /** Full conversation, or null when absent OR owned by someone else. */
   get(userId: string, id: string): Conversation | null;
   /** Guest→account merge on login: reassigns every row owned by `fromUserId`

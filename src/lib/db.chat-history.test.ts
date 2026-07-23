@@ -100,4 +100,25 @@ describe("SqliteChatHistoryStore", () => {
     expect(store.claim("guest:never-existed", "user:new@x.com")).toBe(0);
     expect(store.claim("user:new@x.com", "user:new@x.com")).toBe(0);
   });
+
+  // PRD-BIBLE-TEACHER: the same account has two separate recents lists — the
+  // list() query must be scoped by workspace so a teacher chat never shows up
+  // in the kid app and vice versa.
+  it("H.10 list is scoped by workspace — teacher and default chats never cross", () => {
+    const uid = "user:ws@x.com";
+    store.upsert(uid, convo("kidchat"), 1000); // no workspace → 'default'
+    store.upsert(uid, { ...convo("btchat"), workspace: "bible-teacher" }, 2000);
+
+    expect(store.list(uid, 10).map((s) => s.id)).toEqual(["kidchat"]); // default (implicit)
+    expect(store.list(uid, 10, undefined, "default").map((s) => s.id)).toEqual(["kidchat"]);
+    expect(store.list(uid, 10, undefined, "bible-teacher").map((s) => s.id)).toEqual(["btchat"]);
+  });
+
+  it("H.11 a bible-teacher conversation round-trips its workspace through get()", () => {
+    store.upsert("user:rt@x.com", { ...convo("rt1"), workspace: "bible-teacher" }, 1000);
+    expect(store.get("user:rt@x.com", "rt1")!.workspace).toBe("bible-teacher");
+    // A default chat carries no workspace field (kept clean).
+    store.upsert("user:rt@x.com", convo("rt2"), 1000);
+    expect(store.get("user:rt@x.com", "rt2")!.workspace).toBeUndefined();
+  });
 });

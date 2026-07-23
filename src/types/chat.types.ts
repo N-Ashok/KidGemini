@@ -2,6 +2,11 @@
 
 export type ChatRole = "child" | "assistant";
 
+/** Which surface a conversation belongs to (PRD-BIBLE-TEACHER). The
+ *  /bible-teacher teacher surface keeps its chats in their own workspace,
+ *  separate from the kid `default` app — same account, two recents lists. */
+export type Workspace = "default" | "bible-teacher";
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
@@ -38,6 +43,10 @@ export interface Conversation {
    *  is sent; after it lands, the freshly generated reply is newest again and
    *  ordinary "last game wins" behavior resumes on its own. */
   activeGameMessageId?: string;
+  /** Which surface this thread belongs to (PRD-BIBLE-TEACHER). Omitted →
+   *  "default" (the kid app); "bible-teacher" for the teacher surface, so the
+   *  two recents lists stay separate under the same identity. */
+  workspace?: Workspace;
 }
 
 /** A picture the child attached for context (base64 payload, no data: prefix).
