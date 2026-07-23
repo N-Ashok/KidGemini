@@ -26,21 +26,30 @@ export const CURATED_IMPORT_NAMES = [
 ];
 const CURATED_IMPORTS = CURATED_IMPORT_NAMES.join(", ");
 
-export const THREE_PROMPT_SECTION = `**Optional 3D graphics**: for games that would look better in 3D (racing,
-flying, exploring, a rolling-ball maze), you MAY build the scene with
-Three.js instead of a flat 2D canvas. To do that:
+export const THREE_PROMPT_SECTION = `**3D graphics**: this child asked for 3D — so build a REAL 3D scene with
+Three.js and a PerspectiveCamera. Do NOT fake it with a flat 2D canvas, CSS
+3D transforms, or sprites scaled to look far away: a 2D canvas dressed up to
+"look 3D" is the single most common way a 3D request goes unmet — the child
+keeps saying "this isn't really 3D" and they are right. Anything they call a
+"3D game", "3D cars", a "3D world", or "real 3D" MUST be Three.js. (Only a
+game that is genuinely better flat — a quiz, a word game, a 2D board game —
+should stay 2D, in which case skip the marker below.) To build in 3D:
 1. Put the single line \`<!--USES_THREE-->\` as the very first thing inside
    \`<body>\` — this is how the platform knows to make the 3D library
-   available (leave it out for plain 2D games; don't add it otherwise).
+   available (leave it out ONLY for a genuinely 2D game; don't add it otherwise).
 2. Write your game code in \`<script type="module">\`, and start it with
    \`import { ${CURATED_IMPORTS} } from "three";\` — only import names from
    this exact list, and only the ones you use; nothing else is available
    (no textures, no OrbitControls, no post-processing effects).
-3. Create the renderer EXACTLY like this:
-   \`const renderer = new WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });\`
-   — preserveDrawingBuffer: true is REQUIRED (the platform's health check
-   reads pixels back from the canvas; without it every frame reads blank).
-   Then \`renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));\`
+3. Put exactly ONE \`<canvas id="scene"></canvas>\` in your HTML and draw INTO
+   it — create the renderer EXACTLY like this:
+   \`const renderer = new WebGLRenderer({ canvas: document.getElementById('scene'), antialias: true, preserveDrawingBuffer: true });\`
+   Pass that canvas so the renderer draws into it. Do NOT also call
+   \`appendChild(renderer.domElement)\`, and do NOT add a second \`<canvas>\`: a
+   leftover empty canvas covers the real one and the whole screen goes BLACK
+   (the #1 "my 3D game is a black screen" cause). preserveDrawingBuffer: true is
+   REQUIRED (the platform's health check reads pixels back; without it every
+   frame reads blank). Then \`renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));\`
    so high-density phones don't render 9x the pixels.
 4. Build the scene from the primitive shapes and solid colors above. Light
    it with exactly two lights — one AmbientLight (soft fill) plus one
@@ -99,7 +108,9 @@ export function modelsPromptSection(
 professional low-poly models from the toy box: ${names}.
 1. Add a second marker line right after \`<!--USES_THREE-->\` naming ONLY the
    models you use, e.g. \`<!--USES_MODELS: ${models[0]!.name}-->\` (comma-separated;
-   only names from the list above — anything else is ignored).
+   only names from the list above). NEVER invent a model name — an unlisted name
+   silently loads nothing. If you need an object the list doesn't have, build it
+   from the primitive shapes instead.
 2. Load them with the built-in \`loadModel(name)\` helper — do NOT import a
    loader yourself. It returns a Promise of a ready-to-add object, or null
    if loading failed.

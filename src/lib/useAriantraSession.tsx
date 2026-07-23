@@ -17,7 +17,14 @@ export type SessionStatus = "loading" | "authenticated" | "unauthenticated";
 export interface SessionData {
   /** image is always null here (the SSO session carries no avatar) — kept for
    *  next-auth API compatibility so consumers don't need changes. */
-  user: { name: string | null; email: string | null; image?: string | null };
+  user: {
+    name: string | null;
+    email: string | null;
+    image?: string | null;
+    /** Verified-adult claim (PRD-BIBLE-TEACHER) — drives the Bible-games
+     *  publish affordance on the teacher surface. Absent → not adult. */
+    adult?: boolean;
+  };
 }
 
 export function useSession(): { status: SessionStatus; data: SessionData | null } {

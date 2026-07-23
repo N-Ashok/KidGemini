@@ -11,7 +11,7 @@ import { catalogGates, type CatalogGates } from "./assets/catalog-gate";
 import { multiplayerGate } from "./multiplayer-gate";
 import { MULTIPLAYER_PROMPT_SECTION } from "./multiplayer-prompt";
 import {
-  isGameEditTurn, isRepeatedRequest, GAME_EDIT_PROMPT_SECTION,
+  isGameEditTurn, isThreeConversionTurn, isRepeatedRequest, GAME_EDIT_PROMPT_SECTION,
   GAME_EDIT_STRICT_RETRY_SECTION, REPEATED_REQUEST_SECTION, FRESH_GAME_LINE,
 } from "./game-edit";
 import { PERSONAS, type PersonaId } from "./persona/persona";
@@ -627,7 +627,14 @@ export class GeminiChatModel implements ChatModel {
     // the real per-user entitlement and the paid tier goes always-on (§9).
     const gates = catalogGates({ message: input.message, history: input.history, paid: false });
     const wantsMultiplayer = multiplayerGate({ message: input.message, history: input.history });
-    const isEdit = !input.forceFullRegen && isGameEditTurn(input.message, input.history, input.activeGameMessageId);
+    // A 2D→3D conversion streams as a full REBUILD, not a patch (BUG-FIX-LOG
+    // 2026-07-23): patching a 2D canvas game into Three.js makes the model fake
+    // depth instead of switching engines. Kept in lock-step with the route's
+    // patch-branch guard via the same isThreeConversionTurn predicate.
+    const isEdit =
+      !input.forceFullRegen &&
+      !isThreeConversionTurn(input.message, input.history, input.activeGameMessageId) &&
+      isGameEditTurn(input.message, input.history, input.activeGameMessageId);
     // Penguin-maze hardening 2026-07-18: an identical re-send means the last
     // reply claimed success without the change appearing — tell the model.
     const repeated = isRepeatedRequest(input.message, input.history);

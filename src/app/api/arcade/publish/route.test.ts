@@ -23,9 +23,9 @@ afterAll(() => {
   process.env.AUTH_JWT_SECRET = OLD.secret;
 });
 
-async function sessionToken(): Promise<string> {
+async function sessionToken(extra: Record<string, unknown> = {}): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  return new SignJWT({ typ: "session", name: "Agilan" })
+  return new SignJWT({ typ: "session", name: "Agilan", ...extra })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject("player-1")
     .setIssuer("ariantra")
@@ -56,6 +56,14 @@ describe("arcade publish gates", () => {
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe("parent_required");
     expect(platformCalls).toHaveLength(0);
+  });
+
+  it("G.1b a VERIFIED-ADULT session publishes with NO parent-PIN cookie → 200 (teachers skip the PIN)", async () => {
+    cookieJar.ariantra_session = await sessionToken({ adult: true }); // teacher who cleared the age gate
+    // No PARENT_SESSION_COOKIE at all — the adult claim is the approval.
+    const res = await POST(req({ name: "Loaves and Fishes", html: HTML, bibleGame: true }));
+    expect(res.status).toBe(200);
+    expect(platformCalls).toHaveLength(1);
   });
 
   it("G.2 signed out (no session cookie) → 401, platform never called", async () => {
@@ -166,5 +174,64 @@ describe("arcade publish — category forwarded", () => {
     const res = await POST(req({ name: "Fish Maze", html: HTML, category: "NotACategory" }));
     expect(res.status).toBe(200);
     expect((platformCalls[0] as { category?: unknown }).category).toBeUndefined();
+  });
+});
+
+// PRD-BIBLE-TEACHER §5: the teacher surface tags a game for the separate
+// "Bible games" listing.
+// Surface-driven tagging (owner direction 2026-07-23): anything published from
+// the /bible-teacher surface lands in /bible-games — the SURFACE is the signal,
+// not the adult claim. Age verification gates ACCESS to the teacher surface, not
+// publishing. So bibleGame:true is honored regardless of the adult claim.
+describe("arcade publish — Bible-games tag is surface-driven, not adult-gated", () => {
+  it("G.12 an ADULT session forwards bibleGame:true to the platform", async () => {
+    cookieJar.ariantra_session = await sessionToken({ adult: true });
+    cookieJar[PARENT_SESSION_COOKIE] = await mintParentSession(FAMILY, SECRET);
+    const res = await POST(req({ name: "David and Goliath", html: HTML, bibleGame: true }));
+    expect(res.status).toBe(200);
+    expect(platformCalls[0]).toMatchObject({ bibleGame: true });
+  });
+
+  it("G.13 a NON-adult session ALSO forwards bibleGame:true — the surface is the signal", async () => {
+    cookieJar.ariantra_session = await sessionToken(); // no adult claim
+    cookieJar[PARENT_SESSION_COOKIE] = await mintParentSession(FAMILY, SECRET);
+    const res = await POST(req({ name: "Noah's Ark", html: HTML, bibleGame: true }));
+    expect(res.status).toBe(200);
+    expect(platformCalls[0]).toMatchObject({ bibleGame: true });
+  });
+
+  it("G.13b a normal (non-Bible) publish never sends the flag — no accidental Bible tagging", async () => {
+    cookieJar.ariantra_session = await sessionToken();
+    cookieJar[PARENT_SESSION_COOKIE] = await mintParentSession(FAMILY, SECRET);
+    const res = await POST(req({ name: "Space Racer", html: HTML })); // no bibleGame in body
+    expect(res.status).toBe(200);
+    expect((platformCalls[0] as { bibleGame?: unknown }).bibleGame).toBeUndefined();
+  });
+});
+
+// The served file must render even when the child publishes an OLD chat whose
+// stored HTML predates the 3D fixes (BUG-FIX-LOG 2026-07-23): the publish route
+// floors it server-side so the import map + canvas fix are present on the arcade,
+// not just in the in-app preview.
+describe("arcade publish — 3D floor applied before serving", () => {
+  const forwardedHtml = () =>
+    (platformCalls[0] as { files: { "index.html": { data: string } } }).files["index.html"].data;
+
+  it("G.14 a 3D game is floored (import map + canvas fix) before forwarding to the platform", async () => {
+    cookieJar.ariantra_session = await sessionToken();
+    cookieJar[PARENT_SESSION_COOKIE] = await mintParentSession(FAMILY, SECRET);
+    const threeGame =
+      '<html><head></head><body><canvas></canvas><script type="module">import { Scene } from "three"; new Scene();</script></body></html>';
+    const res = await POST(req({ name: "Racer", html: threeGame }));
+    expect(res.status).toBe(200);
+    expect(forwardedHtml()).toContain('type="importmap"');
+    expect(forwardedHtml()).toContain("ari-3d-canvas-floor");
+  });
+
+  it("G.15 a plain 2D game is forwarded byte-identical (floor is a no-op for 2D)", async () => {
+    cookieJar.ariantra_session = await sessionToken();
+    cookieJar[PARENT_SESSION_COOKIE] = await mintParentSession(FAMILY, SECRET);
+    await POST(req({ name: "Quiz", html: HTML }));
+    expect(forwardedHtml()).toBe(HTML);
   });
 });

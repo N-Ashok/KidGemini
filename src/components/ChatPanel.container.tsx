@@ -107,6 +107,13 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   // This surface's workspace (PRD-BIBLE-TEACHER): the teacher surface keeps its
   // own recents list + localStorage bucket, separate from the kid default.
   const workspace: Workspace = persona === "bible-teacher" ? "bible-teacher" : "default";
+  // The SURFACE is the signal (owner direction 2026-07-23): anything created on
+  // /bible-teacher publishes to /bible-games — full stop, regardless of adult
+  // status. Age verification gates ACCESS to the teacher surface (the relaxed
+  // authoring persona, via the trial-spent age gate), NOT publishing. So the
+  // publish affordance fixes the category to "Bible games" for everyone on this
+  // surface; a game authored here is a Bible game by definition.
+  const publishesAsBible = workspace === "bible-teacher";
   const [convos, setConvos] = useState<Conversation[]>([newConversation(workspace)]);
   const [activeId, setActiveId] = useState(convos[0]!.id);
   const [busy, setBusy] = useState(false);
@@ -1148,6 +1155,11 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             // Themed preview leaderboard (PRD-PREVIEW-WYSIWYG): biblical seed
             // names on the teacher surface, generic names elsewhere.
             previewTheme={workspace === "bible-teacher" ? "bible" : "default"}
+            // Publishing fixes the game to the "Bible games" category + separate
+            // listing (PRD-BIBLE-TEACHER §5) for anyone on the teacher surface —
+            // surface-driven, not adult-gated (age verification gates ACCESS, not
+            // publishing; owner direction 2026-07-23).
+            bibleTeacher={publishesAsBible}
             // The kid's latest ask — self-healing repair prompts carry it so a
             // fix never drifts from intent (PRD §7 / R.5).
             originalRequest={[...active.messages].reverse().find((m) => m.role === "child")?.text ?? ""}

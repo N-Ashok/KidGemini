@@ -19,6 +19,7 @@ import { GAME_CONSOLE_SOURCE, injectConsoleCapture } from "@/lib/game-console";
 import { DEVICE_PRESETS, deviceById, fitScale, orientedSize } from "@/lib/device-preview";
 import { injectPreviewInstrumentation } from "@/lib/preview-verify";
 import { injectPreviewRuntime, type PreviewTheme } from "@/lib/preview-runtime";
+import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
 import { keyToPanelAction, UPDATING_LINE } from "@/lib/preview-pane";
 import { buildErrorReport, hasExtremeError } from "@/lib/error-report";
 import { usePreviewVerify } from "./usePreviewVerify";
@@ -58,6 +59,9 @@ interface ArtifactFrameProps {
   /** Which themed leaderboard seed the preview WYSIWYG runtime uses
    *  (PRD-PREVIEW-WYSIWYG): 'bible' on the bible-teacher surface, else 'default'. */
   previewTheme?: PreviewTheme;
+  /** Bible-teacher surface (PRD-BIBLE-TEACHER §5): publishing fixes the game to
+   *  the "Bible games" category and the separate listing. Server re-verifies. */
+  bibleTeacher?: boolean;
 }
 
 type Tab = "preview" | "code" | "console";
@@ -94,6 +98,7 @@ export function ArtifactFrame({
   nudgeMic,
   onNudgeShown,
   previewTheme = "default",
+  bibleTeacher = false,
 }: ArtifactFrameProps) {
   const [tab, setTab] = useState<Tab>("preview");
   const [publishing, setPublishing] = useState(false);
@@ -146,14 +151,19 @@ export function ArtifactFrame({
   // multiplayer-prompt rule 9's promise ("Ariantra always exists, in the preview
   // too") via a solo session. PREVIEW ONLY — publish/🎮 Invite send
   // state.currentHtml untouched, where the platform loads the real backend SDK.
+  //
+  // ensureAssetRuntime is the innermost floor (BUG-FIX-LOG 2026-07-23): whatever
+  // produced currentHtml — a fresh build, a repair patch, or reloading an older
+  // chat whose stored HTML predates the fix — a 3D game that imports "three" is
+  // guaranteed a resolvable import map here, so the preview iframe can never throw
+  // "Failed to resolve module specifier three". Idempotent + 2D-safe.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const srcDoc = useMemo(
-    () =>
-      state.probesEnabled
-        ? injectPreviewInstrumentation(injectPreviewRuntime(state.currentHtml, { theme: previewTheme }))
-        : injectConsoleCapture(injectPreviewRuntime(state.currentHtml, { theme: previewTheme })),
-    [docKey],
-  );
+  const srcDoc = useMemo(() => {
+    const floored = ensureAssetRuntime(state.currentHtml);
+    return state.probesEnabled
+      ? injectPreviewInstrumentation(injectPreviewRuntime(floored, { theme: previewTheme }))
+      : injectConsoleCapture(injectPreviewRuntime(floored, { theme: previewTheme }));
+  }, [docKey]);
   const covered = state.phase !== "done";
 
   // Device frame's actual ON-SCREEN box (2026-07-16 fix): shared by the
@@ -578,7 +588,7 @@ export function ArtifactFrame({
       )}
 
       {publishing && (
-        <PublishToArcade html={state.currentHtml} suggestedName={titleOf(state.currentHtml)} onClose={() => setPublishing(false)} />
+        <PublishToArcade html={state.currentHtml} suggestedName={titleOf(state.currentHtml)} bibleGame={bibleTeacher} onClose={() => setPublishing(false)} />
       )}
 
       {inviting && (

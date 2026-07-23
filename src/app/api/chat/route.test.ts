@@ -18,6 +18,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { REBUILT_GAME_LINE, FRESH_GAME_LINE } from "@/lib/game-edit";
 import { SafetyBlockedError } from "@/lib/model-runner";
 import { KIND_REDIRECT, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY, BUILD_STARTER_SPLIT } from "@/lib/chat-copy";
+// The REAL floor (not mocked): delivery now guarantees the three import map on
+// any game that imports "three", even without the <!--USES_THREE--> marker
+// (BUG-FIX-LOG 2026-07-23). Tests assert the delivered game === the game floored.
+import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
 
 // getAriantraSession() — toggled per test (SSO session).
 const authMock = vi.fn();
@@ -373,7 +377,11 @@ describe("POST /api/chat — asset injection can never cost the child the game (
     const text = await res.text();
 
     const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
-    expect(done.artifactHtml).toBe(RAW_GAME);
+    // injectAssets throwing no longer means an unresolvable 3D game: the raw
+    // artifact still gets the import-map floor, so the preview opens AND three
+    // resolves. (Floor is independent of injectAssets, so it survives its throw.)
+    expect(done.artifactHtml).toBe(ensureAssetRuntime(RAW_GAME));
+    expect(done.artifactHtml).toContain('type="importmap"');
   });
 
   it("P.2 injection success → 'done' carries the injected html", async () => {
@@ -850,6 +858,25 @@ describe("POST /api/chat — patch-based feature edits", () => {
     expect(done.artifactHtml).toBe("<html>FALLBACK GAME</html>");
   });
 
+  // #2a (BUG-FIX-LOG 2026-07-23, "racing game" incident): asking a 2D game to go
+  // 3D must REBUILD, not patch — otherwise the model fakes depth on the 2D canvas
+  // turn after turn. isThreeConversionTurn routes it to the fresh-build branch, and
+  // the streamed full 3D game is delivered (import map floored in), with none of the
+  // edit/patch escalations touched.
+  it("C.R a 3D request on a 2D game rebuilds (skips the patch path) — streamed 3D game shipped, no patch/regen", async () => {
+    const THREE_GAME =
+      '<!doctype html><html><body><script type="module">import { Scene } from "three"; new Scene();</script></body></html>';
+    replyStreamMock.mockReturnValue(one("Now in REAL 3D!\n```html\n" + THREE_GAME + "\n```"));
+    extractArtifactMock.mockImplementation(() => ({ text: "Now in REAL 3D!", artifactHtml: THREE_GAME, wasFenced: true }));
+
+    const res = await POST(makeReq({ message: "make it 3D", history: historyWithGame }));
+    const done = JSON.parse((await res.text()).trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(strictEditRetryMock).not.toHaveBeenCalled(); // no cheap edit rung
+    expect(replyMock).not.toHaveBeenCalled(); // no regen fallback — it was a clean fresh build
+    expect(done.artifactHtml).toBe(ensureAssetRuntime(THREE_GAME)); // the 3D game, map floored in
+  });
+
   // BUG-FIX-LOG 2026-07-23 (owner UAT "remove the leaderboard" corrupted the NT
   // quiz): the model fenced a HALF-PATCHED document with raw SEARCH/REPLACE
   // markers left inside. Before the applyPatch conflict-marker guard, that shipped
@@ -881,7 +908,7 @@ describe("POST /api/chat — patch-based feature edits", () => {
       text: "Added the 3D look! 🎮\n<<<<<<< SEARCH\nOLD_FEATURE\n=======\nTHREE_D_FEATURE\n>>>>>>> REPLACE",
     });
 
-    const res = await POST(makeReq({ message: "make it 3D", history: historyWithGame }));
+    const res = await POST(makeReq({ message: "make the car faster", history: historyWithGame }));
     const text = await res.text();
     const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
 
@@ -895,7 +922,7 @@ describe("POST /api/chat — patch-based feature edits", () => {
     replyStreamMock.mockReturnValue(one("I made it 3D!\n```html\n" + COMPLETE_REWRITE + "\n```"));
     strictEditRetryMock.mockResolvedValue({ text: "NEEDS_FULL_REBUILD" });
 
-    const res = await POST(makeReq({ message: "make it 3D", history: historyWithGame }));
+    const res = await POST(makeReq({ message: "make the car faster", history: historyWithGame }));
     const text = await res.text();
     const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
 
@@ -908,7 +935,7 @@ describe("POST /api/chat — patch-based feature edits", () => {
     replyStreamMock.mockReturnValue(one("```html\n" + COMPLETE_REWRITE + "\n```"));
     strictEditRetryMock.mockRejectedValue(new Error("model unavailable"));
 
-    const res = await POST(makeReq({ message: "make it 3D", history: historyWithGame }));
+    const res = await POST(makeReq({ message: "make the car faster", history: historyWithGame }));
     const text = await res.text();
     const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
 
@@ -994,7 +1021,7 @@ describe("POST /api/chat — three-import lint", () => {
     expect(replyMock).toHaveBeenCalledTimes(1);
     expect(replyMock.mock.calls[0]![0].message).toContain("TubeGeometry"); // told exactly what crashed
     expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
-    expect(done.artifactHtml).toBe(CLEAN_GAME);
+    expect(done.artifactHtml).toBe(ensureAssetRuntime(CLEAN_GAME)); // clean retry, import map floored in
   });
 
   it("L.2 if the corrective retry fails, the original is still served — floor stays 'no worse', never a dead end", async () => {
@@ -1006,7 +1033,10 @@ describe("POST /api/chat — three-import lint", () => {
     const text = await res.text();
     const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
 
-    expect(done.artifactHtml).toBe(BAD_IMPORT_GAME); // served, visible, repairable — not dropped
+    // Served, visible, repairable — not dropped. The import map is floored in, so
+    // the specifier resolves; the unknown NAMED export (TubeGeometry) is the
+    // remaining issue the kid can repair — the floor is 'no worse', never a dead end.
+    expect(done.artifactHtml).toBe(ensureAssetRuntime(BAD_IMPORT_GAME));
   });
 
   it("L.3 a clean fresh build costs NO extra Gemini call", async () => {
@@ -1037,7 +1067,7 @@ describe("POST /api/chat — three-import lint", () => {
 
     expect(replyMock).toHaveBeenCalledTimes(1);
     expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
-    expect(done.artifactHtml).toBe(CLEAN_GAME); // never the import-crashing patch result
+    expect(done.artifactHtml).toBe(ensureAssetRuntime(CLEAN_GAME)); // never the import-crashing patch result; map floored in
   });
 });
 
@@ -1228,7 +1258,7 @@ describe("POST /api/chat — cheap strict-edit rung before full rebuild (PRD-RES
     });
     replyMock.mockResolvedValue({ text: "Rebuilt!", artifactHtml: "<html>REBUILT</html>", wasFenced: true });
 
-    const res = await POST(makeReq({ message: "make it 3d", history: historyWithGame }));
+    const res = await POST(makeReq({ message: "make the car faster", history: historyWithGame }));
     const d = done(await res.text());
 
     // rung patch rejected for the bad import → full rebuild

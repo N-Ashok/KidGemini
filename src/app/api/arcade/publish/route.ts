@@ -26,6 +26,7 @@ import { nameToSlug } from "@/lib/arcade";
 import { partner } from "@/lib/arcade-partner";
 import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
 import { GAME_CATEGORIES } from "@/lib/game-categories";
+import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
 
 interface Body {
   check?: boolean;
@@ -38,6 +39,10 @@ interface Body {
   category?: string;
   /** Kid's explicit single/multiplayer choice (default single = absent/false). */
   multiplayer?: boolean;
+  /** Teacher surface (PRD-BIBLE-TEACHER §5): tag this game for the separate
+   *  "Bible games" listing. Only forwarded when the session is a verified
+   *  adult — the platform re-checks the same claim (defense in depth). */
+  bibleGame?: boolean;
 }
 
 const SLUG_RE = /^[a-z0-9-]{2,40}$/;
@@ -79,12 +84,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "signed_out" }, { status: 401 });
   }
 
-  // Gate 2: a PIN-verified parent of THIS family. The account match is the
-  // actual fix for "any parent can approve any kid's publish" — a parent
-  // session from family A can never approve family B's game.
-  const parentAccount = await getVerifiedParentAccount();
-  if (!parentAccount || parentAccount !== session.userId) {
-    return NextResponse.json({ error: "parent_required" }, { status: 403 });
+  // Gate 2: publish approval. A verified ADULT (a teacher who cleared the age
+  // gate — the `adult` claim rides in the signed SSO JWT, unspoofable by a kid)
+  // IS the account owner, so no parent-PIN approval is needed on the teacher
+  // surface (owner direction 2026-07-23: "skip PIN for teachers"). Everyone else
+  // still needs a PIN-verified parent session of THIS family — the fix for "any
+  // parent can approve any kid's publish" (a family-A parent can't approve a
+  // family-B game).
+  if (session.adult !== true) {
+    const parentAccount = await getVerifiedParentAccount();
+    if (!parentAccount || parentAccount !== session.userId) {
+      return NextResponse.json({ error: "parent_required" }, { status: 403 });
+    }
   }
 
   if (!body.html || !/<\w+[\s>/]/.test(body.html)) {
@@ -107,13 +118,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     typeof body.category === "string" && (GAME_CATEGORIES as readonly string[]).includes(body.category)
       ? body.category
       : undefined;
+  // "Bible games" tagging (PRD-BIBLE-TEACHER §5, owner direction 2026-07-23):
+  // the SURFACE is the signal — anything published from /bible-teacher lands in
+  // /bible-games, regardless of the adult claim. Age verification gates ACCESS to
+  // the teacher authoring surface, NOT publishing. The client only sends this flag
+  // from the teacher surface; a normal publish omits it (see G.13b).
+  const bibleGame = body.bibleGame === true;
+  // Floor the served file (BUG-FIX-LOG 2026-07-23): publishing an OLD chat whose
+  // stored HTML predates the 3D fixes would otherwise serve a game with an
+  // unresolvable "three" / a black-screen double canvas. ensureAssetRuntime is
+  // idempotent and a no-op for 2D games, so already-correct games are byte-identical.
+  const html = ensureAssetRuntime(body.html);
   const { status, data } = await partner({
     sessionToken: rawSession,
     name,
     slug,
-    files: { "index.html": { data: body.html, encoding: "utf8" } },
+    files: { "index.html": { data: html, encoding: "utf8" } },
     ...(category ? { category } : {}),
     ...(multiplayer ? { seo: { multiplayer: true } } : {}),
+    ...(bibleGame ? { bibleGame: true } : {}),
   });
   return NextResponse.json({ slug, ...data }, { status });
 }

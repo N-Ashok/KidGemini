@@ -14,6 +14,7 @@ import {
   REPEATED_REQUEST_SECTION, GAME_EDIT_STRICT_RETRY_SECTION, REBUILT_GAME_LINE,
   streamingDisplayText, EDIT_STREAM_WORKING_LINE,
   detectsNewGame, NEW_GAME_SENTINEL, NEW_GAME_PROMPT_LINE,
+  isThreeConversionTurn,
 } from "./game-edit";
 import type { ChatMessage } from "@/types/chat.types";
 
@@ -57,6 +58,42 @@ describe("isGameEditTurn — a build-shaped turn that already has a game to edit
   it("is (over-inclusively, like isGameBuildTurn) true for any message once a game exists", () => {
     const history = [msg("child", "make me a racing game"), msg("assistant", GAME_V1)];
     expect(isGameEditTurn("what do pandas eat?", history)).toBe(true);
+  });
+});
+
+// A 2D→3D conversion must REBUILD, not patch (BUG-FIX-LOG 2026-07-23, the
+// "racing game" incident): patching a finished 2D canvas game into Three.js is
+// a whole-file rewrite, so the model fakes depth on the 2D canvas for turn after
+// turn ("said three.js, stayed 2D"). isThreeConversionTurn flips such a turn to
+// a full rebuild — but ONLY on a 2D game asked to go 3D.
+describe("isThreeConversionTurn — 2D game asked to go 3D must rebuild, not patch", () => {
+  const TWO_D = [msg("child", "make me a racing game"), msg("assistant", GAME_V1)];
+  const THREE_D_GAME =
+    'Here!\n```html\n<!doctype html><html><body><script type="module">import { Scene } from "three";</script></body></html>\n```';
+  const THREE_D = [msg("child", "make me a 3d racer"), msg("assistant", THREE_D_GAME)];
+
+  it("C.1 a 2D game + an explicit 3D request → true (rebuild)", () => {
+    expect(isThreeConversionTurn("make it 3D", TWO_D)).toBe(true);
+    expect(isThreeConversionTurn("i want real 3D cars", TWO_D)).toBe(true);
+  });
+
+  it("C.2 Hinglish 3D request on a 2D game → true (the exact incident phrasing)", () => {
+    expect(isThreeConversionTurn("isko 3D game Banega", TWO_D)).toBe(true);
+    expect(isThreeConversionTurn("Mujhe 3D cars use karna hai", TWO_D)).toBe(true);
+  });
+
+  it("C.3 a non-3D edit on a 2D game → false (ordinary patch edit)", () => {
+    expect(isThreeConversionTurn("make the car faster", TWO_D)).toBe(false);
+    expect(isThreeConversionTurn("add a brake button", TWO_D)).toBe(false);
+  });
+
+  it("C.4 an ALREADY-3D game asked for more 3D → false (edit normally, don't rebuild)", () => {
+    expect(isThreeConversionTurn("make it more 3D", THREE_D)).toBe(false);
+    expect(isThreeConversionTurn("add 3D trees", THREE_D)).toBe(false);
+  });
+
+  it("C.5 no game yet → false (a fresh build already gets the 3D catalog)", () => {
+    expect(isThreeConversionTurn("make me a 3d game", [])).toBe(false);
   });
 });
 

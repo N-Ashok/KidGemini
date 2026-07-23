@@ -11,7 +11,19 @@ import { getAriantraSession } from "@/lib/ariantra-session.server";
 export async function GET(): Promise<NextResponse> {
   const session = await getAriantraSession();
   return NextResponse.json(
-    { user: session ? { name: session.name ?? null, email: session.email ?? null } : null },
+    {
+      user: session
+        ? {
+            name: session.name ?? null,
+            email: session.email ?? null,
+            // Verified-adult claim (PRD-BIBLE-TEACHER) so the client can match
+            // the server: the Bible-games publish affordance (fixed category,
+            // separate listing) is only shown when the game will ACTUALLY be
+            // tagged — which the partner-publish route gates on this same claim.
+            adult: session.adult === true,
+          }
+        : null,
+    },
     { headers: { "cache-control": "no-store" } },
   );
 }

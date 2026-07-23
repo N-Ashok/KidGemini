@@ -9,12 +9,17 @@ import { nameToSlug } from "@/lib/arcade";
 import { whatsappShareUrl } from "@/lib/share-links";
 import { GAME_CATEGORIES } from "@/lib/game-categories";
 import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
-import { signIn, useSession } from "@/lib/useAriantraSession";
+import { signIn, verifyAge, useSession } from "@/lib/useAriantraSession";
 
 interface Props {
   html: string;
   suggestedName?: string;
   onClose: () => void;
+  /** Bible-teacher surface (PRD-BIBLE-TEACHER §5): the game is fixed to the
+   *  "Bible games" category — no picker — and published into the separate Bible
+   *  listing. Surface-driven (true whenever authored on /bible-teacher), not
+   *  adult-gated — age verification gates ACCESS to the surface, not publishing. */
+  bibleGame?: boolean;
 }
 
 type Step = "signin" | "choose" | "pick" | "name" | "pin" | "publishing" | "done";
@@ -34,7 +39,7 @@ const NAME_IDEAS = [
 // why the whatsapp:// deep-link + delayed-window.open approach is banned
 // (BUG-FIX-LOG 2026-07-18: it silently opened nothing without the app).
 
-export function PublishToArcade({ html, suggestedName, onClose }: Props) {
+export function PublishToArcade({ html, suggestedName, onClose, bibleGame = false }: Props) {
   const [step, setStep] = useState<Step>("name");
   // Sign-in is checked FIRST (before the kid invests in naming + PIN): the
   // family account is required to publish, and signIn() round-trips back to
@@ -105,6 +110,10 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
   const [shareEnabled, setShareEnabled] = useState(false);
   const [shareMessage, setShareMessage] = useState("");
   const [shareConfirmed, setShareConfirmed] = useState(false);
+  // Where the game ACTUALLY landed — read from the publish response, not the
+  // client's assumption, so the "done" screen never points at Bible games when
+  // the server (fail-closed on the adult claim) filed it in the general catalog.
+  const [landedBible, setLandedBible] = useState(false);
   const checkTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const slug = updateTarget ? updateTarget.slug : nameToSlug(name);
@@ -167,11 +176,13 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
           ...(target ? { slug: target.slug } : {}),
           ...(category ? { category } : {}),
           multiplayer: playMode === "friends",
+          ...(bibleGame ? { bibleGame: true } : {}),
         }),
       });
       const data = (await res.json()) as {
         url?: string; error?: string; suggestions?: string[]; matched?: string;
         shareEnabled?: boolean; credit?: { name?: string; age?: number; place?: string } | null;
+        bibleGame?: boolean;
       };
       clearTimeout(t1);
       clearTimeout(t2);
@@ -188,6 +199,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
       setStage(4);
       setLiveUrl(data.url);
       setShareEnabled(data.shareEnabled === true);
+      setLandedBible(data.bibleGame === true);
       // Copy rewrite (2026-07-17): the kid is the hook, not the platform — a
       // named "a 10-year-old made this" beats any platform tagline, and "no
       // download" removes WhatsApp's one real objection. Brand tagline lives
@@ -208,7 +220,7 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
       setStep("pin");
       setError("That didn't work — nothing is broken. Check the internet and try again.");
     }
-  }, [displayName, html, updateTarget, category, playMode]);
+  }, [displayName, html, updateTarget, category, playMode, bibleGame]);
 
   // PIN step: verify against /api/parent/verify-pin (which sets the HttpOnly
   // parent-session cookie), THEN publish. The PIN itself never rides on the
@@ -263,13 +275,27 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
 
         {step === "signin" && (
           <>
-            <h3 className="font-display text-xl font-bold">Ask a grown-up to sign in 🧑‍🚀</h3>
+            <h3 className="font-display text-xl font-bold">
+              {bibleGame ? "Sign in to publish 📖" : "Ask a grown-up to sign in 🧑‍🚀"}
+            </h3>
             <p className="mb-4 text-sm text-neutral-500">
-              Games publish under your family&rsquo;s Ariantra account. Sign in and you&rsquo;ll come
-              straight back here — <b>your chat and game are safe</b>.
+              {bibleGame ? (
+                <>
+                  Bible games publish under your Ariantra teacher account. Sign in and confirm
+                  you&rsquo;re a grown-up — you&rsquo;ll come straight back here, <b>your work is safe</b>.
+                </>
+              ) : (
+                <>
+                  Games publish under your family&rsquo;s Ariantra account. Sign in and you&rsquo;ll come
+                  straight back here — <b>your chat and game are safe</b>.
+                </>
+              )}
             </p>
             <button
-              onClick={() => signIn()}
+              // Teacher surface: route through the age gate (verifyAge) so the
+              // teacher clears the adult check ONCE and then publishes PIN-free.
+              // Kid surface: plain sign-in → parent-PIN approval still applies.
+              onClick={() => (bibleGame ? verifyAge() : signIn())}
               className="w-full rounded-2xl bg-orange-500 py-3.5 text-base font-extrabold text-white shadow-lg shadow-orange-500/30"
             >
               Sign in →
@@ -363,24 +389,34 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
                 🎲 give me an idea
               </button>
             </div>
-            <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-neutral-400">What kind of game is it?</p>
-            <div className="mb-3 flex flex-wrap gap-1.5">
-              {GAME_CATEGORIES.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setCategory(c)}
-                  aria-pressed={category === c}
-                  className={`rounded-full border px-3 py-1 text-xs font-bold ${
-                    category === c
-                      ? "border-orange-500 bg-orange-500 text-white"
-                      : "border-neutral-200 text-neutral-600 hover:border-orange-400"
-                  }`}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
+            {bibleGame ? (
+              // Category is FIXED on the teacher surface (PRD-BIBLE-TEACHER §5) —
+              // no picker; the game lands on the separate Bible-games page.
+              <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
+                📖 This publishes to <span className="underline">Bible games</span>
+              </div>
+            ) : (
+              <>
+                <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-neutral-400">What kind of game is it?</p>
+                <div className="mb-3 flex flex-wrap gap-1.5">
+                  {GAME_CATEGORIES.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setCategory(c)}
+                      aria-pressed={category === c}
+                      className={`rounded-full border px-3 py-1 text-xs font-bold ${
+                        category === c
+                          ? "border-orange-500 bg-orange-500 text-white"
+                          : "border-neutral-200 text-neutral-600 hover:border-orange-400"
+                      }`}
+                    >
+                      {c}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
             {hasMpCode && (
               <>
                 <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-neutral-400">How is it played?</p>
@@ -409,7 +445,9 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
               </>
             )}
             <button
-              disabled={!slug || !category || check.state === "taken" || check.state === "copyright"}
+              // Category is required only in the general flow; the Bible surface
+              // fixes it, so a bible publish never needs a category pick.
+              disabled={!slug || (!bibleGame && !category) || check.state === "taken" || check.state === "copyright"}
               // Straight to publish: if a grown-up verified the PIN within
               // the last 30 min the game just goes; otherwise the server's
               // parent_required 403 routes to the PIN step.
@@ -479,8 +517,13 @@ export function PublishToArcade({ html, suggestedName, onClose }: Props) {
             <a href={liveUrl} target="_blank" rel="noreferrer" className="mb-2 block w-full rounded-2xl bg-orange-500 py-3.5 text-base font-extrabold text-white">
               ▶ Play at my address
             </a>
-            <a href="https://games.ariantra.com/" target="_blank" rel="noreferrer" className="mb-3 block w-full rounded-2xl border-2 border-neutral-200 py-3 text-base font-bold text-neutral-800">
-              🕹 See it in the Arcade
+            <a
+              href={landedBible ? "https://games.ariantra.com/bible-games" : "https://games.ariantra.com/"}
+              target="_blank"
+              rel="noreferrer"
+              className="mb-3 block w-full rounded-2xl border-2 border-neutral-200 py-3 text-base font-bold text-neutral-800"
+            >
+              {landedBible ? "📖 See it in Bible games" : "🕹 See it in the Arcade"}
             </a>
 
             {shareEnabled ? (

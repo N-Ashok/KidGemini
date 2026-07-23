@@ -13,6 +13,7 @@ import "@/lib/logger";
 import { NextRequest, NextResponse } from "next/server";
 import { GeminiChatModel } from "@/lib/gemini";
 import { SqliteUsageStore } from "@/lib/db";
+import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
@@ -115,8 +116,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: patched.reason } satisfies RepairResponse, { status: 422 });
   }
 
-  console.log(`[api/repair] ✓ ${patched.mode} @${Date.now() - t0}ms outChars=${patched.html.length}`);
-  return NextResponse.json({ patchedHtml: patched.html, mode: patched.mode } satisfies RepairResponse);
+  // Floor the import map back in (BUG-FIX-LOG 2026-07-23): a repair patch can
+  // rewrite/drop the injected <script type="importmap">, which would relaunch the
+  // exact "Failed to resolve module specifier three" crash the repair was meant to
+  // fix — a loop the model can never escape. ensureAssetRuntime is idempotent, so
+  // 2D games and already-correct 3D games pass through byte-identical.
+  const floored = ensureAssetRuntime(patched.html);
+  console.log(`[api/repair] ✓ ${patched.mode} @${Date.now() - t0}ms outChars=${floored.length}`);
+  return NextResponse.json({ patchedHtml: floored, mode: patched.mode } satisfies RepairResponse);
 }
 
 /** Same fail-safe as /api/chat: broken auth config means "guest", not a 500. */

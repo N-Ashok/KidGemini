@@ -8,7 +8,7 @@
 // instead of bug fixes.
 
 import { isGameBuildTurn } from "./builder-mode";
-import { arAssetsKeys, assetMarkerNames, hasAssetMarker, looksInjected, stripAssetMarkers } from "./assets/markers";
+import { arAssetsKeys, assetMarkerNames, hasAssetMarker, looksInjected, stripAssetMarkers, THREE_MARKER } from "./assets/markers";
 import type { ChatMessage } from "@/types/chat.types";
 
 // Deliberately NOT importing from gemini.ts or history-trim.ts here: gemini.ts
@@ -61,6 +61,40 @@ export function patchEditsEnabled(env: Record<string, string | undefined> = proc
  *  forcing a wasted regeneration (api/chat/route.ts). */
 export function isGameEditTurn(message: string, history: ChatMessage[], pinnedId?: string): boolean {
   return patchEditsEnabled() && isGameBuildTurn(message, history) && lastGameIndex(history, pinnedId) !== -1;
+}
+
+/** The child is asking for 3D — `3d`, `3-d`, or "three dimensional", in any
+ *  language (the incident was Hinglish: "isko 3D game Banega"). The token is the
+ *  signal, so English and Hinglish requests match alike. */
+const MESSAGE_WANTS_3D = /\b3\s?-?\s?d\b|three[\s-]?dimensional/i;
+
+/** True when `html` is already a Three.js game — it imports "three", carries the
+ *  <!--USES_THREE--> marker, was asset-injected (import map / AR_ASSETS), or
+ *  calls the 3D model loader. Such a game EDITS normally; only a 2D game needs
+ *  the rebuild-instead-of-patch treatment. */
+function gameUsesThree(html: string): boolean {
+  return (
+    looksInjected(html) ||
+    html.includes(THREE_MARKER) ||
+    /from\s*["']three["']/.test(html) ||
+    /\bloadModel\s*\(/.test(html)
+  );
+}
+
+/** True when the child is asking to turn an EXISTING 2D game into 3D. Such a
+ *  turn must REBUILD, not patch (BUG-FIX-LOG 2026-07-23, the "racing game"
+ *  incident): converting a finished 2D canvas game to Three.js is a whole-file
+ *  rewrite, and an incremental SEARCH/REPLACE edit makes the model fake depth
+ *  (CSS/perspective) on the 2D canvas instead — "said three.js, stayed 2D" for
+ *  ten turns. Fires ONLY on a 2D game: a game already using Three.js edits
+ *  normally, and a first-ever build already gets the 3D catalog. Used at BOTH
+ *  choke points (gemini.ts configFor's stream mode + the route's patch branch)
+ *  so the streamed reply and the applied path always agree. */
+export function isThreeConversionTurn(message: string, history: ChatMessage[], pinnedId?: string): boolean {
+  if (!isGameBuildTurn(message, history)) return false;
+  if (!MESSAGE_WANTS_3D.test(message)) return false;
+  const html = currentGameHtml(history, pinnedId);
+  return html !== undefined && !gameUsesThree(html);
 }
 
 /** True when the child sent the SAME message again (whitespace/case

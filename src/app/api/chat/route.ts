@@ -13,12 +13,13 @@ import { writeDecision } from "@/lib/model-ledger";
 import type { ChainSummary } from "@/types/model-ledger.types";
 import { SafetyBlockedError } from "@/lib/model-runner";
 import {
-  isGameEditTurn, currentGameHtml, editReplyProse, looksLikeAttemptedEdit, looksLikeCompleteDocument, looksTruncatedDocument,
+  isGameEditTurn, isThreeConversionTurn, currentGameHtml, editReplyProse, looksLikeAttemptedEdit, looksLikeCompleteDocument, looksTruncatedDocument,
   regenReplyProse, reconcileAssetMarkers, detectsNewGame, NEW_GAME_PROMPT_LINE, REBUILT_GAME_LINE, FRESH_GAME_LINE,
 } from "@/lib/game-edit";
 import { stripAssetMarkers } from "@/lib/assets/markers";
 import { applyPatch } from "@/lib/repair-prompt";
 import { injectAssets } from "@/lib/assets/inject";
+import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
 import { newUnknownThreeImports, unknownThreeImports } from "@/lib/assets/three-import-lint";
 import { CURATED_IMPORT_NAMES } from "@/lib/assets/prompt-catalog";
 import { ensureMultiplayerMarker } from "@/lib/multiplayer-gate";
@@ -414,10 +415,16 @@ export async function POST(req: NextRequest) {
         // Marker insurance (2026-07-18): real SDK multiplayer code without the
         // opt-in marker = an invite button that never appears. Self-gating —
         // byte-identical pass-through for everything else.
-        return ensureMultiplayerMarker(injected.html);
+        //
+        // ensureAssetRuntime is the marker-INDEPENDENT floor (BUG-FIX-LOG
+        // 2026-07-23): if the model imported "three" but mis-placed/omitted the
+        // <!--USES_THREE--> marker, injectAssets no-ops and the game would ship
+        // with an unresolvable specifier. The floor guarantees the import map
+        // regardless; it's idempotent on already-injected HTML.
+        return ensureMultiplayerMarker(ensureAssetRuntime(injected.html));
       } catch (err) {
         console.error(`[api/chat] ✖ asset injection failed @${ms()}ms (serving raw artifact): ${(err as Error).message}`);
-        return ensureMultiplayerMarker(rawHtml);
+        return ensureMultiplayerMarker(ensureAssetRuntime(rawHtml));
       }
     }
 
@@ -530,7 +537,11 @@ export async function POST(req: NextRequest) {
     // forceRebuild ("Change this one ✏️", PRD §11) skips this whole path — the
     // child already consented to rebuild the new game in place, so it takes the
     // ordinary fresh-build branch below.
-    if (!forceRebuild && isGameEditTurn(message, history, activeGameMessageId)) {
+    // A 2D→3D conversion skips the patch path entirely and rebuilds (BUG-FIX-LOG
+    // 2026-07-23): gemini.ts streamed this turn in full-rebuild mode (same
+    // isThreeConversionTurn predicate), so `full` is a whole 3D game, not a patch —
+    // fall through to the fresh-build branch that extracts it.
+    if (!forceRebuild && !isThreeConversionTurn(message, history, activeGameMessageId) && isGameEditTurn(message, history, activeGameMessageId)) {
       const currentHtml = currentGameHtml(history, activeGameMessageId)!; // isGameEditTurn guarantees a game exists
       // Debug trail (2026-07-18 search_not_found class): make it obvious from
       // the log alone WHICH source a patch was applied against, and — on a
