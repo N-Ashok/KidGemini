@@ -49,6 +49,24 @@ beforeEach(() => {
 });
 
 describe("GeminiChatModel.reply — falls back like replyStream() (BUG-FIX-LOG 2026-07-18)", () => {
+  // BUG-FIX-LOG 2026-07-23: a model that STUBS a build returns a SUCCESSFUL
+  // short reply (not an error), so the ordinary chain never advances past it —
+  // asking the same model to "finish" just stubs again. The truncation-recovery
+  // retry passes preferAlternateModel so a genuinely DIFFERENT model gets the
+  // retry (same mechanism as replyStream's "🔄 Different one").
+  it("preferAlternateModel leads the one-shot chain with the FALLBACK model, not the stubbing primary", async () => {
+    process.env.GEMINI_CHAT_MODEL = "gemini-3-flash-preview"; // valid registry primary → real fallback chain
+    generateContent.mockResolvedValueOnce({ text: "```html<html>finished</html>```" });
+
+    const model = new GeminiChatModel();
+    const out = await model.reply({ history: [], message: "finish it", forceFullRegen: true, preferAlternateModel: true });
+
+    expect(out.artifactHtml).toContain("finished");
+    const first = calledModels()[0];
+    expect(first).not.toBe("gemini-3-flash-preview"); // NOT the model that just stubbed
+    expect(first).toBe("gemini-2.5-flash"); // the next model in the chain gets the retry
+  });
+
   it("a 404/retired primary model id falls back to the next model instead of dead-ending", async () => {
     generateContent
       .mockRejectedValueOnce(goneErr())

@@ -28,3 +28,10 @@ export const MODEL_GLITCH_RETRY =
 // artifact, invite a retry and nudge toward a smaller ask that won't overflow.
 export const BUILD_INCOMPLETE_RETRY =
   "Oof — that one got too big for me to finish in one go! 😅 Tap try again, or ask for it in two steps: the game first, then the details (like the full list of characters).";
+
+// Auto-split success (owner ask 2026-07-23): the full ask was too big to finish
+// in one go, so instead of a dead-end we BUILT A WORKING STARTER VERSION with a
+// small set and offer to add the rest — which lands as a reliable edit/patch
+// turn on the game that now exists. Actionable, not a refusal.
+export const BUILD_STARTER_SPLIT =
+  "That one was a bit big to build all at once, so I made a **working starter version** to get you playing right away! 🎮 It has just a few to begin with — want them all? Say **\"add the rest\"** and I'll add the full list to this game.";

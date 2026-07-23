@@ -561,12 +561,22 @@ export class GeminiChatModel implements ChatModel {
      *  its model + real billed usage (+ its text, so the route can estimate if
      *  the provider reported no usage) so the route bills it as fallback cost. */
     onLoserCost?: (model: string, usage: TokenUsage | undefined, outputText: string) => void,
+    /** Lead the chain with the FALLBACK model instead of the primary. Used by a
+     *  truncation-recovery retry (BUG-FIX-LOG 2026-07-23): a model that stubs a
+     *  build returns a SUCCESSFUL short reply, not an error, so the ordinary
+     *  chain never advances past it — asking the SAME model to finish just stubs
+     *  again. Leading with the alternate model gives a genuinely different model
+     *  the retry. Falls back to normal order when no fallback is configured. */
+    preferAlternate = false,
   ): Promise<OneShotResult> {
     // Shallow ON PURPOSE — see ONESHOT_MAX_MODELS. Depth here multiplies the
     // child's wait, unlike the streaming path where the hedge races rather
     // than queues. Non-Google slots are NO LONGER filtered out (E): they're
     // dispatched to their generator below, so a rescue can cross providers.
-    const chain = [this.model, ...this.fallbacks].slice(0, ONESHOT_MAX_MODELS);
+    const chain = (preferAlternate && this.fallbacks.length > 0
+      ? [...this.fallbacks, this.model]
+      : [this.model, ...this.fallbacks]
+    ).slice(0, ONESHOT_MAX_MODELS);
     return runOneShotChain<OneShotResult>({
       chain,
       totalBudgetMs: oneShotBudgetMs(),
@@ -637,7 +647,7 @@ export class GeminiChatModel implements ChatModel {
    *  same model-fallback chain replyStream() uses (oneShotWithFallback) —
    *  this is the SAFETY NET for a mismatched patch, so it must not itself be
    *  a dead end on a single bad/unavailable model. */
-  async reply(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean; persona?: PersonaId; onLedger?: (summary: ChainSummary) => void; onLoserCost?: (model: string, usage: TokenUsage | undefined, outputText: string) => void }) {
+  async reply(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean; persona?: PersonaId; preferAlternateModel?: boolean; onLedger?: (summary: ChainSummary) => void; onLoserCost?: (model: string, usage: TokenUsage | undefined, outputText: string) => void }) {
     const ai = getClient();
     try {
       const res = await this.oneShotWithFallback(
@@ -654,6 +664,7 @@ export class GeminiChatModel implements ChatModel {
         oneShotTimeoutMs(input),
         input.onLedger,
         input.onLoserCost,
+        input.preferAlternateModel,
       );
       return { ...extractArtifact(res.text), usage: res.usage };
     } catch (err) {

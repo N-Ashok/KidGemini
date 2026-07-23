@@ -17,7 +17,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // when a whole-game rebuild happened (penguin-maze hardening, 2026-07-18).
 import { REBUILT_GAME_LINE, FRESH_GAME_LINE } from "@/lib/game-edit";
 import { SafetyBlockedError } from "@/lib/model-runner";
-import { KIND_REDIRECT, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY } from "@/lib/chat-copy";
+import { KIND_REDIRECT, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY, BUILD_STARTER_SPLIT } from "@/lib/chat-copy";
 
 // getAriantraSession() — toggled per test (SSO session).
 const authMock = vi.fn();
@@ -428,14 +428,34 @@ describe("POST /api/chat — never publish a truncated/blank build", () => {
     expect(done.artifactHtml).not.toContain("margin:0}"); // never the truncated one
   });
 
-  it("CG.2 truncated build AND a still-truncated retry → NO artifact, a friendly retry (never a blank game)", async () => {
+  it("CG.2 truncated build where BOTH the retry AND the starter build stay cut off → NO artifact, a friendly retry", async () => {
+    // Every reply() (compact retry + reduced starter) comes back truncated.
     replyMock.mockResolvedValue({ text: "cut off again", artifactHtml: "<!doctype html><html><body>still cut", wasFenced: false });
 
     const res = await POST(makeReq({ message: "make a big game with 30 characters", history: [] }));
     const done = doneOf(await res.text());
 
     expect(done.artifactHtml == null).toBe(true); // nothing blank published
-    expect(done.text).toBe(BUILD_INCOMPLETE_RETRY); // friendly next step instead
+    expect(done.text).toBe(BUILD_INCOMPLETE_RETRY); // only after the split also fails
+  });
+
+  // Auto-split (owner ask 2026-07-23): when the compact retry still can't fit
+  // the whole thing, don't dead-end — build a WORKING game with a small subset
+  // and offer to add the rest. Turns "too big" into a playable game + a nudge.
+  it("CG.5 retry still truncated → AUTO-SPLIT ships a working starter game and offers to add the rest", async () => {
+    replyMock
+      .mockResolvedValueOnce({ text: "still cut", artifactHtml: "<!doctype html><html><body>still cut", wasFenced: false }) // compact retry: truncated
+      .mockResolvedValueOnce({ text: "A starter!", artifactHtml: WHOLE, wasFenced: false }); // reduced starter: finishes
+
+    const res = await POST(makeReq({ message: "a Bible game with all 100 New Testament names", history: [] }));
+    const done = doneOf(await res.text());
+
+    expect(replyMock).toHaveBeenCalledTimes(2); // compact retry, then the starter build
+    expect(done.artifactHtml).toContain("WHOLE GAME"); // a real, playable game shipped
+    expect(done.text).toContain(BUILD_STARTER_SPLIT); // leads with the "add the rest" offer
+    expect(done.text).not.toBe(BUILD_INCOMPLETE_RETRY); // never the dead-end message
+    // The starter's second reply asked for a SMALL subset that finishes.
+    expect(replyMock.mock.calls[1]![0].message).toMatch(/small representative subset|6 to 10 items/i);
   });
 
   it("CG.3 a COMPLETE build ships as-is, with NO corrective retry (guard never misfires)", async () => {

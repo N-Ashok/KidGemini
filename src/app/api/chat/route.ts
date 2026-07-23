@@ -25,7 +25,7 @@ import { ensureMultiplayerMarker } from "@/lib/multiplayer-gate";
 import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
 import { RulesClassifier } from "@/lib/safety.rules";
-import { KIND_REDIRECT, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY } from "@/lib/chat-copy";
+import { KIND_REDIRECT, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY, BUILD_STARTER_SPLIT } from "@/lib/chat-copy";
 import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore, SqliteTurnResultStore, SqliteScreenTimeStore } from "@/lib/db";
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
@@ -420,11 +420,25 @@ export async function POST(req: NextRequest) {
     // cut off — the caller must then show BUILD_INCOMPLETE_RETRY, never a blank
     // artifact. (An EDIT that falls back to a full rebuild goes through this too,
     // so an old chat gets the same protection a new chat does.)
-    async function completeTruncatedBuild(
-      art: string | undefined,
-    ): Promise<Awaited<ReturnType<typeof chatModel.reply>> | null | "incomplete"> {
+    // `null` = build was fine; `{status:"incomplete"}` = even the reduced build
+    // was cut off (caller shows BUILD_INCOMPLETE_RETRY); `{status:"recovered"}` =
+    // a usable game — `reduced:true` means it's a SMALL STARTER SUBSET, so the
+    // caller leads with BUILD_STARTER_SPLIT and offers to add the rest.
+    type RecoveredBuild =
+      | null
+      | { status: "incomplete" }
+      | { status: "recovered"; reply: Awaited<ReturnType<typeof chatModel.reply>>; reduced: boolean };
+
+    async function completeTruncatedBuild(art: string | undefined): Promise<RecoveredBuild> {
       if (!art || !looksTruncatedDocument(art)) return null;
       console.warn(`[api/chat] ⚠ build output incomplete (opened <html>, no </html>, ${art.length} chars) — corrective retry @${ms()}ms`);
+      // Diagnostic (2026-07-23): a truncation this SHORT (well under the 24576
+      // output cap) means the model stopped early on its own, not a size limit.
+      // Dump the head+tail of what it produced so we can tell a genuine partial
+      // game from a stub / an in-HTML refusal / a wrong-shaped response.
+      console.warn(`[api/chat]   ⤷ truncated HEAD: ${JSON.stringify(art.slice(0, 200))}`);
+      console.warn(`[api/chat]   ⤷ truncated TAIL: ${JSON.stringify(art.slice(-160))}`);
+      // Pass 1: same scope, told to finish COMPLETE + COMPACT.
       try {
         const retry = await chatModel.reply({
           history,
@@ -437,18 +451,52 @@ export async function POST(req: NextRequest) {
           image,
           forceFullRegen: true,
           persona: persona.id,
+          // A model that STUBS a build returns a successful short reply, so the
+          // ordinary chain never advances past it (BUG-FIX-LOG 2026-07-23). Lead
+          // the retry with the ALTERNATE model — a different model is far more
+          // likely to actually finish than the one that just gave up.
+          preferAlternateModel: true,
           onLedger: mkLedger("regen"),
         });
         trackTurn(() => recordUsage("chat", servedModel, message, retry.text, false, retry.usage));
         if (retry.artifactHtml && !looksTruncatedDocument(retry.artifactHtml)) {
-          console.log(`[api/chat] ✓ completeness corrective retry produced a whole game @${ms()}ms`);
-          return retry;
+          console.log(`[api/chat] ✓ completeness corrective retry produced a whole game (alternate model) @${ms()}ms`);
+          return { status: "recovered", reply: retry, reduced: false };
         }
-        console.warn(`[api/chat] build STILL incomplete after retry — NOT shipping a blank game @${ms()}ms`);
-        return "incomplete";
+        console.warn(`[api/chat] retry STILL incomplete — auto-splitting into a working starter build @${ms()}ms`);
       } catch (err) {
-        console.warn(`[api/chat] completeness retry unavailable (${(err as Error).message}) — NOT shipping a blank game @${ms()}ms`);
-        return "incomplete";
+        console.warn(`[api/chat] completeness retry unavailable (${(err as Error).message}) — auto-splitting into a working starter build @${ms()}ms`);
+      }
+      // Pass 2 (auto-split, owner ask 2026-07-23): don't dead-end — build a
+      // WORKING game NOW with a small representative subset. It finishes because
+      // it's small; the caller then offers to add the full set as a follow-up
+      // (an edit/patch turn on the game that now exists — far more reliable than
+      // re-generating the whole content-heavy game from scratch).
+      try {
+        const starter = await chatModel.reply({
+          history,
+          message:
+            `${message}\n\n(Your previous attempts were CUT OFF — there was too much to generate ` +
+            `at once. Build a COMPLETE, WORKING game NOW using only a SMALL representative subset ` +
+            `of the data — about 6 to 10 items — and END with </html>. Do NOT include the full ` +
+            `list; a small working game that finishes is required. Keep the data in a JavaScript ` +
+            `array so more can be added later. Do not truncate.)`,
+          image,
+          forceFullRegen: true,
+          persona: persona.id,
+          preferAlternateModel: true, // still on the alternate model — the primary already stubbed twice
+          onLedger: mkLedger("regen"),
+        });
+        trackTurn(() => recordUsage("chat", servedModel, message, starter.text, false, starter.usage));
+        if (starter.artifactHtml && !looksTruncatedDocument(starter.artifactHtml)) {
+          console.log(`[api/chat] ✓ auto-split starter build finished — shipping with an "add the rest" offer @${ms()}ms`);
+          return { status: "recovered", reply: starter, reduced: true };
+        }
+        console.warn(`[api/chat] starter build STILL incomplete — NOT shipping a blank game @${ms()}ms`);
+        return { status: "incomplete" };
+      } catch (err) {
+        console.warn(`[api/chat] starter build unavailable (${(err as Error).message}) — NOT shipping a blank game @${ms()}ms`);
+        return { status: "incomplete" };
       }
     }
 
@@ -633,20 +681,28 @@ export async function POST(req: NextRequest) {
           // rebuild is cut off, one compact-complete retry; if it STILL can't
           // finish, never ship a blank game — a friendly retry instead.
           const editGuard = await completeTruncatedBuild(fallback.artifactHtml);
-          if (editGuard === "incomplete") {
+          if (editGuard?.status === "incomplete") {
             deliverableHtml = null;
             displayText = BUILD_INCOMPLETE_RETRY;
           } else {
-            const whole = editGuard ?? fallback;
-            // Honest messaging (penguin-maze hardening): this path REPLACED the
-            // child's game — the bare fresh-build default would read as a small
-            // targeted change and hide the rebuild that just happened.
-            const fallbackProse = whole.artifactHtml && (!whole.text.trim() || whole.text.trim() === FRESH_GAME_LINE)
-              ? REBUILT_GAME_LINE
-              : whole.text;
-            displayText = whole.artifactHtml && !whole.wasFenced
-              ? `${fallbackProse}\n\n\`\`\`html\n${whole.artifactHtml}\n\`\`\``.trim()
-              : fallbackProse;
+            const whole = editGuard ? editGuard.reply : fallback;
+            // Auto-split: a working starter subset — lead with the "add the rest"
+            // offer, same as the fresh-build path.
+            if (editGuard?.reduced) {
+              displayText = whole.artifactHtml
+                ? `${BUILD_STARTER_SPLIT}\n\n\`\`\`html\n${whole.artifactHtml}\n\`\`\``.trim()
+                : BUILD_STARTER_SPLIT;
+            } else {
+              // Honest messaging (penguin-maze hardening): this path REPLACED the
+              // child's game — the bare fresh-build default would read as a small
+              // targeted change and hide the rebuild that just happened.
+              const fallbackProse = whole.artifactHtml && (!whole.text.trim() || whole.text.trim() === FRESH_GAME_LINE)
+                ? REBUILT_GAME_LINE
+                : whole.text;
+              displayText = whole.artifactHtml && !whole.wasFenced
+                ? `${fallbackProse}\n\n\`\`\`html\n${whole.artifactHtml}\n\`\`\``.trim()
+                : fallbackProse;
+            }
             deliverableHtml = toDeliverable(whole.artifactHtml);
           }
         } catch (err) {
@@ -663,11 +719,17 @@ export async function POST(req: NextRequest) {
 
       // Never ship a game the model reported "done" on but left truncated.
       const guard = await completeTruncatedBuild(artifactHtml);
-      if (guard === "incomplete") {
+      if (guard?.status === "incomplete") {
         deliverableHtml = null;
         displayText = BUILD_INCOMPLETE_RETRY;
       } else {
-        if (guard) { prose = guard.text; artifactHtml = guard.artifactHtml; wasFenced = guard.wasFenced ?? false; displaySource = guard.text; }
+        if (guard) {
+          const r = guard.reply;
+          prose = r.text; artifactHtml = r.artifactHtml; wasFenced = r.wasFenced ?? false; displaySource = r.text;
+          // Auto-split: lead with the "starter version — add the rest" offer, and
+          // re-fence the game so that message is what the child reads.
+          if (guard.reduced) { prose = BUILD_STARTER_SPLIT; wasFenced = false; displaySource = BUILD_STARTER_SPLIT; }
+        }
         deliverableHtml = toDeliverable(artifactHtml);
       // Send the FULL text (code block kept inline, Gemini-style) for the chat,
       // and the extracted HTML for the side panel preview. When the model didn't
