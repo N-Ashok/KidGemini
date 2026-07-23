@@ -45,6 +45,25 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-23 — Teacher mode gets an HONEST safety-block message (the kid "tell me more" redirect didn't help an adult author)
+
+- **Symptom (what the user saw):** when a build was provider-safety-blocked in `/bible-teacher`, Ari showed the kid copy — *"Hmm, that one tangled me up! Try telling me a bit more…"* — which is misleading for a verified-adult teacher: more context won't clear a genuine safety block, and it hides WHY it happened. Owner ask: *"in the adult mode, honest answer would help find solutions."*
+- **Root cause:** the model-safety block path emitted one message (`MODEL_GLITCH_RETRY`) for everyone, regardless of persona.
+- **Fix (copy only — NO safety posture change):** `src/lib/chat-copy.ts` adds `adultSafetyBlockMessage(safetyInfo)` + `blockedCategoryNames(safetyInfo)`; the block handler in `src/app/api/chat/route.ts` now branches on `persona.inputRuleMode === "adult"` → the teacher gets an honest message that names the tripped category (harassment / hate speech / …) from the provider's own ratings and gives a concrete next step (summarize tense content at a higher level, resend). Kids keep the gentle `MODEL_GLITCH_RETRY`.
+- **Result (verified):** `chat-copy.test.ts` (category extraction + honest-vs-kid copy) and `route.test.ts` (a verified-adult bible-teacher SAFETY block returns the honest message, names "harassment", is NOT `MODEL_GLITCH_RETRY`). Full suite **1149 passed / 1 skipped**, typecheck clean.
+- **Related:** the HARASSMENT threshold entry below (fewer blocks now, but honest copy for the ones that remain); the block-copy split (2026-07-21/22).
+
+### 2026-07-23 — SAFETY-POSTURE CHANGE: bible-teacher HARASSMENT relaxed LOW→MEDIUM (benign faith edits still blocked with the persona ACTIVE)
+
+- **Symptom (what the user saw):** on `/bible-teacher`, signed in and verified-adult, a plain edit — **"remove the leaderboard"** — on a *New Testament Character Quiz* got safety-blocked and Ari showed the retry copy. This was WITH the teacher persona correctly engaged, confirmed in `logs/app.log`: `input-rules action=allow persona=bible-teacher` … `⛔ model output safety-blocked [HARASSMENT:LOW, HATE_SPEECH:LOW, …]`.
+- **Owner authorization:** the owner reproduced it live and asked to fix problem B; this safety-threshold change was applied with explicit owner sign-off (a safety relaxation is never made silently).
+- **Root cause:** the block is on the model's OUTPUT (the edited Bible game HTML re-emitted on an edit turn), not the input. The bible-teacher persona already relaxed **HATE_SPEECH** to MEDIUM, so `HATE_SPEECH:LOW` passed — but **HARASSMENT stayed at `BLOCK_LOW_AND_ABOVE`**, so `HARASSMENT:LOW` alone tripped the block. Bible narratives are full of conflict (Goliath's taunts, persecution, "enemies of Israel"), which reads as low-confidence harassment exactly the way faith content reads as low-confidence hate speech. Class: **the faith-content latitude covered only one of the two categories benign scripture trips.**
+- **Fix:** in `src/lib/persona/persona.ts`, `BIBLE_TEACHER_SAFETY` HARASSMENT `BLOCK_LOW_AND_ABOVE → BLOCK_MEDIUM_AND_ABOVE` — mirroring the HATE_SPEECH scoping. **Scope is unchanged and tight:** only the verified-adult `bible-teacher` persona; the kid `default` persona keeps HARASSMENT at the strictest LOW (pinned by `gemini.safety-config.test.ts`). SEXUALLY_EXPLICIT stays strictest; DANGEROUS_CONTENT unchanged. The OUTPUT game is still played by children under every other guard — this only changes the adult authoring turn's provider threshold.
+- **Result (verified):** `persona/persona.test.ts` now pins `bible-teacher` HARASSMENT = MEDIUM and `default` HARASSMENT = LOW (split from the old "both LOW" assertion); persona + safety-config suites **19/19**. The live repro ("remove the leaderboard") is expected to pass now that neither `HARASSMENT:LOW` nor `HATE_SPEECH:LOW` exceeds the persona's MEDIUM bar — owner to re-confirm in UAT.
+- **Impact:** verified-adult teachers can author/edit Bible games whose benign conflict narratives previously false-positive-blocked. No change to the kids' surface or to any other category.
+- **Prevention:** thresholds live in the single `persona.ts` registry, each category pinned per-persona by test; a regression that widened this to the child default, or narrowed the faith latitude back, turns those tests red.
+- **Related:** the entry below (2026-07-23 HATE_SPEECH re-scope to the persona), 2026-07-22 (original HATE_SPEECH LOW→MEDIUM), PRD-BIBLE-TEACHER §6, and the separate provider-block copy work (2026-07-21/22).
+
 ### 2026-07-23 — SAFETY-POSTURE CHANGE: child-default HATE_SPEECH re-tightened LOW (relaxation re-scoped to the bible-teacher persona)
 
 - **Context:** the bible-teacher persona (PRD-BIBLE-TEACHER) gives verified-adult Sunday-school teachers a dedicated authoring surface. Faith games are now built through that persona, which carries the HATE_SPEECH=MEDIUM latitude added 2026-07-22 (entry below).

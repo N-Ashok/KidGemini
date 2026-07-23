@@ -52,13 +52,17 @@ const CHILD_SAFETY: SafetySetting[] = [
   { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
 ];
 
-// Bible-teacher authoring — same posture as the child default EXCEPT
-// HATE_SPEECH relaxed LOW→MEDIUM. Religion is a protected attribute, so benign
-// faith content (David & Goliath, the Exodus) trips a LOW hate-speech flag; the
-// author is a verified adult and the OUTPUT game is still played by children
-// under all the other guards. SEXUALLY_EXPLICIT + HARASSMENT stay strictest.
+// Bible-teacher authoring — same posture as the child default EXCEPT HATE_SPEECH
+// AND HARASSMENT relaxed LOW→MEDIUM. Religion is a protected attribute and Bible
+// narratives are full of conflict (Goliath's taunts, persecution, "enemies of
+// Israel"), so benign faith content (David & Goliath, the Exodus) trips a LOW
+// hate-speech OR harassment flag — verified live 2026-07-23: with the persona
+// ACTIVE, a plain "remove the leaderboard" edit on a New Testament quiz still
+// blocked on HARASSMENT:LOW while HATE_SPEECH:LOW already passed. The author is a
+// verified adult and the OUTPUT game is still played by children under all the
+// other guards. SEXUALLY_EXPLICIT stays strictest; DANGEROUS_CONTENT unchanged.
 const BIBLE_TEACHER_SAFETY: SafetySetting[] = [
-  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
   { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
   { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
   { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },

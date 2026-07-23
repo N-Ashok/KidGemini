@@ -82,9 +82,17 @@ describe("persona safety posture (pinned)", () => {
     expect(thresholds(PERSONAS["bible-teacher"]).se).toBe("low");
   });
 
-  it("HARASSMENT stays STRICTEST (LOW) in both personas", () => {
+  // BUG-FIX-LOG 2026-07-23: with the persona ACTIVE, a benign edit ("remove the
+  // leaderboard") on a New Testament quiz still blocked on HARASSMENT:LOW while
+  // HATE_SPEECH:LOW passed (already MEDIUM). Bible narratives (Goliath's taunts,
+  // persecution, "enemies of Israel") trip HARASSMENT too, so the faith latitude
+  // now covers it — same rationale/scope as HATE_SPEECH, adult-gated only.
+  it("child default keeps HARASSMENT at the STRICTEST (LOW)", () => {
     expect(thresholds(PERSONAS.default).h).toBe("low");
-    expect(thresholds(PERSONAS["bible-teacher"]).h).toBe("low");
+  });
+
+  it("bible-teacher relaxes HARASSMENT to MEDIUM (faith conflict narratives)", () => {
+    expect(thresholds(PERSONAS["bible-teacher"]).h).toBe("med");
   });
 
   it("DANGEROUS_CONTENT stays MEDIUM in both (game-genre allowance, unchanged)", () => {

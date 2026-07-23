@@ -25,7 +25,7 @@ import { ensureMultiplayerMarker } from "@/lib/multiplayer-gate";
 import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
 import { RulesClassifier } from "@/lib/safety.rules";
-import { KIND_REDIRECT, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY, BUILD_STARTER_SPLIT } from "@/lib/chat-copy";
+import { KIND_REDIRECT, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY, BUILD_STARTER_SPLIT, adultSafetyBlockMessage } from "@/lib/chat-copy";
 import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore, SqliteTurnResultStore, SqliteScreenTimeStore } from "@/lib/db";
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
@@ -375,7 +375,12 @@ export async function POST(req: NextRequest) {
         console.warn(`[api/chat] ⛔ model output safety-blocked @${ms()}ms [${ratings}] — redirecting (fail closed)`);
         alert("model", full || message, { category: null, severity: "high", action: "hard_block", reason: `model output blocked by the provider (finishReason SAFETY) — ${ratings}` });
         if (replyId) trackTurn(() => turnResults.fail(replyId, userId, Date.now()));
-        send({ type: "blocked", text: MODEL_GLITCH_RETRY });
+        // A verified-adult teacher gets an HONEST, actionable explanation (they
+        // can act on the truth); a kid gets the gentle retry redirect (owner ask
+        // 2026-07-23). Copy only — no safety posture change.
+        const blockedText =
+          persona.inputRuleMode === "adult" ? adultSafetyBlockMessage(err.safetyInfo) : MODEL_GLITCH_RETRY;
+        send({ type: "blocked", text: blockedText });
         return;
       }
       console.error(`[api/chat] ✖ stream error @${ms()}ms: ${(err as Error).message}`);

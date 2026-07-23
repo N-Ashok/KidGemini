@@ -1113,6 +1113,25 @@ describe("POST /api/chat — model output safety block (finishReason SAFETY, KNO
     expect(blocked?.text).toBe(MODEL_GLITCH_RETRY);
     expect(blocked?.text).not.toBe(KIND_REDIRECT);
   });
+
+  // Teacher mode (verified-adult bible-teacher persona): an HONEST, actionable
+  // safety-block message that names what tripped — NOT the kid "tell me more"
+  // redirect, which doesn't help an adult author find a fix (owner ask
+  // 2026-07-23).
+  it("gives a verified-adult teacher an HONEST safety-block message, not the kid retry copy", async () => {
+    authMock.mockResolvedValue({ userId: "user:teacher@example.com", email: "teacher@example.com", name: "Teacher", adult: true });
+    replyStreamMock.mockReturnValue((async function* (): AsyncGenerator<never> {
+      throw new SafetyBlockedError("gemini-3-flash-preview", "HARASSMENT:MEDIUM, HATE_SPEECH:NEGLIGIBLE");
+    })());
+
+    const res = await POST(makeReq({ message: "remove the leaderboard", history: [], persona: "bible-teacher" }));
+    const text = await res.text();
+    const blocked = text.trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.type === "blocked");
+
+    expect(blocked?.text).not.toBe(MODEL_GLITCH_RETRY);
+    expect(blocked?.text).toMatch(/content-safety/i);
+    expect(blocked?.text).toContain("harassment"); // names the category that tripped
+  });
 });
 
 describe("POST /api/chat — genuine input block keeps the gentle topic-change redirect", () => {
