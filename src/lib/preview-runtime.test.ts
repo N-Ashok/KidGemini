@@ -43,6 +43,16 @@ describe("injectPreviewRuntime", () => {
     expect(marker).toBeLessThan(body); // before the game body/script
   });
 
+  it("R.4b declares UTF-8 FIRST (before the runtime) so emoji don't corrupt past the charset-sniff window", () => {
+    const out = injectPreviewRuntime(DOC, { theme: "default" });
+    const charset = out.indexOf('<meta charset="utf-8">');
+    const bundle = out.indexOf(PREVIEW_SDK_BUNDLE.slice(0, 40));
+    expect(charset).toBeGreaterThan(-1);
+    expect(charset).toBeLessThan(bundle); // charset comes before the ~44KB runtime
+    // …and within the first bytes of the injected block (the browser's sniff window).
+    expect(charset - out.indexOf(PREVIEW_RUNTIME_MARKER)).toBeLessThan(80);
+  });
+
   it("R.5 the inlined runtime script is never terminated early by a nested </script>", () => {
     // The overlays carry HTML strings with </script>; esbuild already escapes
     // those to <\/script> in the bundle (injectPreviewRuntime's escape is a

@@ -36,9 +36,15 @@ function escapeForInlineScript(js: string): string {
 export function injectPreviewRuntime(html: string, opts: { theme?: PreviewTheme } = {}): string {
   if (html.includes(PREVIEW_RUNTIME_MARKER)) return html;
   const theme: PreviewTheme = opts.theme === "bible" ? "bible" : "default";
+  // Charset FIRST (BUG-FIX-LOG 2026-07-23, "� in the preview menu"): browsers
+  // only sniff the first ~1024 bytes for <meta charset>, and inlining the ~44KB
+  // runtime after <head> pushes the game's own charset past that window — so the
+  // document falls back to a non-UTF-8 encoding and emoji (🏆🔗🎯) render as �.
+  // Declaring UTF-8 before the runtime locks the encoding immediately.
+  const charset = `<meta charset="utf-8">`;
   const globals = `<script>window.ARIANTRA_PREVIEW=${JSON.stringify({ theme })};</script>`;
   const runtime = `<script>${escapeForInlineScript(PREVIEW_SDK_BUNDLE)}</script>`;
-  const block = `${PREVIEW_RUNTIME_MARKER}${globals}${runtime}`;
+  const block = `${PREVIEW_RUNTIME_MARKER}${charset}${globals}${runtime}`;
 
   const headMatch = html.match(/<head[^>]*>/i);
   if (headMatch) {

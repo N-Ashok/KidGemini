@@ -55,6 +55,13 @@ export function MessageItem(props: MessageItemProps) {
       <Markdown>{m.text}</Markdown>
       {m.artifactHtml && props.onOpenArtifact && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
+          {/* Discoverability (owner UAT 2026-07-23): the leaderboard, sharing and
+              high-scores live in the in-game ⋯ menu — kids won't find them
+              otherwise. Say it right by the Open-game button. */}
+          <p className="w-full text-xs text-neutral-500">
+            ✨ Inside your game, tap the <span className="font-semibold">⋯</span> menu (top-right) for a{" "}
+            <span className="font-semibold">leaderboard</span>, sharing &amp; more!
+          </p>
           <button
             onClick={props.onOpenArtifact}
             className="flex items-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-2.5 text-sm font-medium text-neutral-800 hover:border-neutral-300 hover:bg-neutral-100"
