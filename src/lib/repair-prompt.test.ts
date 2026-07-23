@@ -118,4 +118,28 @@ describe("applyPatch (R.6 — patch, not regeneration)", () => {
   it("rejects a reply with neither patch nor document", () => {
     expect(applyPatch(html, "Sorry, I cannot help with that.")).toEqual({ ok: false, reason: "no_patch_in_reply" });
   });
+
+  // BUG-FIX-LOG 2026-07-23 (owner UAT, "remove the leaderboard" left the word +
+  // raw markers in the saved New Testament quiz): the model wrapped a
+  // HALF-PATCHED game in a ```html fence, leaving SEARCH/REPLACE conflict markers
+  // INSIDE the document. The regeneration fallback stored it verbatim, so the
+  // game shipped corrupted (markers inside <style>, edit never took). A "full
+  // document" that still carries conflict markers is NOT a clean game — reject it
+  // so the route falls back to a real full regeneration.
+  it("rejects a fenced document that still contains raw SEARCH/REPLACE conflict markers", () => {
+    const reply =
+      "```html\n<!doctype html><html><head><style>#x{color:red}\n\n" +
+      ">>>>>>> REPLACE\n<<<<<<< SEARCH\n" +
+      '<div id="leaderboard">Leaderboard</div>\n=======\n' +
+      "</style></head><body>game</body></html>\n```";
+    expect(applyPatch(html, reply)).toEqual({ ok: false, reason: "conflict_markers" });
+  });
+
+  it("rejects an UNFENCED full document carrying MALFORMED conflict markers too", () => {
+    // Reversed/partial markers (REPLACE before SEARCH, no closing REPLACE) — the
+    // real corruption shape — don't form a valid PATCH_RE block, so they reach
+    // the regeneration fallback and must be rejected there.
+    const reply = "<!doctype html><html><body>x\n>>>>>>> REPLACE\n<<<<<<< SEARCH\ny\n=======\nz</body></html>";
+    expect(applyPatch(html, reply)).toEqual({ ok: false, reason: "conflict_markers" });
+  });
 });

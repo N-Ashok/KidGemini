@@ -850,6 +850,27 @@ describe("POST /api/chat — patch-based feature edits", () => {
     expect(done.artifactHtml).toBe("<html>FALLBACK GAME</html>");
   });
 
+  // BUG-FIX-LOG 2026-07-23 (owner UAT "remove the leaderboard" corrupted the NT
+  // quiz): the model fenced a HALF-PATCHED document with raw SEARCH/REPLACE
+  // markers left inside. Before the applyPatch conflict-marker guard, that shipped
+  // verbatim — markers rendered in <style>, the edit never took. Now it's a failed
+  // patch → full regeneration, and a game with markers is NEVER published.
+  it("a fenced document that leaked SEARCH/REPLACE markers is rejected — full regeneration, never a corrupted game", async () => {
+    const leaked =
+      "Removed it!\n```html\n<!doctype html><html><head><style>#x{color:red}\n\n" +
+      ">>>>>>> REPLACE\n<<<<<<< SEARCH\n<div>Leaderboard</div>\n=======\n</style></head><body>game</body></html>\n```";
+    replyStreamMock.mockReturnValue(one(leaked));
+    replyMock.mockResolvedValue({ text: "Here you go!", artifactHtml: "<html>CLEAN GAME</html>", wasFenced: true });
+
+    const res = await POST(makeReq({ message: "remove the leaderboard", history: historyWithGame }));
+    const done = JSON.parse((await res.text()).trim().split("\n").find((l) => l.includes('"done"'))!);
+
+    expect(done.artifactHtml).not.toContain(">>>>>>>"); // never ship conflict markers
+    expect(done.artifactHtml).not.toContain("SEARCH");
+    expect(done.artifactHtml).toBe("<html>CLEAN GAME</html>"); // clean full regeneration
+    expect(replyMock).toHaveBeenCalledTimes(1);
+  });
+
   // ---- Penguin-maze hardening (2026-07-18): strict retry, kill switch, honest messaging ----
 
   const COMPLETE_REWRITE = '<!doctype html><html><body><div id="score">0</div><div>REWRITTEN_GAME</div></body></html>';

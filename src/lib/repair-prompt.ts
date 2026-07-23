@@ -132,6 +132,11 @@ export function buildRepairPrompt(input: {
 
 const PATCH_RE = /<{7} SEARCH\r?\n([\s\S]*?)\r?\n={7}\r?\n([\s\S]*?)\r?\n>{7} REPLACE/g;
 
+/** Leftover SEARCH/REPLACE conflict markers — the 7-angle-bracket sigils never
+ *  appear in a real game, so their presence in a would-be full document means a
+ *  half-applied patch leaked in (BUG-FIX-LOG 2026-07-23). */
+const CONFLICT_MARKER_RE = /<{7} SEARCH|>{7} REPLACE/;
+
 export type PatchResult =
   | { ok: true; html: string; mode: "patch" | "regeneration" }
   | { ok: false; reason: string };
@@ -157,7 +162,15 @@ export function applyPatch(html: string, reply: string): PatchResult {
   // Fallback: model returned a whole file despite instructions.
   const fenced = reply.match(/```html\s*([\s\S]*?)```/i)?.[1];
   const full = fenced ?? (/<!doctype html|<html[\s>]/i.test(reply) ? reply : null);
-  if (full?.trim()) return { ok: true, html: full.trim(), mode: "regeneration" };
+  if (full?.trim()) {
+    // A clean game NEVER contains SEARCH/REPLACE markers. BUG-FIX-LOG 2026-07-23:
+    // the model wrapped a HALF-PATCHED document in a ```html fence, leaving raw
+    // conflict markers inside; storing it verbatim shipped a corrupted game (the
+    // edit never took, and the markers rendered in <style>). Reject it so the
+    // caller escalates to a real full regeneration instead of saving garbage.
+    if (CONFLICT_MARKER_RE.test(full)) return { ok: false, reason: "conflict_markers" };
+    return { ok: true, html: full.trim(), mode: "regeneration" };
+  }
 
   return { ok: false, reason: "no_patch_in_reply" };
 }
