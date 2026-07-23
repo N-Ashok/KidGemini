@@ -42,6 +42,10 @@ export async function POST(req: NextRequest) {
 
   if (verdict.action !== "allow") {
     alerts.record({
+      // The Guard extension has no signed-in family, so its alerts get a
+      // namespaced sentinel account — they never surface in any real family's
+      // dashboard (PRD-PARENT-AUTH-ALERT-SCOPING §8 Phase 2, fail-closed).
+      accountId: "extension",
       origin,
       category: verdict.category,
       severity: verdict.severity,

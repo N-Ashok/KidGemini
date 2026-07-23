@@ -238,6 +238,10 @@ export async function POST(req: NextRequest) {
       ts: new Date().toISOString(),
       reqId: replyId ?? "no-reply-id",
       userId, kind,
+      // Record the persona so a per-persona, per-model failure rate is a one-line
+      // ledger query (owner ask 2026-07-23: is a single model the one that keeps
+      // safety-blocking bible-teacher builds? then swap it for that persona).
+      persona: persona.id,
       chain: summary.chain, attempts: summary.attempts, winner: summary.winner,
       calls: summary.attempts.length,
     });
@@ -272,7 +276,10 @@ export async function POST(req: NextRequest) {
     });
   }
   function alert(origin: "child" | "model", triggerText: string, v: SafetyVerdict) {
-    alerts.record({ origin, category: v.category, severity: v.severity, action: v.action, triggerText, reason: v.reason });
+    // Scope to the child's account so ONLY their parent sees it, never another
+    // family (PRD-PARENT-AUTH-ALERT-SCOPING §8 Phase 2). userId is the SSO
+    // family account (user:<email>) for a signed-in child, else the guest id.
+    alerts.record({ accountId: userId, origin, category: v.category, severity: v.severity, action: v.action, triggerText, reason: v.reason });
   }
   // A LOSING call from a one-shot fan-out (a backup that finished after the
   // winner) — owner ask 2026-07-21. It's real, already-paid work, so record it

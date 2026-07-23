@@ -26,7 +26,7 @@ import { evaluate } from "./rate-limit";
 
 let db: Database.Database | null = null;
 
-function getDb(): Database.Database {
+export function getDb(): Database.Database {
   if (db) return db;
   const path = process.env.DATABASE_PATH ?? "./data/kidgemini.db";
   const dir = dirname(path);
@@ -38,6 +38,10 @@ function getDb(): Database.Database {
     CREATE TABLE IF NOT EXISTS alerts (
       id TEXT PRIMARY KEY,
       createdAt INTEGER NOT NULL,
+      -- Owning account (PRD-PARENT-AUTH-ALERT-SCOPING §8 Phase 2): the child's
+      -- identity when the alert fired. A parent's dashboard query filters by it,
+      -- so one family never sees another's. NULL = legacy/un-owned → shown to no one.
+      accountId TEXT,
       origin TEXT NOT NULL,
       category TEXT,
       severity TEXT NOT NULL,
@@ -45,6 +49,7 @@ function getDb(): Database.Database {
       triggerText TEXT NOT NULL,
       reason TEXT NOT NULL
     );
+    CREATE INDEX IF NOT EXISTS idx_alerts_account ON alerts(accountId, createdAt DESC);
     CREATE TABLE IF NOT EXISTS usage_events (
       id TEXT PRIMARY KEY,
       createdAt INTEGER NOT NULL,
@@ -196,6 +201,16 @@ function getDb(): Database.Database {
   if (!convoCols.some((c) => c.name === "workspace")) {
     db.exec(`ALTER TABLE conversations ADD COLUMN workspace TEXT NOT NULL DEFAULT 'default';`);
   }
+  // Per-account alert scoping (PRD-PARENT-AUTH-ALERT-SCOPING §8 Phase 2). Pre-
+  // migration rows get accountId = NULL, so they're shown to NO parent — the
+  // safe outcome (an un-owned global alert stops leaking across families).
+  const alertCols = db.prepare(`PRAGMA table_info(alerts)`).all() as Array<{ name: string }>;
+  if (!alertCols.some((c) => c.name === "accountId")) {
+    db.exec(`
+      ALTER TABLE alerts ADD COLUMN accountId TEXT;
+      CREATE INDEX IF NOT EXISTS idx_alerts_account ON alerts(accountId, createdAt DESC);
+    `);
+  }
   return db;
 }
 
@@ -209,17 +224,20 @@ export class SqliteAlertStore implements AlertStore {
     const alert: ParentAlert = { ...input, id: newId(), createdAt: Date.now() };
     getDb()
       .prepare(
-        `INSERT INTO alerts (id, createdAt, origin, category, severity, action, triggerText, reason)
-         VALUES (@id, @createdAt, @origin, @category, @severity, @action, @triggerText, @reason)`,
+        `INSERT INTO alerts (id, createdAt, accountId, origin, category, severity, action, triggerText, reason)
+         VALUES (@id, @createdAt, @accountId, @origin, @category, @severity, @action, @triggerText, @reason)`,
       )
       .run(alert);
     return alert;
   }
 
-  list(limit = 100): ParentAlert[] {
+  /** Scoped to one account — a parent NEVER sees another family's alerts
+   *  (PRD-PARENT-AUTH-ALERT-SCOPING §8 Phase 2). A NULL-accountId legacy row
+   *  can never match, so it's shown to no one (fail closed). */
+  list(accountId: string, limit = 100): ParentAlert[] {
     return getDb()
-      .prepare(`SELECT * FROM alerts ORDER BY createdAt DESC LIMIT ?`)
-      .all(limit) as ParentAlert[];
+      .prepare(`SELECT * FROM alerts WHERE accountId = ? ORDER BY createdAt DESC LIMIT ?`)
+      .all(accountId, limit) as ParentAlert[];
   }
 }
 
@@ -690,6 +708,7 @@ export class SqliteScreenTimeStore implements ScreenTimeStore {
 
     if (shouldAlert) {
       this.alerts.record({
+        accountId, // scope the screen-time alert to this family (PRD-PARENT-AUTH §8 Phase 2)
         origin: "system",
         category: null,
         severity: "low",

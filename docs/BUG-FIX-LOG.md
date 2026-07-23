@@ -45,6 +45,19 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-23 — PRIVACY: every parent saw every child's safety alerts (no per-account scoping)
+
+- **Symptom (owner):** a parent opening the parent dashboard saw the block / high-risk alert history of EVERY child across ALL families, not just their own.
+- **Surface area:** `src/lib/db.ts` (`alerts` table + `SqliteAlertStore`), `src/app/api/alerts/route.ts`, `src/app/api/chat/route.ts` (`alert()`), `src/app/api/safety/route.ts`, `src/lib/db.ts` (`SqliteScreenTimeStore`), `src/types/alert.types.ts`. New tests: `src/lib/db.alerts.test.ts`, updated `alerts/route.test.ts`.
+- **Root cause:** the `alerts` table had **no owning-account column** — alerts were stored globally, and `SqliteAlertStore.list(limit)` returned ALL of them. `GET /api/alerts` gated on a verified parent session but then returned the global list. This was known/documented tech debt (PRD-PARENT-AUTH-ALERT-SCOPING §8 said "Phase 2 child scoping" was deferred — the route comment literally read "the list is still global — any verified parent sees all alerts"). It stayed global.
+- **Fix (test-first, tenancy fail-closed):**
+  - `alerts` gains an `accountId` column (+ index) with an idempotent migration for existing DBs; `ParentAlert.accountId` added to the type; `AlertStore.list(accountId, limit)`.
+  - Every recorder now tags the alert with the owning account: `/api/chat`'s `alert()` uses the child's `userId` (the SSO family account `user:<email>` for a signed-in child, else the guest id); `SqliteScreenTimeStore` uses its `accountId` param; the standalone Guard-extension `/api/safety` uses a namespaced `"extension"` sentinel.
+  - `SqliteAlertStore.list` filters `WHERE accountId = ?`; `/api/alerts` passes the verified parent's account.
+  - **Fail closed:** a pre-migration row has `accountId = NULL`, which matches no account → legacy global alerts are shown to NO parent (they stop leaking) instead of everyone.
+- **Result (verified):** `db.alerts.test.ts` — family A never sees family B's alerts, unknown/legacy accounts get nothing (RED before, GREEN after); `alerts/route.test.ts` — the route queries with the verified parent's account and returns only their own (A.3/A.3b). Full suite **1160 pass / 1 skip**, typecheck clean.
+- **Impact:** closes a cross-family PII leak on a children's platform — the single most sensitive data (a child's flagged/blocked messages) is now visible only to that child's own parent.
+
 ### 2026-07-23 — Edit leaked raw SEARCH/REPLACE conflict markers into the saved game (corrupted the New Testament quiz)
 
 - **Symptom (owner UAT):** editing a game with "remove the leaderboard" didn't work — the leaderboard word stayed, and the saved game HTML contained raw patch markers (`>>>>>>> REPLACE`, `<<<<<<< SEARCH`, `=======`) sitting inside the `<style>` block. A follow-up "the leaderboard word is still there" confirmed the edit never took.

@@ -50,6 +50,11 @@ export interface DecisionLedger extends ChainSummary {
   userId?: string;
   /** chat | build | repair — which surface fired the chain. */
   kind: string;
+  /** Which persona the request ran as ("default" | "bible-teacher"). Lets a
+   *  per-persona, per-model failure rate be queried straight from the ledger —
+   *  e.g. "how often does the primary model safety-block bible-teacher builds?"
+   *  (owner ask 2026-07-23: decide whether to swap the model for one persona). */
+  persona?: string;
   /** attempts.length — how many model calls this one request made. */
   calls: number;
 }
