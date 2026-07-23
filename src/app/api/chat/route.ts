@@ -30,7 +30,8 @@ import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore, SqliteTurnRes
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
-import { GUEST_TOKEN_LIMIT, GUEST_COOKIE, GUEST_COOKIE_LEGACY, GUEST_COOKIE_MAX_AGE_S, GUEST_WINDOW_MS, IP_GUEST_TOKEN_CAP, signedInDailyTokenLimit } from "@/lib/gate.config";
+import { resolvePersona } from "@/lib/persona/persona";
+import { GUEST_COOKIE, GUEST_COOKIE_LEGACY, GUEST_COOKIE_MAX_AGE_S, GUEST_WINDOW_MS, IP_GUEST_TOKEN_CAP, guestTokenLimitFor, signedInDailyTokenLimit } from "@/lib/gate.config";
 import { validateImageAttachment } from "@/lib/image-attachment";
 import type { ChatMessage, ImageAttachment, TokenUsage } from "@/types/chat.types";
 import type { SafetyVerdict } from "@/types/safety.types";
@@ -48,7 +49,7 @@ const estTokens = (t: string) => Math.ceil(t.length / 4);
 
 export async function POST(req: NextRequest) {
   const geo = resolveGeo(req);
-  let body: { message?: string; history?: ChatMessage[]; image?: unknown; replyId?: unknown; activeGameMessageId?: unknown; forceRebuild?: unknown; differentVersion?: unknown };
+  let body: { message?: string; history?: ChatMessage[]; image?: unknown; replyId?: unknown; activeGameMessageId?: unknown; forceRebuild?: unknown; differentVersion?: unknown; persona?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -83,6 +84,12 @@ export async function POST(req: NextRequest) {
   // "🔄 Different one" (PRD-INSTANT-ALTERNATE, on-demand): regenerate this turn
   // led by the fallback model, so the child gets a genuinely different take.
   const preferAlternateModel = body.differentVersion === true;
+  // Persona REQUEST (PRD-BIBLE-TEACHER). This is only what the client ASKED for
+  // (the /bible-teacher surface sends "bible-teacher"); it selects the guest
+  // trial allowance below and is fail-closed against the verified session before
+  // it is honored (resolvePersona). A client can never opt into the relaxed
+  // authoring posture with this flag alone.
+  const requestedPersona = typeof body.persona === "string" ? body.persona : undefined;
   // Trim what the MODEL sees (stale game versions stripped + sliding window,
   // see history-trim.ts) — the client's stored conversation is untouched.
   const history = trimHistory(body.history ?? [], activeGameMessageId);
@@ -110,6 +117,13 @@ export async function POST(req: NextRequest) {
   // client cannot bypass this — the check and the tally both live here on the server.
   const session = await safeAuth();
   const signedIn = Boolean(session);
+
+  // Fail-closed persona resolution (PRD-BIBLE-TEACHER §4, defense in depth): the
+  // relaxed teacher persona is honored ONLY for a verified-adult session, no
+  // matter what the body requested. Guest / signed-in-but-not-adult / spoofed
+  // flag → `default` (child) persona + child safety. This is the API-side gate;
+  // the /bible-teacher page runs its own login+age gate independently.
+  const persona = resolvePersona(requestedPersona, session);
 
   // Guest trial (PRD "guest gate", restored): new visitors chat up to
   // GUEST_TOKEN_LIMIT tokens, backstopped per-IP; signed-in users have a
@@ -192,9 +206,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // The bible-teacher surface gets a SMALLER free trial (PRD §3a) before the
+    // sign-in + adult gate; every other surface keeps the default guest limit.
+    const guestLimit = guestTokenLimitFor(requestedPersona);
     const used = usage.tokensUsedByUser(guestId, Date.now() - GUEST_WINDOW_MS);
-    console.log(`[api/chat] guest ${guestId} used=${used}/${GUEST_TOKEN_LIMIT} tokens`);
-    if (used >= GUEST_TOKEN_LIMIT) {
+    console.log(`[api/chat] guest ${guestId} used=${used}/${guestLimit} tokens (persona=${requestedPersona ?? "default"})`);
+    if (used >= guestLimit) {
       console.log(`[api/chat] ⛔ gate: guest over device limit → 401 sign-in wall`);
       return NextResponse.json(
         { error: "auth_required", reason: "guest_limit",
@@ -289,9 +306,17 @@ export async function POST(req: NextRequest) {
 
   // ── 1. INPUT: instant deterministic check (no LLM latency) ────────────────
   const inRules = rules.classifySync({ text: message, origin: "child" });
-  console.log(`[api/chat] input-rules action=${inRules.action} @${ms()}ms`);
-  if (inRules.action !== "allow") {
-    alert("child", message, inRules);
+  console.log(`[api/chat] input-rules action=${inRules.action} persona=${persona.id} @${ms()}ms`);
+  // Adult authoring mode (verified-adult bible-teacher persona, PRD §4): the
+  // teacher is an adult author of their OWN typing, so a PII soft-block is not a
+  // child-safety concern and there is no parent to alert — only HARD blocks
+  // (profanity / self-harm) still apply, the same safety floor as everyone.
+  // Child (default) mode blocks on ANY non-allow verdict and fires a parent
+  // alert, exactly as before.
+  const blockedByRules =
+    persona.inputRuleMode === "adult" ? inRules.action === "hard_block" : inRules.action !== "allow";
+  if (blockedByRules) {
+    if (persona.inputRuleMode !== "adult") alert("child", message, inRules);
     return ndjson((send) => {
       send({ type: "blocked", text: KIND_REDIRECT });
     }, guestCookieHeader(setGuestCookie));
@@ -307,7 +332,7 @@ export async function POST(req: NextRequest) {
     if (replyId) trackTurn(() => turnResults.start(replyId, userId, Date.now()));
     try {
       console.log(`[api/chat] streaming… @${ms()}ms`);
-      for await (const chunk of chatModel.replyStream({ history, message, image, activeGameMessageId, forceRebuild, preferAlternateModel, onLedger: mkLedger("chat") })) {
+      for await (const chunk of chatModel.replyStream({ history, message, image, activeGameMessageId, forceRebuild, preferAlternateModel, persona: persona.id, onLedger: mkLedger("chat") })) {
         if (chunk.kind === "thought") {
           // Thought summaries drive the kid-facing planning line during the
           // silent thinking phase. kidThoughtLine fails closed (null = drop):
@@ -411,6 +436,7 @@ export async function POST(req: NextRequest) {
             `array and loop over it instead of writing each one out by hand. Do not truncate.)`,
           image,
           forceFullRegen: true,
+          persona: persona.id,
           onLedger: mkLedger("regen"),
         });
         trackTurn(() => recordUsage("chat", servedModel, message, retry.text, false, retry.usage));
@@ -519,7 +545,7 @@ export async function POST(req: NextRequest) {
         displayText = regenReplyProse(full);
         deliverableHtml = toDeliverable(applied.html);
         try {
-          const retry = await chatModel.strictEditRetry({ currentHtml, message, onLedger: mkLedger("strict-edit"), onLoserCost: recordLoser });
+          const retry = await chatModel.strictEditRetry({ currentHtml, message, persona: persona.id, onLedger: mkLedger("strict-edit"), onLoserCost: recordLoser });
           trackTurn(() => recordUsage("chat", servedModel, message, retry.text, false, retry.usage));
           const retryApplied = applyPatch(currentHtml, retry.text);
           if (retryApplied.ok && retryApplied.mode === "patch") {
@@ -571,7 +597,7 @@ export async function POST(req: NextRequest) {
         // the unchanged regeneration below. Capped at this single attempt.
         let rescued = false;
         try {
-          const rung = await chatModel.strictEditRetry({ currentHtml, message, onLedger: mkLedger("strict-edit"), onLoserCost: recordLoser });
+          const rung = await chatModel.strictEditRetry({ currentHtml, message, persona: persona.id, onLedger: mkLedger("strict-edit"), onLoserCost: recordLoser });
           trackTurn(() => recordUsage("chat", servedModel, message, rung.text, false, rung.usage));
           const rungApplied = applyPatch(currentHtml, rung.text);
           const rungBadImports =
@@ -598,7 +624,7 @@ export async function POST(req: NextRequest) {
         } else {
         console.warn(`[api/chat] patch failed (${reason}) — falling back to full regeneration @${ms()}ms`);
         try {
-          const fallback = await chatModel.reply({ history, message, image, forceFullRegen: true, onLedger: mkLedger("regen"), onLoserCost: recordLoser });
+          const fallback = await chatModel.reply({ history, message, image, forceFullRegen: true, persona: persona.id, onLedger: mkLedger("regen"), onLoserCost: recordLoser });
           trackTurn(() => recordUsage("chat", servedModel, message, fallback.text, false, fallback.usage));
           // Same completeness guard as the fresh-build path (BUG-FIX-LOG
           // 2026-07-22): an EDIT that falls back to a full rebuild can be

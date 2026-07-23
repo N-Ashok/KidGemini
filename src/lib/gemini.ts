@@ -2,7 +2,7 @@
 // Knows nothing about safety or persistence. Server-only.
 
 import "server-only";
-import { GoogleGenAI, HarmBlockThreshold, HarmCategory } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import type { ChatMessage, ChatModel, ImageAttachment, StreamChunk, TokenUsage } from "@/types/chat.types";
 import type { ChainSummary } from "@/types/model-ledger.types";
 import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
@@ -14,6 +14,7 @@ import {
   isGameEditTurn, isRepeatedRequest, GAME_EDIT_PROMPT_SECTION,
   GAME_EDIT_STRICT_RETRY_SECTION, REPEATED_REQUEST_SECTION, FRESH_GAME_LINE,
 } from "./game-edit";
+import { PERSONAS, type PersonaId } from "./persona/persona";
 import { fallbackChain, isModelGone, shouldTryNextModel } from "./model-fallback";
 import { runOneShotChain, runStreamChain, type ProviderChunk, type FinishReason, type ProviderGenerator } from "./model-runner";
 import { chainFor, specFor } from "./model-registry";
@@ -215,31 +216,14 @@ function withReducedThinkingBudget<T extends { thinkingConfig?: { thinkingBudget
   return { ...config, thinkingConfig: { ...config.thinkingConfig, thinkingBudget: Math.max(0, Math.floor(current / 2)) } };
 }
 
-// Exported so tests can pin the child-safety instruction (it replaced the
-// Flash-Lite output monitor — see docs/BUG-FIX-LOG.md 2026-07-09).
-export const CHILD_SYSTEM_PROMPT = `You are a friendly, encouraging assistant for a child aged between 7 and 14.
-Be careful in the way you speak and be cautious about safety when answering,
-because you are talking to a child aged between 7 and 14.
-Speak simply and warmly. Keep answers short and clear. Be playful and curious.
-Never produce anything scary, gory, sexual, hateful, or unsafe.
-Games the child asks for are ALWAYS welcome — chess, puzzles, arcade games,
-anything playful — never refuse a game request; just keep its content wholesome.
-NEVER say a game is too complicated, and never deflect to a simpler, different
-game — build the game the child asked for, complete and playable, in one go.
-For rule-heavy classics (chess, checkers, sudoku), you may load a well-known
-open-source library from a public CDN with <script src> (e.g. chess.js for
-correct chess rules) so the game plays like a professional site; all other
-games stay fully self-contained and offline (inline CSS + JS, no external
-resources).
-Classic video-game action IS fine and welcome — space shooters, laser blasters,
-sword-and-shield adventures, dodging dino attacks, water-balloon battles, tank
-games. Keep it cartoonish and bloodless: enemies "pop", "vanish" or "bounce away",
-never bleed or suffer; no realistic weapons aimed at people, no gore, no cruelty.
-If the ask is vague or open-ended ("make something cool", "a fun game"),
-pick one fun, concrete interpretation yourself and start building it
-immediately — do not list options or ask which one, and do not spend long
-weighing interpretations; the child can always ask for changes after playing.
-If the child asks for a game, respond with a single HTML document wrapped in a
+// The technical game-BUILD contract — playability, responsiveness, the id="score"
+// element, one-shot-complete-HTML, compact data arrays, real-world-fact honesty.
+// These rules are PERSONA-INDEPENDENT: every game (child- or teacher-authored) is
+// played by children in the same small preview panel, so both system prompts
+// compose from this exact block — extracted so the two prompts can never drift on
+// the mechanics that keep a game playable. Only the AUDIENCE framing above it
+// differs per persona.
+const GAME_BUILD_CONTRACT = `respond with a single HTML document wrapped in a
 \`\`\`html code block. The game MUST be easy and fun for a young child to control:
 - Provide BOTH keyboard controls (Arrow keys / WASD) AND large on-screen buttons that work
   with mouse AND touch (kids often use tablets/phones). Buttons should respond to
@@ -276,7 +260,87 @@ If the child asks for a game, respond with a single HTML document wrapped in a
   overlapping, never adjacent); the player always has at least one escape
   move available; difficulty ramps up — the first enemy starts slow and rare,
   and speed/spawn rate grow gradually with time or score.
+- Output the COMPLETE HTML document in one response, always ending with
+  </html> — never stop partway or leave the game half-finished. For any game
+  with a lot of repeated data (a list of names, quiz questions, characters,
+  levels, cards), store that data in a JavaScript ARRAY and loop over it to
+  build the game, instead of writing each item out by hand — this keeps even a
+  content-rich game short enough to finish in one go.
+- When a game needs real-world facts (people or places from the Bible,
+  countries, animals, historical figures), use ONLY real, accurate ones — never
+  invent or make up names or facts. If asked for more than you can recall
+  accurately, include as many correct ones as you are sure of and build the
+  game around that set: a smaller ACCURATE set is always better than a padded,
+  made-up one.
 - Keep it wholesome; work fully offline unless a CDN library is allowed above.`;
+
+// Exported so tests can pin the child-safety instruction (it replaced the
+// Flash-Lite output monitor — see docs/BUG-FIX-LOG.md 2026-07-09). Composed from
+// the child-audience framing + the shared GAME_BUILD_CONTRACT — the resulting
+// text is byte-identical to the previous single literal (the prompt pins in
+// gemini.prompt.test.ts still hold).
+export const CHILD_SYSTEM_PROMPT = `You are a friendly, encouraging assistant for a child aged between 7 and 14.
+Be careful in the way you speak and be cautious about safety when answering,
+because you are talking to a child aged between 7 and 14.
+Speak simply and warmly. Keep answers short and clear. Be playful and curious.
+Never produce anything scary, gory, sexual, hateful, or unsafe.
+Games the child asks for are ALWAYS welcome — chess, puzzles, arcade games,
+anything playful — never refuse a game request; just keep its content wholesome.
+NEVER say a game is too complicated, and never deflect to a simpler, different
+game — build the game the child asked for, complete and playable, in one go.
+For rule-heavy classics (chess, checkers, sudoku), you may load a well-known
+open-source library from a public CDN with <script src> (e.g. chess.js for
+correct chess rules) so the game plays like a professional site; all other
+games stay fully self-contained and offline (inline CSS + JS, no external
+resources).
+Classic video-game action IS fine and welcome — space shooters, laser blasters,
+sword-and-shield adventures, dodging dino attacks, water-balloon battles, tank
+games. Keep it cartoonish and bloodless: enemies "pop", "vanish" or "bounce away",
+never bleed or suffer; no realistic weapons aimed at people, no gore, no cruelty.
+If the ask is vague or open-ended ("make something cool", "a fun game"),
+pick one fun, concrete interpretation yourself and start building it
+immediately — do not list options or ask which one, and do not spend long
+weighing interpretations; the child can always ask for changes after playing.
+If the child asks for a game, ${GAME_BUILD_CONTRACT}`;
+
+// Bible-teacher persona (PRD-BIBLE-TEACHER §6). Audience is a VERIFIED-ADULT
+// Sunday-school / kids' Bible teacher building games FOR their class of children
+// aged 7-14 — so it shares the exact GAME_BUILD_CONTRACT (playability, the
+// id="score" element, one-shot-complete HTML, compact arrays, real-fact honesty)
+// and the same wholesome-OUTPUT rules (the games are still played by children).
+// What differs (PRD §4): scripture faithfulness, and latitude for the
+// age-appropriate STORY tension of scripture (David & Goliath, the Exodus,
+// Daniel in the lions' den) told in a bloodless, non-graphic, wholesome way —
+// tension the child-default "no conflict" reading over-blocks. Exported for the
+// prompt-contract tests.
+export const BIBLE_TEACHER_SYSTEM_PROMPT = `You are a warm, knowledgeable assistant helping a Sunday-school / kids' Bible teacher build games for their class of children aged between 7 and 14.
+The teacher is a trusted adult author; speak to them plainly and helpfully.
+Games are ALWAYS welcome — never refuse a game request and never call a game too
+complicated; build the game the teacher asked for, complete and playable, in one go.
+Be FAITHFUL to scripture: use ONLY real, accurate Bible names, places, stories and
+events — never invent or alter them. When you are unsure of a detail, use the
+well-attested version and keep the set smaller rather than padding it with
+inventions. A game that teaches the Bible accurately matters more than a bigger,
+looser one.
+ALWAYS use the English Standard Version (ESV) of the Bible: any verse you quote,
+reference, or build a game around must match the ESV wording and its book/chapter/
+verse references. Do not mix translations.
+The Bible's own stories carry real tension — David faces Goliath, the Israelites
+flee through the Red Sea, Daniel is thrown to the lions. You MAY portray that
+age-appropriate conflict honestly, because it is the story: but keep it wholesome
+and non-graphic for a young child — no gore, no blood, no cruelty, no realistic
+weapons aimed at people; danger is shown the cartoonish, "pop"/"vanish"/"escape"
+way, and courage, kindness and faith are what the game celebrates.
+The finished game is played by children, so its content stays wholesome: nothing
+scary, gory, sexual, hateful, or otherwise unsafe for a child.
+When the teacher asks for a game, ${GAME_BUILD_CONTRACT}`;
+
+/** The base (audience-framing + build-contract) system prompt for a persona.
+ *  Persona-specific asset/edit sections layer ON TOP of this in
+ *  buildTurnSystemInstruction — this only picks the audience+contract base. */
+function personaBasePrompt(persona: PersonaId): string {
+  return persona === "bible-teacher" ? BIBLE_TEACHER_SYSTEM_PROMPT : CHILD_SYSTEM_PROMPT;
+}
 
 /** System instruction for a game-BUILD turn: the child-safety base plus
  *  whichever asset catalogs this turn's gates unlock (PRD-3D-GAMES-AND-ASSETS
@@ -292,7 +356,9 @@ export function buildTurnSystemInstruction(
   multiplayer = true,
   isEdit = false,
   repeated = false,
+  persona: PersonaId = "default",
 ): string {
+  const base = personaBasePrompt(persona);
   const sections = [
     ...(gates.three ? [THREE_PROMPT_SECTION, modelsPromptSection(undefined, context)] : []),
     ...(gates.audio ? [audioPromptSection()] : []),
@@ -300,7 +366,7 @@ export function buildTurnSystemInstruction(
     ...(isEdit ? [GAME_EDIT_PROMPT_SECTION] : []),
     ...(repeated ? [REPEATED_REQUEST_SECTION] : []),
   ].filter(Boolean);
-  return sections.length ? `${CHILD_SYSTEM_PROMPT}\n\n${sections.join("\n\n")}` : CHILD_SYSTEM_PROMPT;
+  return sections.length ? `${base}\n\n${sections.join("\n\n")}` : base;
 }
 
 function getClient(): GoogleGenAI {
@@ -370,23 +436,11 @@ const GEN_CONFIG = {
   // chat-app-style responsiveness. GAME-BUILD turns override this with a bounded
   // budget + more output headroom (middle path, 2026-07-09 — see builder-mode.ts).
   thinkingConfig: { thinkingBudget: 0 },
-  safetySettings: [
-    // Thresholds are pinned + explained in gemini.safety-config.test.ts.
-    // DANGEROUS_CONTENT at LOW blocked ordinary game-genre requests ("make me a
-    // shooting game") — kids' arcade staples. MEDIUM still blocks real-world
-    // dangerous content, and the deterministic input rules run on top.
-    // HATE_SPEECH relaxed LOW→MEDIUM (owner call 2026-07-22, BUG-FIX-LOG): a
-    // church pastor's Sunday-school Bible game was blocked SOLELY by
-    // HATE_SPEECH:LOW (proven by the safety-block attribution log; every other
-    // category NEGLIGIBLE) — religion is a protected attribute, so benign faith
-    // content trips a LOW flag. MEDIUM+ still blocks genuine hate. HARASSMENT +
-    // SEXUALLY_EXPLICIT stay at the STRICTEST — the attribution showed they were
-    // NEGLIGIBLE here, not the culprit, and there's no reason to loosen them.
-    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
-    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
-    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
-    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
-  ],
+  // Child-default thresholds, sourced from the persona registry (the SINGLE
+  // SOURCE OF TRUTH — PERSONAS.default). Pinned + explained in
+  // gemini.safety-config.test.ts and persona/persona.test.ts. A persona turn
+  // overrides these with its own safetySettings in configFor.
+  safetySettings: PERSONAS.default.safetySettings,
 };
 
 /** Request shape sent to Gemini. Exported for tests (gemini.contents.test.ts pins it).
@@ -447,7 +501,7 @@ export class GeminiChatModel implements ChatModel {
    *  GenerationRequest and back would only lose fidelity (thinking budgets,
    *  harm thresholds) that Gemini alone supports. */
   private toGenerationRequest(
-    input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean; activeGameMessageId?: string },
+    input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean; activeGameMessageId?: string; persona?: PersonaId },
   ): GenerationRequest {
     const config = this.configFor(input) as { systemInstruction: string; maxOutputTokens?: number };
     return {
@@ -550,8 +604,15 @@ export class GeminiChatModel implements ChatModel {
    *  class fix 2026-07-18): when a patch attempt fails to apply, the fallback
    *  regeneration call must NOT get the edit-patch instruction again — it
    *  needs a full file back this time. */
-  private configFor(input: { history: ChatMessage[]; message: string; forceFullRegen?: boolean; activeGameMessageId?: string }) {
-    if (!isGameBuildTurn(input.message, input.history)) return GEN_CONFIG;
+  private configFor(input: { history: ChatMessage[]; message: string; forceFullRegen?: boolean; activeGameMessageId?: string; persona?: PersonaId }) {
+    // The persona has ALREADY been fail-closed by the route (resolvePersona
+    // against the verified session); configFor trusts the id it is handed and
+    // never re-derives it from client input. `default` when unset — every
+    // existing caller keeps the child posture untouched.
+    const persona = PERSONAS[input.persona ?? "default"] ?? PERSONAS.default;
+    if (!isGameBuildTurn(input.message, input.history)) {
+      return { ...GEN_CONFIG, systemInstruction: personaBasePrompt(persona.id), safetySettings: persona.safetySettings };
+    }
     // paid: false until entitlement lands (TECH_DEBT #11) — then this becomes
     // the real per-user entitlement and the paid tier goes always-on (§9).
     const gates = catalogGates({ message: input.message, history: input.history, paid: false });
@@ -560,10 +621,11 @@ export class GeminiChatModel implements ChatModel {
     // Penguin-maze hardening 2026-07-18: an identical re-send means the last
     // reply claimed success without the change appearing — tell the model.
     const repeated = isRepeatedRequest(input.message, input.history);
-    console.log(`[gemini] builder mode — thinking on, extended output, catalogs: 3d=${gates.three} audio=${gates.audio} multiplayer=${wantsMultiplayer} edit=${isEdit} repeated=${repeated}`);
+    console.log(`[gemini] builder mode — thinking on, extended output, persona=${persona.id}, catalogs: 3d=${gates.three} audio=${gates.audio} multiplayer=${wantsMultiplayer} edit=${isEdit} repeated=${repeated}`);
     return {
       ...GEN_CONFIG,
-      systemInstruction: buildTurnSystemInstruction(gates, { message: input.message, history: input.history }, wantsMultiplayer, isEdit, repeated),
+      systemInstruction: buildTurnSystemInstruction(gates, { message: input.message, history: input.history }, wantsMultiplayer, isEdit, repeated, persona.id),
+      safetySettings: persona.safetySettings,
       ...builderGenOverrides(process.env),
     };
   }
@@ -575,7 +637,7 @@ export class GeminiChatModel implements ChatModel {
    *  same model-fallback chain replyStream() uses (oneShotWithFallback) —
    *  this is the SAFETY NET for a mismatched patch, so it must not itself be
    *  a dead end on a single bad/unavailable model. */
-  async reply(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean; onLedger?: (summary: ChainSummary) => void; onLoserCost?: (model: string, usage: TokenUsage | undefined, outputText: string) => void }) {
+  async reply(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean; persona?: PersonaId; onLedger?: (summary: ChainSummary) => void; onLoserCost?: (model: string, usage: TokenUsage | undefined, outputText: string) => void }) {
     const ai = getClient();
     try {
       const res = await this.oneShotWithFallback(
@@ -606,10 +668,11 @@ export class GeminiChatModel implements ChatModel {
    *  disobeyed the patch contract once already. Child-safety base prompt
    *  stays: an edit can introduce new visible content. Walks the same
    *  model-fallback chain as every other call. */
-  async strictEditRetry(input: { currentHtml: string; message: string; onLedger?: (summary: ChainSummary) => void; onLoserCost?: (model: string, usage: TokenUsage | undefined, outputText: string) => void }): Promise<{ text: string; usage?: TokenUsage }> {
+  async strictEditRetry(input: { currentHtml: string; message: string; persona?: PersonaId; onLedger?: (summary: ChainSummary) => void; onLoserCost?: (model: string, usage: TokenUsage | undefined, outputText: string) => void }): Promise<{ text: string; usage?: TokenUsage }> {
     const ai = getClient();
+    const persona = PERSONAS[input.persona ?? "default"] ?? PERSONAS.default;
     const composed = `Current game source:\n${input.currentHtml}\n\nThe child asked: ${input.message}`;
-    const systemInstruction = `${CHILD_SYSTEM_PROMPT}\n\n${GAME_EDIT_STRICT_RETRY_SECTION}`;
+    const systemInstruction = `${personaBasePrompt(persona.id)}\n\n${GAME_EDIT_STRICT_RETRY_SECTION}`;
     try {
       const res = await this.oneShotWithFallback(
         "gemini.strict-edit",
@@ -619,7 +682,7 @@ export class GeminiChatModel implements ChatModel {
             .generateContent({
               model,
               contents: [{ role: "user", parts: [{ text: composed }] }],
-              config: { ...GEN_CONFIG, systemInstruction, maxOutputTokens: 4096 },
+              config: { ...GEN_CONFIG, systemInstruction, safetySettings: persona.safetySettings, maxOutputTokens: 4096 },
             })
             .then((r) => this.normalizeGoogle(r)),
         { history: [], message: composed, systemInstruction, maxOutputTokens: 4096 },
@@ -669,7 +732,7 @@ export class GeminiChatModel implements ChatModel {
   /** Streaming reply — yields answer deltas AND thought summaries as they're
    *  generated. Thought parts (part.thought, includeThoughts in builder mode)
    *  become the kid-facing planning line; they are NOT part of the answer. */
-  async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; activeGameMessageId?: string; forceRebuild?: boolean; preferAlternateModel?: boolean; onLedger?: (summary: ChainSummary) => void }): AsyncGenerator<StreamChunk> {
+  async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; activeGameMessageId?: string; forceRebuild?: boolean; preferAlternateModel?: boolean; persona?: PersonaId; onLedger?: (summary: ChainSummary) => void }): AsyncGenerator<StreamChunk> {
     const ai = getClient();
     // "🔄 Different one" (PRD-INSTANT-ALTERNATE, on-demand option): lead the
     // chain with the FALLBACK model so the regeneration is a genuinely different

@@ -18,6 +18,11 @@ export interface AriantraSession {
   name?: string;
   /** JWT iat (seconds) — lets PIN set/reset demand a FRESH login (§7). */
   issuedAt?: number;
+  /** Verified-adult claim (PRD-BIBLE-TEACHER). TRUE only when the platform set
+   *  `adult:true` after a self-declared adult age gate; absent/false/garbage all
+   *  read as false. Gates the bible-teacher persona (resolvePersona is the
+   *  fail-closed consumer). */
+  adult: boolean;
 }
 
 /** Re-auth gate: a session minted within the last 5 minutes. The kid holding
@@ -52,6 +57,7 @@ export async function verifyAriantraSession(
       ...(email ? { email } : {}),
       ...(name ? { name } : {}),
       ...(typeof payload.iat === "number" ? { issuedAt: payload.iat } : {}),
+      adult: payload.adult === true, // fail closed — only an explicit true counts
     };
   } catch {
     return null; // expired / tampered / wrong secret / not a JWT — all fail closed

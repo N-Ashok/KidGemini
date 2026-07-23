@@ -137,7 +137,7 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import { POST } from "./route";
-import { GUEST_TOKEN_LIMIT, IP_GUEST_TOKEN_CAP, GUEST_WINDOW_MS, SIGNED_IN_DAILY_TOKEN_LIMIT } from "@/lib/gate.config";
+import { GUEST_TOKEN_LIMIT, IP_GUEST_TOKEN_CAP, GUEST_WINDOW_MS, SIGNED_IN_DAILY_TOKEN_LIMIT, BIBLE_TEACHER_GUEST_TOKEN_LIMIT } from "@/lib/gate.config";
 
 function makeReq(body: unknown, cookies: Record<string, string> = {}): import("next/server").NextRequest {
   return {
@@ -1197,5 +1197,101 @@ describe("POST /api/chat — Different one (PRD-INSTANT-ALTERNATE, on-demand)", 
     await POST(makeReq({ message: "make me a game", history: [] }));
 
     expect(replyStreamMock.mock.calls[0]![0]).toMatchObject({ preferAlternateModel: false });
+  });
+});
+
+// Bible-teacher persona (PRD-BIBLE-TEACHER §3a/§4). The route is the API-side
+// trust boundary: it picks the smaller free-trial allowance for the surface,
+// fail-closes the persona to the verified-adult session, and relaxes the
+// deterministic input rules ONLY in verified-adult authoring mode.
+describe("POST /api/chat — bible-teacher persona (gate + fail-closed resolution)", () => {
+  const ADULT = { userId: "user:teacher@church.org", email: "teacher@church.org", name: "Pastor", adult: true };
+  const NON_ADULT = { userId: "user:kid@x.com", email: "kid@x.com", adult: false };
+
+  it("BT.1 the surface gets the SMALLER free trial — a guest over ~2k is walled even though it's under the 10k default", async () => {
+    authMock.mockResolvedValue(null);
+    // Between the teacher allowance and the default guest limit.
+    usedByUser.mockReturnValue(BIBLE_TEACHER_GUEST_TOKEN_LIMIT + 1);
+    expect(BIBLE_TEACHER_GUEST_TOKEN_LIMIT).toBeLessThan(GUEST_TOKEN_LIMIT);
+
+    const res = await POST(makeReq({ message: "a Noah's ark game", history: [], persona: "bible-teacher" }));
+
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toBe("auth_required");
+    expect(replyStreamMock).not.toHaveBeenCalled();
+  });
+
+  it("BT.2 the SAME usage on the default surface still streams (the smaller cap is surface-scoped)", async () => {
+    authMock.mockResolvedValue(null);
+    usedByUser.mockReturnValue(BIBLE_TEACHER_GUEST_TOKEN_LIMIT + 1); // over the teacher cap, under 10k
+    replyStreamMock.mockReturnValue(one("Hi!"));
+
+    const res = await POST(makeReq({ message: "hello", history: [] }));
+
+    expect(res.status).toBe(200);
+    expect(replyStreamMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("BT.3 a guest can try the surface under the trial allowance (non-blocking entry)", async () => {
+    authMock.mockResolvedValue(null);
+    usedByUser.mockReturnValue(0);
+    replyStreamMock.mockReturnValue(one("Here's your Bible game!"));
+
+    const res = await POST(makeReq({ message: "a David and Goliath game", history: [], persona: "bible-teacher" }));
+
+    expect(res.status).toBe(200);
+    // …but a guest is NOT a verified adult, so the persona fail-closes to default.
+    expect(replyStreamMock.mock.calls[0]![0]).toMatchObject({ persona: "default" });
+  });
+
+  it("BT.4 a VERIFIED-ADULT session unlocks the bible-teacher persona end-to-end", async () => {
+    authMock.mockResolvedValue(ADULT);
+    replyStreamMock.mockReturnValue(one("Here's your Bible game!"));
+
+    await POST(makeReq({ message: "a David and Goliath game", history: [], persona: "bible-teacher" }));
+
+    expect(replyStreamMock.mock.calls[0]![0]).toMatchObject({ persona: "bible-teacher" });
+  });
+
+  it("BT.5 a signed-in but NON-adult session requesting the persona fail-closes to default (defense in depth)", async () => {
+    authMock.mockResolvedValue(NON_ADULT);
+    replyStreamMock.mockReturnValue(one("Here!"));
+
+    await POST(makeReq({ message: "a Bible game", history: [], persona: "bible-teacher" }));
+
+    expect(replyStreamMock.mock.calls[0]![0]).toMatchObject({ persona: "default" });
+  });
+
+  it("BT.6 adult authoring mode does NOT block on a PII soft-block (an adult's own typing), and still streams", async () => {
+    authMock.mockResolvedValue(ADULT);
+    ruleVerdict = { category: "personal_info", severity: "medium", action: "soft_block", reason: "looks like an email" };
+    replyStreamMock.mockReturnValue(one("Here's your Bible game!"));
+
+    const res = await POST(makeReq({ message: "a game listing our church at office@church.org", history: [], persona: "bible-teacher" }));
+
+    expect(res.status).toBe(200);
+    expect(replyStreamMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("BT.7 the SAME PII soft-block DOES block in the default child persona (posture unchanged for kids)", async () => {
+    authMock.mockResolvedValue(null); // guest → default persona
+    ruleVerdict = { category: "personal_info", severity: "medium", action: "soft_block", reason: "looks like an email" };
+
+    const res = await POST(makeReq({ message: "my email is kid@x.com", history: [] }));
+    const text = await res.text();
+
+    expect(text).toContain('"type":"blocked"');
+    expect(replyStreamMock).not.toHaveBeenCalled();
+  });
+
+  it("BT.8 a HARD block (profanity/self-harm) still blocks even in adult authoring mode — the safety floor holds", async () => {
+    authMock.mockResolvedValue(ADULT);
+    ruleVerdict = { category: "profanity", severity: "high", action: "hard_block", reason: "Matched blocked term (rule)." };
+
+    const res = await POST(makeReq({ message: "something hard-blocked", history: [], persona: "bible-teacher" }));
+    const text = await res.text();
+
+    expect(text).toContain('"type":"blocked"');
+    expect(replyStreamMock).not.toHaveBeenCalled();
   });
 });

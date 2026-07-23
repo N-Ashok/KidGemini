@@ -9,7 +9,9 @@
 This is the single source of truth for **how we build** in this repo. Claude Code (and any
 human) should read this before writing code. **Read the relevant docs BEFORE touching the
 code**: product intent in `docs/PRD.md`; visual language in `docs/DESIGN_SYSTEM.md`; system
-map and hosting in `docs/ARCHITECTURE.md`; feature overview in `docs/FEATURES.md`; known
+map and hosting in `docs/ARCHITECTURE.md`; feature overview in `docs/FEATURES.md`; the exact
+LLM prompt sent on every child turn in `docs/PROMPT_MANAGEMENT.md` (read before changing any
+prompt string or the assembly/gating logic); known
 issues in `docs/KNOWN_BUGS.md` and `docs/SCALABILITY_ISSUES.md`; deferred work in
 `../Ariantra-Platform/docs/TECH_DEBT.md` (cross-repo register — add to it when deferring).
 

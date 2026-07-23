@@ -55,6 +55,16 @@ export function signIn(opts?: { reauth?: boolean }): void {
   );
 }
 
+/** Send the user to the platform-hosted adult age gate (PRD-BIBLE-TEACHER):
+ *  sign-in + birth-year + consent, which re-mints the SSO cookie with the
+ *  `adult` claim, then bounces straight back here. Used by the /bible-teacher
+ *  surface when the free trial is spent — instead of the plain sign-in wall, the
+ *  teacher needs the age step too. Shares the platform host with LOGIN_URL. */
+const AGE_URL = LOGIN_URL.replace(/\/login$/, "/age");
+export function verifyAge(): void {
+  window.location.assign(`${AGE_URL}?returnTo=${encodeURIComponent(window.location.href)}`);
+}
+
 /** Clear the shared cookie via our own first-party /api/logout (no CORS —
  *  the domain cookie is clearable from any *.ariantra.com), then reload. */
 export function signOut(): void {

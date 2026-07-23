@@ -6,6 +6,30 @@
  *  sign-in wall. Resets naturally as old usage ages out of the window. */
 export const GUEST_TOKEN_LIMIT = 10_000;
 
+/**
+ * Smaller free-trial allowance for the bible-teacher SURFACE (PRD-BIBLE-TEACHER
+ * §3a). Entry there is non-blocking — a visitor can try it immediately — but the
+ * relaxed authoring persona is only unlocked after a login + self-declared-adult
+ * gate, so the pre-login trial is deliberately short (a taste, not a workshop).
+ * When this is spent the route walls to sign-in exactly like the default guest.
+ * Env-overridable so the exact number can be tuned without a deploy.
+ */
+export const BIBLE_TEACHER_GUEST_TOKEN_LIMIT = 2_000;
+
+/** Guest allowance for a requested persona/surface. `default` for the ordinary
+ *  app; the smaller trial for the bible-teacher surface. Pure + env-overridable
+ *  (BIBLE_TEACHER_GUEST_TOKEN_LIMIT) so the gate stays testable and tunable. */
+export function guestTokenLimitFor(
+  requestedPersona: string | undefined,
+  env: Record<string, string | undefined> = process.env,
+): number {
+  if (requestedPersona === "bible-teacher") {
+    const override = Number(env.BIBLE_TEACHER_GUEST_TOKEN_LIMIT);
+    return Number.isFinite(override) && override > 0 ? override : BIBLE_TEACHER_GUEST_TOKEN_LIMIT;
+  }
+  return GUEST_TOKEN_LIMIT;
+}
+
 /** Rolling window for the guest tallies (device AND per-IP): 2 days. */
 export const GUEST_WINDOW_MS = 2 * 24 * 60 * 60 * 1000;
 

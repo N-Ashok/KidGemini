@@ -45,6 +45,14 @@ You do **not** need an entry for: pure refactors, doc-only changes, dependency b
 
 <!-- Newest first. Add new entries directly under this heading. -->
 
+### 2026-07-23 — SAFETY-POSTURE CHANGE: child-default HATE_SPEECH re-tightened LOW (relaxation re-scoped to the bible-teacher persona)
+
+- **Context:** the bible-teacher persona (PRD-BIBLE-TEACHER) gives verified-adult Sunday-school teachers a dedicated authoring surface. Faith games are now built through that persona, which carries the HATE_SPEECH=MEDIUM latitude added 2026-07-22 (entry below).
+- **Change:** the 2026-07-22 global HATE_SPEECH `LOW→MEDIUM` relaxation is now **scoped to `bible-teacher`** only. The **child default is tightened back to the strictest `BLOCK_LOW_AND_ABOVE`** — kids no longer pay for the faith-content false-positive latitude, because that content is authored through the adult persona instead.
+- **Source of truth:** safety thresholds moved into `src/lib/persona/persona.ts` (`PERSONAS.default` / `PERSONAS['bible-teacher']`), the single place a threshold is set; `GEN_CONFIG.safetySettings` reads `PERSONAS.default`.
+- **Guardrails:** `persona/persona.test.ts` pins both postures; `gemini.safety-config.test.ts` updated to pin the child default (HATE_SPEECH=LOW); `gemini.persona-config.test.ts` pins that the persona sends prompt+safety together. HARASSMENT + SEXUALLY_EXPLICIT stay strictest in BOTH personas.
+- **Watch at UAT:** a Bible-themed game built in the **normal child app** (not `/bible-teacher`) is again subject to the stricter HATE_SPEECH=LOW — the exact false-positive from the entry below could recur there. Expected/intended: such games belong on the teacher surface. Full suite **1124 pass / 1 skip**, typecheck clean.
+
 ### 2026-07-22 — SAFETY-POSTURE CHANGE: HATE_SPEECH relaxed LOW→MEDIUM (benign faith content was blocked)
 
 - **Symptom (what the user saw):** a church pastor's Sunday-school Bible game ("100 New Testament names + 80 followers of Jesus, sort follower/not") was repeatedly hard-blocked by Gemini's OUTPUT safety layer (`finishReason: SAFETY`) → the "tangled up" retry, never a game.

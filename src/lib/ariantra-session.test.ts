@@ -73,4 +73,18 @@ describe("verifyAriantraSession", () => {
   it("V.7 cookie name matches the platform's", () => {
     expect(SESSION_COOKIE).toBe("ariantra_session");
   });
+
+  // PRD-BIBLE-TEACHER: the verified-adult claim gates the teacher persona. It
+  // must be read ONLY when the platform set it explicitly true — every other
+  // shape (absent, false, non-boolean) fails closed to not-adult, so a missing
+  // or spoofed-shape claim can never unlock the relaxed authoring posture.
+  it("V.9 reads adult:true only when the platform set it explicitly true (fail closed)", async () => {
+    expect((await verifyAriantraSession(await mint({ adult: true }), SECRET))?.adult).toBe(true);
+    expect((await verifyAriantraSession(await mint({ adult: false }), SECRET))?.adult).toBe(false);
+    // Absent claim → not adult (the common signed-in-but-never-declared case).
+    expect((await verifyAriantraSession(await mint(), SECRET))?.adult).toBe(false);
+    // Non-boolean garbage → not adult.
+    expect((await verifyAriantraSession(await mint({ adult: "yes" }), SECRET))?.adult).toBe(false);
+    expect((await verifyAriantraSession(await mint({ adult: 1 }), SECRET))?.adult).toBe(false);
+  });
 });

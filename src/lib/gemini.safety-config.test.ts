@@ -7,11 +7,15 @@
 // BUG-FIX-LOG 2026-07-22: HATE_SPEECH at BLOCK_LOW_AND_ABOVE false-positive
 // blocked benign FAITH content — a church pastor's Sunday-school Bible game.
 // The attribution logging (summarizeSafetyRatings) proved it: the block came
-// solely from `HATE_SPEECH:LOW` (every other category NEGLIGIBLE). The model is
-// only faintly suspicious, but LOW-and-above blocks it. Relaxed HATE_SPEECH to
-// MEDIUM (same as DANGEROUS_CONTENT already is) — MEDIUM+ still blocks genuine
-// hate; input rules + system prompt unchanged. HARASSMENT/SEXUALLY_EXPLICIT
-// stay at the strictest (the data showed they were NEGLIGIBLE, not the culprit).
+// solely from `HATE_SPEECH:LOW` (every other category NEGLIGIBLE).
+//
+// PRD-BIBLE-TEACHER (2026-07-23): that HATE_SPEECH LOW→MEDIUM relaxation is now
+// RE-SCOPED to the bible-teacher persona (verified-adult authors) — see
+// persona/persona.test.ts. The CHILD DEFAULT below is tightened back to the
+// STRICTEST (HATE_SPEECH:LOW): faith games are authored through /bible-teacher,
+// so the child default no longer pays for the false-positive latitude. This
+// test pins the child-default (no-persona) posture; the persona posture is
+// pinned in persona/persona.test.ts. HARASSMENT/SEXUALLY_EXPLICIT stay strictest.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -59,8 +63,8 @@ describe("Gemini safetySettings — kids' safety posture (pinned)", () => {
     process.env.GEMINI_CHAT_MODEL = "gemini-3-flash-preview";
   });
 
-  it("HATE_SPEECH is MEDIUM — a LOW-confidence flag on benign faith content must not block", async () => {
-    expect((await thresholdsSentToGemini())["hs"]).toBe("med");
+  it("child default HATE_SPEECH is STRICTEST (LOW) — the faith latitude moved to the bible-teacher persona", async () => {
+    expect((await thresholdsSentToGemini())["hs"]).toBe("low");
   });
 
   it("HARASSMENT stays STRICTEST (LOW) — the block attribution showed it NEGLIGIBLE, not the culprit", async () => {

@@ -54,4 +54,20 @@ describe("CHILD_SYSTEM_PROMPT (safety instruction, monitor replacement)", () => 
     expect(CHILD_SYSTEM_PROMPT).toMatch(/start\s+(building|coding)\s+(it\s+)?immediately/i);
     expect(CHILD_SYSTEM_PROMPT).toMatch(/do\s+not\s+list\s+options\s+or\s+ask\s+which/i);
   });
+
+  // 2026-07-22: heavy content-generation asks (a pastor's Bible game — "100 real
+  // New Testament names, 80 followers") made the model STOP EARLY on a half-
+  // written file, not for size (3D games generate far more and finish) but on
+  // the factual-recall + finish-the-document task. Steer it to finish and to
+  // stay honest about facts. \s+ tolerates the wrapped template literal.
+  it("tells the model to output a COMPLETE document ending in </html>, using compact data arrays", () => {
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/COMPLETE\s+HTML\s+document/);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/ending\s+with\s*\n?\s*<\/html>/i);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/JavaScript\s+ARRAY\s+and\s+loop\s+over\s+it/i);
+  });
+
+  it("forbids inventing real-world facts/names — accurate set over a padded, made-up one", () => {
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/never\s+invent\s+or\s+make\s+up\s+names\s+or\s+facts/i);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/smaller\s+ACCURATE\s+set\s+is\s+always\s+better/i);
+  });
 });

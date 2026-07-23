@@ -4,7 +4,7 @@
 // Naming: `.container.tsx` = data-fetching component (CLAUDE.md § 5).
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { signIn, useSession } from "@/lib/useAriantraSession";
+import { signIn, verifyAge, useSession } from "@/lib/useAriantraSession";
 import { Sidebar } from "./Sidebar";
 import { Composer, type Attachment } from "./Composer";
 import { ArtifactFrame } from "./ArtifactFrame";
@@ -87,7 +87,16 @@ function plain(text: string): string {
     .trim();
 }
 
-export function ChatPanelContainer() {
+/** Props for the chat container. `persona` selects a server persona for this
+ *  surface (PRD-BIBLE-TEACHER): the /bible-teacher page passes "bible-teacher"
+ *  so /api/chat can apply the teacher prompt/safety — but the server ALWAYS
+ *  fail-closes it to the verified-adult session (resolvePersona), so this is a
+ *  UX hint, never the access control. Omitted → the default child experience. */
+export interface ChatPanelContainerProps {
+  persona?: "bible-teacher";
+}
+
+export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   const { status: authStatus } = useSession();
   const [convos, setConvos] = useState<Conversation[]>([newConversation()]);
   const [activeId, setActiveId] = useState(convos[0]!.id);
@@ -622,6 +631,7 @@ export function ChatPanelContainer() {
           ...(activeGameMessageId ? { activeGameMessageId } : {}),
           ...(forceRebuild ? { forceRebuild: true } : {}),
           ...(differentVersion ? { differentVersion: true } : {}),
+          ...(persona ? { persona } : {}),
         }),
         signal: controller.signal,
       });
@@ -1156,7 +1166,10 @@ export function ChatPanelContainer() {
       )}
 
       {gate && (
-        <LoginGate message={gate.text} showUpgrade={gate.upgrade} onSignIn={() => signIn()} />
+        // On the bible-teacher surface the sign-in wall routes through the
+        // platform age gate (sign-in + adult self-declaration + consent) so the
+        // teacher persona can be unlocked; every other surface signs in plainly.
+        <LoginGate message={gate.text} showUpgrade={gate.upgrade} onSignIn={() => (persona ? verifyAge() : signIn())} />
       )}
     </div>
   );
