@@ -18,7 +18,7 @@ import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
 import { GAME_CONSOLE_SOURCE, injectConsoleCapture } from "@/lib/game-console";
 import { DEVICE_PRESETS, deviceById, fitScale, orientedSize } from "@/lib/device-preview";
 import { injectPreviewInstrumentation } from "@/lib/preview-verify";
-import { injectPreviewSdkStub } from "@/lib/preview-sdk-stub";
+import { injectPreviewRuntime, type PreviewTheme } from "@/lib/preview-runtime";
 import { keyToPanelAction, UPDATING_LINE } from "@/lib/preview-pane";
 import { buildErrorReport, hasExtremeError } from "@/lib/error-report";
 import { usePreviewVerify } from "./usePreviewVerify";
@@ -55,6 +55,9 @@ interface ArtifactFrameProps {
   onCoachDone?: () => void;
   nudgeMic?: boolean;
   onNudgeShown?: () => void;
+  /** Which themed leaderboard seed the preview WYSIWYG runtime uses
+   *  (PRD-PREVIEW-WYSIWYG): 'bible' on the bible-teacher surface, else 'default'. */
+  previewTheme?: PreviewTheme;
 }
 
 type Tab = "preview" | "code" | "console";
@@ -90,6 +93,7 @@ export function ArtifactFrame({
   onCoachDone,
   nudgeMic,
   onNudgeShown,
+  previewTheme = "default",
 }: ArtifactFrameProps) {
   const [tab, setTab] = useState<Tab>("preview");
   const [publishing, setPublishing] = useState(false);
@@ -136,15 +140,18 @@ export function ArtifactFrame({
   // finish, and letting srcDoc change without a docKey bump would reload
   // (flash) a game we decided NOT to reload. A new docKey = new document;
   // anything else stays put.
-  // The SDK stub keeps multiplayer-prompt rule 9's promise ("Ariantra always
-  // exists, in the preview too") for the PREVIEW ONLY — publish/invite send
-  // state.currentHtml untouched, where the platform loads the real SDK.
+  // Preview WYSIWYG (PRD-PREVIEW-WYSIWYG): the preview runtime inlines the REAL
+  // sdk.js + publish overlays (🏆 leaderboard, ⋯ menu, high-score, share) backed
+  // by a LOCAL mock, so the preview looks like the published game — and keeps
+  // multiplayer-prompt rule 9's promise ("Ariantra always exists, in the preview
+  // too") via a solo session. PREVIEW ONLY — publish/🎮 Invite send
+  // state.currentHtml untouched, where the platform loads the real backend SDK.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const srcDoc = useMemo(
     () =>
       state.probesEnabled
-        ? injectPreviewInstrumentation(injectPreviewSdkStub(state.currentHtml))
-        : injectConsoleCapture(injectPreviewSdkStub(state.currentHtml)),
+        ? injectPreviewInstrumentation(injectPreviewRuntime(state.currentHtml, { theme: previewTheme }))
+        : injectConsoleCapture(injectPreviewRuntime(state.currentHtml, { theme: previewTheme })),
     [docKey],
   );
   const covered = state.phase !== "done";

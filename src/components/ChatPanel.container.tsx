@@ -1145,6 +1145,9 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
           <ArtifactFrame
             html={artifact}
             busy={busy}
+            // Themed preview leaderboard (PRD-PREVIEW-WYSIWYG): biblical seed
+            // names on the teacher surface, generic names elsewhere.
+            previewTheme={workspace === "bible-teacher" ? "bible" : "default"}
             // The kid's latest ask — self-healing repair prompts carry it so a
             // fix never drifts from intent (PRD §7 / R.5).
             originalRequest={[...active.messages].reverse().find((m) => m.role === "child")?.text ?? ""}

@@ -9,6 +9,7 @@
     "start": "next start",
     "deploy": "bash scripts/deploy-rsync.sh",
     "sync:brand": "bash scripts/sync-brand.sh",
+    "sync:preview-sdk": "node scripts/sync-preview-sdk.mjs",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
