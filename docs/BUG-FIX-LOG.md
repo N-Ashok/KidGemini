@@ -11,6 +11,19 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+### 2026-07-23 — Sign-in on a local build escaped to production Studio, losing the local draft
+
+- **Symptom (what the user saw):** In local dev the user built a game while logged out, then signed in via Google — and instead of coming back to `localhost`, they landed on `https://studio.ariantra.com` (Studio). The game they'd just made was gone.
+- **Surface area:** `src/lib/useAriantraSession.tsx` (`signIn`/`verifyAge`), reached from the create-while-logged-out LoginGate (`src/components/ChatPanel.container.tsx`). Prod-side second barrier: platform `src/lib/auth/return-to.ts` (`safeReturnTo`).
+- **Root cause:** `LOGIN_URL` was chosen from **build-time** `process.env.NODE_ENV` — `"development"` → localhost, everything else → `https://studio.ariantra.com/login`. A locally-served **production** build (`next start`) has `NODE_ENV === "production"`, so sign-in was sent to the prod platform even though the app was served from localhost. The prod platform's `safeReturnTo` then (correctly, as a security guard) rejected the `returnTo=http://localhost…` and fell back to `/studio` — so the user was both bounced to prod AND unable to return, and the local-only draft never existed there.
+- **Fix:** Login origin is now resolved at **click time** from the live host, not NODE_ENV. New `src/lib/login-url.ts` (`resolveLoginUrl(hostname, envOverride)`): explicit `NEXT_PUBLIC_ARIANTRA_LOGIN_URL` wins → `localhost`/`127.0.0.1` → local platform `:3000` → else production. `useAriantraSession.tsx` now calls it with `window.location.hostname` inside `signIn`/`verifyAge` (age gate derived via `ageUrlFrom`). The prod-side `safeReturnTo` guard is left as-is — it is correct.
+- **Result (verified):** `login-url.test.ts` L.1–L.5 (localhost→local incl. under a prod build, real host→prod, SSR→prod fail-closed, env override wins, age-gate host). `npx vitest run` green; `tsc --noEmit` clean.
+- **Impact:** Anyone running/QA-ing a **local production build** of the chat app can now sign in without being thrown to production and losing their work. No change to real prod or `next dev` behaviour. No auth-model or cookie change.
+- **Prevention:** Class — **build-time env leaking into a client runtime decision**. Guard: `login-url.test.ts` pins that the origin comes from the host, not NODE_ENV. Same `NODE_ENV`-switch pattern still lives in `src/components/ArNav.tsx`, `src/app/parent/page.tsx`, and platform `src/lib/ui/nav-links.ts` (outbound nav links, not the login redirect) — lower impact, not fixed here.
+- **Related:** KNOWN_BUGS.md #6. Prior SSO returnTo work: platform BUG_LOG #12 (`return-to.ts`).
+
+---
+
 ## When to add an entry
 
 Add an entry **whenever a fix lands**, including:

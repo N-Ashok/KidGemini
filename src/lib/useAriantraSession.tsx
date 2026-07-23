@@ -5,12 +5,17 @@
 // hook just asks our /api/session who we are.
 
 import { useEffect, useState } from "react";
+import { resolveLoginUrl, ageUrlFrom } from "./login-url";
 
-const LOGIN_URL =
-  process.env.NEXT_PUBLIC_ARIANTRA_LOGIN_URL ??
-  (process.env.NODE_ENV === "development"
-    ? "http://localhost:3000/login" // platform dev server, by local convention
-    : "https://studio.ariantra.com/login");
+/** Resolved at CLICK time from the live host — never build-time NODE_ENV, which
+ *  sent local prod builds (`next start`) to production and lost the local draft
+ *  (KNOWN_BUGS 2026-07-23). See src/lib/login-url.ts. */
+function loginUrl(): string {
+  return resolveLoginUrl(
+    typeof window !== "undefined" ? window.location.hostname : undefined,
+    process.env.NEXT_PUBLIC_ARIANTRA_LOGIN_URL,
+  );
+}
 
 export type SessionStatus = "loading" | "authenticated" | "unauthenticated";
 
@@ -58,7 +63,7 @@ export function useSession(): { status: SessionStatus; data: SessionData | null 
 export function signIn(opts?: { reauth?: boolean }): void {
   const reauth = opts?.reauth ? "&reauth=1" : "";
   window.location.assign(
-    `${LOGIN_URL}?returnTo=${encodeURIComponent(window.location.href)}${reauth}`,
+    `${loginUrl()}?returnTo=${encodeURIComponent(window.location.href)}${reauth}`,
   );
 }
 
@@ -66,10 +71,10 @@ export function signIn(opts?: { reauth?: boolean }): void {
  *  sign-in + birth-year + consent, which re-mints the SSO cookie with the
  *  `adult` claim, then bounces straight back here. Used by the /bible-teacher
  *  surface when the free trial is spent — instead of the plain sign-in wall, the
- *  teacher needs the age step too. Shares the platform host with LOGIN_URL. */
-const AGE_URL = LOGIN_URL.replace(/\/login$/, "/age");
+ *  teacher needs the age step too. Shares the platform host with the login URL. */
 export function verifyAge(): void {
-  window.location.assign(`${AGE_URL}?returnTo=${encodeURIComponent(window.location.href)}`);
+  const ageUrl = ageUrlFrom(loginUrl());
+  window.location.assign(`${ageUrl}?returnTo=${encodeURIComponent(window.location.href)}`);
 }
 
 /** Clear the shared cookie via our own first-party /api/logout (no CORS —
