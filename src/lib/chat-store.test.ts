@@ -93,6 +93,24 @@ describe("chat-store — chats survive navigation", () => {
     expect(s.getItem("kidgemini:chats:v1:bible-teacher")).toBeNull();
   });
 
+  // docs/PRD-IDEA-QUEUE.md: ideas typed while Ari was building ride on the
+  // conversation, so a reload mid-build finds the line exactly as it was.
+  it("round-trips a chat's queued ideas", () => {
+    const s = fakeStorage();
+    const withQueue = { ...convo("a"), queuedIdeas: [{ id: "q1", text: "add a dragon boss", createdAt: 7 }] };
+    saveChats(s, [withQueue] as never, "a");
+    expect(loadChats(s)!.convos[0]!.queuedIdeas).toEqual([{ id: "q1", text: "add a dragon boss", createdAt: 7 }]);
+  });
+
+  it("drops a malformed queued idea instead of loading junk into the composer", () => {
+    const s = fakeStorage();
+    s.setItem(
+      "kidgemini:chats:v1",
+      JSON.stringify({ convos: [{ ...convo("a"), queuedIdeas: [{ id: "q1" }, "nope"] }], activeId: "a" }),
+    );
+    expect(loadChats(s)!.convos[0]!.queuedIdeas).toEqual([]);
+  });
+
   it("degrades to null on corrupt data or quota errors (never throws)", () => {
     const s = fakeStorage();
     s.setItem("kidgemini:chats:v1", "{not json");

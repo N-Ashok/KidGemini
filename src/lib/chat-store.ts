@@ -3,6 +3,7 @@
 // link — lost them). Device-local like the guest identity; server-side safety
 // transcripts are unaffected. Pure functions: storage injected, never throws.
 
+import { sanitizeQueue } from "./idea-queue";
 import type { Conversation, Workspace } from "@/types/chat.types";
 
 const KEY = "kidgemini:chats:v1";
@@ -50,7 +51,12 @@ export function loadChats(storage: Storage, workspace: Workspace = "default"): {
     const activeId = parsed.convos.some((c) => c.id === parsed.activeId)
       ? (parsed.activeId as string)
       : parsed.convos[0]!.id;
-    return { convos: parsed.convos, activeId };
+    // Queued ideas (docs/PRD-IDEA-QUEUE.md) auto-send when Ari next goes idle,
+    // so they get validated on the way in — never send a hand-edited blob.
+    const convos = parsed.convos.map((c) =>
+      c.queuedIdeas === undefined ? c : { ...c, queuedIdeas: sanitizeQueue(c.queuedIdeas) },
+    );
+    return { convos, activeId };
   } catch {
     return null;
   }

@@ -272,7 +272,15 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   goes live under the family's SSO account with auto-score/leaderboard/
   thumbnail included (`PublishToArcade.tsx` + `/api/arcade/publish` →
   platform partner bridge). A parent verified in the last 30 min skips the
-  PIN prompt entirely
+  PIN prompt entirely.
+  **One question per decision** (2026-07-24, BUG-FIX-LOG): the sheet opens on a
+  skeleton ("Getting the launchpad ready… 🚀") while it checks whether the kid
+  already has games, then commits ONCE — games → "What are we doing?", none →
+  straight to naming. It used to open on the naming screen as a guess and
+  correct itself, so a kid with existing games saw name → choose → name.
+  Sequencing is pure + tested in `src/lib/publish-flow.ts`; a late or retried
+  games-list response can never pull a kid out of naming, the PIN, or a
+  running publish
 - **Category + play-mode choice at publish** (2026-07-18, owner ask): the
   naming step now includes required category chips (`GAME_CATEGORIES` in
   `src/lib/game-categories.ts`, hand-synced with the platform's list — no
@@ -356,6 +364,22 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   game from the Parent area (🎮 Multiplayer card, `/api/parent/games` → the
   partner bridge's `toggleMultiplayer`, same PIN + ownership-match gate as
   publishing) — flipping it restamps the live game immediately
+- **⏳ Idea Queue** (2026-07-24, docs/PRD-IDEA-QUEUE.md): Ari used to work on one
+  idea at a time with a DEAD composer (`disabled={busy}`) — a kid who thought of
+  the next thing mid-build had nowhere to put it. Now the composer stays alive:
+  Enter/↑ adds the idea to a visible FIFO line ("⏳ Next up (n)", max 5) shown
+  directly above the composer, where each row is editable in place (commit on
+  blur) and droppable with ✕. Queuing never interrupts — ⏹ Stop is still the only
+  interrupt. After each CLEAN finish the front of the line sends itself, one at a
+  time; after a stop or a failure the line FREEZES and asks ("⏸ Still want
+  these?" → Yes, keep going / drop them) so an edit is never chained onto a
+  half-built game. The line rides on `Conversation.queuedIdeas`, so it persists
+  through a reload (localStorage + the per-turn server write-through) — and a
+  restored or newly-opened chat always starts paused, so nothing generates while
+  nobody is watching. Text only: an attachment-send while busy is refused with a
+  reason (base64 images would blow the localStorage quota), as is a 6th idea —
+  the queue never silently drops what a kid typed
+  (`src/lib/idea-queue.ts`, `IdeaQueue.tsx`)
 - **🎤 Idea Button + 🎒 Idea Bag** (2026-07-12, docs/PRD-IDEA-BUTTON.md): an
   edge-docked mic tab over the game preview — the only capture path while the
   composer is hidden (⤢ full screen / mobile game screen). Click slides it out,

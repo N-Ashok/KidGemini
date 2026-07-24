@@ -15,6 +15,13 @@ export type Attachment =
 interface ComposerProps {
   disabled?: boolean;
   busy?: boolean;
+  /** Idea Queue (docs/PRD-IDEA-QUEUE.md): a send while `busy` doesn't go to the
+   *  model, it joins the line — the copy has to say so BEFORE the kid hits
+   *  Enter, or a queued idea reads as a message that disappeared. */
+  queueing?: boolean;
+  /** The line is full (MAX_QUEUED): typing still works, sending is refused with
+   *  a reason. Never silently swallow the idea. */
+  queueFull?: boolean;
   onSend: (text: string, attachment?: Attachment) => void;
   onStop?: () => void;
 }
@@ -27,10 +34,13 @@ const MAX_IMAGE_EDGE_PX = 1024;
 // Matches max-h-40 (10rem) — the textarea grows to here, then scrolls.
 const MAX_TEXTAREA_PX = 160;
 
-export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
+export function Composer({ disabled, busy, queueing, queueFull, onSend, onStop }: ComposerProps) {
   const [value, setValue] = useState("");
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [fileError, setFileError] = useState("");
+  // Why a queue-time send was refused (line full / attachment) — cleared on the
+  // next successful submit.
+  const [notice, setNotice] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -58,6 +68,12 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_PX)}px`;
   }, [displayValue]);
+
+  // Ari went idle — a "the line is full" / "not while I'm building" note is
+  // stale the moment the reason is gone.
+  useEffect(() => {
+    if (!queueing) setNotice("");
+  }, [queueing]);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     setFileError("");
@@ -100,6 +116,19 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
     // Send what the kid SEES — mid-dictation that includes the live interim.
     const text = displayValue.trim();
     if ((!text && !attachment) || disabled) return;
+    if (queueing) {
+      // Queue refusals must SAY why and keep what the kid typed — the whole
+      // point of the queue is that an idea is never lost to a busy Ari.
+      if (queueFull) {
+        setNotice("Ari can hold 5 ideas — send or drop one of those first. 🙂");
+        return;
+      }
+      if (attachment) {
+        setNotice("Pictures and files need Ari's full attention — try again once this game is done. 📷");
+        return;
+      }
+    }
+    setNotice("");
     // The interim is going out with the message: kill the session without
     // committing it, or it would reappear as a stray draft after the send.
     if (isListening || interim) discardAndStop();
@@ -159,6 +188,11 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
         </div>
       )}
       {fileError && <p className="mb-1 px-2 text-sm text-red-600">{fileError}</p>}
+      {notice && (
+        <p role="status" className="mb-1 px-2 text-sm font-medium text-neutral-600">
+          {notice}
+        </p>
+      )}
       <div className="flex items-end gap-2 rounded-[28px] border border-neutral-200 bg-white px-3 py-2 shadow-sm">
         <input
           ref={fileInput}
@@ -183,7 +217,10 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
           rows={1}
-          placeholder="Ask me anything…"
+          // Kept short on purpose: at 390px a longer queueing placeholder wrapped
+          // and got clipped by the one-row box (visual pass 2026-07-24). The
+          // "Next up" card above carries the fuller explanation.
+          placeholder={queueing ? "Add your next idea…" : "Ask me anything…"}
           disabled={disabled}
           // While dictating the box shows value + live interim; a keyboard
           // edit would commit the interim into `value` and it would then
@@ -207,7 +244,11 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
             </button>
           )}
 
-          {busy ? (
+          {/* Stop and Send now COEXIST while busy (docs/PRD-IDEA-QUEUE.md): the
+              composer used to go dead mid-build, so a kid's next idea had
+              nowhere to go. Stop ends the current game; ↑ lines the new idea up
+              behind it. */}
+          {busy && (
             <button
               type="button"
               onClick={onStop}
@@ -217,17 +258,19 @@ export function Composer({ disabled, busy, onSend, onStop }: ComposerProps) {
             >
               ◼
             </button>
-          ) : (
-            (value.trim() || attachment) && (
-              <button
-                type="button"
-                onClick={submit}
-                aria-label="Send"
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-neutral-800 text-white hover:bg-neutral-700 disabled:opacity-40"
-              >
-                ↑
-              </button>
-            )
+          )}
+          {(value.trim() || attachment) && (
+            <button
+              type="button"
+              onClick={submit}
+              aria-label={queueing ? "Add this idea to the queue" : "Send"}
+              title={queueing ? "I'll do this next" : "Send"}
+              className={`flex h-10 w-10 items-center justify-center rounded-full text-white disabled:opacity-40 ${
+                queueing ? "bg-brand-500 hover:bg-brand-600" : "bg-neutral-800 hover:bg-neutral-700"
+              }`}
+            >
+              {queueing ? "⏳" : "↑"}
+            </button>
           )}
         </div>
       </div>

@@ -1,5 +1,7 @@
 // Chat domain types.
 
+import type { QueuedIdea } from "./idea-queue.types";
+
 export type ChatRole = "child" | "assistant";
 
 /** Which surface a conversation belongs to (PRD-BIBLE-TEACHER). The
@@ -47,6 +49,11 @@ export interface Conversation {
    *  "default" (the kid app); "bible-teacher" for the teacher surface, so the
    *  two recents lists stay separate under the same identity. */
   workspace?: Workspace;
+  /** Ideas the kid typed while Ari was still building (docs/PRD-IDEA-QUEUE.md),
+   *  oldest first. They ride on the conversation so a reload — or a different
+   *  device, via the server write-through — finds the line exactly as it was.
+   *  Drains one at a time after each clean finish; logic in lib/idea-queue.ts. */
+  queuedIdeas?: QueuedIdea[];
 }
 
 /** A picture the child attached for context (base64 payload, no data: prefix).

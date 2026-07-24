@@ -12,6 +12,7 @@ import { MessageItem } from "./MessageItem";
 import { LoginGate } from "./LoginGate";
 import { useTextToSpeech } from "./useTextToSpeech";
 import type { ChatMessage, Conversation, Workspace } from "@/types/chat.types";
+import type { QueuedIdea } from "@/types/idea-queue.types";
 import type { IdeaRecord } from "@/types/idea-bag.types";
 import { loadChats, saveChats } from "@/lib/chat-store";
 import { canContinueFromHere } from "@/lib/chat-rewind";
@@ -29,6 +30,15 @@ import {
   saveIdeas,
   updateIdeaText,
 } from "@/lib/idea-bag";
+import {
+  canQueue,
+  enqueueIdea,
+  queueSendAction,
+  removeQueuedIdea,
+  takeNextIdea,
+  updateQueuedIdea,
+} from "@/lib/idea-queue";
+import { IdeaQueue } from "./IdeaQueue";
 import {
   defaultCoachStore,
   loadCoach,
@@ -432,6 +442,21 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   }, [artifact]);
 
   const active = convos.find((c) => c.id === activeId) ?? convos[0]!;
+
+  // ── Idea Queue (docs/PRD-IDEA-QUEUE.md) ────────────────────────────────
+  // Ideas typed while Ari is building. They live on the conversation (so
+  // chat-store + the write-through persist them), drain one at a time, and
+  // FREEZE after a stop/failure rather than stacking onto a broken game.
+  const queuedIdeas = active.queuedIdeas ?? [];
+  const [queuePaused, setQueuePaused] = useState(false);
+  // Only ever set false by an explicit kid action (a send, or "keep going") —
+  // opening/restoring a chat that still has a line always asks first, so
+  // nothing is generated while nobody is watching.
+  useEffect(() => setQueuePaused(true), [activeId]);
+  function patchQueue(fn: (q: QueuedIdea[]) => QueuedIdea[]) {
+    patchActive((c) => ({ ...c, queuedIdeas: fn(c.queuedIdeas ?? []) }));
+  }
+
   // Sidebar list = local chats (full-text searched) + server-only chats not on
   // this device (title-searched; their messages load when opened).
   const recents = useMemo(
@@ -626,6 +651,11 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     };
     let finalized = false;
     let willRetry = false;
+    // Idea Queue: only a CLEAN finish (`done`, or a reply resumed from the
+    // server) releases the next queued idea. Stops, gates, retractions and
+    // errors freeze the line and let the kid decide — `finalized` is too
+    // broad here, it's true for blocked/errored turns too.
+    let turnOk = false;
     let acc = "";
     setBusy(true);
     setThinkingLine(null);
@@ -717,6 +747,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             setArtifact((a) => nextArtifact({ type: "done", artifactHtml: ev.artifactHtml }, a));
             setBusy(false);
             finalized = true;
+            turnOk = true;
             onSuccess?.();
             console.log(`[chat] ✓ shown @${Date.now() - startedAt}ms artifact=${ev.artifactHtml ? "yes" : "no"}`);
           } else if (ev.type === "retract") {
@@ -783,7 +814,10 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
       // Exhausted retries deliberately KEEP the bookmark — a later reload can
       // still collect the reply the server finished on its own.
       if (finalized || manualStopRef.current) clearPendingTurn(window.localStorage);
-      if (!willRetry) setBusy(false); // stay "busy" across a retry — no flicker, Stop still works
+      if (!willRetry) {
+        setBusy(false); // stay "busy" across a retry — no flicker, Stop still works
+        setQueuePaused(!turnOk); // anything but a clean finish → the queue asks first
+      }
       console.log(`[chat] finished; total ${Date.now() - startedAt}ms${willRetry ? " (retrying)" : ""}`);
     }
 
@@ -793,6 +827,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
       if (manualStopRef.current) {
         setReply(streamingDisplayText(acc) || "⏹ Stopped.");
         setBusy(false);
+        setQueuePaused(true);
         return;
       }
       // Resume before re-generating (TECH_DEBT #23 shipped): the server kept
@@ -806,6 +841,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
       if (manualStopRef.current) {
         setReply(streamingDisplayText(acc) || "⏹ Stopped.");
         setBusy(false);
+        setQueuePaused(true);
         return;
       }
       if (resumed) {
@@ -814,6 +850,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         setArtifact((a) => nextArtifact({ type: "done", artifactHtml: resumed.artifactHtml }, a));
         clearPendingTurn(window.localStorage);
         setBusy(false);
+        setQueuePaused(false); // the reply landed intact — the line may drain
         onSuccess?.();
         return;
       }
@@ -821,11 +858,27 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     }
   }
 
+  /** What the composer calls. While Ari is building, a send doesn't die (the
+   *  old `disabled={busy}`) and doesn't interrupt — it joins the line
+   *  (docs/PRD-IDEA-QUEUE.md). Programmatic callers keep using handleSend. */
+  function handleComposerSend(text: string, attachment?: Attachment) {
+    if (busy) {
+      // The composer refuses (with a reason) before it gets here when the line
+      // is full or a file is attached; this is the belt-and-braces half.
+      if (!attachment && canQueue(queuedIdeas)) patchQueue((q) => enqueueIdea(q, text));
+      return;
+    }
+    void handleSend(text, attachment);
+  }
+
   async function handleSend(
     text: string,
     attachment?: Attachment,
     opts?: { fromIdeaBag?: boolean; onSuccess?: (childId: string) => void; forceRebuild?: boolean },
   ) {
+    // A turn the kid (or the drain) deliberately started — the line is rolling
+    // again, so drop any "still want these?" hold from an earlier failure.
+    setQueuePaused(false);
     const history = active.messages;
     // "Continue from here" pin (chat-rewind.ts): captured now, sent with THIS
     // turn only, then cleared below — once this reply lands it's the newest
@@ -871,13 +924,39 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         },
       ],
     }));
-    await runStream(
-      apiMessage, history, replyId, 0, image,
-      opts?.onSuccess && (() => opts.onSuccess!(childId)),
-      activeGameMessageId,
-      opts?.forceRebuild ?? false,
-    );
+    // `busy` only flips on the next render, so two effects flushing together
+    // (a queued ✨ bundle and the Idea Queue drain) would both still read
+    // busy=false and fire two turns. This ref closes that gap synchronously.
+    sendingRef.current = true;
+    try {
+      await runStream(
+        apiMessage, history, replyId, 0, image,
+        opts?.onSuccess && (() => opts.onSuccess!(childId)),
+        activeGameMessageId,
+        opts?.forceRebuild ?? false,
+      );
+    } finally {
+      sendingRef.current = false;
+    }
   }
+
+  const sendingRef = useRef(false);
+
+  // Drain the Idea Queue: one idea per clean finish, oldest first. The idea is
+  // removed from the line BEFORE it's sent, so a re-render can never fire the
+  // same one twice; `hold` (after a stop/failure) waits for the kid's "keep
+  // going" instead — nothing generates unattended on a half-built game.
+  useEffect(() => {
+    if (sendingRef.current) return;
+    const action = queueSendAction({ hasQueued: queuedIdeas.length > 0, busy, paused: queuePaused });
+    if (action !== "send") return;
+    const { next, rest } = takeNextIdea(queuedIdeas);
+    if (!next) return;
+    patchQueue(() => rest);
+    void handleSend(next.text);
+    // Reads fresh state from the render closure each pass (same contract as
+    // the ✨ queue effect above). eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, queuePaused, queuedIdeas]);
 
   // ✨ Make my game better! — the whole bag becomes ONE visible chat message
   // (no hidden side-channel); ideas flip to `sent` only when the generation
@@ -1122,7 +1201,24 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             </button>
           </div>
         )}
-        <Composer disabled={busy} busy={busy} onSend={handleSend} onStop={handleStop} />
+        {/* The waiting line, right above the composer where the kid typed it. */}
+        <IdeaQueue
+          ideas={queuedIdeas}
+          paused={queuePaused}
+          onEdit={(id, text) => patchQueue((q) => updateQueuedIdea(q, id, text))}
+          onDrop={(id) => patchQueue((q) => removeQueuedIdea(q, id))}
+          onResume={() => setQueuePaused(false)}
+          onDropAll={() => patchQueue(() => [])}
+        />
+        {/* Never `disabled` any more (docs/PRD-IDEA-QUEUE.md): while Ari builds,
+            the composer queues instead of dying. */}
+        <Composer
+          busy={busy}
+          queueing={busy}
+          queueFull={!canQueue(queuedIdeas)}
+          onSend={handleComposerSend}
+          onStop={handleStop}
+        />
       </main>
 
       {/* z-[110]: must sit ABOVE the sticky brand nav (.ar-nav, z-100) — at

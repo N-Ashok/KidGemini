@@ -10,6 +10,7 @@ import { whatsappShareUrl } from "@/lib/share-links";
 import { GAME_CATEGORIES } from "@/lib/game-categories";
 import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
 import { signIn, verifyAge, useSession } from "@/lib/useAriantraSession";
+import { INITIAL_PUBLISH_STEP, stepAfterGamesLoad, type PublishStep } from "@/lib/publish-flow";
 
 interface Props {
   html: string;
@@ -22,7 +23,8 @@ interface Props {
   bibleGame?: boolean;
 }
 
-type Step = "signin" | "choose" | "pick" | "name" | "pin" | "publishing" | "done";
+// Step sequencing lives in lib/publish-flow.ts (pure + unit-tested).
+type Step = PublishStep;
 
 interface MyGame {
   slug: string;
@@ -40,7 +42,11 @@ const NAME_IDEAS = [
 // (BUG-FIX-LOG 2026-07-18: it silently opened nothing without the app).
 
 export function PublishToArcade({ html, suggestedName, onClose, bibleGame = false }: Props) {
-  const [step, setStep] = useState<Step>("name");
+  // Opens on `loading`, NOT a guess (BUG-FIX-LOG 2026-07-24): starting on
+  // "name" meant a kid with existing games saw the naming screen, lost it to
+  // "What are we doing?" when the list arrived, then got it back after
+  // choosing "brand-new" — three modals for one decision.
+  const [step, setStep] = useState<Step>(INITIAL_PUBLISH_STEP);
   // Sign-in is checked FIRST (before the kid invests in naming + PIN): the
   // family account is required to publish, and signIn() round-trips back to
   // this exact page — the chat survives via chat-store.
@@ -77,12 +83,15 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
         if (!alive) return;
         const games = d.games ?? [];
         setMyGames(games);
-        setStep((s) => (s === "signin" || s === "name" ? (games.length > 0 ? "choose" : "name") : s));
+        setStep((s) => stepAfterGamesLoad({ current: s, gameCount: games.length }));
       })
       .catch(() => {
         if (!alive) return;
         setGamesLoadError(true);
         setMyGames([]);
+        // Don't strand the kid on the spinner — the name step carries the
+        // "couldn't check your games — tap to retry" affordance.
+        setStep((s) => stepAfterGamesLoad({ current: s, gameCount: 0 }));
       });
     return () => {
       alive = false;
@@ -272,6 +281,17 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
         aria-modal="true"
       >
         <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-neutral-200" />
+
+        {/* Skeleton, not a blank sheet and not a guessed step: we're waiting to
+            learn whether this kid already has games in the Arcade. */}
+        {step === "loading" && (
+          <div className="py-2" role="status" aria-live="polite">
+            <h3 className="font-display text-xl font-bold">Getting the launchpad ready… 🚀</h3>
+            <p className="mb-4 text-sm text-neutral-500">One second — checking your Arcade.</p>
+            <div className="mb-2 h-12 w-full animate-pulse rounded-2xl bg-neutral-100" />
+            <div className="h-12 w-full animate-pulse rounded-2xl bg-neutral-100" />
+          </div>
+        )}
 
         {step === "signin" && (
           <>

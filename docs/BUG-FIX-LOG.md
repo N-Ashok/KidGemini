@@ -11,6 +11,19 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+### 2026-07-24 — Publish showed the naming screen, took it away, then brought it back
+
+- **Symptom (what the user saw):** Pressing 🚀 Publish in the preview showed **"Name your game!"** for a few seconds, then it was replaced by **"What are we doing? 🎮"**, and then the naming screen appeared *again* — three modals for one decision, reading as a broken/looping sheet.
+- **Surface area:** `src/components/PublishToArcade.tsx` (step state machine), reached from the preview panel's Publish pill (`src/components/ArtifactFrame.tsx:305`).
+- **Root cause:** The sheet **guessed** its first step. `useState<Step>("name")` rendered the naming screen immediately, while an async `POST /api/arcade/publish {list:true}` was still fetching the kid's existing games; when that resolved with ≥1 game the step flipped to `choose`. Picking "🆕 Publish a brand-new game" then returned to `name` — the screen the kid had already been shown and had taken away. Every kid with at least one published game hit this on every publish; the slower the list call, the longer the wrong screen sat there. (It also violated the no-blank/no-wrong-screen rule in CLAUDE.md §5 — a loading state was owed here.)
+- **Fix:** Step sequencing moved into pure, unit-tested `src/lib/publish-flow.ts`. The sheet now opens on a new `loading` step (kid-styled skeleton: "Getting the launchpad ready… 🚀") and commits **once**, via `stepAfterGamesLoad()`: games → `choose`, none → `name`. That helper only moves the two steps that are actually waiting on the list (`loading`, and `signin` after the sign-in round trip), so a late or retried list response can never yank a kid out of naming, the PIN, or a running publish. The `catch` path now also resolves the step (previously it could strand the sheet) and still surfaces the existing "couldn't check your games — tap to retry" affordance.
+- **Result (verified):** `src/lib/publish-flow.test.ts` (6 tests). Browser repro against the real UI with stubbed session/arcade routes, before: `["Name your game! 🎮", "What are we doing? 🎮"]`; after: `["Getting the launchpad ready… 🚀", "What are we doing? 🎮"]` — and `["Getting the launchpad ready… 🚀", "Name your game! 🎮"]` for a kid with no games. Re-verified with a deliberately slow (2.5s) list response: still no naming flash. `tsc --noEmit` clean.
+- **Impact:** Publishing now asks exactly one question per decision. No change to the server gates (`/api/arcade/publish` still enforces auth, parent PIN, name/copyright checks) — this is purely which screen the kid is shown while the client learns what it needs.
+- **Prevention:** Class — **rendering a step before the data that decides it has arrived** (guessed initial state instead of a loading state). Guard: `publish-flow.test.ts` pins `INITIAL_PUBLISH_STEP === "loading"` and that no in-progress step is ever overwritten by a late fetch. Same shape to watch for anywhere a modal picks its first screen from an async answer.
+- **Related:** REGRESSION-TEST-CATALOG row for `publish-flow.ts`.
+
+---
+
 ### 2026-07-23 — Sign-in on a local build escaped to production Studio, losing the local draft
 
 - **Symptom (what the user saw):** In local dev the user built a game while logged out, then signed in via Google — and instead of coming back to `localhost`, they landed on `https://studio.ariantra.com` (Studio). The game they'd just made was gone.
