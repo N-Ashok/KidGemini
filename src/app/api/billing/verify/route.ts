@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { resolveUserId } from "@/lib/auth-identity";
 import { RazorpayGateway } from "@/lib/razorpay";
 import { SqlitePaymentStore } from "@/lib/db";
-import { findPlan } from "@/lib/billing.config";
+import { findPlan, CUSTOM_PLAN_KEY } from "@/lib/billing.config";
 
 export const runtime = "nodejs";
 
@@ -55,8 +55,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "unknown_order" }, { status: 404 });
     }
 
-    const plan = findPlan(record.planKey);
-    const periodEndsAt = Date.now() + (plan?.periodDays ?? 30) * DAY_MS;
+    // A custom pay-any-amount charge is recorded as paid but grants NO access
+    // period — otherwise a ₹1 payment would buy a plan's entitlement.
+    const periodEndsAt =
+      record.planKey === CUSTOM_PLAN_KEY
+        ? null
+        : Date.now() + (findPlan(record.planKey)?.periodDays ?? 30) * DAY_MS;
     payments.markPaid(orderId, paymentId, periodEndsAt);
     console.log(`[api/billing/verify] ✓ paid order=${orderId} user=${userId}`);
     return NextResponse.json({ status: "paid", periodEndsAt });

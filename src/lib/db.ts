@@ -18,6 +18,7 @@ import type { IpLimitRecord, RateLimitStatus, RateLimitStore } from "@/types/rat
 import type { ParentAuthRecord, ParentAuthStore } from "@/types/parent-auth.types";
 import type { ScreenTimeSettings, ScreenTimeDaily, ScreenTimeStore } from "@/types/screen-time.types";
 import { utcDayStart, deriveActiveMinutes } from "./screen-time";
+import { CUSTOM_PLAN_KEY } from "./billing.config";
 import type { PaymentRecord, PaymentStore } from "@/types/billing.types";
 import type { ChatHistoryStore, ConvoSummary } from "@/types/chat-history.types";
 import type { TurnResult, TurnResultStore } from "@/types/turn-result.types";
@@ -545,7 +546,7 @@ export class SqlitePaymentStore implements PaymentStore {
     return rec;
   }
 
-  markPaid(razorpayOrderId: string, razorpayPaymentId: string, periodEndsAt: number): PaymentRecord | null {
+  markPaid(razorpayOrderId: string, razorpayPaymentId: string, periodEndsAt: number | null): PaymentRecord | null {
     const info = getDb()
       .prepare(
         `UPDATE payments SET status = 'paid', razorpayPaymentId = ?, periodEndsAt = ?, updatedAt = ?
@@ -575,9 +576,12 @@ export class SqlitePaymentStore implements PaymentStore {
   }
 
   latestForUser(userId: string): PaymentRecord | null {
+    // Exclude custom pay-any-amount rows: they grant no entitlement, and if one
+    // were the newest row it would MASK a real plan the user still holds
+    // (isEntitled reads only this one record). Entitlement = latest PLAN payment.
     const r = getDb()
-      .prepare(`SELECT * FROM payments WHERE userId = ? ORDER BY createdAt DESC LIMIT 1`)
-      .get(userId) as Record<string, unknown> | undefined;
+      .prepare(`SELECT * FROM payments WHERE userId = ? AND planKey != ? ORDER BY createdAt DESC LIMIT 1`)
+      .get(userId, CUSTOM_PLAN_KEY) as Record<string, unknown> | undefined;
     return r ? mapPaymentRow(r) : null;
   }
 }

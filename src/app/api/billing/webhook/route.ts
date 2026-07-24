@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { RazorpayGateway } from "@/lib/razorpay";
 import { SqlitePaymentStore } from "@/lib/db";
-import { findPlan } from "@/lib/billing.config";
+import { findPlan, CUSTOM_PLAN_KEY } from "@/lib/billing.config";
 
 export const runtime = "nodejs";
 
@@ -59,8 +59,12 @@ export async function POST(req: NextRequest) {
     if (orderId && paymentId) {
       try {
         const record = payments.getByOrderId(orderId);
-        const plan = record ? findPlan(record.planKey) : undefined;
-        const periodEndsAt = Date.now() + (plan?.periodDays ?? 30) * DAY_MS;
+        // Custom pay-any-amount charges grant no access period (see verify route
+        // + latestForUser). Everything else gets its plan's period (default 30d).
+        const periodEndsAt =
+          record?.planKey === CUSTOM_PLAN_KEY
+            ? null
+            : Date.now() + (record ? findPlan(record.planKey)?.periodDays ?? 30 : 30) * DAY_MS;
         const updated = payments.markPaid(orderId, paymentId, periodEndsAt);
         console.log(
           `[api/billing/webhook] ${updated ? "✓ paid" : "⚠ unknown order"} event=${event.event} order=${orderId}`,

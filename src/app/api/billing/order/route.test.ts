@@ -73,4 +73,47 @@ describe("POST /api/billing/order", () => {
       expect.objectContaining({ userId: "user:kid@example.com", planKey: "explorer", razorpayOrderId: "order_abc" }),
     );
   });
+
+  // ── Pay-any-amount (2026-07-24) ──────────────────────────────────────────
+  it("creates a custom-amount order and records it under the custom sentinel", async () => {
+    resolveUserIdMock.mockResolvedValue("user:kid@example.com");
+    createOrderMock.mockResolvedValue({ id: "order_custom", amount: 50_000, currency: "INR" });
+
+    const res = await POST(makeReq({ amountPaise: 50_000 })); // ₹500
+
+    expect(res.status).toBe(200);
+    expect(createOrderMock).toHaveBeenCalledWith(expect.objectContaining({ amountPaise: 50_000 }));
+    expect(createPaymentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ planKey: "custom", amountPaise: 50_000, razorpayOrderId: "order_custom" }),
+    );
+  });
+
+  it("rejects a below-floor custom amount with 400 and never calls Razorpay", async () => {
+    resolveUserIdMock.mockResolvedValue("user:kid@example.com");
+    const res = await POST(makeReq({ amountPaise: 99 })); // < ₹1
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "invalid_amount" });
+    expect(createOrderMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an above-cap custom amount with 400", async () => {
+    resolveUserIdMock.mockResolvedValue("user:kid@example.com");
+    const res = await POST(makeReq({ amountPaise: 10_000_001 })); // > ₹1,00,000
+    expect(res.status).toBe(400);
+    expect(createOrderMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a negative / non-integer custom amount with 400 (fail-closed)", async () => {
+    resolveUserIdMock.mockResolvedValue("user:kid@example.com");
+    expect((await POST(makeReq({ amountPaise: -500 }))).status).toBe(400);
+    expect((await POST(makeReq({ amountPaise: 100.5 }))).status).toBe(400);
+    expect(createOrderMock).not.toHaveBeenCalled();
+  });
+
+  it("still requires auth for a custom amount (401, no Razorpay)", async () => {
+    resolveUserIdMock.mockResolvedValue(null);
+    const res = await POST(makeReq({ amountPaise: 50_000 }));
+    expect(res.status).toBe(401);
+    expect(createOrderMock).not.toHaveBeenCalled();
+  });
 });

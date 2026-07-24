@@ -585,7 +585,7 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   seen — same-day repeats count once; guest streaks undercount across cookie
   clears
 
-## Billing (`/upgrade`)
+## Billing (`/upgrade`, `/pay`)
 - Razorpay one-time payments: plan cards, order creation, checkout
 - Webhook with signature verification + idempotency (each event processed once)
 - Rails-only for now: paid rows stamp `periodEndsAt`; nothing gated on it yet

@@ -64,10 +64,19 @@ export interface PaymentStore {
     currency: string;
     razorpayOrderId: string;
   }): PaymentRecord;
-  /** Flip an order to "paid" and stamp the access period. Returns null if the order is unknown. */
-  markPaid(razorpayOrderId: string, razorpayPaymentId: string, periodEndsAt: number): PaymentRecord | null;
+  /** Flip an order to "paid" and stamp the access period. `periodEndsAt` is null
+   *  for a custom pay-any-amount charge, which grants no entitlement. Returns
+   *  null if the order is unknown. */
+  markPaid(
+    razorpayOrderId: string,
+    razorpayPaymentId: string,
+    periodEndsAt: number | null,
+  ): PaymentRecord | null;
   /** Idempotency: record `eventId` and return true if new, false if already processed. */
   isNewEvent(eventId: string): boolean;
   getByOrderId(razorpayOrderId: string): PaymentRecord | null;
+  /** The user's latest ENTITLING payment (a plan purchase). Custom pay-any-amount
+   *  rows are excluded, so a ₹1 donation can neither grant access nor mask a
+   *  real plan the user already holds. */
   latestForUser(userId: string): PaymentRecord | null;
 }
