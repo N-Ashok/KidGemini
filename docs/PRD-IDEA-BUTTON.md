@@ -1,5 +1,12 @@
 # PRD — Idea Button: speak-while-you-play feedback capture
 
+> **PARTIALLY SUPERSEDED 2026-07-24 by `PRD-IDEA-QUEUE-V2.md`:** the 🎤 mic tab
+> and first-run coach live on unchanged, but captured ideas now join the unified
+> **Idea Queue** as `tweak` rows — the 🎒 Idea Bag (chip, panel, localStorage
+> store) and the ✨ Make-my-game-better button are RETIRED; bagged ideas
+> migrated once into their chat's queue. §2.2–2.3, §3's IdeaRecord store, and
+> the ✨ parts of the UAT script below are historical.
+
 Status: **implemented 2026-07-12** (this doc reviewed against code).
 Mock + kid-experience narrative reviewed with owner before build.
 

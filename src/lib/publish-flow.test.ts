@@ -40,4 +40,12 @@ describe("stepAfterGamesLoad", () => {
     // kid on a spinner they can't leave.
     expect(stepAfterGamesLoad({ current: "loading", gameCount: 0 })).toBe("name");
   });
+
+  it("an edit chat's preset target skips choose/pick — the game to update is already known", () => {
+    // Edit-a-launched-game (PRD-STUDIO-CHAT-EDIT rev 2026-07-24): a chat bound
+    // to a published slug goes straight to the confirm/name step as an update,
+    // no matter how many other games the kid has.
+    expect(stepAfterGamesLoad({ current: "loading", gameCount: 5, hasPresetTarget: true })).toBe("name");
+    expect(stepAfterGamesLoad({ current: "signin", gameCount: 5, hasPresetTarget: true })).toBe("name");
+  });
 });

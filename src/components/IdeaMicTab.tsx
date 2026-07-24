@@ -12,9 +12,11 @@
 // standalone caption, like an app-dock label: always visible (still
 // touch-discoverable), but no longer widens the tappable button itself.
 //
-// Capture ≠ send: ✅ hands the transcript to the container's Idea Bag — no
-// network, no generation, back to the game in seconds. Presentational; the
-// tab state machine lives in lib/idea-mic.ts, speech in useSpeechInput.
+// Capture ≠ generate: ✅ hands the transcript to the Idea Queue as a `tweak`
+// row (docs/PRD-IDEA-QUEUE-V2.md — the separate Idea Bag is gone) — no
+// network, no interruption, back to the game in seconds; the line drains
+// itself. Presentational; the tab state machine lives in lib/idea-mic.ts,
+// speech in useSpeechInput, queue logic in lib/idea-queue.ts.
 
 import { useEffect, useRef, useState } from "react";
 import { composeDictation } from "@/lib/speech-transcript";
@@ -23,25 +25,17 @@ import { COACH_LINE } from "@/lib/idea-coach";
 import { MicRecoveryCard } from "./MicRecoveryCard";
 import { useSpeechInput } from "./useSpeechInput";
 import { useTextToSpeech } from "./useTextToSpeech";
-import type { BagIdea } from "./IdeaBag";
 
 interface IdeaMicTabProps {
-  /** ✅ Got it! — the finished transcript, ready for the bag. */
-  onIdea: (text: string) => void;
-  /** Already-bagged ideas (2026-07-15) — shown as a compact list while
-   *  listening, so a kid mid-capture can see what they've already said
-   *  without leaving this bar to open the separate Idea Bag panel. */
-  ideas?: BagIdea[];
-  /** ✨ Make my game better! (2026-07-16) — the SAME bundle-send the Idea Bag
-   *  panel's own button calls; offered here too so finishing a thought and
-   *  sending it don't require a separate trip through the bag chip. Absent
-   *  prop = hidden, matching the rest of this file's optional-prop pattern. */
-  onMakeBetter?: () => void;
-  /** A generation is already streaming — ✨ still works, it QUEUES the send
-   *  (2026-07-21), mirroring the Idea Bag panel's own button. */
-  busy?: boolean;
-  /** ✨ tapped mid-build: a send is queued for when this turn lands. */
-  makeBetterQueued?: boolean;
+  /** ✅ — the finished transcript, offered to the Idea Queue. Returns whether
+   *  the line ACCEPTED it (queued or merged). On false the bar keeps the
+   *  transcript on screen and says why — a spoken idea has no composer
+   *  holding its text, so a silent refusal would eat it (PRD v2 §3.4). */
+  onIdea: (text: string) => boolean;
+  /** The waiting line (id+text is all the bar shows) — a compact list while
+   *  listening, so a kid mid-capture can see what's already lined up without
+   *  leaving the game. */
+  queued?: { id: string; text: string }[];
   /** First-run coach (docs/PRD-IDEA-BUTTON.md §coach): the tab introduces
       itself with a silent bubble + animation; voice only on the 🔊 Hear it
       button. Policy lives in the container; mic support is enforced HERE
@@ -60,10 +54,13 @@ const NUDGE_MS = 5000;
 // The wiggle-only reminder runs two wiggle cycles (globals.css) then rests.
 const RENUDGE_ANIM_MS = 3000;
 
-export function IdeaMicTab({ onIdea, ideas, onMakeBetter, makeBetterQueued, busy, coach, onCoachDone, nudge, onNudgeShown }: IdeaMicTabProps) {
+export function IdeaMicTab({ onIdea, queued, coach, onCoachDone, nudge, onNudgeShown }: IdeaMicTabProps) {
   const [tab, setTab] = useState<MicTabState>("tucked");
   // Committed (finalized) speech for the CURRENT capture; interim rides on top.
   const [draft, setDraft] = useState("");
+  // The line refused the last commit (full, trailing build row) — keep the
+  // transcript and say why until the next successful action (PRD v2 §3.4).
+  const [lineFull, setLineFull] = useState(false);
   // Vertical position of the tab along the preview edge (% of height) — docked
   // near the top by default (visible, out of the way of bottom/center HUD
   // controls) but still draggable if a game puts something there instead.
@@ -164,7 +161,11 @@ export function IdeaMicTab({ onIdea, ideas, onMakeBetter, makeBetterQueued, busy
       // clean slate without a stop+restart (that race is exactly what the
       // repeat-mic fix elsewhere guards against — no reason to reintroduce
       // it here).
-      if (text) onIdea(text);
+      if (text && !onIdea(text)) {
+        setLineFull(true); // transcript stays — never eaten by a full line
+        return;
+      }
+      setLineFull(false);
       setDraft("");
       setTab(nextMicTabState(tab, "got"));
       return;
@@ -172,23 +173,14 @@ export function IdeaMicTab({ onIdea, ideas, onMakeBetter, makeBetterQueued, busy
     // "Done" (commit the last idea, then close) and "Never mind" (discard
     // without committing, then close) both end the session — the explicit
     // way back to tucked now that "Next idea" no longer does that.
-    if (kind === "done" && text) onIdea(text);
+    if (kind === "done" && text && !onIdea(text)) {
+      setLineFull(true);
+      return;
+    }
+    setLineFull(false);
     discardAndStop();
     setDraft("");
     setTab(nextMicTabState(tab, "never"));
-  }
-
-  // ✨ Make my game better! reached directly from mid-capture (2026-07-16):
-  // commit whatever's on screen (same as "Done"), close the session the same
-  // way, THEN hand off to the container's real send — no detour through the
-  // separate Idea Bag panel to find this button.
-  function handleMakeBetterFromMic() {
-    const text = display.trim();
-    if (text) onIdea(text);
-    discardAndStop();
-    setDraft("");
-    setTab(nextMicTabState(tab, "never"));
-    onMakeBetter?.();
   }
 
   // Drag the tab up/down the edge with pointer events; a real click stays put.
@@ -272,7 +264,7 @@ export function IdeaMicTab({ onIdea, ideas, onMakeBetter, makeBetterQueued, busy
               Hi! I&apos;m your Idea Button!
             </p>
             <p className="mt-1 text-sm leading-snug text-neutral-700">
-              Tap me and <b>SAY</b> your idea — no typing! I&apos;ll keep it safe in your bag. 🎒
+              Tap me and <b>SAY</b> your idea — no typing! It lines up and Ari builds it. ⏳
             </p>
             <div className="mt-3 flex min-h-[38px] items-center gap-2 rounded-xl bg-brand-50 px-3 py-2 text-sm font-bold text-neutral-800">
               <span className="mic-listening flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-danger-500 text-xs text-white" aria-hidden>
@@ -349,17 +341,15 @@ export function IdeaMicTab({ onIdea, ideas, onMakeBetter, makeBetterQueued, busy
             </span>
             {idle ? "All done? Tap ➡️ Next idea, or 🏁 Done" : "I'm listening! Tell me your idea — you can keep playing!"}
           </p>
-          {/* Already-saved ideas (2026-07-15): a kid mid-capture could only
-              see this list by leaving the bar and opening the separate Idea
-              Bag chip — surfaced here too, compact and scrollable, so "what
-              have I already said?" doesn't need a detour. */}
-          {ideas && ideas.length > 0 && (
+          {/* The waiting line (PRD v2): a kid mid-capture sees what's already
+              lined up without leaving the bar — same list the ⏳ chip opens. */}
+          {queued && queued.length > 0 && (
             <div className="mt-2 max-h-16 overflow-y-auto rounded-lg bg-brand-50/60 px-2 py-1">
               <p className="text-[10px] font-bold uppercase tracking-wide text-neutral-400">
-                🎒 Saved so far ({ideas.length})
+                ⏳ Lined up for Ari ({queued.length})
               </p>
               <ul className="mt-0.5 space-y-0.5">
-                {ideas.map((idea) => (
+                {queued.map((idea) => (
                   <li key={idea.id} className="truncate text-xs text-neutral-600">
                     • {idea.text}
                   </li>
@@ -386,24 +376,13 @@ export function IdeaMicTab({ onIdea, ideas, onMakeBetter, makeBetterQueued, busy
               {interim}
             </p>
           )}
-          {/* ✨ Make my game better!, reachable directly from mid-capture
-              (2026-07-16) — same bundle-send the Idea Bag panel's own button
-              triggers, offered here too so finishing a thought and sending it
-              don't require a separate trip through the 🎒 chip. Only shown
-              when there's something to send (the current draft, or anything
-              already bagged) and the caller wired it up at all. */}
-          {onMakeBetter && (display.trim() || (ideas && ideas.length > 0)) && (
-            <button
-              type="button"
-              onClick={handleMakeBetterFromMic}
-              className="mt-2 w-full rounded-full bg-brand-500 px-4 py-2.5 text-sm font-extrabold text-white shadow-md shadow-brand-500/20 hover:bg-brand-600"
-            >
-              {makeBetterQueued
-                ? "⏳ Lined up — Ari builds these next!"
-                : busy
-                  ? "✨ Send these — Ari builds them next!"
-                  : "✨ Make my game better!"}
-            </button>
+          {/* The line refused the commit (full, and the last row is a typed
+              build): the transcript above is UNTOUCHED — say why and what to
+              do; the queue frees a slot every time a build finishes. */}
+          {lineFull && (
+            <p role="status" className="mt-2 rounded-lg bg-warn-50 px-3 py-1.5 text-xs font-bold text-warn-600">
+              The line is full — Ari will catch up soon! Try ➡️ again after the next game lands. 🙂
+            </p>
           )}
           <div className="mt-2 flex gap-2">
             {/* Next idea (2026-07-14, renamed from "Got it!" — that name was

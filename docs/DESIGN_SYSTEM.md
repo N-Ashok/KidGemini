@@ -26,6 +26,7 @@ to `tailwind.config.ts`; never hardcode values in components.
 | `brand-600/700` | `#1f6fe0` / `#1957b0` | hover/active |
 | `brand-50/100` | `#eef6ff` / `#d9ecff` | surfaces, chat bubbles (assistant) |
 | `safe-500` | `#22c55e` | "safe / approved" status |
+| `warn-50` | `#fffbeb` | soft caution surface (Idea Queue "line is full" notice, held ⏸ chip) |
 | `warn-500` | `#f59e0b` | soft-block / caution |
 | `danger-500` | `#ef4444` | hard-block / parent alert |
 | `ink-900/700/500` | text high/med/low |

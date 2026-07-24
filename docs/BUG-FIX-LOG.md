@@ -11,6 +11,32 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+### 2026-07-24 — Typing any fresh message silently un-froze a stopped idea line
+
+- **Symptom (what the user saw):** Found by design review during the Idea Queue v2 work (PRD-IDEA-QUEUE-V2), not reported by a kid — but live in v1 all day: stop a build → the queue freezes with "⏸ Still want these?" → type anything unrelated → after that turn finishes, the frozen ideas start building again even though the question was never answered. A second, same-class hole: on a restored chat, the drain effect could run once against its stale pre-pause closure (the pause was set by a sibling effect in the same commit) and fire a queued idea the instant the chat loaded — exactly what the "restored chats always ask" rule forbids.
+- **Surface area:** `src/components/ChatPanel.container.tsx` (`handleSend` cleared `queuePaused` unconditionally; `queuePaused` initialized `false`), drain effect.
+- **Root cause:** The pause was a bare boolean, so the code couldn't distinguish "paused because the chat was restored" (fine to clear on any kid action) from "paused because a turn was stopped/failed" (must keep asking). And the initial state was un-paused, leaving a one-commit stale-closure window on restore.
+- **Fix (class level):** `QueueHold = "restored" | "failed" | null` (idea-queue.types.ts) replaces the boolean. `holdAfterKidAction` (pure, tested) clears only "restored"; a "failed" hold is cleared exclusively by the explicit "Yes — keep going ▶". Initial state is `"restored"`, killing the restore-drain race deterministically instead of racing the sibling effect.
+- **Result (verified):** `idea-queue.test.ts` — `holdAfterKidAction` truth table + `drainDecision` holds for ANY QueueHold, busy or not; browser visual pass (restored 3-idea line asks first on desktop and via the preview sheet, resume drains). Full suite + tsc clean.
+- **Impact:** Nothing generates unattended after a stop/failure without explicit consent — cost + trust guarantee, now structural.
+- **Prevention:** Class — **a boolean flattening two states that need different clearing rules** (same family as fail-open defaults). When a "paused" flag has more than one cause, model the cause.
+- **Related:** PRD-IDEA-QUEUE.md §3 (v1 owner decision this preserves), 2026-07-21 ✨ queue-while-busy entry (the mechanism v2 retires).
+
+---
+
+### 2026-07-24 — The queue drain could send the pre-edit text of the exact idea being fixed
+
+- **Symptom (what the user saw):** Design-review find (same v2 pass): queue rows committed edits on BLUR. If the kid was mid-edit on row 1 at the moment the current build finished, the drain took the row's stored (pre-edit) text and sent it; the blur then committed into an id no longer in the line — the kid's correction vanished and the uncorrected idea got built.
+- **Surface area:** `src/components/IdeaQueue.tsx` rows (was uncontrolled `defaultValue` + `onBlur`), drain effect in `ChatPanel.container.tsx`.
+- **Root cause:** Commit-on-blur assumes the reader waits for the writer; the drain is an async consumer that doesn't. (The uncontrolled field existed to dodge the store's trim-or-noop rule snapping a controlled field back when briefly empty.)
+- **Fix (class level):** Rows keep a local draft and commit upward on every NON-EMPTY change (`QueueRow` in IdeaQueue.tsx) — the store always holds current text, so any consumer reads the edit; the empty-draft case stays local (preserving the trim-or-noop protection), and external text changes (a cap-merge) sync in only while the row isn't focused.
+- **Result (verified):** Full suite + tsc clean; visual pass exercises in-place edits. The same pattern was applied to the sheet variant for free (one component).
+- **Impact:** An edit a kid is typing can no longer lose a race to the drain, on either surface.
+- **Prevention:** Class — **commit-on-blur feeding an asynchronous consumer**. Anywhere a store value can be *consumed* while a field is focused, commit on change, not blur. (The Idea Bag's blur-commit rows, same pattern, were retired in this change.)
+- **Related:** PRD-IDEA-QUEUE-V2 §3.6; the silent-resume entry above (same review).
+
+---
+
 ### 2026-07-24 — The Game Stuff gallery told kids to say "3d strawberrys"
 
 - **Symptom (what the user saw):** The asset gallery's trigger phrase for the strawberry model read **"3d strawberrys"**. Found while auditing plurals during the 106 → 159 catalog expansion, not reported by a user — but it is on a page built for children to read aloud.

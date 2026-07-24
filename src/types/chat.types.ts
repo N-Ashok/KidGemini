@@ -17,8 +17,10 @@ export interface ChatMessage {
   artifactHtml?: string;
   /** Name of a file the child attached to this message (shown as a chip). */
   attachmentName?: string;
-  /** True when this child message is a bundled Idea Bag send (🎒 label in the
-   *  bubble) — spoken thoughts captured during play, docs/PRD-IDEA-BUTTON.md. */
+  /** True when this child message is a bundled TWEAK send from the Idea Queue
+   *  (✨ label in the bubble) — spoken thoughts captured during play,
+   *  docs/PRD-IDEA-QUEUE-V2.md. Field name predates the queue (it was the
+   *  Idea Bag's) and is kept: it's persisted in local + server chat history. */
   fromIdeaBag?: boolean;
   /** Set on an assistant reply that ASKED the child whether their request is a
    *  whole new game (PRD-RESILIENT-GENERATION §11). The bubble renders two
@@ -49,10 +51,17 @@ export interface Conversation {
    *  "default" (the kid app); "bible-teacher" for the teacher surface, so the
    *  two recents lists stay separate under the same identity. */
   workspace?: Workspace;
-  /** Ideas the kid typed while Ari was still building (docs/PRD-IDEA-QUEUE.md),
-   *  oldest first. They ride on the conversation so a reload — or a different
-   *  device, via the server write-through — finds the line exactly as it was.
-   *  Drains one at a time after each clean finish; logic in lib/idea-queue.ts. */
+  /** Edit-a-launched-game binding (PRD-STUDIO-CHAT-EDIT rev 2026-07-24): this
+   *  chat edits the published game at `{editSlug}.ariantra.com` — Publish
+   *  pre-targets that slug (update, not a new game) and the UI shows a
+   *  "you're editing X" banner. Set on chats seeded from Studio's Edit
+   *  button; absent on ordinary chats. */
+  editSlug?: string;
+  /** The Idea Queue (docs/PRD-IDEA-QUEUE-V2.md), oldest first: every idea the
+   *  kid had while Ari was busy — typed (`build`) or spoken (`tweak`). Rides
+   *  on the conversation so a reload — or a different device, via the server
+   *  write-through — finds the line exactly as it was. Drains one send unit
+   *  per clean finish (tweak runs bundle); logic in lib/idea-queue.ts. */
   queuedIdeas?: QueuedIdea[];
 }
 

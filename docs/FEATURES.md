@@ -285,6 +285,24 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   Sequencing is pure + tested in `src/lib/publish-flow.ts`; a late or retried
   games-list response can never pull a kid out of naming, the PIN, or a
   running publish
+- **✏️ Edit a launched game** (2026-07-24, platform PRD-STUDIO-CHAT-EDIT
+  revised — Ari is the editor): Studio's per-game "Edit in Games-Lab" button
+  arrives here as `/?edit=<slug>&chat=<chatId?>` (`/bible-teacher?…` for
+  teacher games). Resolution (`lib/edit-entry.ts` + the container bootstrap,
+  URL stripped on arrival — no re-run on reload): the game's ORIGINAL chat if
+  it still exists (local cache → server history), else a fresh chat SEEDED
+  with the live game's code via `GET /api/arcade/edit-source?slug=`
+  (session-gated; fronts the platform's owner-checked `getCode`, which
+  returns the archived bundle with all platform injections stripped). The
+  seeded chat opens with the game already playing, a green "🔗 Editing X —
+  publishing updates x.ariantra.com" banner, and `Conversation.editSlug`
+  binding: the Publish button reads "Publish update" and skips the
+  brand-new/update question (preset `updateTarget`; parent-PIN gate
+  unchanged). Every publish forwards `chatId`, which the platform stamps as
+  `Game.sourceChatId` — so legacy games self-heal into deep-linkable ones on
+  their first republish. Failures are in-chat messages with a next step
+  (signed-out / multi-file "re-upload in Studio" / deleted / admin-paused /
+  network), never a blank screen, never a "coming soon" promise
 - **Category + play-mode choice at publish** (2026-07-18, owner ask): the
   naming step now includes required category chips (`GAME_CATEGORIES` in
   `src/lib/game-categories.ts`, hand-synced with the platform's list — no
@@ -368,63 +386,48 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   game from the Parent area (🎮 Multiplayer card, `/api/parent/games` → the
   partner bridge's `toggleMultiplayer`, same PIN + ownership-match gate as
   publishing) — flipping it restamps the live game immediately
-- **⏳ Idea Queue** (2026-07-24, docs/PRD-IDEA-QUEUE.md): Ari used to work on one
-  idea at a time with a DEAD composer (`disabled={busy}`) — a kid who thought of
-  the next thing mid-build had nowhere to put it. Now the composer stays alive:
-  Enter/↑ adds the idea to a visible FIFO line ("⏳ Next up (n)", max 5) shown
-  directly above the composer, where each row is editable in place (commit on
-  blur) and droppable with ✕. Queuing never interrupts — ⏹ Stop is still the only
-  interrupt. After each CLEAN finish the front of the line sends itself, one at a
-  time; after a stop or a failure the line FREEZES and asks ("⏸ Still want
-  these?" → Yes, keep going / drop them) so an edit is never chained onto a
-  half-built game. The line rides on `Conversation.queuedIdeas`, so it persists
-  through a reload (localStorage + the per-turn server write-through) — and a
-  restored or newly-opened chat always starts paused, so nothing generates while
-  nobody is watching. Text only: an attachment-send while busy is refused with a
-  reason (base64 images would blow the localStorage quota), as is a 6th idea —
-  the queue never silently drops what a kid typed
-  (`src/lib/idea-queue.ts`, `IdeaQueue.tsx`)
-- **🎤 Idea Button + 🎒 Idea Bag** (2026-07-12, docs/PRD-IDEA-BUTTON.md): an
-  edge-docked mic tab over the game preview — the only capture path while the
-  composer is hidden (⤢ full screen / mobile game screen). Click slides it out,
-  second click listens (stray clicks near game controls are harmless; the tab
-  drags up/down the edge); the game keeps running and keeps the keyboard.
-  Spoken thoughts collect in the Idea Bag (chip + badge, bottom-left) —
-  capture never triggers a generation. The bag panel reads ideas aloud (🔊,
-  pre-readers) and "✨ Make my game better!" bundles ALL ideas into ONE visible
-  chat message (🎒-labeled bubble) through the normal /api/chat loop; ideas
-  flip to `sent` only on a successful `done` — failures keep them bagged.
-  Text-only records in localStorage (`kidgemini:ideas:v1`, audio never
-  recorded); reuses `useSpeechInput`/`mic-errors` verbatim
-  (`IdeaMicTab.tsx`, `IdeaBag.tsx`, `src/lib/idea-bag.ts`, `src/lib/idea-mic.ts`).
+- **⏳ Unified Idea Queue** (v2 2026-07-24, docs/PRD-IDEA-QUEUE-V2.md — supersedes
+  the v1 typed-only queue AND the 🎒 Idea Bag): ONE visible line, per
+  conversation, for every idea a kid has while Ari is busy. Typed ideas
+  (composer, Enter/↑ while busy) join as numbered **`build`** rows — one row =
+  one turn; ideas spoken over the preview via the 🎤 mic tab join as ✨
+  **`tweak`** rows — consecutive tweaks compose into ONE bundled turn
+  (`takeNextSend`), so five spoken thoughts never cost five rebuilds. The card
+  sits above the composer ("⏳ Next up (n)", cap 5); rows edit in place
+  (commit-on-change, so a drain can never send pre-edit text) and drop with ✕.
+  Draining is fully automatic, one send unit per CLEAN finish; idle tweaks wait
+  a 4s "settle" ("✨ Sending in a moment — keep talking!", with Send now ▶) so a
+  kid mid-thought gets one bundle. Stops/failures freeze the line with a
+  reasoned hold: "restored" (chat opened/reloaded with a line) clears on any
+  kid action, "failed" clears ONLY on the explicit "Yes — keep going ▶" — a
+  fresh message never silently resumes a frozen line. **In the preview** the
+  line is mirrored (mobile + full screen, where the panel covers the chat): a
+  ⏳ n chip (⏸ n in warn tint when held) in the header opens a bottom sheet
+  with the same card — edit/drop/resume without leaving the game — and while a
+  queued idea builds, the banner names it ("Making \"…\"") so the game swap on
+  `done` is never silent. Refusals always say why and keep the text: a 6th
+  typed idea, or an attachment while busy, is refused in the composer; a spoken
+  tweak at the cap MERGES into a trailing tweak row (a mic user has no composer
+  holding their words). The line rides on `Conversation.queuedIdeas`
+  (localStorage + per-turn server write-through); v1 bag records migrate once
+  into their chat's line as tweak rows
+  (`src/lib/idea-queue.ts`, `src/lib/idea-migrate.ts`, `IdeaQueue.tsx`,
+  `Composer.tsx`, `ArtifactFrame.tsx`, `ChatPanel.container.tsx`)
+- **🎤 Idea Button** (2026-07-12, docs/PRD-IDEA-BUTTON.md; capture target since
+  2026-07-24 = the Idea Queue above — the 🎒 Idea Bag and its ✨ button are
+  RETIRED): an edge-docked mic tab over the game preview — the only capture
+  path while the composer is hidden (⤢ full screen / mobile game screen).
+  Click slides it out, second click listens (stray clicks near game controls
+  are harmless; the tab drags up/down the edge); the game keeps running and
+  keeps the keyboard. ✅ hands the transcript to the queue as a tweak row —
+  capture never interrupts; the line drains itself. The listening bar shows
+  what's already lined up, and a refused commit (line full of typed builds)
+  keeps the transcript on screen and says why. Audio never recorded — the
+  browser transcribes live; reuses `useSpeechInput`/`mic-errors` verbatim
+  (`IdeaMicTab.tsx`, `src/lib/idea-mic.ts`).
   Wake-word invocation deliberately rejected (always-on mic = parent-trust +
   iOS reliability); revisit only with on-device keyword spotting / Gemini Live.
-  **2026-07-15 UAT polish:** a corner ✕ (top-right of the listening bar) is
-  now the standard "just close this" affordance — same effect as 🗑️ Never
-  mind (discards the in-progress draft only, keeps whatever's already
-  bagged); "Done" dropped its ✕ icon in favor of 🏁 (an X read as
-  "cancel/discard," not "successfully finished"); the listening bar now
-  shows a compact, scrollable preview of already-saved ideas so a kid
-  mid-capture doesn't have to leave the bar to check what they've said —
-  the full editable list still lives in the Idea Bag panel.
-  **Redesign + edit-in-place (2026-07-16):** the resting tab collapsed from a
-  wide labeled pill to a compact 44×44 circular icon, with the "Idea"/"On"
-  label moved to a small always-visible caption BELOW the button (dock-icon
-  style) instead of beside it — kept visible (not hover-only) so the original
-  2026-07-14 discoverability fix still holds. "✨ Make my game better!" is now
-  also reachable directly from the listening bar (same `handleMakeBetter`
-  bundle-send the Idea Bag panel's own button calls) — finishing a thought
-  and sending it no longer requires a separate trip through the 🎒 chip. The
-  Idea Bag panel itself shrank from a near-full-screen modal to a bottom
-  sheet (mobile) / 420px centered card (desktop) with its own corner ✕, and
-  every bagged idea is now directly editable (an always-on textarea per row,
-  commits on blur via `updateIdeaText`) — no separate edit-mode tap.
-  **Queue-while-busy** (2026-07-21, BUG-FIX-LOG): ✨ is always enabled — tapping
-  it while Ari is still building QUEUES the bundle ("⏳ Ari will add your ideas
-  next!" pill by the 🎒 chip) and it sends automatically when that turn lands;
-  decision in pure helpers `makeBetterOnClick`/`ideaQueueAction`, bag still
-  empties on `done` success only.
-  **First-run coach** (same day): the very first playable preview dims and the
+  **First-run coach** (2026-07-12): the very first playable preview dims and the
   tab introduces itself — wiggle + glow, speech bubble read ALOUD by the buddy
   voice (pre-readers), mini demo, "OK got it". Once per device; tapping the
   tab during the intro goes straight to listening; ONE wiggle-only re-nudge

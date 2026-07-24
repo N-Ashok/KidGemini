@@ -12,32 +12,23 @@ import { MessageItem } from "./MessageItem";
 import { LoginGate } from "./LoginGate";
 import { useTextToSpeech } from "./useTextToSpeech";
 import type { ChatMessage, Conversation, Workspace } from "@/types/chat.types";
-import type { QueuedIdea } from "@/types/idea-queue.types";
-import type { IdeaRecord } from "@/types/idea-bag.types";
+import type { QueueHold, QueuedIdea } from "@/types/idea-queue.types";
 import { loadChats, saveChats } from "@/lib/chat-store";
 import { canContinueFromHere } from "@/lib/chat-rewind";
 // Never render raw SEARCH/REPLACE hunks mid-stream (BUG-FIX-LOG 2026-07-18
 // "not kid friendly") — every partial-text render goes through this.
 import { streamingDisplayText } from "@/lib/game-edit";
 import {
-  addIdea,
-  baggedFor,
-  composeIdeaBundle,
-  discardIdea,
-  ideaQueueAction,
-  loadIdeas,
-  markSent,
-  saveIdeas,
-  updateIdeaText,
-} from "@/lib/idea-bag";
-import {
   canQueue,
+  drainDecision,
   enqueueIdea,
-  queueSendAction,
+  enqueueTweak,
+  holdAfterKidAction,
   removeQueuedIdea,
-  takeNextIdea,
+  takeNextSend,
   updateQueuedIdea,
 } from "@/lib/idea-queue";
+import { foldTweaksIntoQueue, takeBagForMigration } from "@/lib/idea-migrate";
 import { IdeaQueue } from "./IdeaQueue";
 import {
   defaultCoachStore,
@@ -60,6 +51,7 @@ import {
 import { PanelResizeHandle } from "./PanelResizeHandle";
 import { searchChats } from "@/lib/chat-search";
 import { appendPage, chatToAutoRestore, mergeRecents, SYNC_FLAG } from "@/lib/chat-sync";
+import { parseEditEntry, stripEditParams, seedingConversation, applySeed, applySeedFailure, type EditEntry } from "@/lib/edit-entry";
 import { loadSidebarCollapsed, saveSidebarCollapsed } from "@/lib/sidebar-pane";
 import type { ConvoSummary } from "@/types/chat-history.types";
 import { suggestionsFor } from "@/lib/game-suggestions";
@@ -200,9 +192,6 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   // The ref makes restore one-shot: without it, StrictMode's double effect
   // pass re-reads storage AFTER the save effect has already written the fresh
   // greeting convo, clobbering the restore.
-  // Idea Bag (docs/PRD-IDEA-BUTTON.md): spoken thoughts captured over the
-  // preview. Same one-shot-hydrate + persist-on-change contract as chats.
-  const [ideas, setIdeas] = useState<IdeaRecord[]>([]);
   // Pull-to-resize preview width (null = the 440px default via the CSS var).
   const [panelWidth, setPanelWidth] = useState<number | null>(null);
   // First-run coach state (docs/PRD-IDEA-BUTTON.md §coach): intro once, one
@@ -222,12 +211,21 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     if (hydratedFromStore.current) return;
     hydratedFromStore.current = true;
     const saved = loadChats(window.localStorage, workspace);
+    // One-time Idea Bag → Idea Queue migration (PRD-IDEA-QUEUE-V2 §5): the v1
+    // bag's still-bagged ideas become tweak rows on their conversation's line.
+    // Kid-default surface only — the bag only ever belonged to it, and running
+    // this on /bible-teacher would consume the key against the wrong convo set.
+    const bag = workspace === "default" ? takeBagForMigration(window.localStorage) : null;
     if (saved) {
-      setConvos(saved.convos);
+      const convos = bag
+        ? saved.convos.map((c) =>
+            bag[c.id] ? { ...c, queuedIdeas: foldTweaksIntoQueue(c.queuedIdeas ?? [], bag[c.id]!, { now: Date.now() }) } : c,
+          )
+        : saved.convos;
+      setConvos(convos);
       setActiveId(saved.activeId);
       hadLocalChatsRef.current = saved.convos.length > 0;
     }
-    setIdeas(loadIdeas(window.localStorage));
     setCoachStore(loadCoach(window.localStorage));
     const w = loadPanelWidth(window.localStorage);
     if (w) setPanelWidth(clampPanelWidth(w, window.innerWidth));
@@ -365,6 +363,17 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         /* offline migration attempt — flag stays unset, retried next visit */
       }
       const chats = await loadMoreRemote(true);
+      // Studio "✏️ Edit in Games-Lab" arrival: takes over the whole landing
+      // decision (and the URL is stripped up-front, so a reload won't re-run
+      // it). Runs AFTER the migration + index fetch above so the sidebar is
+      // ready, and INSTEAD of the auto-restore below — the entry says exactly
+      // which chat should be active.
+      const editEntry = parseEditEntry(window.location.search);
+      if (editEntry) {
+        window.history.replaceState(null, "", stripEditParams(window.location.pathname + window.location.search));
+        await openEditEntry(editEntry);
+        return;
+      }
       // Cross-browser chat-history bug (2026-07-16, see hadLocalChatsRef
       // above): this device had NOTHING locally, but the account/guest
       // identity already has real history server-side — open the most
@@ -423,12 +432,8 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
       });
   }, [busy, convos, activeId]);
   useEffect(() => {
-    if (hydratedFromStore.current) saveIdeas(window.localStorage, ideas);
-  }, [ideas]);
-  useEffect(() => {
     if (hydratedFromStore.current) saveCoach(window.localStorage, coachStore);
   }, [coachStore]);
-  const baggedIdeas = useMemo(() => baggedFor(ideas, activeId), [ideas, activeId]);
 
   // Count game-preview opens toward the re-nudge: each time the panel goes
   // from closed to open post-intro while the feature is still unused.
@@ -445,19 +450,37 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
 
   const active = convos.find((c) => c.id === activeId) ?? convos[0]!;
 
-  // ── Idea Queue (docs/PRD-IDEA-QUEUE.md) ────────────────────────────────
-  // Ideas typed while Ari is building. They live on the conversation (so
-  // chat-store + the write-through persist them), drain one at a time, and
-  // FREEZE after a stop/failure rather than stacking onto a broken game.
+  // ── Idea Queue (docs/PRD-IDEA-QUEUE-V2.md) ─────────────────────────────
+  // ONE line for every idea — typed (`build`) or spoken over the preview
+  // (`tweak`). Lives on the conversation (chat-store + write-through persist
+  // it), drains one SEND UNIT per clean finish (a tweak run bundles into one
+  // turn), and HOLDS with a reason instead of a bare boolean: "restored"
+  // clears on any kid action, "failed" only on the explicit yes — the fix for
+  // v1's silent-resume trap (BUG-FIX-LOG 2026-07-24).
   const queuedIdeas = active.queuedIdeas ?? [];
-  const [queuePaused, setQueuePaused] = useState(false);
-  // Only ever set false by an explicit kid action (a send, or "keep going") —
-  // opening/restoring a chat that still has a line always asks first, so
-  // nothing is generated while nobody is watching.
-  useEffect(() => setQueuePaused(true), [activeId]);
+  // STARTS "restored", not null: the hydrate commit changes queuedIdeas and
+  // activeId in the same pass, so a null start would let the drain effect run
+  // once against its stale pre-"restored" closure and fire a queued idea the
+  // instant a chat with a line is restored — exactly what rule 3 forbids.
+  const [queueHold, setQueueHold] = useState<QueueHold>("restored");
+  // Opening/restoring/switching to a chat that still has a line always asks
+  // first, so nothing is generated while nobody is watching.
+  useEffect(() => setQueueHold("restored"), [activeId]);
   function patchQueue(fn: (q: QueuedIdea[]) => QueuedIdea[]) {
     patchActive((c) => ({ ...c, queuedIdeas: fn(c.queuedIdeas ?? []) }));
   }
+  // When the newest tweak landed — drives the idle settle window (§3.3), so a
+  // kid speaking three thoughts gets ONE bundle. A ref (not state): it must
+  // update synchronously inside the same event that enqueues.
+  const lastTweakAtRef = useRef(0);
+  const [settleTick, setSettleTick] = useState(0);
+  const [queueSettling, setQueueSettling] = useState(false);
+  // Which queued idea is building right now — narrated over the preview so
+  // the game swap on `done` is never silent (§4.2). null for manual sends.
+  const [nowBuilding, setNowBuilding] = useState<string | null>(null);
+  useEffect(() => {
+    if (!busy) setNowBuilding(null);
+  }, [busy]);
 
   // Sidebar list = local chats (full-text searched) + server-only chats not on
   // this device (title-searched; their messages load when opened).
@@ -566,6 +589,56 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     // handleSend reads the freshly-active (empty) conversation as history — a
     // clean first build in the new chat. eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
+
+  /** Studio's "✏️ Edit in Games-Lab" arrival (PRD-STUDIO-CHAT-EDIT rev
+   *  2026-07-24): open the game's own chat if it still exists (local first,
+   *  then server history), else SEED a fresh chat with the live game's code —
+   *  bound via editSlug so Publish updates the same subdomain. Every failure
+   *  lands as a friendly in-chat message with a next step, never a blank
+   *  screen. Called from the bootstrap, which strips the URL params first. */
+  async function openEditEntry(entry: EditEntry) {
+    if (entry.chatId) {
+      const saved = loadChats(window.localStorage, workspace);
+      const local = saved?.convos.find((c) => c.id === entry.chatId);
+      if (local) {
+        setActiveId(local.id);
+        // "Ready to change": surface the chat's newest game immediately.
+        const game = [...local.messages].reverse().find((m) => m.artifactHtml)?.artifactHtml;
+        if (game) setArtifact(game);
+        return;
+      }
+      try {
+        const res = await fetch(`/api/chats/${encodeURIComponent(entry.chatId)}`, { cache: "no-store" });
+        if (res.ok) {
+          const { convo } = (await res.json()) as { convo: Conversation };
+          setConvos((list) => (list.some((c) => c.id === convo.id) ? list : [convo, ...list]));
+          setActiveId(convo.id);
+          const game = [...convo.messages].reverse().find((m) => m.artifactHtml)?.artifactHtml;
+          if (game) setArtifact(game);
+          return;
+        }
+      } catch {
+        /* linked chat unreachable — the seed flow below still works */
+      }
+    }
+    const seed = seedingConversation(workspace, entry.slug);
+    setConvos((list) => [seed, ...list]);
+    setActiveId(seed.id);
+    try {
+      const res = await fetch(`/api/arcade/edit-source?slug=${encodeURIComponent(entry.slug)}`, { cache: "no-store" });
+      const data = (await res.json().catch(() => ({}))) as { eligible?: boolean; html?: string; name?: string; reason?: string };
+      if (res.ok && data.eligible === true && typeof data.html === "string") {
+        const gameName = typeof data.name === "string" && data.name !== "" ? data.name : entry.slug;
+        const html = data.html;
+        setConvos((list) => list.map((c) => (c.id === seed.id ? applySeed(c, { name: gameName, html }) : c)));
+        setArtifact(html);
+      } else {
+        setConvos((list) => list.map((c) => (c.id === seed.id ? applySeedFailure(c, { reason: data.reason, signedOut: res.status === 401 }) : c)));
+      }
+    } catch {
+      setConvos((list) => list.map((c) => (c.id === seed.id ? applySeedFailure(c, {}) : c)));
+    }
+  }
 
   function handleSelect(id: string) {
     tts.stop();
@@ -818,7 +891,9 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
       if (finalized || manualStopRef.current) clearPendingTurn(window.localStorage);
       if (!willRetry) {
         setBusy(false); // stay "busy" across a retry — no flicker, Stop still works
-        setQueuePaused(!turnOk); // anything but a clean finish → the queue asks first
+        // Anything but a clean finish → a "failed" hold: the queue asks first,
+        // and ONLY the explicit yes clears it (holdAfterKidAction).
+        setQueueHold(turnOk ? null : "failed");
       }
       console.log(`[chat] finished; total ${Date.now() - startedAt}ms${willRetry ? " (retrying)" : ""}`);
     }
@@ -829,7 +904,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
       if (manualStopRef.current) {
         setReply(streamingDisplayText(acc) || "⏹ Stopped.");
         setBusy(false);
-        setQueuePaused(true);
+        setQueueHold("failed");
         return;
       }
       // Resume before re-generating (TECH_DEBT #23 shipped): the server kept
@@ -843,7 +918,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
       if (manualStopRef.current) {
         setReply(streamingDisplayText(acc) || "⏹ Stopped.");
         setBusy(false);
-        setQueuePaused(true);
+        setQueueHold("failed");
         return;
       }
       if (resumed) {
@@ -852,7 +927,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         setArtifact((a) => nextArtifact({ type: "done", artifactHtml: resumed.artifactHtml }, a));
         clearPendingTurn(window.localStorage);
         setBusy(false);
-        setQueuePaused(false); // the reply landed intact — the line may drain
+        setQueueHold(null); // the reply landed intact — the line may drain
         onSuccess?.();
         return;
       }
@@ -861,16 +936,39 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   }
 
   /** What the composer calls. While Ari is building, a send doesn't die (the
-   *  old `disabled={busy}`) and doesn't interrupt — it joins the line
-   *  (docs/PRD-IDEA-QUEUE.md). Programmatic callers keep using handleSend. */
+   *  old `disabled={busy}`) and doesn't interrupt — it joins the line as a
+   *  `build` row (docs/PRD-IDEA-QUEUE-V2.md). Programmatic callers keep using
+   *  handleSend. */
   function handleComposerSend(text: string, attachment?: Attachment) {
     if (busy) {
       // The composer refuses (with a reason) before it gets here when the line
       // is full or a file is attached; this is the belt-and-braces half.
-      if (!attachment && canQueue(queuedIdeas)) patchQueue((q) => enqueueIdea(q, text));
+      if (!attachment && canQueue(queuedIdeas)) {
+        const startingFresh = queuedIdeas.length === 0;
+        patchQueue((q) => enqueueIdea(q, text));
+        // Queuing is a kid action: it clears a "restored" hold, and a stale
+        // "failed" hold from BEFORE this (previously empty) line is moot too.
+        setQueueHold((h) => (startingFresh ? null : holdAfterKidAction(h)));
+      }
       return;
     }
     void handleSend(text, attachment);
+  }
+
+  /** 🎤 over the preview (PRD v2 §3.4): the transcript joins the line as a
+   *  `tweak` row — merging into a trailing tweak at the cap, refusing (false)
+   *  only when a typed build holds the last slot; the mic bar then keeps the
+   *  transcript on screen and says why. */
+  function handleCaptureTweak(text: string): boolean {
+    const startingFresh = queuedIdeas.length === 0;
+    const { queue, outcome } = enqueueTweak(queuedIdeas, text);
+    if (outcome === "refused") return false;
+    patchQueue(() => queue);
+    lastTweakAtRef.current = Date.now();
+    setQueueHold((h) => (startingFresh ? null : holdAfterKidAction(h)));
+    // The feature has been used — the mic coach's re-nudge is off forever.
+    setCoachStore((s) => (s.everCaptured ? s : { ...s, everCaptured: true }));
+    return true;
   }
 
   async function handleSend(
@@ -878,9 +976,10 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     attachment?: Attachment,
     opts?: { fromIdeaBag?: boolean; onSuccess?: (childId: string) => void; forceRebuild?: boolean },
   ) {
-    // A turn the kid (or the drain) deliberately started — the line is rolling
-    // again, so drop any "still want these?" hold from an earlier failure.
-    setQueuePaused(false);
+    // A turn deliberately started is a kid action: it clears a "restored"
+    // hold — but NOT a "failed" one (PRD v2 §3.5): a frozen line keeps asking
+    // until the kid answers, instead of silently resuming (the v1 trap).
+    setQueueHold(holdAfterKidAction);
     const history = active.messages;
     // "Continue from here" pin (chat-rewind.ts): captured now, sent with THIS
     // turn only, then cleared below — once this reply lands it's the newest
@@ -944,71 +1043,45 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
 
   const sendingRef = useRef(false);
 
-  // Drain the Idea Queue: one idea per clean finish, oldest first. The idea is
-  // removed from the line BEFORE it's sent, so a re-render can never fire the
-  // same one twice; `hold` (after a stop/failure) waits for the kid's "keep
-  // going" instead — nothing generates unattended on a half-built game.
+  // Drain the Idea Queue (PRD v2 §3.2–3.3): one SEND UNIT per clean finish —
+  // a front `build` row alone, a front tweak RUN bundled into one message.
+  // Rows leave the line BEFORE the send, so a re-render can never fire the
+  // same ones twice; `hold` waits for the kid's "keep going" instead —
+  // nothing generates unattended on a half-built game. Idle tweaks SETTLE
+  // briefly (the timer just re-runs this effect; the decision itself is pure
+  // and unit-tested — no interval capturing stale state).
   useEffect(() => {
     if (sendingRef.current) return;
-    const action = queueSendAction({ hasQueued: queuedIdeas.length > 0, busy, paused: queuePaused });
-    if (action !== "send") return;
-    const { next, rest } = takeNextIdea(queuedIdeas);
-    if (!next) return;
-    patchQueue(() => rest);
-    void handleSend(next.text);
-    // Reads fresh state from the render closure each pass (same contract as
-    // the ✨ queue effect above). eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, queuePaused, queuedIdeas]);
-
-  // ✨ Make my game better! — the whole bag becomes ONE visible chat message
-  // (no hidden side-channel); ideas flip to `sent` only when the generation
-  // finishes, so failures keep every thought safely bagged.
-  //
-  // Queue-governed ✨ (owner asks 2026-07-21, BUG-FIX-LOG). EVERY tap just sets
-  // this flag — the effect below decides send/wait/clear via `ideaQueueAction`.
-  // Why not send synchronously: (a) a tap while Ari builds must QUEUE, not die
-  // ("disabled={busy}" made it dead); (b) the mic bar commits a just-spoken
-  // idea (setIdeas) and taps ✨ in the SAME event — a synchronous read would
-  // see the pre-commit empty bag and send nothing ("first tap did nothing,
-  // second worked"). Deferring to an effect lets React's batched commit land
-  // the idea first, so the send always sees the complete bag.
-  const [queuedMakeBetter, setQueuedMakeBetter] = useState(false);
-
-  function handleMakeBetter() {
-    setQueuedMakeBetter(true);
-  }
-
-  // The actual compose-and-send — reads the freshly-committed bag.
-  async function sendMakeBetter() {
-    const convoId = activeId;
-    const bundle = composeIdeaBundle(baggedFor(ideas, convoId).map((i) => i.text));
-    if (!bundle) return;
-    setExpandState({ expanded: false }); // watch the send land in chat (desktop split view)
-    // Mobile: the panel covers the whole screen — flip to the chat so the kid
-    // SEES the bundle post; the updated game re-opens the panel via `done`.
-    if (window.matchMedia("(max-width: 767px)").matches) setArtifact(null);
-    await handleSend(bundle, undefined, {
-      fromIdeaBag: true,
-      onSuccess: (childId) => setIdeas((list) => markSent(list, convoId, childId)),
+    const d = drainDecision({
+      queue: queuedIdeas,
+      busy,
+      hold: queueHold,
+      now: Date.now(),
+      lastEnqueueAt: lastTweakAtRef.current,
     });
-  }
-
-  // Resolve a queued ✨: send once Ari is idle WITH ideas bagged (a just-spoken
-  // idea has committed by now — the race fix), keep waiting while a turn is
-  // still building, and self-clear a queue that has no ideas so it can never
-  // fire empty. When it sends, busy flips true and the action drops to "wait" —
-  // no re-fire loop; onSuccess empties the bag on `done` alone.
-  useEffect(() => {
-    const action = ideaQueueAction({ queued: queuedMakeBetter, busy, hasBaggedIdeas: baggedIdeas.length > 0 });
-    if (action === "send") {
-      setQueuedMakeBetter(false);
-      void sendMakeBetter();
-    } else if (action === "clear") {
-      setQueuedMakeBetter(false);
+    setQueueSettling(d.action === "settle");
+    if (d.action === "settle") {
+      const t = window.setTimeout(() => setSettleTick((x) => x + 1), d.waitMs);
+      return () => window.clearTimeout(t);
     }
-    // sendMakeBetter reads fresh state from the render closure each pass.
+    if (d.action !== "send") return;
+    const { message, taken, rest, isTweakBundle } = takeNextSend(queuedIdeas);
+    if (!message) return;
+    patchQueue(() => rest);
+    // Narrate over the preview which idea is building (§4.2) — first row's
+    // text stands in for a bundle ("make the sky blue …").
+    setNowBuilding(taken[0]!.text);
+    void handleSend(message, undefined, { fromIdeaBag: isTweakBundle });
+    // Reads fresh state from the render closure each pass.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, queuedMakeBetter, baggedIdeas]);
+  }, [busy, queueHold, queuedIdeas, settleTick]);
+
+  // "Send now ▶" out of the settle wait: zeroing the timestamp makes
+  // drainDecision skip the settle branch on the re-run.
+  function handleQueueSendNow() {
+    lastTweakAtRef.current = 0;
+    setSettleTick((x) => x + 1);
+  }
 
   function handleStop() {
     manualStopRef.current = true;
@@ -1104,6 +1177,17 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         <div className="px-4 pt-3">
           <RenameNoticeBanner />
         </div>
+        {/* Edit-a-launched-game binding banner (approved mockup 2026-07-24):
+            always visible while a chat is bound to a published game, so
+            "publishing updates the REAL game" is never a surprise. */}
+        {active.editSlug && (
+          <div className="mx-4 mt-2 flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">
+            <span aria-hidden>🔗</span>
+            <span className="min-w-0 truncate">
+              Editing <b>{active.title}</b> — publishing updates <b>{active.editSlug}.ariantra.com</b>
+            </span>
+          </div>
+        )}
         <div
           ref={scrollRef}
           onWheel={handleManualScroll}
@@ -1206,10 +1290,12 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         {/* The waiting line, right above the composer where the kid typed it. */}
         <IdeaQueue
           ideas={queuedIdeas}
-          paused={queuePaused}
+          hold={queueHold}
+          settling={queueSettling}
+          onSendNow={handleQueueSendNow}
           onEdit={(id, text) => patchQueue((q) => updateQueuedIdea(q, id, text))}
           onDrop={(id) => patchQueue((q) => removeQueuedIdea(q, id))}
-          onResume={() => setQueuePaused(false)}
+          onResume={() => setQueueHold(null)}
           onDropAll={() => patchQueue(() => [])}
         />
         {/* Never `disabled` any more (docs/PRD-IDEA-QUEUE.md): while Ari builds,
@@ -1258,6 +1344,11 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             // surface-driven, not adult-gated (age verification gates ACCESS, not
             // publishing; owner direction 2026-07-23).
             bibleTeacher={publishesAsBible}
+            // Edit-a-launched-game binding: publish opens as an UPDATE of this
+            // slug ("Publish update"), and the chat id rides along so the
+            // platform stamps the chat ↔ game link for Studio's Edit button.
+            editTarget={active.editSlug ? { slug: active.editSlug, name: active.title } : undefined}
+            chatId={active.id}
             // The kid's latest ask — self-healing repair prompts carry it so a
             // fix never drifts from intent (PRD §7 / R.5).
             originalRequest={[...active.messages].reverse().find((m) => m.role === "child")?.text ?? ""}
@@ -1267,18 +1358,24 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             }}
             expanded={previewExpanded}
             onToggleExpand={() => setExpandState(nextExpandOnManualToggle)}
-            ideas={baggedIdeas.map((i) => ({ id: i.id, text: i.text }))}
-            onCaptureIdea={(text) => {
-              setIdeas((list) => addIdea(list, activeId, text));
-              // The feature has been used — the re-nudge is off forever.
-              setCoachStore((s) => (s.everCaptured ? s : { ...s, everCaptured: true }));
-            }}
-            onDiscardIdea={(id) => setIdeas((list) => discardIdea(list, id))}
-            onEditIdea={(id, text) => setIdeas((list) => updateIdeaText(list, id, text))}
-            onMakeBetter={handleMakeBetter}
-            // Only the "waiting for the current build" case shows the ⏳ pill —
-            // an idle tap resolves within a tick, so gating on busy avoids a flash.
-            makeBetterQueued={queuedMakeBetter && busy}
+            // The Idea Queue, mirrored into the preview (PRD v2 §4.2): the mic
+            // tab captures INTO the line; the ⏳/⏸ chip + sheet make the line —
+            // and its held state — visible and answerable without leaving the
+            // game. Same handlers as the chat card; one queue, two surfaces.
+            onCaptureIdea={handleCaptureTweak}
+            queuedIdeas={queuedIdeas}
+            queueHold={queueHold}
+            queueSettling={queueSettling}
+            onEditQueued={(id, text) => patchQueue((q) => updateQueuedIdea(q, id, text))}
+            onDropQueued={(id) => patchQueue((q) => removeQueuedIdea(q, id))}
+            onResumeQueue={() => setQueueHold(null)}
+            onDropAllQueued={() => patchQueue(() => [])}
+            onQueueSendNow={handleQueueSendNow}
+            updatingLine={
+              nowBuilding
+                ? `Making "${nowBuilding.length > 48 ? `${nowBuilding.slice(0, 48)}…` : nowBuilding}" — you can keep playing this one! ✨`
+                : undefined
+            }
             // micSupported is enforced structurally: IdeaMicTab renders
             // nothing (tab OR coach) when Web Speech is unavailable.
             coach={shouldShowCoach({ seen: coachStore.seen, busy, micSupported: true })}

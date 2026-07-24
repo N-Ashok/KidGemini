@@ -25,7 +25,12 @@ Browser ── pages: / (chat) · /parent · /admin · /upgrade
 /api/logout    → clears the .ariantra.com session cookie (signs out ALL surfaces)
 /api/arcade/publish → parent-PIN + session gate → platform partner bridge
                  (server-to-server publish/list/slug-check; the platform
-                 re-verifies everything — see platform ARCHITECTURE.md §Partner)
+                 re-verifies everything — see platform ARCHITECTURE.md §Partner;
+                 publishes forward the chat id → Game.sourceChatId, the link
+                 behind Studio's "Edit in Games-Lab" deep link)
+/api/arcade/edit-source → session gate (no PIN — read-only) → partner getCode:
+                 the owner's clean single-file game code, seeding an edit chat
+                 (lib/edit-entry.ts; arrival = /?edit=<slug>&chat=<id?>)
    │
    ▼ src/lib/db.ts — Store interfaces (AlertStore, UsageStore, RateLimitStore, PaymentStore)
 SQLite (better-sqlite3, WAL): alerts · usage_events · ip_limits · payments · webhook_events

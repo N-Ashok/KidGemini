@@ -51,6 +51,10 @@ export function sanitizeConversation(input: unknown): Conversation | null {
     // round-trips into its own workspace; anything but the known value drops to
     // the kid default (fail safe — never leak a teacher chat into the kid list).
     ...(c.workspace === "bible-teacher" ? { workspace: "bible-teacher" as const } : {}),
+    // Preserve the edit-a-launched-game binding (chat ↔ published slug) so a
+    // cross-device restore still publishes to the same subdomain. Validated to
+    // the platform slug shape; anything else is dropped, not rejected.
+    ...(typeof c.editSlug === "string" && /^[a-z0-9-]{2,40}$/.test(c.editSlug) ? { editSlug: c.editSlug } : {}),
   };
   if (JSON.stringify(convo).length > MAX_CONVO_BYTES) return null;
   return convo;

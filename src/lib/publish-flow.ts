@@ -29,7 +29,12 @@ export function stepAfterGamesLoad(args: {
   /** Games already in the Arcade. A failed load counts as 0 — the name step
    *  carries its own "couldn't check your games" retry. */
   gameCount: number;
+  /** Edit-a-launched-game (PRD-STUDIO-CHAT-EDIT rev 2026-07-24): the chat is
+   *  already bound to a published slug, so "which game?" is answered — go
+   *  straight to the confirm step as an update. */
+  hasPresetTarget?: boolean;
 }): PublishStep {
   if (args.current !== "loading" && args.current !== "signin") return args.current;
+  if (args.hasPresetTarget) return "name";
   return args.gameCount > 0 ? "choose" : "name";
 }

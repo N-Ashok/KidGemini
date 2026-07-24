@@ -21,6 +21,13 @@ interface Props {
    *  listing. Surface-driven (true whenever authored on /bible-teacher), not
    *  adult-gated — age verification gates ACCESS to the surface, not publishing. */
   bibleGame?: boolean;
+  /** Edit-a-launched-game binding (PRD-STUDIO-CHAT-EDIT rev 2026-07-24): this
+   *  chat edits a specific published game, so the sheet opens as an UPDATE of
+   *  that slug — no "brand-new or update?" question, no picker. */
+  editTarget?: { slug: string; name: string };
+  /** The conversation publishing this game — forwarded so the platform stamps
+   *  the chat ↔ game link that powers Studio's Edit deep link. */
+  chatId?: string;
 }
 
 // Step sequencing lives in lib/publish-flow.ts (pure + unit-tested).
@@ -41,7 +48,7 @@ const NAME_IDEAS = [
 // why the whatsapp:// deep-link + delayed-window.open approach is banned
 // (BUG-FIX-LOG 2026-07-18: it silently opened nothing without the app).
 
-export function PublishToArcade({ html, suggestedName, onClose, bibleGame = false }: Props) {
+export function PublishToArcade({ html, suggestedName, onClose, bibleGame = false, editTarget, chatId }: Props) {
   // Opens on `loading`, NOT a guess (BUG-FIX-LOG 2026-07-24): starting on
   // "name" meant a kid with existing games saw the naming screen, lost it to
   // "What are we doing?" when the list arrived, then got it back after
@@ -52,7 +59,11 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
   // this exact page — the chat survives via chat-store.
   const { status: authStatus } = useSession();
   const [myGames, setMyGames] = useState<MyGame[] | null>(null); // null = not fetched
-  const [updateTarget, setUpdateTarget] = useState<MyGame | null>(null);
+  // An edit chat pre-binds the target: the sheet opens as an update of that
+  // slug, and the list fetch below refreshes its name/status when it lands.
+  const [updateTarget, setUpdateTarget] = useState<MyGame | null>(
+    editTarget ? { slug: editTarget.slug, name: editTarget.name, status: "published" } : null,
+  );
   // A failed fetch used to look identical to "you have zero games" — the kid
   // got silently routed into "publish new" with no sign anything went wrong,
   // even if they actually had games that should have offered "update"
@@ -83,7 +94,13 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
         if (!alive) return;
         const games = d.games ?? [];
         setMyGames(games);
-        setStep((s) => stepAfterGamesLoad({ current: s, gameCount: games.length }));
+        // Refresh the preset edit target with the real record when present
+        // (name may have changed since the chat was seeded).
+        if (editTarget) {
+          const match = games.find((g) => g.slug === editTarget.slug);
+          if (match) setUpdateTarget(match);
+        }
+        setStep((s) => stepAfterGamesLoad({ current: s, gameCount: games.length, hasPresetTarget: !!editTarget }));
       })
       .catch(() => {
         if (!alive) return;
@@ -91,7 +108,7 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
         setMyGames([]);
         // Don't strand the kid on the spinner — the name step carries the
         // "couldn't check your games — tap to retry" affordance.
-        setStep((s) => stepAfterGamesLoad({ current: s, gameCount: 0 }));
+        setStep((s) => stepAfterGamesLoad({ current: s, gameCount: 0, hasPresetTarget: !!editTarget }));
       });
     return () => {
       alive = false;
@@ -186,6 +203,8 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
           ...(category ? { category } : {}),
           multiplayer: playMode === "friends",
           ...(bibleGame ? { bibleGame: true } : {}),
+          // Chat ↔ game link (Studio Edit deep link) — validated server-side.
+          ...(chatId ? { chatId } : {}),
         }),
       });
       const data = (await res.json()) as {
@@ -229,7 +248,7 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
       setStep("pin");
       setError("That didn't work — nothing is broken. Check the internet and try again.");
     }
-  }, [displayName, html, updateTarget, category, playMode, bibleGame]);
+  }, [displayName, html, updateTarget, category, playMode, bibleGame, chatId]);
 
   // PIN step: verify against /api/parent/verify-pin (which sets the HttpOnly
   // parent-session cookie), THEN publish. The PIN itself never rides on the

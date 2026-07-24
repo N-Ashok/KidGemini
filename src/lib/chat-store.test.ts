@@ -93,13 +93,16 @@ describe("chat-store — chats survive navigation", () => {
     expect(s.getItem("kidgemini:chats:v1:bible-teacher")).toBeNull();
   });
 
-  // docs/PRD-IDEA-QUEUE.md: ideas typed while Ari was building ride on the
-  // conversation, so a reload mid-build finds the line exactly as it was.
-  it("round-trips a chat's queued ideas", () => {
+  // docs/PRD-IDEA-QUEUE-V2.md: ideas queued while Ari was building ride on the
+  // conversation, so a reload mid-build finds the line exactly as it was. A
+  // v1 row (no kind) loads back as a "build" — back-compat via sanitizeQueue.
+  it("round-trips a chat's queued ideas, stamping v1 rows as builds", () => {
     const s = fakeStorage();
     const withQueue = { ...convo("a"), queuedIdeas: [{ id: "q1", text: "add a dragon boss", createdAt: 7 }] };
     saveChats(s, [withQueue] as never, "a");
-    expect(loadChats(s)!.convos[0]!.queuedIdeas).toEqual([{ id: "q1", text: "add a dragon boss", createdAt: 7 }]);
+    expect(loadChats(s)!.convos[0]!.queuedIdeas).toEqual([
+      { id: "q1", text: "add a dragon boss", createdAt: 7, kind: "build" },
+    ]);
   });
 
   it("drops a malformed queued idea instead of loading junk into the composer", () => {

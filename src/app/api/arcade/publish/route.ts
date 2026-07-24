@@ -43,6 +43,10 @@ interface Body {
    *  "Bible games" listing. Only forwarded when the session is a verified
    *  adult — the platform re-checks the same claim (defense in depth). */
   bibleGame?: boolean;
+  /** The conversation this publish came from (PRD-STUDIO-CHAT-EDIT rev
+   *  2026-07-24) — the platform stamps it on the game so Studio's Edit
+   *  button deep-links back into this exact chat. */
+  chatId?: string;
 }
 
 const SLUG_RE = /^[a-z0-9-]{2,40}$/;
@@ -137,6 +141,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     ...(category ? { category } : {}),
     ...(multiplayer ? { seo: { multiplayer: true } } : {}),
     ...(bibleGame ? { bibleGame: true } : {}),
+    // Chat ↔ game link for Studio's Edit deep link. Validated shape only; the
+    // platform re-validates and ignores anything off — a link stamp must
+    // never block a publish.
+    ...(typeof body.chatId === "string" && body.chatId !== "" && body.chatId.length <= 100 ? { chatId: body.chatId } : {}),
   });
   return NextResponse.json({ slug, ...data }, { status });
 }

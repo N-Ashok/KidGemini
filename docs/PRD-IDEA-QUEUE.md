@@ -1,6 +1,10 @@
 # PRD — Idea Queue (type your next idea while Ari builds)
 
-**Status:** shipped 2026-07-24 · **Owner decisions:** 2026-07-24
+> **SUPERSEDED same day by `PRD-IDEA-QUEUE-V2.md`** (owner decision 2026-07-24):
+> one unified line for typed AND spoken ideas; the Idea Bag merged into it.
+> Kept for the v1 decisions and rules v2 carries forward.
+
+**Status:** shipped 2026-07-24, superseded by v2 · **Owner decisions:** 2026-07-24
 **Code:** `src/lib/idea-queue.ts` (logic) · `src/components/IdeaQueue.tsx` (UI) ·
 `src/components/Composer.tsx` · `src/components/ChatPanel.container.tsx` (wiring)
 **Tests:** `src/lib/idea-queue.test.ts`, `src/lib/chat-store.test.ts` (persistence rows)

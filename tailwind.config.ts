@@ -19,7 +19,9 @@ const config: Config = {
           700: "#1957b0",
         },
         safe: { 500: "#22c55e", 600: "#16a34a" },
-        warn: { 500: "#f59e0b", 600: "#d97706" },
+        // warn.50 added for the Idea Queue's soft "line is full" notice
+        // (PRD-IDEA-QUEUE-V2) — the amber-50 tint matching 500/600 above.
+        warn: { 50: "#fffbeb", 500: "#f59e0b", 600: "#d97706" },
         danger: { 500: "#ef4444", 600: "#dc2626" },
         ink: { 900: "#0f172a", 700: "#334155", 500: "#64748b" },
       },

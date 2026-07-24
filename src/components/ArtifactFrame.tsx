@@ -24,7 +24,8 @@ import { keyToPanelAction, UPDATING_LINE } from "@/lib/preview-pane";
 import { buildErrorReport, hasExtremeError } from "@/lib/error-report";
 import { usePreviewVerify } from "./usePreviewVerify";
 import { IdeaMicTab } from "./IdeaMicTab";
-import { IdeaBag, type BagIdea } from "./IdeaBag";
+import { IdeaQueue } from "./IdeaQueue";
+import type { QueueHold, QueuedIdea } from "@/types/idea-queue.types";
 import type { GameConsoleMessage } from "@/types/game-console.types";
 import type { PreviewDeviceId, PreviewOrientation } from "@/types/device-preview.types";
 import type { VerifyCheckId } from "@/types/preview-verify.types";
@@ -40,16 +41,26 @@ interface ArtifactFrameProps {
       which restyles the panel wrapper; this component only shows the button. */
   expanded?: boolean;
   onToggleExpand?: () => void;
-  /** Idea Button (docs/PRD-IDEA-BUTTON.md) — all owned by the container; the
-      frame only hosts the overlay surfaces. Absent props = feature hidden. */
-  ideas?: BagIdea[];
-  onCaptureIdea?: (text: string) => void;
-  onDiscardIdea?: (id: string) => void;
-  onEditIdea?: (id: string, text: string) => void;
-  onMakeBetter?: () => void;
-  /** ✨ was tapped while Ari was building — the bundle is queued to send when
-      the current turn lands (2026-07-21). Drives the "lined up" affordance. */
-  makeBetterQueued?: boolean;
+  /** 🎤 Idea capture (docs/PRD-IDEA-QUEUE-V2.md) — the mic tab hands finished
+      transcripts to the Idea Queue as `tweak` rows. Returns whether the line
+      accepted it; on false the bar keeps the transcript and says why.
+      Absent prop = feature hidden. */
+  onCaptureIdea?: (text: string) => boolean;
+  /** The Idea Queue, mirrored INTO the preview (PRD v2 §4.2): on mobile and
+      full-screen desktop this panel covers the chat entirely, so the line —
+      and especially its held "still want these?" state — must be visible and
+      answerable from here. Chip in the header; tap → bottom sheet. */
+  queuedIdeas?: QueuedIdea[];
+  queueHold?: QueueHold;
+  queueSettling?: boolean;
+  onEditQueued?: (id: string, text: string) => void;
+  onDropQueued?: (id: string) => void;
+  onResumeQueue?: () => void;
+  onDropAllQueued?: () => void;
+  onQueueSendNow?: () => void;
+  /** Overrides the generic "Making your update…" banner while a QUEUED idea
+      builds — narrates which one, so the eventual game swap is never silent. */
+  updatingLine?: string;
   /** First-run coach + one-time re-nudge (policy in the container; the tab
       renders them, so covered/unsupported states are enforced structurally). */
   coach?: boolean;
@@ -62,6 +73,13 @@ interface ArtifactFrameProps {
   /** Bible-teacher surface (PRD-BIBLE-TEACHER §5): publishing fixes the game to
    *  the "Bible games" category and the separate listing. Server re-verifies. */
   bibleTeacher?: boolean;
+  /** Edit-a-launched-game (PRD-STUDIO-CHAT-EDIT rev 2026-07-24): this chat is
+   *  bound to a published game — Publish opens as an update of that slug and
+   *  the button reads "Publish update". */
+  editTarget?: { slug: string; name: string };
+  /** The active conversation's id — rides on publish so the platform stamps
+   *  the chat ↔ game link behind Studio's Edit deep link. */
+  chatId?: string;
 }
 
 type Tab = "preview" | "code" | "console";
@@ -87,22 +105,34 @@ export function ArtifactFrame({
   onClose,
   expanded,
   onToggleExpand,
-  ideas,
   onCaptureIdea,
-  onDiscardIdea,
-  onEditIdea,
-  onMakeBetter,
-  makeBetterQueued,
+  queuedIdeas,
+  queueHold = null,
+  queueSettling,
+  onEditQueued,
+  onDropQueued,
+  onResumeQueue,
+  onDropAllQueued,
+  onQueueSendNow,
+  updatingLine,
   coach,
   onCoachDone,
   nudgeMic,
   onNudgeShown,
   previewTheme = "default",
   bibleTeacher = false,
+  editTarget,
+  chatId,
 }: ArtifactFrameProps) {
   const [tab, setTab] = useState<Tab>("preview");
   const [publishing, setPublishing] = useState(false);
   const [inviting, setInviting] = useState(false);
+  // ⏳ chip → bottom sheet with the waiting line (PRD-IDEA-QUEUE-V2 §4.2).
+  const [queueOpen, setQueueOpen] = useState(false);
+  const queueCount = queuedIdeas?.length ?? 0;
+  useEffect(() => {
+    if (queueCount === 0) setQueueOpen(false); // line drained/dropped — nothing to show
+  }, [queueCount]);
   const [consoleMessages, setConsoleMessages] = useState<GameConsoleMessage[]>([]);
   const [copied, setCopied] = useState(false);
   // Console tab is debug-only now (PRD G1: a kid never sees a console tab).
@@ -251,7 +281,7 @@ export function ArtifactFrame({
     } disabled:opacity-40`;
 
   return (
-    <aside className="flex h-full w-full flex-col bg-white">
+    <aside className="relative flex h-full w-full flex-col bg-white">
       <header className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-2.5">
         <div className="flex items-center gap-2">
           {/* Mobile-only: the frame covers the whole screen there, so give an
@@ -284,6 +314,31 @@ export function ArtifactFrame({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {/* The Idea Queue chip (PRD-IDEA-QUEUE-V2 §4.2): the line's presence
+              and state, visible from INSIDE the game. Hidden on desktop split
+              view (the card is right there beside the panel); shown on mobile
+              and full screen, where this panel covers the chat. A held line
+              shows ⏸ in warn tint — a stalled queue must never be invisible. */}
+          {queueCount > 0 && (
+            <button
+              onClick={() => setQueueOpen(true)}
+              aria-label={
+                queueHold
+                  ? `Your idea line is paused — ${queueCount} waiting`
+                  : `${queueCount} idea${queueCount === 1 ? "" : "s"} lined up`
+              }
+              title={queueHold ? "Your line is paused — tap to decide" : "Your ideas, lined up"}
+              className={`rounded-full px-3 py-1.5 text-sm font-extrabold ${
+                expanded ? "" : "md:hidden"
+              } ${
+                queueHold
+                  ? "border-2 border-warn-500 bg-warn-50 text-warn-600"
+                  : "border-2 border-brand-300 bg-brand-50 text-brand-600"
+              }`}
+            >
+              {queueHold ? "⏸" : "⏳"} {queueCount}
+            </button>
+          )}
           {/* Invite a friend to test (PRD-MULTIPLAYER.md Phase 4) — ONLY for
               games the model actually built multiplayer (MULTIPLAYER_MARKER);
               on any other game this button would be a dead end (no friend
@@ -304,9 +359,9 @@ export function ArtifactFrame({
             <button
               onClick={() => setPublishing(true)}
               className="rounded-full bg-orange-500 px-3 py-1.5 text-sm font-extrabold text-white shadow shadow-orange-500/30"
-              aria-label="Publish"
+              aria-label={editTarget ? "Publish update" : "Publish"}
             >
-              🚀 <span className="hidden sm:inline">Publish</span>
+              🚀 <span className="hidden sm:inline">{editTarget ? "Publish update" : "Publish"}</span>
             </button>
           )}
           {/* Full-screen toggle — the main view control for this panel, so it
@@ -400,7 +455,9 @@ export function ArtifactFrame({
       {busy && tab === "preview" && (
         <div className="border-b border-sky-100 bg-sky-50 px-4 py-1.5 text-sm text-sky-800">
           <span className="mr-1 inline-block animate-bounce" aria-hidden>🛠️</span>
-          {UPDATING_LINE}
+          {/* A QUEUED idea building gets named (PRD-IDEA-QUEUE-V2 §4.2) — the
+              game swap that follows must be narrated, never a silent switch. */}
+          {updatingLine ?? UPDATING_LINE}
         </div>
       )}
 
@@ -487,24 +544,11 @@ export function ArtifactFrame({
               {!covered && onCaptureIdea && (
                 <IdeaMicTab
                   onIdea={onCaptureIdea}
-                  ideas={ideas}
-                  onMakeBetter={onMakeBetter}
-                  makeBetterQueued={makeBetterQueued}
-                  busy={busy}
+                  queued={queuedIdeas}
                   coach={coach}
                   onCoachDone={onCoachDone}
                   nudge={nudgeMic}
                   onNudgeShown={onNudgeShown}
-                />
-              )}
-              {!covered && ideas && onDiscardIdea && onEditIdea && onMakeBetter && (
-                <IdeaBag
-                  ideas={ideas}
-                  busy={busy}
-                  queued={makeBetterQueued}
-                  onDiscard={onDiscardIdea}
-                  onEditIdea={onEditIdea}
-                  onMakeBetter={onMakeBetter}
                 />
               )}
             </div>
@@ -587,8 +631,47 @@ export function ArtifactFrame({
         </div>
       )}
 
+      {/* The queue sheet (PRD-IDEA-QUEUE-V2 §4.2): the SAME IdeaQueue the chat
+          card renders, so edit/drop/resume — including the held "still want
+          these?" decision — work without leaving the game. Bottom sheet on
+          mobile, centered card on md+ (IdeaBag's former pattern). */}
+      {queueOpen && queueCount > 0 && onEditQueued && onDropQueued && onResumeQueue && onDropAllQueued && (
+        <div
+          className="absolute inset-0 z-30 bg-ink-900/30"
+          onClick={() => setQueueOpen(false)}
+          role="dialog"
+          aria-label="Your idea line"
+        >
+          <div
+            className="absolute inset-x-3 bottom-3 max-h-[70%] overflow-y-auto rounded-kid bg-white p-3 shadow-lg
+              md:inset-x-auto md:bottom-auto md:left-1/2 md:top-1/2 md:max-h-[80%] md:w-[440px] md:-translate-x-1/2 md:-translate-y-1/2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setQueueOpen(false)}
+              aria-label="Close"
+              className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+            >
+              ✕
+            </button>
+            <IdeaQueue
+              variant="sheet"
+              ideas={queuedIdeas!}
+              hold={queueHold}
+              settling={queueSettling}
+              onSendNow={onQueueSendNow}
+              onEdit={onEditQueued}
+              onDrop={onDropQueued}
+              onResume={onResumeQueue}
+              onDropAll={onDropAllQueued}
+            />
+          </div>
+        </div>
+      )}
+
       {publishing && (
-        <PublishToArcade html={state.currentHtml} suggestedName={titleOf(state.currentHtml)} bibleGame={bibleTeacher} onClose={() => setPublishing(false)} />
+        <PublishToArcade html={state.currentHtml} suggestedName={titleOf(state.currentHtml)} bibleGame={bibleTeacher} editTarget={editTarget} chatId={chatId} onClose={() => setPublishing(false)} />
       )}
 
       {inviting && (

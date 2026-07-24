@@ -22,7 +22,7 @@ export const RENUDGE_AFTER_GAMES = 3;
  *  The buddy voice reads this aloud only on request (the 🔊 Hear it button);
  *  the auto voice-over was removed as intrusive. */
 export const COACH_LINE =
-  "Hi! I'm your Idea Button! Tap me and say your idea — no typing! I'll keep it safe in your bag.";
+  "Hi! I'm your Idea Button! Tap me and say your idea — no typing! It lines up and Ari builds it.";
 
 export function defaultCoachStore(): CoachStore {
   return { seen: false, gamesSinceCoach: 0, everCaptured: false, renudged: false };
