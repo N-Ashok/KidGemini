@@ -236,7 +236,11 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   normally target the NEWEST game message in the conversation — there's no
   separate "which version is active" pointer anywhere. So when a later edit
   regresses a game, a kid/creator can click "Continue from here" on any
-  earlier game message to pin it (`Conversation.activeGameMessageId`,
+  earlier game message — a small muted text link below that message's "Open game"
+  button (demoted from a same-styled side-by-side button 2026-07-24: two equal
+  buttons confused kids about which to tap; Open game is now the one
+  `.btn-primary`, the link sits under it with a text-presentation ↩︎ glyph,
+  and the ⋯-menu tip moved below both) — to pin it (`Conversation.activeGameMessageId`,
   `chat-rewind.ts`) as the edit target for the NEXT turn only — non-destructive:
   nothing is deleted or reordered, the regressed later messages stay right
   where they are in the thread, visible and still playable via their own

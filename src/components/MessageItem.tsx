@@ -54,33 +54,43 @@ export function MessageItem(props: MessageItemProps) {
     <div className="group">
       <Markdown>{m.text}</Markdown>
       {m.artifactHtml && props.onOpenArtifact && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
+        // One clear action per message (owner UAT 2026-07-24): kids scan
+        // top-to-bottom, so the primary button comes first and alone, the
+        // rewind link sits quietly below it, and the ⋯-menu tip last — two
+        // equally-styled side-by-side buttons confused kids about which to tap.
+        <div className="mt-3 space-y-1.5">
+          <div>
+            <button onClick={props.onOpenArtifact} className="btn-primary">
+              🎮 Open game
+            </button>
+          </div>
+          {(props.onContinueFromHere || props.isPinned) && (
+            <div className="flex flex-wrap items-center gap-2">
+              {props.onContinueFromHere && (
+                <button
+                  onClick={props.onContinueFromHere}
+                  className="text-xs text-neutral-500 underline underline-offset-2 hover:text-neutral-700"
+                >
+                  {/* Plain glyph, not the ⏪ emoji — emoji render full-color
+                      and out-shout the deliberately muted link. U+FE0E forces
+                      text presentation (Apple otherwise draws ↩ as an emoji). */}
+                  <span aria-hidden>{"↩︎"}</span> Continue from here
+                </button>
+              )}
+              {props.isPinned && (
+                <span className="flex items-center gap-1 rounded-2xl bg-warn-500/10 px-3 py-1.5 text-sm font-medium text-warn-600">
+                  🔧 Building from this version
+                </span>
+              )}
+            </div>
+          )}
           {/* Discoverability (owner UAT 2026-07-23): the leaderboard, sharing and
               high-scores live in the in-game ⋯ menu — kids won't find them
               otherwise. Say it right by the Open-game button. */}
-          <p className="w-full text-xs text-neutral-500">
+          <p className="text-xs text-neutral-500">
             ✨ Inside your game, tap the <span className="font-semibold">⋯</span> menu (top-right) for a{" "}
             <span className="font-semibold">leaderboard</span>, sharing &amp; more!
           </p>
-          <button
-            onClick={props.onOpenArtifact}
-            className="flex items-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-2.5 text-sm font-medium text-neutral-800 hover:border-neutral-300 hover:bg-neutral-100"
-          >
-            🎮 Open game
-          </button>
-          {props.onContinueFromHere && (
-            <button
-              onClick={props.onContinueFromHere}
-              className="flex items-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-2.5 text-sm font-medium text-neutral-800 hover:border-neutral-300 hover:bg-neutral-100"
-            >
-              ⏪ Continue from here
-            </button>
-          )}
-          {props.isPinned && (
-            <span className="flex items-center gap-1 rounded-2xl bg-warn-500/10 px-3 py-1.5 text-sm font-medium text-warn-600">
-              🔧 Building from this version
-            </span>
-          )}
         </div>
       )}
       {m.text !== "" && (
