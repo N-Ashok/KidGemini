@@ -16,17 +16,17 @@ describe("buildTurnSystemInstruction — multiplayer gate (independent of 3D/aud
   });
 
   it("multiplayer=false, both catalog gates closed too → exactly the bare child prompt", () => {
-    expect(buildTurnSystemInstruction({ three: false, audio: false }, undefined, false)).toBe(CHILD_SYSTEM_PROMPT);
+    expect(buildTurnSystemInstruction({ three: false, audio: false }, false)).toBe(CHILD_SYSTEM_PROMPT);
   });
 
   it("multiplayer=true alone (a plain 2D multiplayer game) carries the section with no 3D/audio catalog", () => {
-    const full = buildTurnSystemInstruction({ three: false, audio: false }, undefined, true);
+    const full = buildTurnSystemInstruction({ three: false, audio: false }, true);
     expect(full).toContain(MULTIPLAYER_PROMPT_SECTION);
     expect(full).not.toContain("USES_MODELS");
   });
 
   it("a 3D multiplayer game (e.g. \"3d 2-player racing\") carries both sections", () => {
-    const full = buildTurnSystemInstruction({ three: true, audio: false }, undefined, true);
+    const full = buildTurnSystemInstruction({ three: true, audio: false }, true);
     expect(full).toContain(MULTIPLAYER_PROMPT_SECTION);
     expect(full).toContain("<!--USES_THREE-->");
   });

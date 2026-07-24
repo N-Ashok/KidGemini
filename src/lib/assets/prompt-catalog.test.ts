@@ -92,7 +92,7 @@ describe("buildTurnSystemInstruction — tier/keyword gates (PRD §9/§11: free 
   it("both gates closed → EXACTLY the bare child prompt, zero catalog tokens", () => {
     // multiplayer is a separate, independent gate (PRD-MULTIPLAYER.md Phase 4)
     // — held at false here so this stays a pure test of the 3D/audio gates.
-    expect(buildTurnSystemInstruction({ three: false, audio: false }, undefined, false)).toBe(CHILD_SYSTEM_PROMPT);
+    expect(buildTurnSystemInstruction({ three: false, audio: false }, false)).toBe(CHILD_SYSTEM_PROMPT);
   });
 
   it("3D gate alone → 3D + models sections, no audio catalog", () => {
@@ -126,8 +126,9 @@ describe("modelsPromptSection — the catalog version-locks with the manifest (P
   it("names every manifest model and nothing else", () => {
     expect(section).toContain("car");
     expect(section).toContain("dino");
-    // The names line lists exactly the manifest's models.
-    expect(section).toMatch(/car,\s*dino|dino,\s*car/);
+    // Models are listed under category headings, each exactly once.
+    expect(section).toMatch(/racing[^:]*: car/);
+    expect(section).toMatch(/animals[^:]*: dino/);
   });
 
   it("teaches the USES_MODELS marker with the exact syntax the injector parses", () => {
@@ -168,8 +169,8 @@ describe("modelsPromptSection — the catalog version-locks with the manifest (P
     expect(modelsPromptSection(fakeModels)).not.toMatch(/emote-yes/);
   });
 
-  describe("per-genre hints (Phase F) — lockstep with the manifest", () => {
-    it("hints name only models the manifest carries", () => {
+  describe("category grouping — lockstep with the manifest", () => {
+    it("groups models under their category heading", () => {
       // fakeModels has car + dino only: racing shows car, animals shows dino…
       expect(section).toMatch(/racing[^:]*: car/);
       expect(section).toMatch(/animals[^:]*: dino/);
@@ -178,16 +179,50 @@ describe("modelsPromptSection — the catalog version-locks with the manifest (P
       expect(section).not.toContain("boat");
     });
 
-    it("a genre with no available models disappears entirely", () => {
+    it("a category with no available models disappears entirely", () => {
       expect(section).not.toMatch(/water \/ sailing/);
       expect(section).not.toMatch(/space \/ flying/);
     });
+  });
+});
 
-    it("no hints block at all when no hinted model exists", () => {
-      const engineOnly = fakeModels.assets[0]!;
-      const unhinted = { name: "zzz", type: "model", url: `${ASSET_HOST_ORIGIN}/zzz.${"f".repeat(6)}.glb`, bytes: 1_000, license: "CC0", sourceUrl: "https://example.com", sha256: "f".repeat(64) } as const;
-      expect(modelsPromptSection({ assets: [engineOnly, unhinted] })).not.toContain("Good fits");
-    });
+// The whole point of the 2026-07-24 rework. Selection used to pick models from
+// the CHILD's words, but the catalog is consumed by the LLM's DESIGN decisions,
+// which happen after selection. "make me a fun game" triggered no genre, so the
+// model saw 6 of 106 models, then hand-rolled cubes for a pizza restaurant while
+// 19 food models sat unused on the asset host. inject.ts resolves against the
+// FULL manifest, so those names always worked — we were simply not telling it.
+describe("the catalog teaches the WHOLE library (so the LLM can design against it)", () => {
+  const real = realManifest as AssetManifest;
+  const realModels = real.assets.filter((a) => a.type === "model").map((a) => a.name);
+  const section = modelsPromptSection(real);
+
+  it("names every single model in the manifest", () => {
+    const missing = realModels.filter((n) => !new RegExp(`\\b${n}\\b`).test(section));
+    expect(missing).toEqual([]);
+  });
+
+  it("lists each model exactly once across the category block (cross-listing spends tokens to repeat what the model already read)", () => {
+    // Scope to the index itself — the usage steps below it legitimately repeat
+    // one name as the worked example (USES_MODELS + loadModel).
+    const index = section.split("\n1. Add a second marker")[0]!;
+    for (const name of realModels) {
+      const hits = index.match(new RegExp(`(?<![a-z0-9_])${name}(?![a-z0-9_])`, "g")) ?? [];
+      expect(hits.length, `${name} listed ${hits.length}x in the category block`).toBe(1);
+    }
+  });
+
+  it("does not depend on the child's message — this is what makes the prefix cacheable", () => {
+    // COST_TOKEN_BUDGET.md waste-ledger #4: a system prompt that varies per
+    // message breaks Gemini implicit caching on the ~10-15k of game code behind
+    // it. Byte-identical output is the property that fixes it.
+    expect(modelsPromptSection(real)).toBe(section);
+  });
+
+  it("stays inside its token ceiling (§9 scale ceiling — revisit past ~1500 tokens)", () => {
+    // ~4 chars/token. The ceiling is what makes "teach everything" affordable;
+    // if a bulk import breaks this, the category-map hybrid is the fallback.
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(1_500);
   });
 });
 
@@ -230,26 +265,22 @@ describe("audioPromptSection — the audio catalog version-locks with the manife
   });
 });
 
-describe("catalog scale ceilings (PRD §14, amended 2026-07-13: retrieval-lite)", () => {
-  it("a build-turn PROMPT never teaches more than the cap, however big the library (selection, model-select.ts)", () => {
-    // The real enforcement matrix lives in model-select.test.ts; this pins
-    // the wiring: a context-aware section over the committed manifest can't
-    // exceed the cap.
-    const section = modelsPromptSection(realManifest as AssetManifest, { message: "make me a game", history: [] });
-    const namesLine = section.match(/toy box: ([^.\n]+(?:\n[^.\n]+)*)\./);
-    if (section) {
-      const count = (namesLine?.[1] ?? "").split(",").length;
-      expect(count).toBeLessThanOrEqual(30);
-    }
-  });
-
+describe("catalog scale ceilings (PRD §14, amended 2026-07-24: teach-everything)", () => {
   it("the committed manifest stays under a sanity ceiling (revisit selection priorities at the next doubling)", () => {
     // Bumped 60 → 120 (2026-07-14): the catalog doubled 50 → 100 (city models,
     // race-track pieces, dragons). Selection priorities WERE revisited as part
     // of this bump — see model-select.ts GENRES, extended the same day to
     // route every new model through a genre trigger, not just name-literal
-    // matching. Next doubling (~200) should get the same treatment.
+    // matching.
+    //
+    // Bumped 120 → 320 (2026-07-24), the deliberate decision this test exists
+    // to force. What changed: the prompt no longer teaches a per-message
+    // SUBSET, it teaches the whole library grouped by category, so "selection
+    // priorities" are no longer the thing at risk — the TOKEN CEILING is.
+    // That is now pinned directly by the token-ceiling test above (≤1,500),
+    // which is a tighter and more honest guard than a model count. This
+    // number stays only as a tripwire against an accidental bulk import.
     const models = realManifest.assets.filter((a) => a.type === "model");
-    expect(models.length).toBeLessThanOrEqual(120);
+    expect(models.length).toBeLessThanOrEqual(320);
   });
 });

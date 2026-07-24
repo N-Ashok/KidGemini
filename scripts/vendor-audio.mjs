@@ -50,6 +50,11 @@ const KENNEY_ZIPS = {
   'impact-sounds': 'https://kenney.nl/media/pages/assets/impact-sounds/87b4ddecda-1677589768/kenney_impact-sounds.zip',
   'interface-sounds': 'https://kenney.nl/media/pages/assets/interface-sounds/fa43c1dd4d-1677589452/kenney_interface-sounds.zip',
   'music-jingles': 'https://kenney.nl/media/pages/assets/music-jingles/f37e530b9e-1677590399/kenney_music-jingles.zip',
+  // 2026-07-24: footsteps, doors, coins, page turns. Kenney's separate
+  // "UI Audio" pack was NOT added — interface-sounds (already pinned above)
+  // already carries confirm/error/back/select/toggle, so a second download
+  // would buy almost nothing.
+  'rpg-audio': 'https://kenney.nl/media/pages/assets/rpg-audio/8e99002d76-1677590336/kenney_rpg-audio.zip',
 };
 const KENNEY_PAGE = (kit) => `https://kenney.nl/assets/${kit}`;
 
@@ -68,6 +73,28 @@ const SOUNDS = [
   { name: 'laser', type: 'sfx', source: { kind: 'kenney', kit: 'digital-audio', file: 'laser1.ogg' } },
   // thrusterFire is a 5 s burn — trim to a 1.2 s whoosh (fade-out avoids a click).
   { name: 'whoosh', type: 'sfx', source: { kind: 'kenney', kit: 'sci-fi-sounds', file: 'thrusterFire_000.ogg' }, trimSeconds: 1.2 },
+
+  // ── SFX batch 2 (2026-07-24). The catalog had exactly ONE UI sound (`click`)
+  // against a menu/button/error vocabulary every game needs.
+  { name: 'confirm', type: 'sfx', source: { kind: 'kenney', kit: 'interface-sounds', file: 'confirmation_001.ogg' } },
+  { name: 'error', type: 'sfx', source: { kind: 'kenney', kit: 'interface-sounds', file: 'error_002.ogg' } },
+  { name: 'back', type: 'sfx', source: { kind: 'kenney', kit: 'interface-sounds', file: 'back_001.ogg' } },
+  { name: 'select', type: 'sfx', source: { kind: 'kenney', kit: 'interface-sounds', file: 'select_001.ogg' } },
+  { name: 'toggle', type: 'sfx', source: { kind: 'kenney', kit: 'interface-sounds', file: 'toggle_001.ogg' } },
+  { name: 'open_menu', type: 'sfx', source: { kind: 'kenney', kit: 'interface-sounds', file: 'open_001.ogg' } },
+  { name: 'close_menu', type: 'sfx', source: { kind: 'kenney', kit: 'interface-sounds', file: 'close_001.ogg' } },
+  { name: 'drop', type: 'sfx', source: { kind: 'kenney', kit: 'interface-sounds', file: 'drop_001.ogg' } },
+  { name: 'scroll', type: 'sfx', source: { kind: 'kenney', kit: 'interface-sounds', file: 'scroll_001.ogg' } },
+  { name: 'question', type: 'sfx', source: { kind: 'kenney', kit: 'interface-sounds', file: 'question_001.ogg' } },
+  { name: 'pop', type: 'sfx', source: { kind: 'kenney', kit: 'digital-audio', file: 'pepSound1.ogg' } },
+  { name: 'zap', type: 'sfx', source: { kind: 'kenney', kit: 'digital-audio', file: 'zap1.ogg' } },
+  // World sounds — footsteps/doors/coins are the next most-asked-for after UI.
+  { name: 'footstep', type: 'sfx', source: { kind: 'kenney', kit: 'rpg-audio', file: 'footstep00.ogg' } },
+  { name: 'door_open', type: 'sfx', source: { kind: 'kenney', kit: 'rpg-audio', file: 'doorOpen_1.ogg' } },
+  { name: 'door_close', type: 'sfx', source: { kind: 'kenney', kit: 'rpg-audio', file: 'doorClose_1.ogg' } },
+  { name: 'coins', type: 'sfx', source: { kind: 'kenney', kit: 'rpg-audio', file: 'handleCoins.ogg' } },
+  { name: 'page_turn', type: 'sfx', source: { kind: 'kenney', kit: 'rpg-audio', file: 'bookFlip1.ogg' } },
+  { name: 'chop', type: 'sfx', source: { kind: 'kenney', kit: 'rpg-audio', file: 'chop.ogg' } },
   // Music: loops loop via the Web-Audio helper (R2); the jingle is one-shot.
   {
     name: 'bg_loop_upbeat', type: 'music',
@@ -78,6 +105,38 @@ const SOUNDS = [
     name: 'bg_loop_chill', type: 'music',
     source: { kind: 'url', url: 'https://opengameart.org/sites/default/files/Relaxing.mp3' },
     sourceUrl: 'https://opengameart.org/content/calm-loop',
+  },
+  // ── Music batch 2 (2026-07-24). Three loops was too few to give a game a
+  // mood. All CC0, license checked on each asset page individually — OGA hosts
+  // CC-BY and GPL side by side, and "City Loop" was REJECTED on exactly that
+  // (CC-BY-SA 3.0, needs attribution the manifest contract forbids).
+  //
+  // KNOWN QUALITY CAVEAT: playful and dreamy are longer than the 400 KB / 30 s
+  // music budget allows, so they are cut at 28 s with trimSeconds' 0.2 s
+  // fade-out. That fade repeats on every loop cycle as an audible dip — the
+  // cost of the budget, not a mastering choice. gentle (16.7 s) and swing
+  // (25.0 s) fit naturally and are untouched. If loop quality is ever
+  // complained about, the fix is a longer budget (or per-entry bitrate), not
+  // a different track.
+  {
+    name: 'bg_loop_playful', type: 'music',
+    source: { kind: 'url', url: 'https://opengameart.org/sites/default/files/happy_adveture.mp3' },
+    sourceUrl: 'https://opengameart.org/content/happy-adventure-loop', trimSeconds: 28,
+  },
+  {
+    name: 'bg_loop_dreamy', type: 'music',
+    source: { kind: 'url', url: 'https://opengameart.org/sites/default/files/Heavenly%20Loop_0.ogg' },
+    sourceUrl: 'https://opengameart.org/content/heavenly-loop', trimSeconds: 28,
+  },
+  {
+    name: 'bg_loop_gentle', type: 'music',
+    source: { kind: 'url', url: 'https://opengameart.org/sites/default/files/A%20Brand%20New%20Wisdom.ogg' },
+    sourceUrl: 'https://opengameart.org/content/short-loops-background-music-pack', trimSeconds: 28,
+  },
+  {
+    name: 'bg_loop_swing', type: 'music',
+    source: { kind: 'url', url: 'https://opengameart.org/sites/default/files/Swinging%20Sweet_0.ogg' },
+    sourceUrl: 'https://opengameart.org/content/short-loops-background-music-pack', trimSeconds: 28,
   },
   // Kenney jingles are ~1 s stingers — played one-shot via playSound, not looped.
   { name: 'jingle_win', type: 'music', source: { kind: 'kenney', kit: 'music-jingles', file: 'jingles_NES13.ogg' } },

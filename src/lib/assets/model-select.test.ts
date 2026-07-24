@@ -9,7 +9,9 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { selectModelNames, CORE_MODELS, PROMPT_MODEL_CAP, GENRES } from "./model-select";
+import { modelsInGenre } from "./asset-taxonomy";
 import { ASSET_HOST_ORIGIN, type AssetManifest } from "./manifest";
+import manifest from "./manifest.json";
 import type { ChatMessage } from "@/types/chat.types";
 
 const msg = (role: "child" | "assistant", text: string, artifactHtml?: string): ChatMessage =>
@@ -138,11 +140,22 @@ describe("selectModelNames — people / crowd genre (stadium humans, 2026-07-19)
 });
 
 describe("GENRES — data sanity", () => {
-  it("every genre has a trigger and at least one model", () => {
+  const allModels = new Set(
+    (manifest as AssetManifest).assets.filter((a) => a.type === "model").map((a) => a.name),
+  );
+
+  it("every genre has a label, a trigger, and at least one member in the manifest", () => {
     for (const g of GENRES) {
       expect(g.label.length).toBeGreaterThan(0);
-      expect(g.models.length).toBeGreaterThan(0);
       expect(g.trigger.test("")).toBe(false);
+      // Membership now lives on the assets (asset-taxonomy.ts). An empty genre
+      // would render a heading with nothing under it.
+      expect(modelsInGenre(g.id, allModels).length).toBeGreaterThan(0);
     }
+  });
+
+  it("every genre id is distinct (two genres sharing an id would double-render)", () => {
+    const ids = GENRES.map((g) => g.id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });

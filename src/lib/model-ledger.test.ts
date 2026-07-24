@@ -59,6 +59,14 @@ describe("model-decision ledger", () => {
     expect(() => writeDecision(entry())).not.toThrow();
   });
 
+  it("M.5 records the persona so per-persona/per-model failure rates are queryable (owner ask 2026-07-23)", () => {
+    writeDecision(entry({ persona: "bible-teacher", attempts: [{ model: "gemini-3-flash-preview", role: "primary", outcome: "safety", atMs: 13000 }], winner: null, calls: 1 }));
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8").trim()) as DecisionLedger;
+    expect(parsed.persona).toBe("bible-teacher");
+    expect(parsed.attempts[0]!.outcome).toBe("safety");
+    expect(parsed.winner).toBeNull();
+  });
+
   it("M.4 ledgerPath honours the env override", () => {
     expect(ledgerPath()).toBe(file);
   });

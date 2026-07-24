@@ -129,6 +129,35 @@ const EMOJI: Record<string, string> = {
   scientist: "🧑‍🔬",
   police_officer: "👮",
   pirate: "🏴‍☠️",
+
+  // City + vehicles batch 2 (2026-07-24).
+  office_small: "🏢", office_wide: "🏢", office_block: "🏢",
+  flats: "🏬", garden_apartment: "🏡", long_office: "🏢",
+  narrow_tower: "🗼", mall: "🏬",
+  glass_tower: "🏙️", antenna_tower: "📡", white_tower: "🏙️",
+  awning: "⛱️", parasol: "🏖️",
+  family_house: "🏠", bungalow: "🏠", cottage: "🏡", town_house: "🏘️",
+  dark_house: "🏚️", porch_house: "🏡", modern_house: "🏠", modern_villa: "🏛️",
+  stilt_house: "🏕️", garage_house: "🏠",
+  fence: "🚧", low_fence: "🚧", garden_path: "🛤️", stone_path: "🪨",
+  short_driveway: "🛣️", small_tree: "🌲",
+  sedan: "🚙", sports_car: "🏎️", hatchback: "🚗", suv: "🚙", luxury_suv: "🚙",
+  van: "🚐", delivery_van: "📦", truck: "🚚", digger: "🚜",
+  future_car: "🛸", race_kart: "🏎️", traffic_cone: "🚧",
+
+  // The rest of the kit's 18 (2026-07-24).
+  grandpa: "👴",
+  gamer: "🎮",
+  mascot: "🦸",
+  mech: "🤖",
+  purple_mech: "🤖",
+  plumber: "🔧",
+  zombie: "🧟",
+  explorer: "🧭",
+  kimono_woman: "👘",
+  orc: "👹",
+  businessman: "🕴️",
+  ninja: "🥷",
 };
 
 /** Every card gets a face — unknown names fall back to the toy box. */
@@ -149,10 +178,21 @@ const IRREGULAR_PLURALS: Record<string, string> = {
   "ice cream": "ice cream",
   man: "men",
   woman: "women",
+  businessman: "businessmen",
+  "kimono woman": "kimono women",
 };
 
 function plural(name: string): string {
-  return IRREGULAR_PLURALS[name] ?? `${name}s`;
+  const irregular = IRREGULAR_PLURALS[name];
+  if (irregular) return irregular;
+  // Kids read these trigger phrases in the gallery, so a wrong plural is a
+  // visible typo. Handled as RULES, not a growing special-case list:
+  //   already plural → unchanged  ("cherries", never "cherriess")
+  if (/s$/.test(name)) return name;
+  //   consonant + y → -ies        ("strawberry" → "strawberries")
+  //   but vowel + y → -s          ("key" → "keys", "driveway" → "driveways")
+  if (/[^aeiou]y$/.test(name)) return `${name.slice(0, -1)}ies`;
+  return `${name}s`;
 }
 
 export function galleryCards(manifest: AssetManifest = manifestJson as AssetManifest): {

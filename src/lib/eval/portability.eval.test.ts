@@ -29,7 +29,6 @@ function buildRequest(c: EvalCase): GenerationRequest {
     message: c.prompt,
     systemInstruction: buildTurnSystemInstruction(
       { three: true, audio: true },
-      { message: c.prompt, history: [] },
       false,
       c.category === "edit",
       false,

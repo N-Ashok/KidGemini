@@ -78,7 +78,24 @@ describe("trigger phrases — grammar edge cases", () => {
 
   it("people pluralize like people (\"3d men\" / \"3d women\", never \"3d mans\") (2026-07-19)", () => {
     const entry = (name: string) => ({ name, type: "model" as const, url: `${ASSET_HOST_ORIGIN}/${name}.${sha("f").slice(0, 6)}.glb`, bytes: 60_000, license: "CC0" as const, sourceUrl: "https://example.com", sha256: sha("f") });
-    const m: AssetManifest = { assets: [entry("man"), entry("woman")] };
-    expect(galleryCards(m).models.map((c) => c.trigger)).toEqual(["3d men", "3d women"]);
+    const m: AssetManifest = { assets: [entry("man"), entry("woman"), entry("businessman"), entry("kimono_woman")] };
+    expect(galleryCards(m).models.map((c) => c.trigger)).toEqual([
+      "3d men", "3d women", "3d businessmen", "3d kimono women",
+    ]);
+  });
+
+  // Regression (2026-07-24): the gallery showed kids "3d strawberrys" and
+  // "3d cherriess". Fixed as RULES, not a growing special-case list, so every
+  // future -y / already-plural model is right on arrival.
+  it("pluralizes -y and already-plural names correctly", () => {
+    const entry = (name: string) => ({ name, type: "model" as const, url: `${ASSET_HOST_ORIGIN}/${name}.${sha("f").slice(0, 6)}.glb`, bytes: 60_000, license: "CC0" as const, sourceUrl: "https://example.com", sha256: sha("f") });
+    const m: AssetManifest = { assets: [entry("strawberry"), entry("key"), entry("driveway"), entry("cherries"), entry("flats")] };
+    expect(galleryCards(m).models.map((c) => c.trigger)).toEqual([
+      "3d strawberries", // consonant + y → -ies
+      "3d keys", // vowel + y → -s, unchanged
+      "3d driveways", // vowel + y → -s, unchanged
+      "3d cherries", // already plural → unchanged
+      "3d flats", // already plural → unchanged
+    ]);
   });
 });

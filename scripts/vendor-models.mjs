@@ -360,6 +360,56 @@ const MODELS = [
   { name: 'driveway', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/city-kit-suburban/2c871b7af2-1745479373/kenney_city-kit-suburban_20.zip', innerPath: 'Models/GLB format/driveway-long.glb' }, sourceUrl: 'https://kenney.nl/assets/city-kit-suburban' },
   { name: 'planter', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/city-kit-suburban/2c871b7af2-1745479373/kenney_city-kit-suburban_20.zip', innerPath: 'Models/GLB format/planter.glb' }, sourceUrl: 'https://kenney.nl/assets/city-kit-suburban' },
 
+  // ── City batch 2 (2026-07-24). The city genre was the library's weakest —
+  // 7 models built from 81 already sitting in the cached zips. Named from
+  // renders of the actual GLBs (the kits ship letter names only: building-a,
+  // building-type-a…). The kits' `low-detail-*` files are LOD duplicates of
+  // the same buildings, deliberately skipped.
+  ...[
+    // Commercial — offices, blocks, towers.
+    ['office_small', 'building-a'], ['office_wide', 'building-e'], ['office_block', 'building-f'],
+    ['flats', 'building-i'], ['garden_apartment', 'building-j'], ['long_office', 'building-k'],
+    ['narrow_tower', 'building-m'], ['mall', 'building-n'],
+    ['glass_tower', 'building-skyscraper-a'], ['antenna_tower', 'building-skyscraper-c'],
+    ['white_tower', 'building-skyscraper-e'],
+    // Shopfront details.
+    ['awning', 'detail-awning'], ['parasol', 'detail-parasol-a'],
+  ].map(([name, file]) => ({
+    name,
+    source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/city-kit-commercial/a742d900eb-1753115042/kenney_city-kit-commercial_2.1.zip', innerPath: `Models/GLB format/${file}.glb` },
+    sourceUrl: 'https://kenney.nl/assets/city-kit-commercial',
+  })),
+  ...[
+    // Suburban — houses and street furniture.
+    ['family_house', 'building-type-f'], ['bungalow', 'building-type-h'], ['cottage', 'building-type-j'],
+    ['town_house', 'building-type-k'], ['dark_house', 'building-type-l'], ['porch_house', 'building-type-n'],
+    ['modern_house', 'building-type-p'], ['modern_villa', 'building-type-q'],
+    ['stilt_house', 'building-type-r'], ['garage_house', 'building-type-u'],
+    ['fence', 'fence'], ['low_fence', 'fence-low'],
+    ['garden_path', 'path-long'], ['stone_path', 'path-stones-long'],
+    ['short_driveway', 'driveway-short'], ['small_tree', 'tree-small'],
+  ].map(([name, file]) => ({
+    name,
+    source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/city-kit-suburban/2c871b7af2-1745479373/kenney_city-kit-suburban_20.zip', innerPath: `Models/GLB format/${file}.glb` },
+    sourceUrl: 'https://kenney.nl/assets/city-kit-suburban',
+  })),
+
+  // ── Vehicles batch 2 (2026-07-24). car-kit ships semantic filenames, so no
+  // render pass was needed. Note the existing `car` is race.glb and
+  // `pickup_truck` is truck.glb — hence `sedan`/`flatbed_truck` below rather
+  // than re-taking those names. debris-* (crash parts) and wheel-* are skipped:
+  // too niche for a kids' catalog and they'd crowd the prompt.
+  ...[
+    ['sedan', 'sedan'], ['sports_car', 'sedan-sports'], ['hatchback', 'hatchback-sports'],
+    ['suv', 'suv'], ['luxury_suv', 'suv-luxury'], ['van', 'van'],
+    ['delivery_van', 'delivery'], ['truck', 'truck-flat'], ['digger', 'tractor-shovel'],
+    ['future_car', 'race-future'], ['race_kart', 'kart-oodi'], ['traffic_cone', 'cone'],
+  ].map(([name, file]) => ({
+    name,
+    source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/car-kit/1a312ec241-1775131960/kenney_car-kit.zip', innerPath: `Models/GLB format/${file}.glb` },
+    sourceUrl: 'https://kenney.nl/assets/car-kit',
+  })),
+
   // Race track pieces (new kit this batch — racing-kit, CC0 confirmed on the kenney.nl page).
   { name: 'race_track_straight', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadStraight.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
   { name: 'race_track_curve', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadCurved.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
@@ -380,9 +430,24 @@ const MODELS = [
   // catalog shouldn't teach. Clip names are exact (dash-separated) matches.
   // Names must stay in lockstep with PEOPLE_MODELS in
   // src/lib/assets/model-select.ts (people genre + people-clips prompt line).
+  // Batch 2 (2026-07-24): the other 12 of the kit's 18. Same zip (already
+  // pinned + cached), same rig, same clip set — ~63 KB each, so this is the
+  // cheapest variety in the library. Identified from the kit's Previews/*.png;
+  // Overview.html carries no semantic names, only letters a–r, so these names
+  // are OUR reading of the art. Named for what they visibly ARE:
+  //   - NO 'boy'/'child' here. Every one of the 18 shares ONE adult body, so a
+  //     child would be a lie the model acts on ("make the boy smaller than the
+  //     man" would silently do nothing). Real child proportions need the
+  //     160 KB budget + Quaternius Teen — tracked separately.
+  //   - The kit is heavily male-presenting: only character-n reads female.
+  //     This batch buys variety of ROLE, not of age or gender.
   ...[
     ['man', 'character-b'], ['woman', 'character-f'], ['girl', 'character-e'],
     ['scientist', 'character-i'], ['police_officer', 'character-j'], ['pirate', 'character-p'],
+    ['grandpa', 'character-a'], ['gamer', 'character-c'], ['mascot', 'character-d'],
+    ['mech', 'character-g'], ['purple_mech', 'character-h'], ['plumber', 'character-k'],
+    ['zombie', 'character-l'], ['explorer', 'character-m'], ['kimono_woman', 'character-n'],
+    ['orc', 'character-o'], ['businessman', 'character-q'], ['ninja', 'character-r'],
   ].map(([name, file]) => ({
     name,
     source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/blocky-characters/8369c0cf30-1749547469/kenney_blocky-characters_20.zip', innerPath: `Models/GLB format/${file}.glb` },

@@ -117,13 +117,22 @@ never dead-end prod (`src/lib/model-fallback.ts`).
      `route.ts` writes one JSON line per model-call episode (kind = chat /
      strict-edit / regen, all sharing the request's `replyId`) to
      **`logs/model-decisions.jsonl`** (`src/lib/model-ledger.ts`, 10MB cap,
-     fail-safe). Each line: `{ts, reqId, userId, kind, chain, attempts[{model,
-     role, outcome, atMs, chars?}], winner, calls}`. **Metadata only** —
-     response bodies are NOT stored (the winner's body already lives in
+     fail-safe). Each line: `{ts, reqId, userId, kind, persona, chain,
+     attempts[{model, role, outcome, atMs, chars?}], winner, calls}`. **Metadata
+     only** — response bodies are NOT stored (the winner's body already lives in
      `turn_results`; storing losers' bodies is the deferred "saved runner-up",
      see PRD-INSTANT-ALTERNATE §1). Query with `jq`, e.g. requests that fired
      >1 call: `jq 'select(.calls>1)' logs/model-decisions.jsonl`. Pinned by
-     `model-ledger.test.ts` M.1–M.4 and `model-runner.logging.test.ts` L.4–L.6.
+     `model-ledger.test.ts` M.1–M.5 and `model-runner.logging.test.ts` L.4–L.6.
+   - **Per-persona, per-model failure rate (2026-07-23).** `persona` is recorded
+     on every ledger line so a model's failure rate can be sliced by persona —
+     the owner question "does one model keep safety-blocking bible-teacher
+     builds?" A safety block fails CLOSED (no fallback), so a bible safety-block
+     always lands on the PRIMARY model. Report:
+     `node scripts/model-failures.mjs` → a persona × model table of
+     attempts/won/safety + a verdict on whether bible-teacher blocks come from a
+     single model (→ a per-persona model swap would remove them). Records written
+     before this change show `persona:"(unrecorded)"`.
    - **Losing-call cost is billed (2026-07-21).** The ledger exposed that a
      fan-out fires several *billable* calls while only the winner hit
      `usage_events`. Now a one-shot backup that finishes after the winner is

@@ -62,7 +62,7 @@ import { searchChats } from "@/lib/chat-search";
 import { appendPage, chatToAutoRestore, mergeRecents, SYNC_FLAG } from "@/lib/chat-sync";
 import { loadSidebarCollapsed, saveSidebarCollapsed } from "@/lib/sidebar-pane";
 import type { ConvoSummary } from "@/types/chat-history.types";
-import { pickSuggestions } from "@/lib/game-suggestions";
+import { suggestionsFor } from "@/lib/game-suggestions";
 import { shouldAutoRetry } from "@/lib/stream-recovery";
 import { pollTurnResult } from "@/lib/turn-resume";
 import { savePendingTurn, clearPendingTurn, loadPendingTurn } from "@/lib/pending-turn";
@@ -187,7 +187,9 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   // an effect — not at render — so the server HTML matches the first client
   // render (random at render = hydration mismatch).
   const [suggestions, setSuggestions] = useState<string[]>([]);
-  useEffect(() => setSuggestions(pickSuggestions(4)), [activeId]);
+  // Pool follows the surface: a Bible teacher gets scripture starters, not
+  // dinosaurs and aliens (owner report 2026-07-24).
+  useEffect(() => setSuggestions(suggestionsFor(persona)), [activeId, persona]);
   const tts = useTextToSpeech();
   // Screen lock kills the socket mid-stream on phones — keep the screen awake
   // while a reply is streaming (BUG-FIX-LOG 2026-07-09).

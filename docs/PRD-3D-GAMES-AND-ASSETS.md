@@ -765,14 +765,37 @@ side; the manifest `url` field never changes.
 
 ## 14. Scale ceilings & revisit triggers
 
-- **Catalog size:** the retrieval step is BUILT (2026-07-13,
-  `src/lib/assets/model-select.ts`, when the owner took the library to 50):
-  the manifest is unbounded; each build-turn prompt teaches ≤ 30 models
-  selected by cheap regex — models the iterated game already uses (its
-  `USES_MODELS` markers) > names the kid said > genre keyword matches >
-  a small core set. Genre → models data is shared with the prompt's hint
-  lines (single source of truth). Manifest sanity ceiling 60 (test) —
-  revisit selection priorities at the next doubling.
+- **Catalog size:** *Amendment 3 (2026-07-24) — per-message retrieval is
+  RETIRED from the build-turn prompt; the catalog now teaches the WHOLE
+  library, grouped by category (`prompt-catalog.ts`).* Two reasons, both
+  load-bearing:
+  1. **Correctness.** Retrieval picked models from the CHILD's words, but the
+     catalog is consumed by the LLM's DESIGN decisions, which happen after
+     selection. "Make me a fun game" triggered no genre, so the model was
+     taught 6 of 106 models, then built a pizza restaurant out of primitives
+     while 19 food models sat unused. `inject.ts` resolves `USES_MODELS`
+     against the **full manifest**, so those names always worked — the prompt
+     was simply withholding them. The gap widened with the library: 28% of
+     models visible at 106, 10% at the 300 target.
+  2. **Cost.** A system prompt that varies per message breaks Gemini implicit
+     caching on the whole append-only prefix behind it, including ~10–15k
+     tokens of repeated game code (`COST_TOKEN_BUDGET.md` waste-ledger #4,
+     ~₹20–30/day). A byte-stable catalog is what lets that cache hit.
+
+  Measured cost: **~889 tokens at 106 models**, replacing a 150–290-token
+  *varying* block. New ceiling is **1,500 tokens (pinned by test)** — past it,
+  fall back to a category-map hybrid (headings + counts static, exact names
+  retrieved). `selectModelNames`/`PROMPT_MODEL_CAP` are retained, unwired, as
+  that documented fallback. Catalog tokens now grow linearly with the library
+  (~3k at 1000 models) — the accepted trade for full design visibility.
+
+  Genre **membership** moved off the hardcoded `GENRES[].models` arrays onto
+  the assets themselves (`asset-taxonomy.ts`), so adding a model can no longer
+  desync from selection or the prompt. `GENRES` keeps label + trigger only.
+  Shared-animation-clip sets are keyed by a `rig` field, deliberately NOT by
+  genre — the `people` genre also holds `grandstand`, and a stadium must never
+  be described to the model as having a walk cycle. Manifest sanity ceiling
+  120 (test) — revisit at the next doubling.
 - **First-load transfer:** revisit if games want > 5 models or longer music
   (raise the 2 MB transfer cap deliberately, or add per-genre asset
   bundles — never per-game embedding again).

@@ -57,6 +57,12 @@ export const MIME_BY_TYPE: Record<AssetType, string> = {
 };
 
 const NAME_RE = /^[a-z0-9_]{2,32}$/;
+/** A trailing `_<digits>` is unique but says nothing — `tree_2` teaches the LLM
+ *  and the gallery exactly as much as `tree`. Banned so a growing library stays
+ *  self-describing; the convention is `{specific}_{category}` (`oak_tree`).
+ *  Names are baked into the immutable URL, so this can only be enforced at the
+ *  moment of minting — there is no rename later. */
+const NUMBERED_DUPLICATE_RE = /_\d+$/;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 /** Hash fragment length in the filename — enough that a collision within one
  *  name is unrealistic, short enough to stay a readable URL (car.a3f8c2.glb). */
@@ -78,6 +84,12 @@ export function assetUrl(fileName: string): string {
 /** Throws with a precise reason on the first rule an entry breaks. */
 export function validateEntry(e: AssetEntry): void {
   if (!NAME_RE.test(e.name)) throw new Error(`asset name must match ${NAME_RE}: "${e.name}"`);
+  if (NUMBERED_DUPLICATE_RE.test(e.name)) {
+    throw new Error(
+      `asset name "${e.name}" ends in a number — use a descriptive {specific}_{category} name ` +
+        `(e.g. "oak_tree", not "tree_2"): the name is permanent and is all the catalog can match on`,
+    );
+  }
   if (!(e.type in BUDGET_BYTES)) throw new Error(`unknown asset type "${e.type}" for "${e.name}"`);
   const allowedLicense = e.type === "engine" ? ["CC0", "MIT"] : ["CC0"];
   if (!allowedLicense.includes(e.license)) {

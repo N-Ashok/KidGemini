@@ -33,10 +33,15 @@
 // NODE_ENV is inlined per build — server & client render identical hrefs.
 import { usePathname } from "next/navigation";
 import { signIn, useSession } from "@/lib/useAriantraSession";
+import { isTabActive, mobileTabs } from "@/lib/nav-tabs";
 
 const DEV = process.env.NODE_ENV === "development";
 const WWW_URL = DEV ? "http://localhost:3000" : "https://ariantra.com";
 const GAMES_URL = DEV ? "http://localhost:3000/catalog" : "https://games.ariantra.com";
+// Bible listing is its OWN platform route, NOT a child of the catalog path —
+// in dev the catalog is /catalog while Bible games are /bible-games, so this
+// cannot be derived from GAMES_URL. Matches PublishToArcade's "view it" link.
+const BIBLE_GAMES_URL = DEV ? "http://localhost:3000/bible-games" : "https://games.ariantra.com/bible-games";
 const STUDIO_URL = DEV ? "http://localhost:3000/studio" : "https://studio.ariantra.com";
 // 2026-07-11 CTA revamp: the loud CTA creates a game. On Ari itself that
 // means starting a new chat — "/" — not a cross-site hop (guarded by ar-cta.test.ts).
@@ -94,21 +99,19 @@ export function ArNav() {
           </div>
         </div>
       </header>
+      {/* Tabs are per-surface (src/lib/nav-tabs.ts): the Bible-teacher surface
+          sends Arcade to the Bible listing and drops the kid-only Parent tab. */}
       <nav className="ar-tabbar" aria-label="Primary">
-        <a href="/" className={`ar-tab ${pathname === "/" ? "on" : ""}`}>
-          <span className="ar-tab-icon" aria-hidden="true">💬</span>Chat
-        </a>
-        <a href={GAMES_URL} className="ar-tab">
-          <span className="ar-tab-icon" aria-hidden="true">🎮</span>Arcade
-        </a>
-        {/* "Game Stuff" gallery (PRD-3D-GAMES-AND-ASSETS §9b): discovery IS
-            the feature — an invisible library never gets asked for. */}
-        <a href="/assets" className={`ar-tab ${pathname === "/assets" ? "on" : ""}`}>
-          <span className="ar-tab-icon" aria-hidden="true">🧰</span>Toy Box
-        </a>
-        <a href="/parent" className={`ar-tab ${pathname === "/parent" ? "on" : ""}`}>
-          <span className="ar-tab-icon" aria-hidden="true">👪</span>Parent
-        </a>
+        {mobileTabs(pathname ?? "/", GAMES_URL, BIBLE_GAMES_URL).map((tab) => (
+          <a
+            key={tab.id}
+            href={tab.href}
+            className={`ar-tab ${isTabActive(tab, pathname ?? "/") ? "on" : ""}`}
+          >
+            <span className="ar-tab-icon" aria-hidden="true">{tab.icon}</span>
+            {tab.label}
+          </a>
+        ))}
       </nav>
     </>
   );

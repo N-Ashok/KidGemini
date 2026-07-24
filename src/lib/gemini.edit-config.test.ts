@@ -35,17 +35,17 @@ describe("buildTurnSystemInstruction — isEdit param", () => {
   });
 
   it("isEdit=true appends the edit section", () => {
-    const full = buildTurnSystemInstruction({ three: true, audio: true }, undefined, true, true);
+    const full = buildTurnSystemInstruction({ three: true, audio: true }, true, true);
     expect(full).toContain(GAME_EDIT_PROMPT_SECTION);
   });
 
   it("isEdit=true still carries the full child-safety base prompt (safety rules never dropped)", () => {
-    const full = buildTurnSystemInstruction({ three: false, audio: false }, undefined, false, true);
+    const full = buildTurnSystemInstruction({ three: false, audio: false }, false, true);
     expect(full.startsWith(CHILD_SYSTEM_PROMPT)).toBe(true);
   });
 
   it("isEdit=true with everything else off is exactly base + edit section", () => {
-    const full = buildTurnSystemInstruction({ three: false, audio: false }, undefined, false, true);
+    const full = buildTurnSystemInstruction({ three: false, audio: false }, false, true);
     expect(full).toBe(`${CHILD_SYSTEM_PROMPT}\n\n${GAME_EDIT_PROMPT_SECTION}`);
   });
 });

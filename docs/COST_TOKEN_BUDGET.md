@@ -29,7 +29,7 @@ investigate (see Monitoring).
 |---|---|---|---|
 | Child-safety system prompt | ~1,100 | input, every turn | stable, necessary |
 | 3D engine section (keyword/artifact-gated) | ~450 | input, 3D turns | `catalog-gate.ts` |
-| Model catalog (retrieval-lite subset of the library) | ~150–290 | input | `prompt-catalog.ts` |
+| Model catalog (**the whole library**, 106 models) | ~889 | input | `prompt-catalog.ts` — static since 2026-07-24 (was a varying 150–290; see waste ledger #4). Grows with the library; ceiling 1,500 pinned by test |
 | Audio catalog (keyword-gated) | ~150 | input | |
 | Newest game's code in history | ~10–15k | input, every iteration turn | older versions stripped to placeholders (`history-trim.ts`, 12-msg window) |
 | Kid's message (+ folded text attachment) | 10–100+ | input | |
@@ -64,12 +64,43 @@ now over-estimate at the top flash rate, never $0).
 2. **Premium model on every turn** — ✅ fixed: cost-aware chain above.
 3. **Invisible metering** — ✅ fixed: full-reply output metering (route
    M.1 test) + real prices + no-$0-for-unknown-models.
-4. **Prefix caching likely never hits** (est. ₹20–30/day) — OPEN. The
-   builder system prompt varies per message (retrieval-lite re-picks
-   models), breaking Gemini implicit caching on the otherwise append-only
-   request prefix (the repeated game code would ride the ~70–90% cached-input
-   discount). Fix: stabilize the builder system prompt per conversation.
-   **Measure first** — see next section.
+4. **Prefix caching never hits** — **MEASURED 2026-07-24: 3.7%.** Fix shipped,
+   effect not yet re-measured.
+
+   Baseline (local dev DB, trailing 14 days, `usage_events`):
+
+   | rows | billedPromptTokens | cachedTokens | cached % |
+   |---|---|---|---|
+   | 225 | 1,135,094 | 42,482 | **3.7%** |
+
+   The suspicion was right: caching is effectively absent. The builder system
+   prompt varied per message (retrieval-lite re-picked models per turn),
+   breaking Gemini implicit caching on the otherwise append-only request
+   prefix — including the ~10–15k tokens of repeated game code behind it,
+   which would otherwise ride the ~70–90% cached-input discount.
+
+   **Fix shipped 2026-07-24:** the build-turn model catalog is now static and
+   conversation-stable (`prompt-catalog.ts`; PRD-3D-GAMES-AND-ASSETS §14
+   Amendment 3). The whole builder system prompt is now byte-identical across
+   messages — pinned by a test, so it cannot silently regress. Costs ~889
+   catalog tokens instead of a varying 150–290, which is the trade being made.
+
+   **Caveats — do not over-read this number:**
+   - It is the **local dev** DB (225 turns/14d), not production. The rate is
+     suggestive; the number that matters is on EC2
+     (`/var/lib/kidgemini/kidgemini.db`). The old ₹20–30/day estimate is
+     unverified and was NOT confirmed by this measurement.
+   - Dev testing opens many short, fresh conversations, which cache poorly
+     regardless of prompt stability. So 3.7% is **consistent with** the
+     prompt-variance hypothesis without isolating it as the sole cause.
+   - The baseline is historical: rows written after 2026-07-24 reflect the new
+     behaviour. Compare pre/post by `createdAt`.
+
+   **Re-measure** on prod with the same query, split by `createdAt` either side
+   of the deploy. If the rate does not move materially, the remaining suspect
+   is conversation-shape (short sessions), not the system prompt — and the
+   catalog's ~600 extra tokens should then be reconsidered against the
+   category-map hybrid fallback.
 5. **Sticky builder mode** (~₹0.3/turn) — ACCEPTED. After any game exists,
    every turn pays the (capped) thinking budget; deliberate, because
    iteration asks don't say "game".

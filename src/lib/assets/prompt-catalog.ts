@@ -5,10 +5,10 @@
 // bundle's exports, the render-budget rules to §7, and the model names to
 // the manifest. Pure strings, no I/O (the manifest is a static import).
 
-import type { ChatMessage } from "@/types/chat.types";
 import type { AssetManifest } from "./manifest";
 import manifestJson from "./manifest.json";
-import { GENRES, PEOPLE_MODELS, selectModelNames } from "./model-select";
+import { modelsInGenre } from "./asset-taxonomy";
+import { GENRES, peopleModels } from "./model-select";
 
 /** Names the vendored engine bundle exports — MUST stay in lockstep with
  *  THREE_EXPORTS in scripts/vendor-three.mjs (pinned by test). Exported as
@@ -63,49 +63,62 @@ should stay 2D, in which case skip the marker below.) To build in 3D:
    scenery rather than adding many distinct objects), so it stays smooth on
    phones, tablets and Chromebooks.`;
 
-/** Per-genre model hints (Phase F): which toy-box models fit which game
- *  ideas. The genre → models data lives in model-select.ts (one source of
- *  truth with prompt selection). Each line renders only names actually being
- *  taught this turn — a hint can never mention an untaught model — and
- *  genres with nothing available disappear entirely. */
-function genreHints(available: Set<string>): string {
-  const lines = GENRES
-    .map((g) => [g.label, g.models.filter((n) => available.has(n))] as const)
-    .filter(([, names]) => names.length > 0)
-    .map(([genre, names]) => `   - ${genre}: ${names.join(", ")}`);
+/** The library, grouped into category lines. Every model appears exactly ONCE,
+ *  under its primary (first-declared) genre: the model reads the whole index, so
+ *  cross-listing `car` under both racing and city would spend tokens to repeat
+ *  what it already knows. Categories with nothing available vanish. */
+function categoryLines(available: Set<string>): string {
+  const claimed = new Set<string>();
+  const lines: string[] = [];
+  for (const genre of GENRES) {
+    const names = modelsInGenre(genre.id, available).filter((n) => !claimed.has(n));
+    if (names.length === 0) continue;
+    for (const n of names) claimed.add(n);
+    lines.push(`   - ${genre.label}: ${names.join(", ")}`);
+  }
+  // Anything the taxonomy somehow missed still gets taught — the catalog must
+  // never be a subset of the manifest, or the model is told an asset it can
+  // legitimately load does not exist.
+  const orphans = [...available].filter((n) => !claimed.has(n));
+  if (orphans.length > 0) lines.push(`   - other: ${orphans.join(", ")}`);
   return lines.join("\n");
 }
 
-/** The chat turn a prompt is being built for — lets the model catalog select
- *  a per-message subset (retrieval-lite, PRD §14) instead of teaching the
- *  whole library. Without it, the full catalog is taught (tests, small
- *  libraries). */
-export interface PromptTurnContext {
-  message: string;
-  history: ChatMessage[];
-}
-
 /**
- * The named model catalog (§5b) — generated from the manifest so the names
- * the prompt teaches are exactly the names the injector can resolve. With a
- * turn context, teaches only the retrieval-lite selection for that message
- * (≤ PROMPT_MODEL_CAP names). Empty string when nothing to teach.
+ * The named model catalog (§5b) — generated from the manifest so the names the
+ * prompt teaches are exactly the names the injector can resolve. Empty string
+ * when there is nothing to teach.
+ *
+ * Teaches the WHOLE library, grouped by category, and deliberately does NOT
+ * vary with the child's message (2026-07-24). Two reasons, both load-bearing:
+ *
+ * 1. Correctness. Selection ran on the CHILD's words, but this catalog is
+ *    consumed by the LLM's DESIGN decisions, which happen afterwards. A child
+ *    saying "make me a fun game" triggered no genre, so the model was taught 6
+ *    of 106 models, then hand-rolled cubes for a pizza restaurant while 19 food
+ *    models sat unused. inject.ts resolves markers against the full manifest, so
+ *    every name always worked — we simply were not telling the model they exist.
+ * 2. Cost. A system prompt that varies per message breaks Gemini implicit
+ *    caching on the whole append-only prefix behind it, including ~10-15k tokens
+ *    of repeated game code (COST_TOKEN_BUDGET.md waste-ledger #4). Byte-stable
+ *    output is what lets that cache hit.
+ *
+ * The trade-off is that catalog tokens now grow with the library instead of
+ * being capped. prompt-catalog.test.ts pins the ceiling; past it, fall back to a
+ * category-map hybrid (headings + counts static, exact names retrieved).
  */
 export function modelsPromptSection(
   manifest: AssetManifest = manifestJson as AssetManifest,
-  context?: PromptTurnContext,
 ): string {
-  let models = manifest.assets.filter((a) => a.type === "model");
-  if (context) {
-    const selected = new Set(selectModelNames({ ...context, manifest }));
-    models = models.filter((m) => selected.has(m.name));
-  }
+  const models = manifest.assets.filter((a) => a.type === "model");
   if (models.length === 0) return "";
-  const names = models.map((m) => m.name).join(", ");
-  const people = models.map((m) => m.name).filter((n) => PEOPLE_MODELS.includes(n));
-  const hints = genreHints(new Set(models.map((m) => m.name)));
+  const available = new Set(models.map((m) => m.name));
+  const people = peopleModels(available);
+  const categories = categoryLines(available);
   return `**Ready-made 3D models**: for a 3D game you may ALSO use these
-professional low-poly models from the toy box: ${names}.
+professional low-poly models from the toy box — this is the COMPLETE list, so
+design your game around what is actually here:
+${categories}
 1. Add a second marker line right after \`<!--USES_THREE-->\` naming ONLY the
    models you use, e.g. \`<!--USES_MODELS: ${models[0]!.name}-->\` (comma-separated;
    only names from the list above). NEVER invent a model name — an unlisted name
@@ -138,9 +151,7 @@ professional low-poly models from the toy box: ${names}.
    excitement); "sprint" is the running clip, "walk" the walking one. For a
    crowd, call loadModel again for each person (the download is cached, so
    extras are free) — do NOT .clone() a person: cloned characters share one
-   skeleton and animate wrong. Each person needs their own AnimationMixer.` : ""}${hints ? `
-6. Good fits by game idea (use the ones that match, skip the rest):
-${hints}` : ""}`;
+   skeleton and animate wrong. Each person needs their own AnimationMixer.` : ""}`;
 }
 
 /**

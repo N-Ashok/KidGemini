@@ -11,6 +11,19 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+### 2026-07-24 — The Game Stuff gallery told kids to say "3d strawberrys"
+
+- **Symptom (what the user saw):** The asset gallery's trigger phrase for the strawberry model read **"3d strawberrys"**. Found while auditing plurals during the 106 → 159 catalog expansion, not reported by a user — but it is on a page built for children to read aloud.
+- **Surface area:** `plural()` in `src/lib/assets/gallery.ts`, rendered into every model card's `trigger` by `galleryCards()` and shown on `src/app/assets/page.tsx`.
+- **Root cause:** `plural()` was `IRREGULAR_PLURALS[name] ?? \`${name}s\`` — a hardcoded exception list (fish, police, hero, ice cream, man, woman) plus naive `+s` for everything else. English `-y` and already-plural nouns were never handled, so correctness depended on somebody remembering to add each new name to the list. The expansion made that failure mode concrete: `strawberry` → "strawberrys", and `cherries` → "cherriess" (a second instance the audit surfaced only because I went looking).
+- **Fix:** Replaced the guesswork with rules, in `plural()`: already ends in `s` → unchanged; consonant + `y` → `-ies`; vowel + `y` → `-s` (so "keys"/"driveways" stay right); otherwise `+s`. The irregular list stays for genuinely irregular words and gained `businessman` → "businessmen" and `kimono woman` → "kimono women" from this batch.
+- **Result (verified):** `src/lib/assets/gallery.test.ts` — new case pins `strawberry`→"strawberries", `cherries`→"cherries", `flats`→"flats", and that `key`/`driveway` are NOT changed; the existing people case extended to the two new compound names. Swept all 159 committed models afterwards: no remaining bad plurals. `npm run test` 1254 passing, `tsc --noEmit` clean.
+- **Impact:** Cosmetic but kid-facing, on the one page whose entire job is teaching children the words to say. No behaviour change to model loading or the prompt catalog (`trigger` is gallery copy only).
+- **Prevention:** Class — **a correctness rule implemented as a hand-maintained exception list**, so every new asset silently inherits the bug until someone notices. Same shape as the genre-membership arrays retired the same day (`asset-taxonomy.ts`). Guard: the new test asserts the *rules*, not four specific words, so future `-y` and already-plural models are right on arrival rather than needing a new list entry.
+- **Related:** Same-day `asset-taxonomy.ts` migration (membership moved off hand-maintained arrays onto the assets); REGRESSION-TEST-CATALOG row for `gallery.ts`.
+
+---
+
 ### 2026-07-24 — Publish showed the naming screen, took it away, then brought it back
 
 - **Symptom (what the user saw):** Pressing 🚀 Publish in the preview showed **"Name your game!"** for a few seconds, then it was replaced by **"What are we doing? 🎮"**, and then the naming screen appeared *again* — three modals for one decision, reading as a broken/looping sheet.

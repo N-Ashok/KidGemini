@@ -6,7 +6,7 @@ import { GoogleGenAI } from "@google/genai";
 import type { ChatMessage, ChatModel, ImageAttachment, StreamChunk, TokenUsage } from "@/types/chat.types";
 import type { ChainSummary } from "@/types/model-ledger.types";
 import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
-import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection, type PromptTurnContext } from "./assets/prompt-catalog";
+import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection } from "./assets/prompt-catalog";
 import { catalogGates, type CatalogGates } from "./assets/catalog-gate";
 import { multiplayerGate } from "./multiplayer-gate";
 import { MULTIPLAYER_PROMPT_SECTION } from "./multiplayer-prompt";
@@ -352,7 +352,6 @@ function personaBasePrompt(persona: PersonaId): string {
  *  tests. */
 export function buildTurnSystemInstruction(
   gates: CatalogGates = { three: true, audio: true },
-  context?: PromptTurnContext,
   multiplayer = true,
   isEdit = false,
   repeated = false,
@@ -360,7 +359,7 @@ export function buildTurnSystemInstruction(
 ): string {
   const base = personaBasePrompt(persona);
   const sections = [
-    ...(gates.three ? [THREE_PROMPT_SECTION, modelsPromptSection(undefined, context)] : []),
+    ...(gates.three ? [THREE_PROMPT_SECTION, modelsPromptSection()] : []),
     ...(gates.audio ? [audioPromptSection()] : []),
     ...(multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),
     ...(isEdit ? [GAME_EDIT_PROMPT_SECTION] : []),
@@ -641,7 +640,7 @@ export class GeminiChatModel implements ChatModel {
     console.log(`[gemini] builder mode — thinking on, extended output, persona=${persona.id}, catalogs: 3d=${gates.three} audio=${gates.audio} multiplayer=${wantsMultiplayer} edit=${isEdit} repeated=${repeated}`);
     return {
       ...GEN_CONFIG,
-      systemInstruction: buildTurnSystemInstruction(gates, { message: input.message, history: input.history }, wantsMultiplayer, isEdit, repeated, persona.id),
+      systemInstruction: buildTurnSystemInstruction(gates, wantsMultiplayer, isEdit, repeated, persona.id),
       safetySettings: persona.safetySettings,
       ...builderGenOverrides(process.env),
     };

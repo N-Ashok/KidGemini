@@ -98,6 +98,28 @@ describe("validateEntry — every field is load-bearing", () => {
   });
 });
 
+// The catalog is about to grow ~106 → ~300, and a name is the ONLY thing the LLM
+// and the gallery can reason about — it is baked into the immutable URL, so it
+// can never be corrected later. This rule keeps every new name self-describing
+// instead of a numbered duplicate.
+describe("validateEntry — the naming convention is machine-enforced", () => {
+  it.each([["tree_2"], ["building_7"], ["character_12"]])(
+    "rejects the numbered-duplicate name %s — it carries no retrieval signal",
+    (name) => {
+      expect(() => validateEntry(entry({ name, url: `${ASSET_HOST_ORIGIN}/${name}.a3f8c2.glb` }))).toThrow(
+        /name|suffix/i,
+      );
+    },
+  );
+
+  it.each([["oak_tree"], ["fire_truck"], ["corner_shop"], ["bg_loop_upbeat"]])(
+    "accepts the descriptive name %s ({specific}_{category})",
+    (name) => {
+      expect(() => validateEntry(entry({ name, url: `${ASSET_HOST_ORIGIN}/${name}.a3f8c2.glb` }))).not.toThrow();
+    },
+  );
+});
+
 describe("validateManifest — cross-entry rules", () => {
   it("rejects duplicate names (catalog names must be unambiguous for the model)", () => {
     expect(() => validateManifest({ assets: [entry(), entry()] })).toThrow(/duplicate/i);
