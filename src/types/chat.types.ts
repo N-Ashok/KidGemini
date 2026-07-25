@@ -27,6 +27,13 @@ export interface ChatMessage {
    *  choices — "New game 🎮" / "Change this one ✏️" — and nothing was rebuilt:
    *  the current game is untouched until the child chooses. Cleared once chosen. */
   newGamePrompt?: boolean;
+  /** Set on an assistant reply that told the child a 2D→3D conversion is a
+   *  whole NEW game (owner decision 2026-07-26). The bubble renders ONE OK
+   *  button — no fork: tapping it opens a fresh chat seeded with the 2D game
+   *  (edit-entry.ts's threeDConversation) and builds the 3D version there,
+   *  so the 2D game survives here and the child knowingly has two games.
+   *  Cleared once tapped. */
+  threeDNewGame?: boolean;
   /** Set on an assistant reply generated while a "Continue from here" pin was
    *  active (chat-rewind.ts) — which message it was built on. Conversation.
    *  activeGameMessageId is cleared the instant the turn is sent, so without

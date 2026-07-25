@@ -70,6 +70,29 @@ export function applySeed(convo: Conversation, game: { name: string; html: strin
   };
 }
 
+/** 2D→3D conversion = a NEW game (owner decision 2026-07-26): the fresh chat
+ *  the child lands in after tapping OK, seeded with their 2D game so the model
+ *  has the real source to rebuild from (the send that follows goes out with
+ *  forceRebuild, which skips the server's conversion guard). Deliberately NOT
+ *  slug-bound, unlike seedingConversation — this is a second, separate game;
+ *  publishing it must never overwrite the 2D one. */
+export function threeDConversation(workspace: Workspace, game: { title: string; html: string }): Conversation {
+  return {
+    id: crypto.randomUUID(),
+    title: `${game.title} in 3D`.slice(0, 40),
+    messages: [
+      {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        text: `This is your NEW 3D game's chat! 🎉 Your 2D game **${game.title}** is safe in its own chat — that makes TWO games you've made. Here's the 2D version I'm building the 3D one from:`,
+        artifactHtml: game.html,
+        createdAt: Date.now(),
+      },
+    ],
+    ...(workspace === "bible-teacher" ? { workspace } : {}),
+  };
+}
+
 /** The seed failed: say exactly what to do next (house UX rule — no dead
  *  ends), and DROP the slug binding so a later publish from this chat can't
  *  overwrite a game whose code was never loaded. Copy promises nothing we

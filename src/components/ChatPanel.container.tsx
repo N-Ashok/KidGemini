@@ -51,7 +51,7 @@ import {
 import { PanelResizeHandle } from "./PanelResizeHandle";
 import { searchChats } from "@/lib/chat-search";
 import { appendPage, chatToAutoRestore, mergeRecents, SYNC_FLAG } from "@/lib/chat-sync";
-import { parseEditEntry, stripEditParams, seedingConversation, applySeed, applySeedFailure, type EditEntry } from "@/lib/edit-entry";
+import { parseEditEntry, stripEditParams, seedingConversation, applySeed, applySeedFailure, threeDConversation, type EditEntry } from "@/lib/edit-entry";
 import { loadSidebarCollapsed, saveSidebarCollapsed } from "@/lib/sidebar-pane";
 import type { ConvoSummary } from "@/types/chat-history.types";
 import { suggestionsFor } from "@/lib/game-suggestions";
@@ -553,7 +553,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   // game?" prompt. Nothing was rebuilt yet, so both choices are non-destructive:
   // "New game" opens a fresh chat (this one stays exactly as it is, still
   // playable), "Change this one" rebuilds the new game in place, here.
-  const pendingNewChatSend = useRef<{ convoId: string; text: string } | null>(null);
+  const pendingNewChatSend = useRef<{ convoId: string; text: string; forceRebuild?: boolean } | null>(null);
 
   function answerNewGamePrompt(replyId: string, requestText: string, choice: "new-chat" | "rebuild") {
     if (busy) return;
@@ -580,11 +580,34 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     pendingNewChatSend.current = { convoId: c.id, text: requestText };
   }
 
+  // 2D→3D = a NEW game (owner decision 2026-07-26): no fork, one OK button.
+  // The 2D game keeps living in THIS chat; the 3D one is built in a fresh chat
+  // seeded with the 2D source (threeDConversation), sent with forceRebuild so
+  // the server's conversion guard doesn't fire again in there. The child ends
+  // up with TWO games, both visible in their recents.
+  function answerThreeDOk(replyId: string, requestText: string) {
+    if (busy) return;
+    patchActive((c) => ({
+      ...c,
+      messages: c.messages.map((m) => (m.id === replyId ? { ...m, threeDNewGame: false } : m)),
+    }));
+    const source = [...active.messages].reverse().find((m) => m.artifactHtml);
+    if (!source?.artifactHtml || !requestText.trim()) return;
+    tts.stop();
+    const c = threeDConversation(workspace, { title: active.title, html: source.artifactHtml });
+    setConvos((list) => [c, ...list]);
+    setActiveId(c.id);
+    setArtifact(source.artifactHtml); // the 2D game stays on screen while the 3D one builds
+    setExpandState({ expanded: false });
+    setSidebarOpen(false);
+    pendingNewChatSend.current = { convoId: c.id, text: requestText, forceRebuild: true };
+  }
+
   useEffect(() => {
     const pending = pendingNewChatSend.current;
     if (pending && pending.convoId === activeId) {
       pendingNewChatSend.current = null;
-      void handleSend(pending.text);
+      void handleSend(pending.text, undefined, pending.forceRebuild ? { forceRebuild: true } : undefined);
     }
     // handleSend reads the freshly-active (empty) conversation as history — a
     // clean first build in the new chat. eslint-disable-next-line react-hooks/exhaustive-deps
@@ -701,11 +724,19 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     // model, so the kid gets a genuinely different take.
     differentVersion = false,
   ) {
-    const setReply = (t: string, artifactHtml?: string, newGamePrompt?: boolean) =>
+    const setReply = (t: string, artifactHtml?: string, newGamePrompt?: boolean, threeDNewGame?: boolean) =>
       patchActive((c) => ({
         ...c,
         messages: c.messages.map((m) =>
-          m.id === replyId ? { ...m, text: t, artifactHtml, ...(newGamePrompt ? { newGamePrompt: true } : {}) } : m,
+          m.id === replyId
+            ? {
+                ...m,
+                text: t,
+                artifactHtml,
+                ...(newGamePrompt ? { newGamePrompt: true } : {}),
+                ...(threeDNewGame ? { threeDNewGame: true } : {}),
+              }
+            : m,
         ),
       }));
 
@@ -800,7 +831,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
           const line = buffer.slice(0, nl).trim();
           buffer = buffer.slice(nl + 1);
           if (!line) continue;
-          const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null; newGamePrompt?: boolean };
+          const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null; newGamePrompt?: boolean; threeDNewGame?: boolean };
           if (ev.type === "thinking") {
             if (ev.text) setThinkingLine(ev.text);
           } else if (ev.type === "delta") {
@@ -818,7 +849,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             setThinkingLine(null);
             console.warn(`[chat] ↻ fallback model restart @${Date.now() - startedAt}ms — partial reply cleared`);
           } else if (ev.type === "done") {
-            setReply(ev.text ?? acc, ev.artifactHtml ?? undefined, ev.newGamePrompt);
+            setReply(ev.text ?? acc, ev.artifactHtml ?? undefined, ev.newGamePrompt, ev.threeDNewGame);
             setArtifact((a) => nextArtifact({ type: "done", artifactHtml: ev.artifactHtml }, a));
             setBusy(false);
             finalized = true;
@@ -1233,6 +1264,19 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
                     className="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-50"
                   >
                     Change this one ✏️
+                  </button>
+                </div>
+              )}
+              {/* 2D→3D info panel (owner decision 2026-07-26): ONE OK button —
+                  no fork in the road. 3D is a NEW game; the 2D one stays in
+                  this chat, so the child knowingly ends up with two games. */}
+              {m.threeDNewGame && !busy && i === active.messages.length - 1 && (
+                <div className="mt-1 pl-1">
+                  <button
+                    onClick={() => answerThreeDOk(m.id, active.messages[i - 1]?.text ?? "")}
+                    className="rounded-full bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-500"
+                  >
+                    OK — build my 3D game! 🚀
                   </button>
                 </div>
               )}

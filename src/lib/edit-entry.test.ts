@@ -9,6 +9,7 @@ import {
   seedingConversation,
   applySeed,
   applySeedFailure,
+  threeDConversation,
   SEEDING_TEXT,
 } from "./edit-entry";
 
@@ -60,6 +61,19 @@ describe("seed flow conversations", () => {
     expect(seeded.messages[0]!.artifactHtml).toBe("<html><body>game</body></html>");
     expect(seeded.messages[0]!.text).toContain("Space Dodger");
     expect(seeded.messages[0]!.text).toContain("change");
+  });
+
+  it("EE.9 the 2D→3D fresh chat is seeded with the 2D source, NOT slug-bound, and says there are two games", () => {
+    const c = threeDConversation("default", { title: "Penguin Maze", html: "<html><body>2d</body></html>" });
+    expect(c.editSlug).toBeUndefined(); // a second game — publishing it must never overwrite the 2D one
+    expect(c.title).toContain("3D");
+    expect(c.title).toContain("Penguin Maze");
+    expect(c.messages).toHaveLength(1);
+    expect(c.messages[0]!.role).toBe("assistant");
+    expect(c.messages[0]!.artifactHtml).toBe("<html><body>2d</body></html>");
+    expect(c.messages[0]!.text).toContain("TWO games");
+    expect(threeDConversation("bible-teacher", { title: "Noah Quiz", html: "<html/>" }).workspace).toBe("bible-teacher");
+    expect(threeDConversation("default", { title: "Penguin Maze", html: "<html/>" }).workspace).toBeUndefined();
   });
 
   it("EE.8 failures say what to do next — honest multi-file copy, no promises", () => {

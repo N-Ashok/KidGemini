@@ -496,6 +496,15 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   directional light only, no shadows/post-processing, low poly. Sent only
   on game-BUILD turns (chit-chat pays zero extra tokens)
 - 2D stays the default; unmarked games pass through byte-identical
+- **2D→3D is a NEW game** (owner decision 2026-07-26, supersedes the in-place
+  conversion rebuild of BUG-FIX-LOG 2026-07-23): asking an existing 2D game to
+  "make it 3D" answers instantly (no model call, nothing billed) with an info
+  panel — "3D means building a whole NEW game… you'll have TWO games!" — and
+  ONE OK button. OK opens a fresh chat seeded with the 2D source
+  (`threeDConversation`, not slug-bound) and builds the 3D version there with
+  `forceRebuild`; the 2D game survives untouched in its own chat, so the child
+  knowingly ends up with two games. Route guard: `api/chat/route.ts` §1b;
+  tests D3.1-D3.3, C.R, EE.9
 - **Library models** (Phase C, filled to 20 in Phase F): games can name
   curated CC0 models (`<!--USES_MODELS: car, dino-->`) and load them with
   the injected `loadModel(name)` helper — fail-soft (null on any failure,
@@ -602,6 +611,28 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   distinct IST days (all time), with days active / requests / first / last
   seen — same-day repeats count once; guest streaks undercount across cookie
   clears
+
+## Sparks ⚡ (metered currency — Ari side, 2026-07-25)
+
+The PLATFORM owns the ledger (platform repo `docs/PRD-SPARKS.md`); Ari reports
+usage and renders what comes back via `src/lib/sparks-bridge.ts` (same
+server-to-server contract as `arcade-partner.ts`).
+
+- **Metering**: every signed-in turn's real usage (winner + `kind:"fallback"`
+  losers, with Ari's own `costUsd`) bills the platform ledger fire-and-forget
+  from `api/chat/route.ts` (`billTurnSparks`) — guests unbilled (no account),
+  safety calls never billed (our overhead, not the child's).
+- **Kid wallet `/wallet`** (`WalletPanel`, nav tab "Sparks ⚡"): celebration-
+  first — games built, ⚡ EARNED, friends joined, credits-only history,
+  referral code, coupon entry. NO deductions/balance/rupees (owner decision
+  2026-07-25: celebrate up-numbers; a draining meter is anxiety). Gauge is
+  quiet when healthy, gentle nudge when the platform says low.
+- **Parent card** (Parent tab, `SparksParentCard`): the PRECISION — exact
+  balance, ₹ value, full statement incl. spends (tokens + ₹ each), and the
+  parent-only social-share reward submit (Twitter/Instagram, once per
+  game+platform; kids never touch social surfaces).
+- **Low balance**: the PLATFORM emails the parent (throttled 1/3 days) —
+  kids are never dunned.
 
 ## Billing (`/upgrade`, `/pay`)
 - Razorpay one-time payments: plan cards, order creation, checkout

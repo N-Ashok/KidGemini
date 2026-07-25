@@ -858,23 +858,22 @@ describe("POST /api/chat — patch-based feature edits", () => {
     expect(done.artifactHtml).toBe("<html>FALLBACK GAME</html>");
   });
 
-  // #2a (BUG-FIX-LOG 2026-07-23, "racing game" incident): asking a 2D game to go
-  // 3D must REBUILD, not patch — otherwise the model fakes depth on the 2D canvas
-  // turn after turn. isThreeConversionTurn routes it to the fresh-build branch, and
-  // the streamed full 3D game is delivered (import map floored in), with none of the
-  // edit/patch escalations touched.
-  it("C.R a 3D request on a 2D game rebuilds (skips the patch path) — streamed 3D game shipped, no patch/regen", async () => {
-    const THREE_GAME =
-      '<!doctype html><html><body><script type="module">import { Scene } from "three"; new Scene();</script></body></html>';
-    replyStreamMock.mockReturnValue(one("Now in REAL 3D!\n```html\n" + THREE_GAME + "\n```"));
-    extractArtifactMock.mockImplementation(() => ({ text: "Now in REAL 3D!", artifactHtml: THREE_GAME, wasFenced: true }));
-
+  // #2a history: BUG-FIX-LOG 2026-07-23 ("racing game" incident) made a 3D
+  // request on a 2D game REBUILD instead of patch (patching fakes depth on the
+  // 2D canvas). SUPERSEDED by the owner decision 2026-07-26: a 2D→3D
+  // conversion is now a whole NEW game — the route answers with the two-games
+  // info panel and never touches the model on that turn. The rebuild itself
+  // still happens, but in the fresh chat via forceRebuild (see the dedicated
+  // "2D→3D conversion is a NEW game" describe block).
+  it("C.R a 3D request on a 2D game never patches AND never rebuilds in place — it becomes the new-game panel", async () => {
     const res = await POST(makeReq({ message: "make it 3D", history: historyWithGame }));
     const done = JSON.parse((await res.text()).trim().split("\n").find((l) => l.includes('"done"'))!);
 
     expect(strictEditRetryMock).not.toHaveBeenCalled(); // no cheap edit rung
-    expect(replyMock).not.toHaveBeenCalled(); // no regen fallback — it was a clean fresh build
-    expect(done.artifactHtml).toBe(ensureAssetRuntime(THREE_GAME)); // the 3D game, map floored in
+    expect(replyMock).not.toHaveBeenCalled(); // no regen fallback
+    expect(replyStreamMock).not.toHaveBeenCalled(); // no in-place rebuild either
+    expect(done.threeDNewGame).toBe(true);
+    expect(done.artifactHtml).toBeNull(); // the 2D game is untouched
   });
 
   // BUG-FIX-LOG 2026-07-23 (owner UAT "remove the leaderboard" corrupted the NT
@@ -1126,6 +1125,73 @@ describe("POST /api/chat — new-game consent prompt (PRD-RESILIENT-GENERATION �
 
     expect(d.newGamePrompt).toBeUndefined();
     expect(d.artifactHtml).toBe(CURRENT_GAME.replace("RACING", "RACING_FAST")); // the patch applied
+  });
+});
+
+describe("POST /api/chat — 2D→3D conversion is a NEW game (owner decision 2026-07-26)", () => {
+  const TWO_D_GAME = '<!doctype html><html><body><div id="score">0</div><canvas></canvas></body></html>';
+  const THREE_D_GAME =
+    '<!doctype html><html><body><script type="module">import { Scene } from "three";</script></body></html>';
+  const with2dGame = [
+    { id: "1", role: "child" as const, text: "make me a racing game", createdAt: 1 },
+    {
+      id: "2", role: "assistant" as const,
+      text: "Here!\n```html\n" + TWO_D_GAME + "\n```",
+      artifactHtml: TWO_D_GAME,
+      createdAt: 2,
+    },
+  ];
+
+  beforeEach(() => {
+    authMock.mockResolvedValue(null);
+    usageRows.length = 0;
+  });
+
+  const done = (text: string) => JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+  it("D3.1 'make it 3d' on a 2D game answers with the two-games info panel instantly — no model call, nothing billed", async () => {
+    const res = await POST(makeReq({ message: "make it 3d", history: with2dGame }));
+    const d = done(await res.text());
+
+    expect(d.threeDNewGame).toBe(true);
+    expect(d.text).toContain("TWO games"); // the child learns they now have two games
+    expect(d.artifactHtml).toBeNull(); // the 2D game is untouched
+    expect(replyStreamMock).not.toHaveBeenCalled(); // zero model calls…
+    expect(replyMock).not.toHaveBeenCalled();
+    expect(usageRows).toHaveLength(0); // …and zero billing
+  });
+
+  it("D3.2 the OK path (forceRebuild, fired in the seeded fresh chat) streams the full 3D rebuild — the panel never re-asks", async () => {
+    extractArtifactMock.mockImplementation(() => ({ text: FRESH_GAME_LINE, artifactHtml: THREE_D_GAME }));
+    replyStreamMock.mockReturnValue(one("Here!\n```html\n" + THREE_D_GAME + "\n```"));
+
+    const res = await POST(makeReq({ message: "make it 3d", history: with2dGame, forceRebuild: true }));
+    const d = done(await res.text());
+
+    expect(d.threeDNewGame).toBeUndefined();
+    expect(replyStreamMock.mock.calls[0]![0]).toMatchObject({ forceRebuild: true });
+    expect(d.artifactHtml).toBe(ensureAssetRuntime(THREE_D_GAME));
+  });
+
+  it("D3.3 a game already using Three.js edits normally — the panel only ever fires on a genuinely 2D game", async () => {
+    const threeHistory = [
+      { id: "1", role: "child" as const, text: "make me a 3d racing game", createdAt: 1 },
+      {
+        id: "2", role: "assistant" as const,
+        text: "Here!\n```html\n" + THREE_D_GAME + "\n```",
+        artifactHtml: THREE_D_GAME,
+        createdAt: 2,
+      },
+    ];
+    const patchReply =
+      'Faster! 🎮\n<<<<<<< SEARCH\nimport { Scene } from "three";\n=======\nimport { Scene } from "three"; // fast\n>>>>>>> REPLACE';
+    replyStreamMock.mockReturnValue(one(patchReply));
+
+    const res = await POST(makeReq({ message: "make it more 3d and faster", history: threeHistory }));
+    const d = done(await res.text());
+
+    expect(d.threeDNewGame).toBeUndefined();
+    expect(replyStreamMock).toHaveBeenCalledTimes(1); // an ordinary edit turn
   });
 });
 

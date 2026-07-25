@@ -64,8 +64,12 @@ now over-estimate at the top flash rate, never $0).
 2. **Premium model on every turn** — ✅ fixed: cost-aware chain above.
 3. **Invisible metering** — ✅ fixed: full-reply output metering (route
    M.1 test) + real prices + no-$0-for-unknown-models.
-4. **Prefix caching never hits** — **MEASURED 2026-07-24: 3.7%.** Fix shipped,
-   effect not yet re-measured.
+4. **Prefix caching never hits** — **MEASURED 2026-07-24: 3.7%; re-measured
+   2026-07-25: 4.3%** (192 rows, 1,283,751 billed / 54,712 cached — the
+   static-catalog fix alone did not move it). Root-cause investigation +
+   full fix plan (window hysteresis, game-source-to-tail, stable system
+   instruction), savings model, and no-drift UAT: **`PRD-PROMPT-CACHING.md`**
+   — planned 2026-07-25, not yet implemented.
 
    Baseline (local dev DB, trailing 14 days, `usage_events`):
 

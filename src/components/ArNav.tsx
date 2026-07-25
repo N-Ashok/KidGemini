@@ -68,6 +68,12 @@ export function ArNav() {
             <a href="https://ariantra.com/#skills" className="ar-link">Skills</a>
             <a href={GAMES_URL} className="ar-link">Games</a>
             <a href="/" className="ar-link on">Games-Lab</a>
+            {/* Ari-local (not in the canonical platform menu): the kid's
+                Sparks wallet only exists on this app, and only means
+                something signed-in (PRD-SPARKS Phase 4). */}
+            {status === "authenticated" && (
+              <a href="/wallet" className="ar-link">⚡ Sparks</a>
+            )}
             <a href={`${WWW_URL}/#how`} className="ar-link">How it works</a>
             <a href={`${WWW_URL}/#videos`} className="ar-link">Videos</a>
             <a href={STUDIO_URL} className="ar-link">Studio</a>

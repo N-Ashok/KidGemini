@@ -196,6 +196,16 @@ export const NEW_GAME_SENTINEL = "NEW_GAME_REQUEST";
 export const NEW_GAME_PROMPT_LINE =
   "That sounds like a whole new game! 🎮 Want to start it in a fresh chat, so this game stays exactly how you like it? Nothing gets lost either way.";
 
+/** 2D→3D conversion = a NEW game (owner decision 2026-07-26, supersedes the
+ *  in-place conversion rebuild of BUG-FIX-LOG 2026-07-23): converting throws
+ *  away the 2D code anyway, so it is a second game, not an edit. Unlike
+ *  NEW_GAME_PROMPT_LINE there is deliberately NO fork — one OK button, the 2D
+ *  game always survives in its own chat, and the child knowingly ends up with
+ *  TWO games. The OK button + fresh-chat seeding live client-side
+ *  (ChatPanel.container.tsx / edit-entry.ts's threeDConversation). */
+export const THREE_D_NEW_GAME_LINE =
+  "Making your game 3D means building a whole NEW game! 🎉 Your 2D game stays safe right here in this chat. Tap OK and I'll build the 3D version in a brand-new chat — you'll have TWO games!";
+
 /**
  * True when the model self-declared a NEW-GAME request (PRD §11). Fail toward
  * NOT asking: the sentinel must stand alone on its own line AND the reply must

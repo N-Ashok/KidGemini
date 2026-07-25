@@ -6,7 +6,7 @@
 
 export interface NavTab {
   /** Stable id — what tests and analytics key on, independent of the label. */
-  id: "chat" | "arcade" | "toybox" | "parent";
+  id: "chat" | "arcade" | "toybox" | "sparks" | "parent";
   href: string;
   label: string;
   /** Rendered aria-hidden; decoration only. */

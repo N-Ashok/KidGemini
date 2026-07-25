@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { signIn, useSession } from "@/lib/useAriantraSession";
 import { whatsappShareUrl } from "@/lib/share-links";
+import { SparksParentCard } from "@/components/SparksParentCard";
 import type { ParentAlert } from "@/types/alert.types";
 
 interface FamilyGame {
@@ -359,6 +360,10 @@ export default function ParentPage() {
               Open family profile →
             </a>
           </article>
+
+          {/* Sparks: exact balance + full statement + parent-only share reward
+              (PRD-SPARKS Phase 4 — precision is parent-facing by design). */}
+          <SparksParentCard />
 
           {/* PRD-SHARING Phase 1 (S2, "parent pride push") — a STANDING
               section, not just a one-time notification: every published

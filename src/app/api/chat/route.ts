@@ -14,7 +14,7 @@ import type { ChainSummary } from "@/types/model-ledger.types";
 import { SafetyBlockedError } from "@/lib/model-runner";
 import {
   isGameEditTurn, isThreeConversionTurn, currentGameHtml, editReplyProse, looksLikeAttemptedEdit, looksLikeCompleteDocument, looksTruncatedDocument,
-  regenReplyProse, reconcileAssetMarkers, detectsNewGame, NEW_GAME_PROMPT_LINE, REBUILT_GAME_LINE, FRESH_GAME_LINE,
+  regenReplyProse, reconcileAssetMarkers, detectsNewGame, NEW_GAME_PROMPT_LINE, THREE_D_NEW_GAME_LINE, REBUILT_GAME_LINE, FRESH_GAME_LINE,
 } from "@/lib/game-edit";
 import { stripAssetMarkers } from "@/lib/assets/markers";
 import { applyPatch } from "@/lib/repair-prompt";
@@ -31,6 +31,8 @@ import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore, SqliteTurnRes
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
+import { SESSION_COOKIE } from "@/lib/ariantra-session";
+import { billSparks } from "@/lib/sparks-bridge";
 import { resolvePersona } from "@/lib/persona/persona";
 import { GUEST_COOKIE, GUEST_COOKIE_LEGACY, GUEST_COOKIE_MAX_AGE_S, GUEST_WINDOW_MS, IP_GUEST_TOKEN_CAP, guestTokenLimitFor, signedInDailyTokenLimit } from "@/lib/gate.config";
 import { validateImageAttachment } from "@/lib/image-attachment";
@@ -254,12 +256,41 @@ export async function POST(req: NextRequest) {
   // promptTokens/outputTokens stay char-estimates — the guest/daily gates are
   // tuned to them. `real` (Gemini usageMetadata, when the stream delivered it)
   // fills the billed* columns and prices all 4 billed token types.
+  // Sparks (platform PRD-SPARKS): signed-in kids' turns bill the platform
+  // ledger from the SAME measured numbers the dashboard uses. Guests aren't
+  // billed (no platform account); safety/moderation calls are OUR overhead,
+  // never the child's. Fire-and-forget — billing must never slow a turn.
+  const sparksToken = signedIn ? req.cookies.get(SESSION_COOKIE)?.value ?? "" : "";
+  let sparksSeq = 0;
+  function billTurnSparks(kind: string, model: string, promptTokens: number, outputTokens: number, real: TokenUsage | null | undefined, costUsd: number) {
+    if (!sparksToken || kind === "safety") return;
+    billSparks({
+      sessionToken: sparksToken,
+      replyId: replyId ?? "no-reply-id",
+      seq: sparksSeq++,
+      kind,
+      usage: {
+        model,
+        tokensIn: real?.promptTokens ?? promptTokens,
+        tokensOut: (real?.outputTokens ?? outputTokens) + (real?.thoughtTokens ?? 0),
+        tokensCached: real?.cachedTokens,
+        costUsd,
+      },
+    });
+  }
+
   function recordUsage(
     kind: "chat" | "safety", model: string, requestText: string, outputText: string,
     blocked: boolean, real?: TokenUsage | null,
   ) {
     const promptTokens = estTokens(requestText) + (image && kind === "chat" ? IMAGE_PROMPT_TOKENS : 0);
     const outputTokens = estTokens(outputText);
+    const costUsd = estimateCostUsd(model, {
+      prompt: real?.promptTokens ?? promptTokens,
+      output: real?.outputTokens ?? outputTokens,
+      thoughts: real?.thoughtTokens,
+      cached: real?.cachedTokens,
+    });
     usage.record({
       userId, userLabel, model, kind, promptTokens, outputTokens,
       userAgent: req.headers.get("user-agent"),
@@ -267,14 +298,10 @@ export async function POST(req: NextRequest) {
       billedOutputTokens: real?.outputTokens,
       thoughtTokens: real?.thoughtTokens,
       cachedTokens: real?.cachedTokens,
-      costUsd: estimateCostUsd(model, {
-        prompt: real?.promptTokens ?? promptTokens,
-        output: real?.outputTokens ?? outputTokens,
-        thoughts: real?.thoughtTokens,
-        cached: real?.cachedTokens,
-      }),
+      costUsd,
       geo, requestText, outputText, blocked,
     });
+    billTurnSparks(kind, model, promptTokens, outputTokens, real, costUsd);
   }
   function alert(origin: "child" | "model", triggerText: string, v: SafetyVerdict) {
     // Scope to the child's account so ONLY their parent sees it, never another
@@ -293,6 +320,12 @@ export async function POST(req: NextRequest) {
     try {
       const promptTokens = estTokens(message) + (image ? IMAGE_PROMPT_TOKENS : 0);
       const outputTokens = real?.outputTokens ?? estTokens(outputText);
+      const costUsd = estimateCostUsd(model, {
+        prompt: real?.promptTokens ?? promptTokens,
+        output: real?.outputTokens ?? outputTokens,
+        thoughts: real?.thoughtTokens,
+        cached: real?.cachedTokens,
+      });
       usage.record({
         userId, userLabel, model, kind: "fallback", promptTokens, outputTokens,
         userAgent: req.headers.get("user-agent"),
@@ -300,14 +333,10 @@ export async function POST(req: NextRequest) {
         billedOutputTokens: real?.outputTokens,
         thoughtTokens: real?.thoughtTokens,
         cachedTokens: real?.cachedTokens,
-        costUsd: estimateCostUsd(model, {
-          prompt: real?.promptTokens ?? promptTokens,
-          output: real?.outputTokens ?? outputTokens,
-          thoughts: real?.thoughtTokens,
-          cached: real?.cachedTokens,
-        }),
+        costUsd,
         geo, requestText: message, outputText, blocked: false,
       });
+      billTurnSparks("fallback", model, promptTokens, outputTokens, real, costUsd);
       console.log(`[api/chat] 💸 billed losing call ${model} (kind=fallback, ${outputTokens} out tok) @${ms()}ms`);
     } catch { /* bookkeeping must never break a turn */ }
   }
@@ -327,6 +356,20 @@ export async function POST(req: NextRequest) {
     if (persona.inputRuleMode !== "adult") alert("child", message, inRules);
     return ndjson((send) => {
       send({ type: "blocked", text: KIND_REDIRECT });
+    }, guestCookieHeader(setGuestCookie));
+  }
+
+  // ── 1b. 2D→3D conversion = a NEW game (owner decision 2026-07-26,
+  // supersedes the in-place rebuild of BUG-FIX-LOG 2026-07-23): converting
+  // throws away the 2D code anyway, so it is a second game, not an edit.
+  // Answer instantly — no model call, nothing billed — with the info line +
+  // threeDNewGame flag; the client shows the one-button OK panel, then starts
+  // the build in a fresh chat seeded with the 2D game and sends it with
+  // forceRebuild, which skips this guard. The 2D game is never touched.
+  if (!forceRebuild && isThreeConversionTurn(message, history, activeGameMessageId)) {
+    console.log(`[api/chat] 🎮 2D→3D conversion — a new game, offering fresh chat @${ms()}ms`);
+    return ndjson((send) => {
+      send({ type: "done", text: THREE_D_NEW_GAME_LINE, artifactHtml: null, threeDNewGame: true });
     }, guestCookieHeader(setGuestCookie));
   }
 

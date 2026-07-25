@@ -50,6 +50,10 @@ export function mobileTabs(pathname: string, gamesUrl: string, bibleGamesUrl: st
     // "Game Stuff" gallery (PRD-3D-GAMES-AND-ASSETS §9b): discovery IS the
     // feature — an invisible library never gets asked for. Persona-neutral.
     { id: "toybox", href: "/assets", label: "Toy Box", icon: "🧰" },
+    // Sparks wallet (PRD-SPARKS Phase 4) — celebration-first: games built,
+    // ⚡ earned, referral code. Never shows deductions (owner decision
+    // 2026-07-25). Persona-neutral like Toy Box.
+    { id: "sparks", href: "/wallet", label: "Sparks", icon: "⚡" },
   ];
 
   // Parent area is the kid-safety console; it has no meaning for a teacher

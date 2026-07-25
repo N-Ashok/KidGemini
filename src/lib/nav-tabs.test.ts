@@ -32,8 +32,12 @@ describe("surfaceFor — which product the path belongs to", () => {
 describe("mobileTabs — kid surface (unchanged behaviour)", () => {
   const tabs = mobileTabs("/", GAMES, BIBLE);
 
-  it("offers chat, arcade, toy box and parent", () => {
-    expect(tabs.map((t) => t.id)).toEqual(["chat", "arcade", "toybox", "parent"]);
+  it("offers chat, arcade, toy box, sparks and parent", () => {
+    expect(tabs.map((t) => t.id)).toEqual(["chat", "arcade", "toybox", "sparks", "parent"]);
+  });
+
+  it("sends sparks to the kid wallet page (PRD-SPARKS Phase 4)", () => {
+    expect(tabs.find((t) => t.id === "sparks")!.href).toBe("/wallet");
   });
 
   it("sends arcade to the full games catalog", () => {
