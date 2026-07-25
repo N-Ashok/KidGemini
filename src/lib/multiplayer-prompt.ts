@@ -113,4 +113,24 @@ never enforce it yourself; the platform's lobby already rejects a 6th joiner.
    and every player would play alone while the lobby still looks fine. Before
    a friend connects the real calls already behave sensibly (\`myPlayerId()\`
    is \`null\`, \`getPeerState\` returns \`null\`, broadcasts are no-ops) — use
-   them directly, unconditionally.`;
+   them directly, unconditionally.
+10. Recording the result: inside the shared game-over function from rule 5,
+   the HOST — and only the host — calls \`Ariantra.reportMatch({ players:
+   [{ playerId, score, displayName? }, ...], winnerId })\` exactly once, with
+   every player's final score (omit \`winnerId\` for a draw). Calling it as a
+   non-host (or with no session) is a safe ignored no-op, so the shared
+   function stays byte-identical on every player — the host's copy is simply
+   the one that records. NEVER call \`Ariantra.submitScore()\` anywhere in a
+   multiplayer game: solo leaderboards don't record matches, and the platform
+   suppresses score auto-detection during a match (the on-screen score may
+   belong to another player). \`Ariantra.getMyMatches()\` returns the player's
+   recent results (\`{ matches: [...] }\`) if the game wants a "recent games"
+   screen.
+11. Brief disconnections heal themselves — if a non-host player's connection
+   blips, the platform automatically reconnects them for up to a minute and
+   shows its own "Reconnecting…" banner; the roster does NOT change during
+   that window. Keep the game loop running and keep rendering — never tear
+   the game down or show your own error screen for a blip. Only
+   \`Ariantra.onRoomEnded()\` (the host left) and \`Ariantra.onConnectionLost()\`
+   (reconnecting genuinely failed) are terminal — those are the moments to
+   show an end screen.`;

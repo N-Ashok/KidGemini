@@ -281,5 +281,7 @@ database. The human manages those. Only ever touch `.env.example`.
 - **Shared header:** `src/components/ArNav.tsx` renders the Ariantra nav on every page
   (mounted in `src/app/layout.tsx`). Its styles come from `public/brand/ariantra-brand.v1.css`
   — a LOCAL COPY generated in the platform repo from its `theme.ts`. Never hand-edit it;
-  refresh with `npm run sync:brand` (deploy does this automatically). Page content sizes with
+  refresh with `npm run sync:brand` (deploy does this automatically). The preview SDK
+  bundle (`src/generated/preview-sdk-bundle.ts`, from the platform's `public/preview-sdk.js`)
+  is likewise refreshed by `npm run sync:preview-sdk`, which deploy also runs automatically. Page content sizes with
   `h-full` inside the `.ar-app-main` scroll area — don't reintroduce `h-screen` on screens.

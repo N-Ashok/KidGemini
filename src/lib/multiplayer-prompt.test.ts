@@ -185,3 +185,39 @@ describe("MULTIPLAYER_PROMPT_SECTION — distinct spawns + zero-distance collisi
     expect(MULTIPLAYER_PROMPT_SECTION).toContain("NaN");
   });
 });
+
+// PRD-MP-GAPS (platform repo, 2026-07-25): match outcomes are recorded ONCE,
+// by the host, via reportMatch() — never submitScore (the platform suppresses
+// auto-score during a match because the DOM score may be another player's).
+describe("MULTIPLAYER_PROMPT_SECTION — match results via reportMatch (PRD-MP-GAPS F2)", () => {
+  it("teaches the host-only reportMatch call at game over", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toContain("Ariantra.reportMatch");
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/HOST[\s\S]{0,200}reportMatch|reportMatch[\s\S]{0,200}host/i);
+  });
+
+  it("teaches the payload shape: players with playerId+score, optional winnerId (omit for a draw)", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/playerId[\s\S]{0,40}score/);
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/winnerId/);
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/draw/i);
+  });
+
+  it("says a non-host call is a safe no-op — the shared game-over function stays identical everywhere", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/no-op/i);
+  });
+
+  it("forbids submitScore anywhere in a multiplayer game", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/NEVER call \\?`?Ariantra\.submitScore/i);
+  });
+});
+
+describe("MULTIPLAYER_PROMPT_SECTION — reconnect resilience (PRD-MP-GAPS F3)", () => {
+  it("tells the game a brief disconnect self-heals — keep the loop running, don't tear down", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/reconnect/i);
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/keep (the )?game (loop )?running/i);
+  });
+
+  it("names the two genuinely-terminal signals: onRoomEnded and onConnectionLost", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toContain("onRoomEnded");
+    expect(MULTIPLAYER_PROMPT_SECTION).toContain("onConnectionLost");
+  });
+});

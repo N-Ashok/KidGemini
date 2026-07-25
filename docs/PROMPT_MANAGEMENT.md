@@ -278,6 +278,13 @@ Full text lives in `src/lib/multiplayer-prompt.ts`; its contract is pinned by
 - Host-authoritative pattern; explicit game-over broadcast to all players;
   collision push-apart with a divide-by-zero guard; one session hosts many
   rounds (reset in code, never `location.reload()`); never stub `Ariantra`.
+- Match results (PRD-MP-GAPS, platform repo, 2026-07-25): the HOST calls
+  `Ariantra.reportMatch({ players, winnerId? })` once inside the shared
+  game-over function (non-host call = safe no-op); **never** `submitScore()`
+  in a multiplayer game — the platform suppresses auto-score during a match.
+- Reconnect resilience: a non-host disconnect self-heals for up to a minute
+  (platform shows "Reconnecting…"); the game keeps its loop running — only
+  `onRoomEnded()`/`onConnectionLost()` are terminal.
 
 ### 2.6 `GAME_EDIT_PROMPT_SECTION` — if `isEdit` (`game-edit.ts:228`)
 

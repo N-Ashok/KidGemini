@@ -46,6 +46,9 @@ cd "$REPO_DIR"
 echo "→ [local] syncing brand kit CSS from the platform repo…"
 bash "$SCRIPT_DIR/sync-brand.sh"
 
+echo "→ [local] syncing preview SDK bundle from the platform repo…"
+node "$SCRIPT_DIR/sync-preview-sdk.mjs"
+
 echo "→ [local] building (next build)…"
 npm run build
 

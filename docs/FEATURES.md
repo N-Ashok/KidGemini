@@ -385,7 +385,18 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   pattern as publish). A grown-up can turn "Play together" off per published
   game from the Parent area (🎮 Multiplayer card, `/api/parent/games` → the
   partner bridge's `toggleMultiplayer`, same PIN + ownership-match gate as
-  publishing) — flipping it restamps the live game immediately
+  publishing) — flipping it restamps the live game immediately.
+  **Gap closure (2026-07-25, `../Ariantra-Platform/docs/PRD-MP-GAPS.md`):**
+  the prompt now also teaches host-only `Ariantra.reportMatch()` at game over
+  (never `submitScore()` in a multiplayer game — the platform suppresses
+  auto-score during a match) and reconnect resilience (a non-host wifi blip
+  self-heals for up to 60s; only `onRoomEnded`/`onConnectionLost` are
+  terminal). The preview bundle (resynced) now ships the echo peer "Robo":
+  ~1s after a game first touches a multiplayer API, a fake second player
+  joins the roster, echoes `broadcast()`s back, and mirrors the kid's own
+  `broadcastState()` a beat behind — so multiplayer games visibly work in
+  the studio preview before a real friend is invited ("Robo copies your
+  moves" toast keeps it honest)
 - **⏳ Unified Idea Queue** (v2 2026-07-24, docs/PRD-IDEA-QUEUE-V2.md — supersedes
   the v1 typed-only queue AND the 🎒 Idea Bag): ONE visible line, per
   conversation, for every idea a kid has while Ari is busy. Typed ideas
