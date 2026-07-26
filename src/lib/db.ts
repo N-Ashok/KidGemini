@@ -119,7 +119,11 @@ export function getDb(): Database.Database {
       -- vs 'bible-teacher' — the recents list is filtered by it.
       workspace TEXT NOT NULL DEFAULT 'default',
       createdAt INTEGER NOT NULL,
-      updatedAt INTEGER NOT NULL
+      updatedAt INTEGER NOT NULL,
+      -- Soft delete: NULL = visible; a timestamp hides the row from the
+      -- account's view (list/get) while the system keeps it. Pre-existing DBs
+      -- get this column via the PRAGMA-guarded ALTER migration further down.
+      deletedAt INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_convos_user ON conversations(userId, updatedAt DESC);
     -- Resumable generations (TECH_DEBT #23, shipped 2026-07-13): each turn's
@@ -200,6 +204,11 @@ export function getDb(): Database.Database {
   const convoCols = db.prepare(`PRAGMA table_info(conversations)`).all() as Array<{ name: string }>;
   if (!convoCols.some((c) => c.name === "workspace")) {
     db.exec(`ALTER TABLE conversations ADD COLUMN workspace TEXT NOT NULL DEFAULT 'default';`);
+  }
+  // Soft delete (owner ask 2026-07-26): NULL = visible; a timestamp hides the
+  // row from the account's view (list/get) while the system keeps it.
+  if (!convoCols.some((c) => c.name === "deletedAt")) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN deletedAt INTEGER;`);
   }
   // Per-account alert scoping (PRD-PARENT-AUTH-ALERT-SCOPING §8 Phase 2). Pre-
   // migration rows get accountId = NULL, so they're shown to NO parent — the
@@ -776,14 +785,14 @@ export class SqliteChatHistoryStore implements ChatHistoryStore {
     const rows = (
       before === undefined
         ? getDb()
-            .prepare(`SELECT id, title, updatedAt FROM conversations WHERE userId = ? AND workspace = ? ORDER BY updatedAt DESC, id LIMIT ?`)
+            .prepare(`SELECT id, title, updatedAt FROM conversations WHERE userId = ? AND workspace = ? AND deletedAt IS NULL ORDER BY updatedAt DESC, id LIMIT ?`)
             .all(userId, workspace, limit)
         : getDb()
             .prepare(
               // Composite cursor: strictly older, OR same-ms rows after the
               // prior page's last id (ORDER BY ... id ASC ties the order).
               `SELECT id, title, updatedAt FROM conversations
-               WHERE userId = @userId AND workspace = @workspace AND (updatedAt < @u OR (updatedAt = @u AND id > @i))
+               WHERE userId = @userId AND workspace = @workspace AND deletedAt IS NULL AND (updatedAt < @u OR (updatedAt = @u AND id > @i))
                ORDER BY updatedAt DESC, id LIMIT @limit`,
             )
             .all({ userId, workspace, u: before.updatedAt, i: before.id, limit })
@@ -793,7 +802,7 @@ export class SqliteChatHistoryStore implements ChatHistoryStore {
 
   get(userId: string, id: string): Conversation | null {
     const row = getDb()
-      .prepare(`SELECT id, title, messages, workspace FROM conversations WHERE id = ? AND userId = ?`)
+      .prepare(`SELECT id, title, messages, workspace FROM conversations WHERE id = ? AND userId = ? AND deletedAt IS NULL`)
       .get(id, userId) as { id: string; title: string; messages: string; workspace?: string } | undefined;
     if (!row) return null;
     try {
@@ -801,6 +810,22 @@ export class SqliteChatHistoryStore implements ChatHistoryStore {
     } catch {
       return null; // corrupt row — treat as missing, never throw into a route
     }
+  }
+
+  /** SOFT delete (owner ask 2026-07-26): the row stays in the system — only
+   *  the account's VIEW of it goes (list/get filter on deletedAt IS NULL).
+   *  Fail-closed on ownership; idempotent (a second call matches nothing).
+   *  Note upsert deliberately never touches deletedAt: another device that
+   *  still holds the chat locally can re-sync its content without
+   *  resurrecting it in the sidebar (H.14). */
+  softDelete(userId: string, id: string, now: number): boolean {
+    const result = getDb()
+      .prepare(
+        `UPDATE conversations SET deletedAt = @now
+         WHERE id = @id AND userId = @userId AND deletedAt IS NULL`,
+      )
+      .run({ id, userId, now });
+    return result.changes > 0;
   }
 
   claim(fromUserId: string, toUserId: string): number {

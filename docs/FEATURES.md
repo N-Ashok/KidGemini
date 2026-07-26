@@ -37,6 +37,15 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   on one request, regardless of what's left in localStorage. Ownership
   fail-closed at the SQL layer (`/api/chats*`, `SqliteChatHistoryStore`);
   write-through happens once per finished turn, never per streamed token
+- **Delete a chat** (2026-07-26, owner ask): every sidebar row carries a 🗑️
+  with an in-row two-tap confirm ("Delete / Keep" — no browser popup). SOFT
+  delete: `DELETE /api/chats/:id` stamps `deletedAt` and the chat leaves the
+  account's VIEW (list + get filter on `deletedAt IS NULL`) — the row stays
+  in the system (safety review, recoverability). Ownership fail-closed;
+  a later write-through upsert from another device never resurrects it in
+  the sidebar. Client transition is pure (`chat-delete.ts`); deleting the
+  last chat lands on a fresh "New chat", never a blank screen. Deleting the
+  actively-generating chat is blocked until the turn finishes
 - **Resumable generations** (2026-07-13, TECH_DEBT #23 shipped): the server
   keeps each turn's finished reply in `turn_results` (24h TTL) keyed by the
   client's replyId — a dropped or stalled stream POLLS `/api/chat/result`
@@ -503,7 +512,9 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   ONE OK button. OK opens a fresh chat seeded with the 2D source
   (`threeDConversation`, not slug-bound) and builds the 3D version there with
   `forceRebuild`; the 2D game survives untouched in its own chat, so the child
-  knowingly ends up with two games. Route guard: `api/chat/route.ts` §1b;
+  knowingly ends up with two games. The new chat is titled **`3D - <name>`**
+  (owner ask 2026-07-26: prefix, so the badge survives sidebar truncation and
+  the pair sorts together). Route guard: `api/chat/route.ts` §1b;
   tests D3.1-D3.3, C.R, EE.9
 - **Library models** (Phase C, filled to 20 in Phase F): games can name
   curated CC0 models (`<!--USES_MODELS: car, dino-->`) and load them with

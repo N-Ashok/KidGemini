@@ -51,6 +51,7 @@ import {
 import { PanelResizeHandle } from "./PanelResizeHandle";
 import { searchChats } from "@/lib/chat-search";
 import { appendPage, chatToAutoRestore, mergeRecents, SYNC_FLAG } from "@/lib/chat-sync";
+import { stateAfterDelete } from "@/lib/chat-delete";
 import { parseEditEntry, stripEditParams, seedingConversation, applySeed, applySeedFailure, threeDConversation, type EditEntry } from "@/lib/edit-entry";
 import { loadSidebarCollapsed, saveSidebarCollapsed } from "@/lib/sidebar-pane";
 import type { ConvoSummary } from "@/types/chat-history.types";
@@ -663,6 +664,36 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     }
   }
 
+  /** Soft delete (owner ask 2026-07-26): the chat leaves this account's VIEW
+   *  everywhere — sidebar, server index — but the server keeps the row
+   *  (safety review, recoverability). Confirmed in-row in the Sidebar. */
+  function handleDeleteChat(id: string) {
+    // Deleting the chat that's generating right now would orphan the stream's
+    // write target — finish (or stop) first, then delete.
+    if (busy && id === activeId) return;
+    // Fire-and-forget: a 404 just means the chat never synced (local-only) —
+    // removing it locally below is the whole job then.
+    void fetch(`/api/chats/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {
+      /* offline — local removal still applies; the row stays server-side */
+    });
+    const next = stateAfterDelete(convos, remoteIndex, id, activeId);
+    setRemoteIndex(next.remoteIndex);
+    if (id === activeId) {
+      tts.stop();
+      setArtifact(null);
+      setExpandState({ expanded: false });
+    }
+    if (next.nextActiveId === null) {
+      // Last chat gone — land on a fresh greeting, never a blank screen.
+      const fresh = newConversation(workspace);
+      setConvos([fresh]);
+      setActiveId(fresh.id);
+      return;
+    }
+    setConvos(next.convos);
+    setActiveId(next.nextActiveId);
+  }
+
   function handleSelect(id: string) {
     tts.stop();
     setArtifact(null);
@@ -1185,6 +1216,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         onClose={() => setSidebarOpen(false)}
         onNewChat={handleNewChat}
         onSelect={handleSelect}
+        onDelete={handleDeleteChat}
         hasMore={remoteHasMore}
         onEndReached={() => void loadMoreRemote()}
         recentsError={recentsError}

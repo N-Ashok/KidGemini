@@ -79,7 +79,9 @@ export function applySeed(convo: Conversation, game: { name: string; html: strin
 export function threeDConversation(workspace: Workspace, game: { title: string; html: string }): Conversation {
   return {
     id: crypto.randomUUID(),
-    title: `${game.title} in 3D`.slice(0, 40),
+    // "3D - " prefix (owner ask 2026-07-26): leads the title so the badge
+    // survives sidebar truncation and the two games sort next to each other.
+    title: `3D - ${game.title}`.slice(0, 40),
     messages: [
       {
         id: crypto.randomUUID(),

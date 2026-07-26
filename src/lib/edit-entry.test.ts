@@ -66,12 +66,16 @@ describe("seed flow conversations", () => {
   it("EE.9 the 2D→3D fresh chat is seeded with the 2D source, NOT slug-bound, and says there are two games", () => {
     const c = threeDConversation("default", { title: "Penguin Maze", html: "<html><body>2d</body></html>" });
     expect(c.editSlug).toBeUndefined(); // a second game — publishing it must never overwrite the 2D one
-    expect(c.title).toContain("3D");
-    expect(c.title).toContain("Penguin Maze");
+    // "3D - " PREFIX (owner ask 2026-07-26): the 3D badge must survive the
+    // sidebar's truncation, so it leads the title instead of trailing it.
+    expect(c.title).toBe("3D - Penguin Maze");
     expect(c.messages).toHaveLength(1);
     expect(c.messages[0]!.role).toBe("assistant");
     expect(c.messages[0]!.artifactHtml).toBe("<html><body>2d</body></html>");
     expect(c.messages[0]!.text).toContain("TWO games");
+    const long = threeDConversation("default", { title: "Q".repeat(60), html: "<html/>" });
+    expect(long.title.startsWith("3D - ")).toBe(true); // truncation trims the tail, never the badge
+    expect(long.title.length).toBeLessThanOrEqual(40);
     expect(threeDConversation("bible-teacher", { title: "Noah Quiz", html: "<html/>" }).workspace).toBe("bible-teacher");
     expect(threeDConversation("default", { title: "Penguin Maze", html: "<html/>" }).workspace).toBeUndefined();
   });

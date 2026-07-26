@@ -27,6 +27,9 @@ interface SidebarProps {
   onClose: () => void;
   onNewChat: () => void;
   onSelect: (id: string) => void;
+  /** Soft delete (owner ask 2026-07-26): hides the chat from this account's
+   *  view — server keeps the row. Fired only after the in-row confirm tap. */
+  onDelete: (id: string) => void;
   /** True while the server has older chats beyond the loaded index. */
   hasMore?: boolean;
   /** Scrolling near the bottom of Recents asks the container for the next page. */
@@ -43,9 +46,12 @@ interface SidebarProps {
 export function Sidebar(props: SidebarProps) {
   const {
     recents, activeId, isOpen, searchQuery, onSearchChange, onClose, onNewChat, onSelect,
-    hasMore, onEndReached, recentsError, onRetryRecents, collapsed, onToggleCollapsed,
+    onDelete, hasMore, onEndReached, recentsError, onRetryRecents, collapsed, onToggleCollapsed,
   } = props;
   const [isSearching, setIsSearching] = useState(false);
+  // Two-tap delete: the 🗑️ tap swaps the row for an in-row "Delete / Keep"
+  // confirm — no browser confirm() popup, no accidental one-tap loss.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   function closeSearch() {
     onSearchChange("");
     setIsSearching(false);
@@ -190,22 +196,56 @@ export function Sidebar(props: SidebarProps) {
                 : "No chats yet"}
             </li>
           )}
-          {recents.map((r) => (
-            <li key={r.id}>
-              <button
-                data-active={r.id === activeId}
-                onClick={() => {
-                  closeSearch();
-                  onSelect(r.id);
-                }}
-                className={`w-full truncate rounded-lg px-3 py-2 text-left text-sm
-                  ${r.id === activeId ? "bg-neutral-200 text-neutral-900" : "text-neutral-600 hover:bg-neutral-200/60"}`}
-                title={r.title}
-              >
-                {r.title}
-              </button>
-            </li>
-          ))}
+          {recents.map((r) =>
+            confirmingId === r.id ? (
+              <li key={r.id} className="flex items-center gap-1.5 rounded-lg bg-red-50 px-3 py-1.5">
+                <span className="min-w-0 flex-1 truncate text-sm text-red-700" title={r.title}>
+                  Delete “{r.title}”?
+                </span>
+                <button
+                  onClick={() => {
+                    setConfirmingId(null);
+                    onDelete(r.id);
+                  }}
+                  className="shrink-0 rounded-lg bg-red-600 px-2 py-1 text-xs font-medium text-white hover:bg-red-700"
+                >
+                  Delete
+                </button>
+                <button
+                  onClick={() => setConfirmingId(null)}
+                  className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-200/60"
+                >
+                  Keep
+                </button>
+              </li>
+            ) : (
+              <li key={r.id} className="group flex items-center">
+                <button
+                  data-active={r.id === activeId}
+                  onClick={() => {
+                    closeSearch();
+                    onSelect(r.id);
+                  }}
+                  className={`min-w-0 flex-1 truncate rounded-lg px-3 py-2 text-left text-sm
+                    ${r.id === activeId ? "bg-neutral-200 text-neutral-900" : "text-neutral-600 hover:bg-neutral-200/60"}`}
+                  title={r.title}
+                >
+                  {r.title}
+                </button>
+                {/* Faintly visible on touch (no hover there), full on hover/focus. */}
+                <button
+                  aria-label={`Delete chat ${r.title}`}
+                  title="Delete chat"
+                  onClick={() => setConfirmingId(r.id)}
+                  className="shrink-0 rounded-lg px-1.5 py-2 text-sm text-neutral-400 opacity-40
+                             hover:bg-neutral-200/60 hover:text-red-600 focus:opacity-100
+                             group-hover:opacity-100"
+                >
+                  🗑️
+                </button>
+              </li>
+            ),
+          )}
           {hasMore && (
             <li>
               <button

@@ -121,4 +121,41 @@ describe("SqliteChatHistoryStore", () => {
     store.upsert("user:rt@x.com", convo("rt2"), 1000);
     expect(store.get("user:rt@x.com", "rt2")!.workspace).toBeUndefined();
   });
+
+  // ── Soft delete (owner ask 2026-07-26): removed from the ACCOUNT'S VIEW
+  //    (list + get), never from the system — the row stays for safety review
+  //    and recoverability. ──────────────────────────────────────────────────
+  it("H.12 softDelete hides the chat from list() and get(), and reports true", () => {
+    const uid = "user:del@x.com";
+    store.upsert(uid, convo("d1"), 1000);
+    store.upsert(uid, convo("d2"), 2000);
+    expect(store.softDelete(uid, "d1", 3000)).toBe(true);
+    expect(store.list(uid, 10).map((s) => s.id)).toEqual(["d2"]);
+    expect(store.get(uid, "d1")).toBeNull();
+    expect(store.get(uid, "d2")).not.toBeNull();
+  });
+
+  it("H.13 softDelete is fail-closed on ownership: a foreign or unknown id is a no-op returning false", () => {
+    store.upsert("user:owner@x.com", convo("d3"), 1000);
+    expect(store.softDelete("guest:g1", "d3", 2000)).toBe(false); // someone else's chat
+    expect(store.softDelete("user:owner@x.com", "nope", 2000)).toBe(false); // unknown id
+    expect(store.list("user:owner@x.com", 10).map((s) => s.id)).toContain("d3"); // untouched
+  });
+
+  it("H.14 a later upsert of a deleted chat does NOT resurrect it in the account's view", () => {
+    const uid = "user:zombie@x.com";
+    store.upsert(uid, convo("d4"), 1000);
+    store.softDelete(uid, "d4", 2000);
+    // Another device still holding the chat locally re-syncs it (write-through PUT).
+    store.upsert(uid, convo("d4", "Re-synced"), 3000);
+    expect(store.list(uid, 10).map((s) => s.id)).not.toContain("d4");
+    expect(store.get(uid, "d4")).toBeNull();
+  });
+
+  it("H.15 deleting twice is idempotent — the second call reports false", () => {
+    const uid = "user:twice@x.com";
+    store.upsert(uid, convo("d5"), 1000);
+    expect(store.softDelete(uid, "d5", 2000)).toBe(true);
+    expect(store.softDelete(uid, "d5", 3000)).toBe(false);
+  });
 });

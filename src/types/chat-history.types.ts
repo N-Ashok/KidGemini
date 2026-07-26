@@ -21,6 +21,11 @@ export interface ChatHistoryStore {
   list(userId: string, limit: number, before?: { updatedAt: number; id: string }, workspace?: Workspace): ConvoSummary[];
   /** Full conversation, or null when absent OR owned by someone else. */
   get(userId: string, id: string): Conversation | null;
+  /** SOFT delete (owner ask 2026-07-26): hides the chat from this account's
+   *  view (list + get) — the row itself stays in the system (safety review,
+   *  recoverability). Fail-closed on ownership: a foreign or unknown id is a
+   *  no-op returning false. Idempotent: a second delete also returns false. */
+  softDelete(userId: string, id: string, now: number): boolean;
   /** Guest→account merge on login: reassigns every row owned by `fromUserId`
    *  to `toUserId`. An id the target already owns is left under `fromUserId`
    *  (never overwritten/dropped) rather than picking a winner. Returns how
