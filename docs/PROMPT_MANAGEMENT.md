@@ -237,6 +237,14 @@ professional low-poly models from the toy box: MODEL_A, MODEL_B, ....
    (search by name for run/walk/gallop/etc; create an AnimationMixer;
    call mixer.update(delta) in the loop).
    [+ people-models clause, if any people models are taught this turn]
+   [+ SPORTS_PLAYBOOK, if the manifest's sports genre has members
+      (2026-07-26): basic rules + team AI for sports games — team sports
+      (score in the opponent's goal, restart at centre, one chaser +
+      formation, keeper clamped to the goal mouth, kick = velocity impulse
+      + friction) and duel games (air-hockey paddles clamped to halves,
+      battle-top spin decay). ~250 tokens. CACHE-SAFE: derived from the
+      manifest only, never the child's message, so the section stays
+      byte-identical per turn]
 6. Good fits by game idea:
    [+ per-genre hints for the taught models]
 ````

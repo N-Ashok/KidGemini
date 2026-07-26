@@ -219,10 +219,15 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     expect(modelsPromptSection(real)).toBe(section);
   });
 
-  it("stays inside its token ceiling (§9 scale ceiling — revisit past ~1500 tokens)", () => {
+  it("stays inside its token ceiling (§9 scale ceiling — revisit past ~1750 tokens)", () => {
     // ~4 chars/token. The ceiling is what makes "teach everything" affordable;
     // if a bulk import breaks this, the category-map hybrid is the fallback.
-    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(1_500);
+    // Raised 1500 → 1750 (2026-07-26): the sports batch landed at 1501 — the
+    // ~250 of that from the SPORTS_PLAYBOOK is deliberate teaching content
+    // (rules + team AI, owner ask), not catalog creep, so this is the
+    // documented revisit the old comment demanded. Model NAMES still dominate
+    // the section; an accidental bulk import still trips this.
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(1_750);
   });
 });
 
@@ -276,6 +281,54 @@ describe("the sports category (2026-07-26 batch) renders in the real catalog", (
 
   it("the footballers are taught as people-rig models (their clips promise must hold)", () => {
     expect(section).toMatch(/people models \([^)]*footballer\b/);
+  });
+});
+
+// The sports playbook (owner ask 2026-07-26): models alone produce the
+// "everyone chases the ball" game — the LLM needs the basic rules and the
+// team-AI pattern. Static (derived from the manifest, not the message), so
+// the byte-stability test below still holds and prefix caching survives.
+describe("the sports playbook teaches rules + dynamics, cache-safely", () => {
+  const section = modelsPromptSection(realManifest as AssetManifest);
+
+  it("teaches the object of a team sport (score in the OPPONENT's goal, restart, win condition)", () => {
+    expect(section).toMatch(/opponent'?s goal/i);
+    expect(section).toMatch(/restart|centre|center/i);
+    expect(section).toMatch(/score/i);
+  });
+
+  it("bans the ball-swarm: one chaser, everyone else holds formation", () => {
+    expect(section).toMatch(/not .*every(one| player).*chase|only the (one|closest)/i);
+    expect(section).toMatch(/formation|home (spot|position)/i);
+  });
+
+  it("clamps the goalkeeper to the goal mouth", () => {
+    expect(section).toMatch(/goal\s?keeper|keeper/i);
+    expect(section).toMatch(/clamp/i);
+  });
+
+  it("teaches kick-as-impulse with friction, never a physics engine", () => {
+    expect(section).toMatch(/impulse|velocity/i);
+    expect(section).toMatch(/friction|slow(s|ing)? (down|by)/i);
+    expect(section).toMatch(/no physics engine/i);
+  });
+
+  it("covers duel games separately (air hockey paddles, battle-top spin decay)", () => {
+    expect(section).toMatch(/air hockey/i);
+    expect(section).toMatch(/own half/i);
+    expect(section).toMatch(/spin/i);
+    expect(section).toMatch(/decay|slows|loses/i);
+  });
+
+  it("generalizes beyond football (hockey / polo use a hit clip, not the kick)", () => {
+    expect(section).toMatch(/hockey/i);
+    expect(section).toMatch(/polo/i);
+  });
+
+  it("renders NOTHING for a manifest without sports models (zero tokens for non-sports libraries)", () => {
+    const noSports = modelsPromptSection(fakeModels);
+    expect(noSports).not.toMatch(/TEAM SPORT/i);
+    expect(noSports).not.toMatch(/air hockey/i);
   });
 });
 

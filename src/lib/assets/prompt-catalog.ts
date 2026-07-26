@@ -10,6 +10,38 @@ import manifestJson from "./manifest.json";
 import { modelsInGenre } from "./asset-taxonomy";
 import { GENRES, peopleModels } from "./model-select";
 
+/**
+ * The sports playbook (owner ask 2026-07-26): without it the model writes the
+ * "every player swarms the ball" game. Rules + team-AI pattern in ~250 tokens.
+ * CACHE CONTRACT: this clause depends only on the MANIFEST (renders when the
+ * sports genre has members), never on the child's message — so the section
+ * stays byte-identical per turn and Gemini prefix caching keeps hitting
+ * (COST_TOKEN_BUDGET.md waste-ledger #4; same rule as the people clause).
+ */
+const SPORTS_PLAYBOOK = `
+   Sports games have RULES — build them in, don't just scatter the models:
+   For a TEAM SPORT (football/soccer, hockey, polo, handball): two teams score
+   by getting the ball (or puck) into the OPPONENT's goal; after a goal show
+   the score and restart everyone at their starting spots at the centre; first
+   to 3 goals (or a short timer) wins. Do NOT make every player chase the
+   ball: give each player a role and a home spot in formation, and each frame
+   only the ONE teammate closest to the ball chases it (play "sprint");
+   everyone else eases toward home + (ball - home) * 0.2 so the team keeps its
+   shape. The goalkeeper is clamped to the goal mouth and only tracks the
+   ball's sideways position. When the chaser reaches the ball, play the kick
+   clip (the footballers carry attack-kick-right/left; for a hockey/polo hit
+   use "interact-right") and push the ball with a velocity impulse toward the
+   opponent's goal; multiply the ball's velocity by ~0.98 each frame so it
+   slows by friction — no physics engine. The pitch is a green plane with a
+   goal at each end.
+   For a DUEL game (air hockey, pong-style, battle tops): no formations — two
+   players and simple physics (velocity + bounce off the walls + friction).
+   Air hockey: each paddle stays clamped to its own half; the computer paddle
+   tracks the puck at a capped speed so the kid can win. Battle tops: spin
+   with rotation.y += speed * delta and let speed decay slowly; when tops
+   collide, bounce them apart and let each steal a little of the other's
+   spin — the top that runs out of spin first wobbles and loses.`;
+
 /** Names the vendored engine bundle exports — MUST stay in lockstep with
  *  THREE_EXPORTS in scripts/vendor-three.mjs (pinned by test). Exported as
  *  an array so the server-side import lint (three-import-lint.ts) checks
@@ -115,6 +147,7 @@ export function modelsPromptSection(
   const available = new Set(models.map((m) => m.name));
   const people = peopleModels(available);
   const categories = categoryLines(available);
+  const hasSports = modelsInGenre("sports", available).length > 0;
   return `**Ready-made 3D models**: for a 3D game you may ALSO use these
 professional low-poly models from the toy box — this is the COMPLETE list, so
 design your game around what is actually here:
@@ -151,7 +184,7 @@ ${categories}
    excitement); "sprint" is the running clip, "walk" the walking one. For a
    crowd, call loadModel again for each person (the download is cached, so
    extras are free) — do NOT .clone() a person: cloned characters share one
-   skeleton and animate wrong. Each person needs their own AnimationMixer.` : ""}`;
+   skeleton and animate wrong. Each person needs their own AnimationMixer.` : ""}${hasSports ? SPORTS_PLAYBOOK : ""}`;
 }
 
 /**

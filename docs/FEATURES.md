@@ -571,7 +571,13 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   re-skinned into red/blue kits — same shared rig and clips as the other
   people, PLUS the two attack-kick clips, so a football game can actually
   kick). New `sports` genre + trigger (soccer, football, goal, penalty,
-  beyblade, spinning top…)
+  beyblade, spinning top…). **Sports playbook** (same day, owner ask): the
+  catalog also teaches the RULES so games behave like the sport — team
+  sports get score-in-the-opponent's-goal + restart, one-chaser +
+  formation AI (never the ball-swarm), a keeper clamped to the goal
+  mouth, and kick-as-impulse with friction; duel games (air hockey,
+  battle tops) get paddle-half clamps and spin/velocity decay. Static and
+  manifest-derived, so prompt caching is unaffected (~250 tokens)
 - **Retrieval-lite selection** (PRD §14, `src/lib/assets/model-select.ts`):
   the library is unbounded but each build-turn prompt teaches ≤ 30 models,
   picked by cheap regex — the iterated game's own USES_MODELS markers,

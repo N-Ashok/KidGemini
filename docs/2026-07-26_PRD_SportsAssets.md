@@ -92,6 +92,27 @@ asset host is append-only as before.
 - pipeline: contract tests (`npm run test` on `src/lib/assets/`) as the vendor
   gate, per the existing stage-5 flow.
 
+## 5b. Sports playbook (added same day, owner ask)
+
+Models alone produced the "everyone chases the ball" game. `SPORTS_PLAYBOOK`
+in `prompt-catalog.ts` now teaches the basic rules and dynamics whenever the
+manifest's sports genre has members:
+
+- **Team sports** (football, hockey, polo, handball — sport-agnostic): score
+  in the opponent's goal, restart at centre, first-to-3/timer, visible score;
+  one-chaser-only AI with the rest easing toward formation
+  (`home + (ball − home) × 0.2`); keeper clamped to the goal mouth; kick =
+  clip + velocity impulse, friction ×0.98/frame, no physics engine.
+- **Duel games** (air hockey, pong-style, battle tops): paddles clamped to
+  their own half, computer paddle speed-capped so kids can win; tops spin via
+  `rotation.y += speed * delta` with decay and collision spin-steal.
+
+**Caching:** the clause derives from the manifest only (never the message), so
+`modelsPromptSection()` stays byte-identical per turn and the Gemini
+prefix-cache contract holds (pinned by the existing byte-stability test).
+**Cost:** ~250 tokens; the catalog token ceiling was raised 1500 → 1750 as the
+documented revisit that test demands.
+
 ## 6. Out of scope
 
 Stadium bowl mesh (grandstand covers it), referee character, American football
