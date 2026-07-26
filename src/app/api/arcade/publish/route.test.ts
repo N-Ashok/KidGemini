@@ -175,6 +175,14 @@ describe("arcade publish — category forwarded", () => {
     expect(res.status).toBe(200);
     expect((platformCalls[0] as { category?: unknown }).category).toBeUndefined();
   });
+
+  it("G.12 the retired 'Arcade' (stale client) is dropped like any unknown — platform defaults it, publish never blocks", async () => {
+    cookieJar.ariantra_session = await sessionToken();
+    cookieJar[PARENT_SESSION_COOKIE] = await mintParentSession(FAMILY, SECRET);
+    const res = await POST(req({ name: "Fish Maze", html: HTML, category: "Arcade" }));
+    expect(res.status).toBe(200);
+    expect((platformCalls[0] as { category?: unknown }).category).toBeUndefined();
+  });
 });
 
 // PRD-BIBLE-TEACHER §5: the teacher surface tags a game for the separate

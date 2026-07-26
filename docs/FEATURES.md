@@ -37,8 +37,10 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   on one request, regardless of what's left in localStorage. Ownership
   fail-closed at the SQL layer (`/api/chats*`, `SqliteChatHistoryStore`);
   write-through happens once per finished turn, never per streamed token
-- **Delete a chat** (2026-07-26, owner ask): every sidebar row carries a 🗑️
-  with an in-row two-tap confirm ("Delete / Keep" — no browser popup). SOFT
+- **Delete a chat** (2026-07-26, owner ask): each sidebar row has a SUBTLE ✕
+  — invisible until the row is hovered (or the button keyboard-focused);
+  deliberately not an obvious affordance — with an in-row two-tap confirm
+  ("Delete / Keep" — no browser popup). SOFT
   delete: `DELETE /api/chats/:id` stamps `deletedAt` and the chat leaves the
   account's VIEW (list + get filter on `deletedAt IS NULL`) — the row stays
   in the system (safety review, recoverability). Ownership fail-closed;
@@ -320,9 +322,16 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   With friends 2–5; preselected to friends since that's what the kid built,
   defaults single everywhere else). The publish route forwards
   `seo.multiplayer: true` only when the kid chose multiplayer AND the marker
-  exists (`route.test.ts` G.6–G.11) — choice alone would ship a dead lobby,
+  exists (`route.test.ts` G.6–G.12) — choice alone would ship a dead lobby,
   marker alone would override the kid. Admins can recategorize any game
-  later via the platform's `/internal/admin` `set-category` action
+  later via the platform's admin console (`/studio/admin` category select →
+  `set-category` action, built 2026-07-26). **'Arcade' retired 2026-07-26**
+  (owner decision): dropped from `GAME_CATEGORIES` here and on the platform;
+  a stale client sending it is treated as an unknown category (dropped, G.12).
+  When the game carries the multiplayer marker, the naming step also shows an
+  up-front chip — "👥 Multiplayer game — friends can join with a code!" —
+  so the kid sees it before choosing play mode (owner ask 2026-07-26); the
+  platform catalog badges these games the same way on their cards
 - **🔄 Update mode**: when the kid already has games, the sheet ASKS first —
   "brand-new game" or "update one of mine" with a picker of their games
   (fetched via the partner `list` action, session-verified). Picking one

@@ -401,6 +401,14 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
           <>
             <h3 className="font-display text-xl font-bold">Name your game! 🎮</h3>
             <p className="mb-3 text-sm text-neutral-500">This becomes its very own web address.</p>
+            {/* Multiplayer indicator (owner ask 2026-07-26): when the game
+                carries multiplayer code, say so up front with a chip — the
+                play-mode buttons below choose it, this makes it unmissable. */}
+            {hasMpCode && (
+              <div className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-sky-300 bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700">
+                👥 Multiplayer game — friends can join with a code!
+              </div>
+            )}
             {gamesLoadError && (
               <button
                 type="button"

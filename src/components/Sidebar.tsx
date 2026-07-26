@@ -232,16 +232,17 @@ export function Sidebar(props: SidebarProps) {
                 >
                   {r.title}
                 </button>
-                {/* Faintly visible on touch (no hover there), full on hover/focus. */}
+                {/* Deliberately near-invisible (owner ask 2026-07-26): a subtle ✕
+                    that only appears when the pointer is over the row (or the
+                    button is keyboard-focused) — never an obvious affordance. */}
                 <button
                   aria-label={`Delete chat ${r.title}`}
                   title="Delete chat"
                   onClick={() => setConfirmingId(r.id)}
-                  className="shrink-0 rounded-lg px-1.5 py-2 text-sm text-neutral-400 opacity-40
-                             hover:bg-neutral-200/60 hover:text-red-600 focus:opacity-100
-                             group-hover:opacity-100"
+                  className="shrink-0 rounded-lg px-2 py-2 text-xs text-neutral-400 opacity-0
+                             hover:text-red-600 focus:opacity-100 group-hover:opacity-100"
                 >
-                  🗑️
+                  ✕
                 </button>
               </li>
             ),
