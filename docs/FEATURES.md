@@ -633,6 +633,11 @@ server-to-server contract as `arcade-partner.ts`).
   game+platform; kids never touch social surfaces).
 - **Low balance**: the PLATFORM emails the parent (throttled 1/3 days) —
   kids are never dunned.
+- **Publish celebration card** (closure §4, 2026-07-26): first publish's done
+  screen shows "+N ⚡ for publishing!" — the amount read from the wallet
+  credits feed (`src/lib/publish-celebration.ts`, pure + tested; wired in
+  `PublishToArcade.tsx`). No card on republish (reward is once per game) or if
+  the feed is unavailable — Sparks never wobble the publish flow.
 
 ## Billing (`/upgrade`, `/pay`)
 - Razorpay one-time payments: plan cards, order creation, checkout

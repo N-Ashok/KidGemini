@@ -11,6 +11,8 @@ import { GAME_CATEGORIES } from "@/lib/game-categories";
 import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
 import { signIn, verifyAge, useSession } from "@/lib/useAriantraSession";
 import { INITIAL_PUBLISH_STEP, stepAfterGamesLoad, type PublishStep } from "@/lib/publish-flow";
+import { fetchPublishCelebration } from "@/lib/publish-celebration";
+import SparksCelebrationCard from "@/components/SparksCelebrationCard";
 
 interface Props {
   html: string;
@@ -134,6 +136,12 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
   // shareEnabled/credit (account-level Sharing & Privacy, set in Studio) —
   // no extra round trip needed for the share card below.
   const [shareEnabled, setShareEnabled] = useState(false);
+  // PRD-SPARKS closure §4: "+⚡ for publishing" card on the done screen. The
+  // amount comes from the wallet credits feed (the ledger is the truth), so
+  // this is null until that fetch lands — and stays null on a republish
+  // (reward is once per game) or if the feed is unavailable (no card, never
+  // an error: Sparks must not wobble the publish celebration).
+  const [sparksCelebration, setSparksCelebration] = useState<{ amount: number } | null>(null);
   const [shareMessage, setShareMessage] = useState("");
   const [shareConfirmed, setShareConfirmed] = useState(false);
   // Where the game ACTUALLY landed — read from the publish response, not the
@@ -241,6 +249,9 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
           : `I made a game! Play it here.\n${data.url}\n(Built it on Ariantra — kids make the games.)`,
       );
       setShareConfirmed(false);
+      if (!updateTarget) {
+        void fetchPublishCelebration(data.url).then(setSparksCelebration);
+      }
       setTimeout(() => setStep("done"), 700);
     } catch {
       clearTimeout(t1);
@@ -549,6 +560,7 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
             <div className="mb-1 text-5xl">🏆</div>
             <h3 className="font-display text-xl font-bold">{displayName} is {isUpdate ? "UPDATED" : "LIVE"}! 🎉</h3>
             <p className="mb-3 text-sm text-neutral-500">{isUpdate ? "The new version is playing at the same address." : "You’re a real game maker now."}</p>
+            {sparksCelebration && <SparksCelebrationCard amount={sparksCelebration.amount} />}
             <div className="mb-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
               <div className="text-sm font-extrabold text-orange-600">{liveUrl.replace(/^https:\/\//, "").replace(/\/$/, "")}</div>
               <div className="mt-1 text-[11px] text-neutral-400">High scores &amp; leaderboard: ON automatically 🏆</div>

@@ -173,8 +173,14 @@ to the last 12 in one step.
 - Natural future home for threshold compaction (summarize-on-cut) — out of
   scope here, noted in TECH_DEBT.
 - The carry-the-game rule (rule 3) stays but becomes moot after Fix B.
-- Tests: `history-trim` unit tests updated for the new cadence; a new test
-  pins "no trim between thresholds" (the cache invariant).
+- **Cut on a user-message boundary**: after the cut, if the window opens on an
+  assistant message, drop that message too. `slice(-12)` today can open the
+  window mid-pair; a dangling assistant reply adds no context and Gemini
+  history reads cleanest opening on a user turn. Costs at most one extra
+  dropped message per cut.
+- Tests: `history-trim` unit tests updated for the new cadence; new pins:
+  "no trim between thresholds" (the cache invariant) and "window never opens
+  on an assistant message".
 
 ### Fix B — game source moves from mid-history to the tail
 
@@ -184,9 +190,14 @@ New shape (build/edit turns once a game exists):
 [ systemInstruction (stable) ]
 [ prose history — append-only; EVERY game message shows a stable placeholder,
   written once and never rewritten ]
-[ final user message:
-    "Current game source:\n```html\n<newest-or-pinned game>\n```\n\n
-     The child asked: <message>" (+ image part on image turns) ]
+[ final user message — exact part order (pinned by test):
+    part 1 (image turns only): inlineData — keeps today's image-first pin
+                               in gemini.contents.test.ts
+    part 2 (text):  "Current game source:\n```html\n<newest-or-pinned game>\n```"
+                    + GAME_EDIT_PROMPT_SECTION      (edit turns — Fix C)
+                    + REPEATED_REQUEST_SECTION      (repeated turns — Fix C)
+                    + "The child asked: <message>"  (the ask stays LAST —
+                       recency position for the model) ]
 ```
 
 - `trimHistory` stops inlining (`withInlineGame` deleted); **all** game
@@ -199,8 +210,20 @@ New shape (build/edit turns once a game exists):
   — the **same** source `applyPatch` runs against, so SEARCH blocks still
   match server truth exactly. Rewind pins keep working (pinned version is what
   rides the tail).
+- Rule 3 of `trimHistory` (swap the game-bearing message into slot 1 when it
+  falls off the window) is **deleted**, not left moot — the tail carries the
+  source on every turn regardless of window position, and keeping dead code
+  that reorders history is exactly the kind of byte-instability this PRD
+  exists to kill. Rewind pins keep working through `currentGameHtml(history,
+  pinnedId)` alone.
 - This is the shape `strictEditRetry` **already uses in production** — the
   model demonstrably patches correctly against it.
+- **Deferred, do NOT ship in B:** skipping the game block on non-edit turns
+  mid-conversation ("what's 7×8?" doesn't need 12K of game source). Tempting
+  ~12K saving on off-topic turns, but it rides on `isGameEditTurn` being
+  right; a false negative would strand an edit with no source. Revisit only
+  with prod evidence that off-topic-mid-game turns are a material share of
+  spend (TECH_DEBT entry, measured via the edit-branch log line).
 - Consequences: the 10–15K game block can no longer invalidate the prose
   history behind it. The game itself is **never cached** (it sits in the
   changing final message) — accepted; it was effectively never cached before
@@ -223,11 +246,93 @@ New shape (build/edit turns once a game exists):
 - (The 2D→3D conversion turn already stopped perturbing the instruction on
   2026-07-26 — it never reaches the model; the fresh-chat build arrives as an
   ordinary `forceRebuild` first turn.)
+- **Reorder the monotonic sections by invalidation cost.** Today's order in
+  `buildTurnSystemInstruction` is `THREE + models, audio, MULTIPLAYER`. A gate
+  unlock invalidates every byte AFTER its insertion point — so the ~320-token
+  audio section sitting in FRONT of the ~2,150-token multiplayer section means
+  a late audio unlock (a kid asks for sound effects mid-session) throws away
+  the whole multiplayer block behind it. New order: `THREE + models,
+  MULTIPLAYER, audio` — the smallest, likeliest-late section goes last, so its
+  unlock invalidates nothing behind it. General rule, pinned in a code
+  comment: sections are ordered largest/earliest-unlocking first,
+  smallest/latest-unlocking last. (This reorders instruction bytes, so it
+  lands INSIDE the Fix C commit with its prompt-contract test updates — never
+  as a drive-by.)
+- **Determinism pin:** `modelsPromptSection()` and `audioPromptSection()` are
+  function calls — a new test pins that two calls return byte-identical
+  strings (a future catalog shuffle or timestamp would silently zero the
+  cache).
 - NOT moved: the persona base and monotonic sections stay in
   `systemInstruction` (they're stable — moving them buys nothing and risks
   authority dilution of safety instructions).
 - Tests: `gemini.prompt.test.ts` prompt-contract pins move with the text;
   new pin: "instruction bytes identical across consecutive edit turns".
+
+### 4.4 The prompt, before → after — byte for byte
+
+Two consecutive edit turns of one real session ("make the penguin faster" →
+"add a score bonus"), all gates on, history already past the window. `▓` marks
+where the cache dies — everything after it bills at the full input rate.
+
+**TODAY — turn N vs turn N+1** (~4% cached):
+
+```
+turn N                                    turn N+1
+──────────────────────────────────────    ──────────────────────────────────────
+[systemInstruction]                       [systemInstruction]
+  persona base            ~1,310            persona base            (identical)
+  THREE + models + audio  ~2,110            THREE + models + audio  (identical)
+  MULTIPLAYER             ~2,150            MULTIPLAYER             (identical)
+  GAME_EDIT               ~360              GAME_EDIT               (identical)
+[history msg 1]                           ▓[history msg 1]  ← OLDEST DROPPED —
+  user: "add a jump button"                 different message now sits here;
+                                            every byte from this point is a MISS
+[history msg 2..11]                        [what was msg 2..12, shifted up one]
+  …incl. assistant msg with the FULL        …the game blob moved position AND
+  game inlined (~12,000 tok) — and          the pre-edit version was rewritten
+  after each edit the PREVIOUS game         to GAME_OMITTED_PLACEHOLDER —
+  message is rewritten to a placeholder     changed bytes mid-prefix
+[final user msg]                          [final user msg]
+  "make the penguin faster"                 "add a score bonus"
+──────────────────────────────────────
+cacheable prefix on turn N+1: just the system instruction… IF no gate/edit
+flag flipped. Measured result: 4.3%.
+```
+
+**AFTER A+B+C — same two turns** (forecast 35–50% on within-TTL turns):
+
+````
+turn N                                    turn N+1
+──────────────────────────────────────    ──────────────────────────────────────
+[systemInstruction]                       [systemInstruction]      ✅ CACHED
+  persona base            ~1,310            byte-identical — GAME_EDIT and
+  THREE + models          ~1,790            REPEATED are gone from here (they
+  MULTIPLAYER             ~2,150            ride the tail); only a monotonic
+  audio (now last)        ~320              gate unlock can ever change it
+[history msg 1..18]                       [history msg 1..18]      ✅ CACHED
+  prose only; every game message shows      SAME BYTES — window didn't move
+  a stable placeholder written once       [history msg 19..20]     (new, billed)
+                                            last turn's ask + reply, APPENDED —
+                                            nothing above them changed
+[final user msg]                          ▓[final user msg]  ← the only miss
+  Current game source:                      Current game source:
+  ```html                                   ```html
+  <penguin game v3, ~12K tok>               <penguin game v4 — new bytes, fine:
+  ```                                       this block sits BEHIND everything
+  GAME_EDIT section        ~360             cacheable instead of in front of it>
+  "The child asked: make                    ```
+   the penguin faster"                      GAME_EDIT section
+                                            "The child asked: add a score bonus"
+──────────────────────────────────────
+cacheable prefix on turn N+1: instruction (~5,570) + history (~3,000) ≈ 8.5K
+of a ~21K request. Misses only at: window cut (1 per ~12 turns), gate unlock
+(≤3 per conversation), TTL expiry.
+````
+
+The before/after in one sentence: today the request's **only stable bytes are
+the instruction** and even those flip; after, **everything except the final
+user message is frozen**, and the one block that must change every turn (the
+game source) is quarantined at the end where it can't invalidate anything.
 
 ### What deliberately does NOT change
 
@@ -318,7 +423,10 @@ of mid-history? (Mitigating prior: `strictEditRetry` already works this way.)
 - New cache-invariant pins: (1) instruction bytes identical across
   consecutive edit turns; (2) trimmed history bytes for turn N are a prefix
   of turn N+1's between window cuts; (3) game source present exactly once
-  per request, at the tail.
+  per request, at the tail; (4) trimmed window never opens on an assistant
+  message; (5) final-message part order = [image?][game → edit section →
+  repeated section → ask]; (6) `modelsPromptSection()`/`audioPromptSection()`
+  return byte-identical strings across calls.
 
 ### 6.2 Golden-session UAT script (live, dev, ~20 min)
 

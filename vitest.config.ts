@@ -5,6 +5,12 @@ import { fileURLToPath } from "node:url";
 // Coverage threshold (≥70% on src/lib, CLAUDE.md §8) is intentionally NOT enforced yet — it would
 // fail on the as-yet-untested legacy files. Enable it once the retrofit (KNOWN_BUGS #1) lands.
 export default defineConfig({
+  // Next's tsconfig sets `jsx: preserve` (its compiler does the transform);
+  // in the test process the bundler must do it instead, or importing any
+  // .tsx component fails to parse (first needed for SparksCelebrationCard's
+  // render test, PRD-SPARKS closure §4). This vite is rolldown-based → oxc
+  // options, not esbuild.
+  oxc: { jsx: { runtime: "automatic" } },
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],

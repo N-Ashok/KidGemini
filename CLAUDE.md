@@ -156,6 +156,9 @@ write feature code before its tests. "It typechecks" and "it boots" are **not** 
 2. **PRD & plan.** Capture the intent and approach in writing **before coding** — extend
    `docs/PRD.md` (product intent) and write a short implementation plan (files, interfaces,
    test list). One plan per feature; keep it in the PR/change description or `docs/`.
+   **New standalone PRDs (2026-07-26 convention, both repos):** name them
+   `YYYY-MM-DD_PRD_FeatureName.md` and include **Tech Feasibility**, **Tech Plan**, and
+   **Use Cases** (all of them, each with how we tackle it). Existing `PRD-*.md` keep their names.
 3. **Develop per the coding principles in §4** (SOLID, types-first in `src/types`, config not
    call-sites, server-only secrets, fail-closed safety). Keep diffs focused — one concern per change.
 4. **Test-first — write tests BEFORE the implementation.** Required layers:
