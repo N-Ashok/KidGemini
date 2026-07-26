@@ -139,6 +139,42 @@ describe("selectModelNames — people / crowd genre (stadium humans, 2026-07-19)
   });
 });
 
+describe("selectModelNames — sports genre (2026-07-26 batch)", () => {
+  const SPORTS = ["soccer_ball", "soccer_goal", "footballer", "footballer_blue", "battle_top", "blade_top"];
+  const withSports: AssetManifest = { assets: [...BIG_NAMES, ...SPORTS].map(entry) };
+
+  it("a soccer ask picks the football set, not sea creatures", () => {
+    const picked = selectModelNames({ message: "make me a 3d soccer game", history: [], manifest: withSports });
+    expect(picked).toContain("soccer_ball");
+    expect(picked).toContain("soccer_goal");
+    expect(picked).toContain("footballer");
+    expect(picked).not.toContain("shark");
+  });
+
+  it("'football' triggers the same set (the word kids actually use)", () => {
+    const picked = selectModelNames({ message: "a 3d football match", history: [], manifest: withSports });
+    expect(picked).toContain("soccer_ball");
+    expect(picked).toContain("footballer_blue");
+  });
+
+  it("a beyblade ask surfaces the battle tops", () => {
+    const picked = selectModelNames({ message: "3d beyblade battle arena", history: [], manifest: withSports });
+    expect(picked).toContain("battle_top");
+    expect(picked).toContain("blade_top");
+  });
+
+  it("'spinning top' works without the brand word", () => {
+    const picked = selectModelNames({ message: "a 3d spinning top fight", history: [], manifest: withSports });
+    expect(picked).toContain("battle_top");
+  });
+
+  it("no sports words → no sports models (selection stays tight)", () => {
+    const picked = selectModelNames({ message: "3d game under the sea", history: [], manifest: withSports });
+    expect(picked).not.toContain("soccer_ball");
+    expect(picked).not.toContain("battle_top");
+  });
+});
+
 describe("GENRES — data sanity", () => {
   const allModels = new Set(
     (manifest as AssetManifest).assets.filter((a) => a.type === "model").map((a) => a.name),

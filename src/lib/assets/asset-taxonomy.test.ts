@@ -104,6 +104,8 @@ const GENRE_MEMBERSHIP_BEFORE_MIGRATION: Record<GenreId, string[]> = {
     "pizza", "hotdog", "banana", "watermelon", "cake", "cupcake", "taco", "carrot",
     "strawberry", "sandwich", "corn", "sushi", "egg", "muffin", "cherries",
   ],
+  // Born after the migration (2026-07-26 sports batch) — nothing to preserve.
+  sports: [],
 };
 
 describe("migrating genre membership onto the assets never DROPS a model", () => {
@@ -126,11 +128,13 @@ describe("migrating genre membership onto the assets never DROPS a model", () =>
 // a stadium — so deriving that line from the genre would tell the model a
 // grandstand can walk. Rig, not genre, is the only valid source.
 describe("shared-rig set is exactly the Kenney Blocky characters", () => {
-  it("is all 18 of them — the whole kit is imported and every one shares the clip list", () => {
+  it("is the 18 kit characters plus the 2 footballer re-skins (2026-07-26 sports batch) — every one shares the clip list", () => {
+    // The footballers are re-textured character-b meshes (same skeleton, same
+    // clips), so listing them here keeps the people-clips prompt line true.
     expect([...modelsWithRig("kenney_blocky", new Set(modelNames))].sort()).toEqual([
-      "businessman", "explorer", "gamer", "girl", "grandpa", "kimono_woman", "man", "mascot",
-      "mech", "ninja", "orc", "pirate", "plumber", "police_officer", "purple_mech", "scientist",
-      "woman", "zombie",
+      "businessman", "explorer", "footballer", "footballer_blue", "gamer", "girl", "grandpa",
+      "kimono_woman", "man", "mascot", "mech", "ninja", "orc", "pirate", "plumber",
+      "police_officer", "purple_mech", "scientist", "woman", "zombie",
     ]);
   });
 
@@ -147,6 +151,33 @@ describe("shared-rig set is exactly the Kenney Blocky characters", () => {
     for (const scenery of ["grandstand", "house", "car", "tree", "pit_garage"]) {
       expect(rigged).not.toContain(scenery);
     }
+  });
+});
+
+// Sports batch (2026-07-26, docs/2026-07-26_PRD_SportsAssets.md): first-party
+// CC0 models + two Kenney-derivative footballers. Pinned by name so a pipeline
+// or curation edit can't silently drop the set the sports trigger promises.
+describe("sports genre (2026-07-26 batch)", () => {
+  const SPORTS_MODELS = ["soccer_ball", "soccer_goal", "footballer", "footballer_blue", "battle_top", "blade_top"];
+
+  it("the manifest carries all six sports models", () => {
+    for (const name of SPORTS_MODELS) expect(modelNames).toContain(name);
+  });
+
+  it("all six sit in the sports genre", () => {
+    const members = modelsInGenre("sports", new Set(modelNames));
+    for (const name of SPORTS_MODELS) expect(members).toContain(name);
+  });
+
+  it("the battle tops do NOT claim the character rig (a top has no walk clip)", () => {
+    const rigged = modelsWithRig("kenney_blocky", new Set(modelNames));
+    expect(rigged).not.toContain("battle_top");
+    expect(rigged).not.toContain("blade_top");
+  });
+
+  it("kid vocabulary reaches the models via tags (beyblade → battle_top, keeper → footballer)", () => {
+    expect(tagsOf("battle_top")).toContain("beyblade");
+    expect(tagsOf("soccer_ball")).toContain("football");
   });
 });
 

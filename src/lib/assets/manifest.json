@@ -1754,6 +1754,60 @@
       "license": "CC0",
       "sourceUrl": "https://opengameart.org/content/short-loops-background-music-pack",
       "sha256": "8fc7e3126ccb9bfb40c797a16aa0be4abc5814b8eabfbae9685e697f2815133a"
+    },
+    {
+      "name": "soccer_ball",
+      "type": "model",
+      "url": "https://assets.ariantra.com/soccer_ball.fceff8.glb",
+      "bytes": 4320,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "fceff8a0855504bcef6c02c9a3d69ba81a75da6dc9dccb9c8fc63b14c9f81889"
+    },
+    {
+      "name": "soccer_goal",
+      "type": "model",
+      "url": "https://assets.ariantra.com/soccer_goal.79154c.glb",
+      "bytes": 3560,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "79154cd07db89baa8a369381a7bd6b2f17e801c87084c7f8229fdf69b3361679"
+    },
+    {
+      "name": "battle_top",
+      "type": "model",
+      "url": "https://assets.ariantra.com/battle_top.58635d.glb",
+      "bytes": 5068,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "58635ddb138c3764079bb2c46385308b53623d4b5f65eeb91e15f0f468c4e472"
+    },
+    {
+      "name": "blade_top",
+      "type": "model",
+      "url": "https://assets.ariantra.com/blade_top.a50f75.glb",
+      "bytes": 5068,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "a50f7547e9d9bf538d712ba9341edf94de3be01646d64db2686049de7699ed04"
+    },
+    {
+      "name": "footballer",
+      "type": "model",
+      "url": "https://assets.ariantra.com/footballer.b2a4b7.glb",
+      "bytes": 73768,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/blocky-characters",
+      "sha256": "b2a4b7bcfe0c579284f2aa1be95bf906f7b46222b850a25a57d9b5b2e3f9d927"
+    },
+    {
+      "name": "footballer_blue",
+      "type": "model",
+      "url": "https://assets.ariantra.com/footballer_blue.2a41d0.glb",
+      "bytes": 73816,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/blocky-characters",
+      "sha256": "2a41d02fcae816ac4db69d40023dde0aa57da284e85d8a501d0d3bfe591c0ec4"
     }
   ]
 }

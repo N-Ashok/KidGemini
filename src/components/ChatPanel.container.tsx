@@ -52,6 +52,7 @@ import { PanelResizeHandle } from "./PanelResizeHandle";
 import { searchChats } from "@/lib/chat-search";
 import { appendPage, chatToAutoRestore, mergeRecents, SYNC_FLAG } from "@/lib/chat-sync";
 import { stateAfterDelete } from "@/lib/chat-delete";
+import { fileOpenPlan, openedFileLine, uploadHistoryLine } from "@/lib/file-open";
 import { parseEditEntry, stripEditParams, seedingConversation, applySeed, applySeedFailure, threeDConversation, type EditEntry } from "@/lib/edit-entry";
 import { loadSidebarCollapsed, saveSidebarCollapsed } from "@/lib/sidebar-pane";
 import type { ConvoSummary } from "@/types/chat-history.types";
@@ -1049,6 +1050,56 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     const activeGameMessageId = active.activeGameMessageId;
     const replyId = crypto.randomUUID();
     const displayText = text || (attachment ? "" : "");
+
+    // Deterministic file-open (file-open.ts, BUG-FIX-LOG 2026-07-26): a
+    // complete HTML upload opens in the preview byte-for-byte — an "open the
+    // file" turn NEVER reaches the model (the old fold-into-prompt path made
+    // Gemini regenerate the game, i.e. "opening" meant hallucinated
+    // additions). A real change request still goes to the model, but as an
+    // ordinary patch-edit against the OPENED game already in history.
+    const openPlan = fileOpenPlan(attachment, text);
+    if (openPlan.mode !== "model") {
+      const childId2 = crypto.randomUUID();
+      anchorIdRef.current = childId2;
+      const childMsg: ChatMessage = {
+        id: childId2, role: "child", text: displayText,
+        attachmentName: attachment!.name, createdAt: Date.now(),
+      };
+      const gameMsg: ChatMessage = {
+        id: crypto.randomUUID(), role: "assistant",
+        text: openedFileLine(attachment!.name), artifactHtml: openPlan.html, createdAt: Date.now(),
+      };
+      patchActive((c) => ({
+        ...c,
+        title: c.title === "New chat" ? (attachment!.name || text).slice(0, 40) : c.title,
+        activeGameMessageId: undefined,
+        messages: [
+          ...c.messages, childMsg, gameMsg,
+          ...(openPlan.mode === "open-then-edit"
+            ? [{ id: replyId, role: "assistant", text: "", createdAt: Date.now() } as ChatMessage]
+            : []),
+        ],
+      }));
+      setArtifact(openPlan.html);
+      if (openPlan.mode === "open-only") return; // opened — nothing for the model to do
+      // Edit turn: history carries the upload as a stand-in line (NOT the
+      // typed text — an identical copy would trip isRepeatedRequest) plus the
+      // opened game; the kid's ask rides as the final message, so the server
+      // sees a normal edit against the uploaded source.
+      sendingRef.current = true;
+      try {
+        await runStream(
+          text,
+          [...history, { ...childMsg, text: uploadHistoryLine(attachment!.name) }, gameMsg],
+          replyId, 0, undefined,
+          opts?.onSuccess && (() => opts.onSuccess!(childId2)),
+        );
+      } finally {
+        sendingRef.current = false;
+      }
+      return;
+    }
+
     // What the model receives: text files fold their contents into the prompt;
     // pictures travel as a real image part (base64) NEXT to the prompt — and are
     // NOT stored in history (localStorage quota; single-turn context by design).

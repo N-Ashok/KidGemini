@@ -166,6 +166,17 @@ box, never at runtime.
 **Explicitly avoid** (attribution or non-commercial): Mixkit, Zapsplat
 non-premium, BBC RemArc, Jamendo commercial, CC-BY/CC-BY-NC anything.
 
+**First-party authored models (2026-07-26,
+`docs/2026-07-26_PRD_SportsAssets.md`):** when a needed subject has NO CC0
+source anywhere (verified for sports: poly.pizza's entire sports shelf is the
+CC-BY Google-Poly archive; Kenney/Quaternius publish no sports kits), we may
+author the mesh ourselves — `scripts/author-first-party-models.mjs` builds
+deterministic GLBs (and Kenney-derivative re-textures, which CC0 permits) into
+`assets-src/models/`, dedicated CC0 via `assets-src/LICENSE.md`. The vendor
+pipeline's `local` source kind feeds them through the exact same compress →
+budget → upload → verify → manifest stages; `sourceUrl` points at the in-repo
+dedication (originals) or the upstream Kenney page (derivatives).
+
 ### 4.2 Curation criteria
 - Kid-friendly subject; nothing scary/violent/branded.
 - **Models:** low-poly (< ~5K tris), reads well untextured (baked vertex

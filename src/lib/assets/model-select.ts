@@ -89,6 +89,14 @@ export const GENRES: readonly GenreDef[] = [
     label: "food / cooking",
     trigger: /\b(foods?|cook(ing)?|kitchen|restaurants?|burgers?|pizzas?|ice\s?creams?|donuts?|apples?|eat(ing)?|hungry|snacks?)\b/i,
   },
+  {
+    // Sports batch (2026-07-26, docs/2026-07-26_PRD_SportsAssets.md).
+    // "beyblade" matches the kid's own word for the unbranded battle tops —
+    // triggers are matched against their message, never rendered back out.
+    id: "sports",
+    label: "sports / football",
+    trigger: /\b(sports?|soccer|football(er)?s?|goals?|goal\s?keeper|penalt(y|ies)|kick(ing|s)?|strikers?|match(es)?|beyblades?|spinning\s?tops?|battle\s?tops?)\b/i,
+  },
 ];
 
 /** Always-available basics: broadly useful in any game idea. */

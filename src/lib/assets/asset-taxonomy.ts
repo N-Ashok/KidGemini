@@ -19,7 +19,7 @@
  *  (prompt-catalog.ts) and pairs with a trigger regex in model-select.ts. */
 export const GENRE_IDS = [
   "people", "racing", "platformer", "space", "animals",
-  "castle", "city", "nature", "water", "food",
+  "castle", "city", "nature", "water", "food", "sports",
 ] as const;
 export type GenreId = (typeof GENRE_IDS)[number];
 
@@ -208,6 +208,19 @@ export const TAXONOMY: Record<string, TaxonomyEntry> = {
   orc: { genres: ["castle"], tags: ["monster", "tusks", "green", "troll", "brute", "goblin"], rig: "kenney_blocky" },
   businessman: { genres: ["people", "city"], tags: ["suit", "office", "worker", "boss", "man", "tie"], rig: "kenney_blocky" },
   ninja: { genres: ["castle", "people"], tags: ["assassin", "warrior", "stealth", "shinobi", "masked"], rig: "kenney_blocky" },
+
+  // ── Sports batch (2026-07-26, docs/2026-07-26_PRD_SportsAssets.md).
+  // First-party CC0 models; the footballers are re-skinned Kenney character-b
+  // meshes, so they carry the shared rig (their clip-list promise is real).
+  // "beyblade" lives in tags only — tags are selection metadata and never
+  // render into the prompt, so the brand word maps kid vocabulary to our
+  // unbranded tops without shipping the trademark anywhere kid-visible.
+  soccer_ball: { genres: ["sports"], tags: ["football", "ball", "soccer", "kick", "penalty"] },
+  soccer_goal: { genres: ["sports"], tags: ["football", "goal", "net", "goalpost", "penalty"] },
+  footballer: { genres: ["sports", "people"], tags: ["soccer", "football", "player", "striker", "red_team"], rig: "kenney_blocky" },
+  footballer_blue: { genres: ["sports", "people"], tags: ["soccer", "football", "player", "goalkeeper", "opponent", "blue_team"], rig: "kenney_blocky" },
+  battle_top: { genres: ["sports"], tags: ["beyblade", "spinner", "spinning", "top", "spin", "arena"] },
+  blade_top: { genres: ["sports"], tags: ["beyblade", "spinner", "spinning", "top", "spin", "opponent"] },
 
   man: { genres: ["people", "city"], tags: ["guy", "dad", "father", "person", "human", "adult"], rig: "kenney_blocky" },
   woman: { genres: ["people", "city"], tags: ["lady", "mum", "mom", "mother", "person", "human", "adult"], rig: "kenney_blocky" },

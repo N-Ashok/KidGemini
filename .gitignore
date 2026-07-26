@@ -32,3 +32,6 @@ next-env.d.ts
 
 # asset-host staging (scripts/vendor-*.mjs build output; the S3 upload is the artifact)
 /.assets-out
+# Generated first-party model sources (rebuild: scripts/author-first-party-models.mjs);
+# the dedication (assets-src/LICENSE.md) stays committed.
+/assets-src/models

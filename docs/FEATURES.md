@@ -107,6 +107,16 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   re-sent with follow-ups and regenerate, so "now fix the jumping too" still
   sees the screenshot; a new upload replaces it. Never stored in localStorage
   (quota) — lost on reload until server-side history (TECH_DEBT #26)
+- **Deterministic file-open** (2026-07-26, BUG-FIX-LOG): uploading a complete
+  HTML document and asking to open it ("open the file", "run it", or nothing
+  at all) opens the file in the preview **byte-for-byte with no model call**
+  — a local assistant line confirms it, and the file becomes the chat's
+  current game so the normal patch-edit flow continues from it. A real
+  change request typed with the upload opens the file first, then sends the
+  ask as an ordinary edit against the OPENED game (the model never rebuilds
+  the raw file — that path hallucinated additions). Fragments/scripts (.js,
+  partial HTML) still fold into the prompt as before (`src/lib/file-open.ts`,
+  pure + 9 tests; `ChatPanel.container.tsx` executes the plan)
 - **Builder mode** (2026-07-09, middle-path thinking): game-BUILD turns (message
   says "game", or the chat already has a game artifact) run with a bounded
   thinking budget + extended output (24576 tokens) — the two config gaps
@@ -315,12 +325,16 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   (signed-out / multi-file "re-upload in Studio" / deleted / admin-paused /
   network), never a blank screen, never a "coming soon" promise
 - **Category + play-mode choice at publish** (2026-07-18, owner ask): the
-  naming step now includes required category chips (`GAME_CATEGORIES` in
-  `src/lib/game-categories.ts`, hand-synced with the platform's list — no
-  more everything-lands-in-"Arcade") and, for games whose HTML carries the
-  `USES_MULTIPLAYER` marker, a "How is it played?" toggle (Single player /
-  With friends 2–5; preselected to friends since that's what the kid built,
-  defaults single everywhere else). The publish route forwards
+  naming step now includes required category chips — since 2026-07-26 the
+  LIVE list is fetched from `/api/arcade/categories` (an Ari server proxy of
+  the platform's public `/api/categories`, so admin-added categories from
+  /studio/admin appear here immediately; `GAME_CATEGORIES` in
+  `src/lib/game-categories.ts` is only the offline fallback, and the proxy
+  itself falls back to it on any failure — `sanitizeCategories`, GC.1-GC.5) —
+  no more everything-lands-in-"Arcade". Games whose HTML carries the
+  `USES_MULTIPLAYER` marker also get a "How is it played?" toggle (Single
+  player / With friends 2–5; preselected to friends since that's what the
+  kid built, defaults single everywhere else). The publish route forwards
   `seo.multiplayer: true` only when the kid chose multiplayer AND the marker
   exists (`route.test.ts` G.6–G.12) — choice alone would ship a dead lobby,
   marker alone would override the kid. Admins can recategorize any game
@@ -549,6 +563,15 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   grandstand). The prompt teaches the clip names when a people model is
   taught, plus the crowd rule: call `loadModel` per person (cached
   download), never `.clone()` a skinned character (shared-skeleton bug)
+- **Sports & battle tops** (2026-07-26, `docs/2026-07-26_PRD_SportsAssets.md`):
+  soccer_ball, soccer_goal, battle_top, blade_top (first-party CC0 —
+  authored in-repo by `scripts/author-first-party-models.mjs` because no
+  CC0 third-party soccer/spinning-top models exist and Beyblade meshes are
+  branded), plus footballer / footballer_blue (Kenney character-b
+  re-skinned into red/blue kits — same shared rig and clips as the other
+  people, PLUS the two attack-kick clips, so a football game can actually
+  kick). New `sports` genre + trigger (soccer, football, goal, penalty,
+  beyblade, spinning top…)
 - **Retrieval-lite selection** (PRD §14, `src/lib/assets/model-select.ts`):
   the library is unbounded but each build-turn prompt teaches ≤ 30 models,
   picked by cheap regex — the iterated game's own USES_MODELS markers,

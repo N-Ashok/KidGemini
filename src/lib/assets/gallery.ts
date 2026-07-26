@@ -122,6 +122,14 @@ const EMOJI: Record<string, string> = {
   dragon: "🐉",
   dragon_evolved: "🐲",
 
+  // Sports batch (2026-07-26, docs/2026-07-26_PRD_SportsAssets.md).
+  soccer_ball: "⚽",
+  soccer_goal: "🥅",
+  footballer: "⛹️",
+  footballer_blue: "🏃",
+  battle_top: "🌀",
+  blade_top: "💫",
+
   // People (2026-07-19: stadium humans — Kenney Blocky Characters).
   man: "🧍",
   woman: "🧍‍♀️",

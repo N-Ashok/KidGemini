@@ -125,6 +125,22 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
   // single-player game would ship a dead lobby (the server enforces the
   // same AND, route.ts).
   const [category, setCategory] = useState<string | null>(null);
+  // Live taxonomy (owner ask 2026-07-26: admin-extendable): baked list shows
+  // instantly, then the server's list (base + admin-added extras) replaces it.
+  // A failed fetch keeps the baked chips — the platform re-validates anyway.
+  const [categories, setCategories] = useState<readonly string[]>(GAME_CATEGORIES);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/arcade/categories", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d: { categories?: string[] }) => {
+        if (alive && Array.isArray(d.categories) && d.categories.length > 0) setCategories(d.categories);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
   const hasMpCode = html.includes(MULTIPLAYER_MARKER);
   const [playMode, setPlayMode] = useState<"single" | "friends">(hasMpCode ? "friends" : "single");
   const [check, setCheck] = useState<{ state: "idle" | "checking" | "free" | "taken" | "mine" | "copyright" | "unknown"; suggestions: string[]; matched?: string }>({ state: "idle", suggestions: [] });
@@ -457,7 +473,7 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
               <>
                 <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-neutral-400">What kind of game is it?</p>
                 <div className="mb-3 flex flex-wrap gap-1.5">
-                  {GAME_CATEGORIES.map((c) => (
+                  {categories.map((c) => (
                     <button
                       key={c}
                       type="button"

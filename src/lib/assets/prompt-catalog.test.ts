@@ -265,6 +265,20 @@ describe("audioPromptSection — the audio catalog version-locks with the manife
   });
 });
 
+describe("the sports category (2026-07-26 batch) renders in the real catalog", () => {
+  const section = modelsPromptSection(realManifest as AssetManifest);
+
+  it("has a sports heading naming the soccer set and the battle tops", () => {
+    expect(section).toMatch(/sports[^\n]*: [^\n]*soccer_ball/);
+    expect(section).toMatch(/\bbattle_top\b/);
+    expect(section).toMatch(/\bblade_top\b/);
+  });
+
+  it("the footballers are taught as people-rig models (their clips promise must hold)", () => {
+    expect(section).toMatch(/people models \([^)]*footballer\b/);
+  });
+});
+
 describe("catalog scale ceilings (PRD §14, amended 2026-07-24: teach-everything)", () => {
   it("the committed manifest stays under a sanity ceiling (revisit selection priorities at the next doubling)", () => {
     // Bumped 60 → 120 (2026-07-14): the catalog doubled 50 → 100 (city models,

@@ -11,6 +11,19 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+### 2026-07-26 — "Open the file" on an uploaded game went to the model, which rebuilt it with hallucinated additions
+
+- **Symptom (what the user saw):** Owner UAT: upload a game's HTML file, say "open the file" — instead of the preview simply showing the uploaded game, the request went to Gemini, which regenerated its own version of the game and added things that weren't in the file.
+- **Surface area:** `src/components/ChatPanel.container.tsx` (`handleSend`), new `src/lib/file-open.ts`.
+- **Root cause:** There was no open-the-file path at all. Every text-file upload took the one existing route — file contents folded into the prompt ("The child attached a file… Its contents: …") and sent to the model. The preview only ever renders what the MODEL returns, so "open it" could only ever mean "regenerate it": hallucination was structural, not a model mood.
+- **Fix (class level):** Deterministic file-open, model excluded. `file-open.ts` (pure, fully tested): a complete HTML document (`isCompleteHtmlDocument`, same detection `extractArtifact` uses) plus an open-only/empty message (`isOpenOnlyRequest` — conservative word-set check; "open a shop in the game" still counts as an edit) → the file is inserted into the chat as a game message byte-for-byte and shown in the preview, with a local assistant line — **no model call**. A real change request opens the file the same way first, then sends the ask as an ordinary patch-edit against the opened game (history carries a stand-in upload line, not a copy of the typed text, so `isRepeatedRequest` can't misfire). Fragments/scripts (.js, partial HTML) keep the old model path — they can't render.
+- **Result (verified):** `file-open.test.ts` (9 tests: document detection, open-intent vs edit-intent incl. the reported phrase, plan modes, repeated-request guard); game-edit + history-trim suites green; tsc clean. Live check: uploaded HTML opens byte-identical in the preview with zero model calls in the server log.
+- **Impact:** Kids can bring a game file in and trust what opens IS their file; iterating from it uses the cheap patch path instead of a full rebuild (~10–15K input tokens saved per open).
+- **Prevention:** Class — **an intent the app can satisfy deterministically must not be delegated to the model.** When the correct output is already sitting in local bytes, the model can only make it worse.
+- **Related:** BUG-FIX-LOG 2026-07-18 search_not_found (artifactHtml-field game detection this reuses), PRD-PROMPT-CACHING.md (patch-path economics).
+
+---
+
 ### 2026-07-24 — Typing any fresh message silently un-froze a stopped idea line
 
 - **Symptom (what the user saw):** Found by design review during the Idea Queue v2 work (PRD-IDEA-QUEUE-V2), not reported by a kid — but live in v1 all day: stop a build → the queue freezes with "⏸ Still want these?" → type anything unrelated → after that turn finishes, the frozen ideas start building again even though the question was never answered. A second, same-class hole: on a restored chat, the drain effect could run once against its stale pre-pause closure (the pause was set by a sibling effect in the same commit) and fire a queued idea the instant the chat loaded — exactly what the "restored chats always ask" rule forbids.

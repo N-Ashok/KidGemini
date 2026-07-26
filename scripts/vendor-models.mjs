@@ -455,6 +455,30 @@ const MODELS = [
     keepAnimations: ['static', 'idle', 'walk', 'sprint', 'sit', 'drive', 'die', 'pick-up', 'emote-yes', 'emote-no', 'interact-right', 'interact-left'],
   })),
 
+  // ── Sports batch (2026-07-26, docs/2026-07-26_PRD_SportsAssets.md). No CC0
+  // third-party soccer or spinning-top models exist (poly.pizza sports = the
+  // CC-BY Google-Poly archive, license-scanned 2026-07-26; Kenney and
+  // Quaternius publish no 3D sports kits; Beyblade meshes are branded and
+  // fail §4.2). So these are FIRST-PARTY: kind 'local' copies from
+  // assets-src/models/<name>/ (regenerate with
+  // scripts/author-first-party-models.mjs). sourceUrl for the four authored
+  // models is the in-repo CC0 dedication; the two footballers are re-textured
+  // Kenney character-b (mesh/rig untouched → same clip set as the other
+  // blocky characters), so their proof trail is the kenney.nl page.
+  { name: 'soccer_ball', source: { kind: 'local', dir: 'assets-src/models/soccer_ball' }, sourceUrl: 'https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md' },
+  { name: 'soccer_goal', source: { kind: 'local', dir: 'assets-src/models/soccer_goal' }, sourceUrl: 'https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md' },
+  { name: 'battle_top', source: { kind: 'local', dir: 'assets-src/models/battle_top' }, sourceUrl: 'https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md' },
+  { name: 'blade_top', source: { kind: 'local', dir: 'assets-src/models/blade_top' }, sourceUrl: 'https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md' },
+  ...[['footballer'], ['footballer_blue']].map(([name]) => ({
+    name,
+    source: { kind: 'local', dir: `assets-src/models/${name}` },
+    sourceUrl: 'https://kenney.nl/assets/blocky-characters',
+    // Same trim as the other blocky characters PLUS the two kick clips: the
+    // blanket attack-* exclusion targets weapon moves, but for a footballer
+    // the kick IS the sport (a /kick/i clip search finds them).
+    keepAnimations: ['static', 'idle', 'walk', 'sprint', 'sit', 'drive', 'die', 'pick-up', 'emote-yes', 'emote-no', 'interact-right', 'interact-left', 'attack-kick-right', 'attack-kick-left'],
+  })),
+
   // Dragons (poly.pizza / Quaternius — CC0 confirmed on both model pages, 2026-07-14).
   {
     name: 'dragon',
@@ -475,6 +499,19 @@ const MODELS = [
     sourceUrl: 'https://poly.pizza/m/3rUm1cN3yp',
   },
 ];
+
+// --only a,b,c: process just the named models (2026-07-26). A full re-run
+// re-prepares every model, so a tool-version drift would re-hash the whole
+// library in one accidental sweep; scoping a batch keeps the append-only host
+// churn-free. Manifest updates are per-entry, so a partial run is safe.
+const onlyArg = process.argv.find((a) => a.startsWith('--only='));
+const only = onlyArg ? new Set(onlyArg.slice('--only='.length).split(',').map((s) => s.trim())) : null;
+if (only) {
+  for (const name of only) {
+    if (!MODELS.some((m) => m.name === name)) throw new Error(`--only: unknown model "${name}"`);
+  }
+}
+const selectedModels = only ? MODELS.filter((m) => only.has(m.name)) : MODELS;
 
 await mkdir(outDir, { recursive: true });
 await mkdir(cacheDir, { recursive: true });
@@ -509,6 +546,15 @@ async function prepare(model) {
     try {
       execFileSync('unzip', ['-o', '-j', zipPath, texturesGlob, '-d', texturesDir], { stdio: 'pipe' });
     } catch { /* kit without a Textures folder — GLB is self-contained */ }
+  } else if (model.source.kind === 'local') {
+    // First-party source (2026-07-26): raw.glb (+ optional Textures/) authored
+    // in-repo by scripts/author-first-party-models.mjs — same dir layout the
+    // kenney-zip branch produces, so every later stage is identical.
+    const srcDir = join(repo, model.source.dir);
+    if (!existsSync(join(srcDir, 'raw.glb'))) {
+      throw new Error(`${model.name}: ${model.source.dir}/raw.glb missing — run scripts/author-first-party-models.mjs first`);
+    }
+    execFileSync('cp', ['-R', `${srcDir}/.`, modelDir], { stdio: 'pipe' });
   } else {
     console.log(`  ↓ ${model.source.url}`);
     await download(model.source.url, rawPath);
@@ -562,7 +608,7 @@ async function prepare(model) {
 }
 
 const prepared = [];
-for (const model of MODELS) {
+for (const model of selectedModels) {
   console.log(`● ${model.name}`);
   const p = await prepare(model);
   prepared.push({ model, ...p });
