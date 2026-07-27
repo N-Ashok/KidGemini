@@ -2,18 +2,25 @@
 // "did this payment succeed". No user session here; the HMAC signature IS the authentication.
 // Fail-closed: invalid/missing signature ⇒ 400 and no state change. Idempotent on the event id
 // (Razorpay retries). Reads the RAW body — the signature is over the exact bytes.
+//
+// 2026-07-27 Phase 5: this is the SOURCE-OF-TRUTH Sparks credit path (see
+// verify/route.ts for the fast-path UI confirm, which degrades gracefully
+// instead of throwing). A bridge failure here THROWS — same as the existing
+// markPaid error handling below — so Razorpay's own automatic webhook retry
+// keeps calling until the ledger accepts the credit. Safe to retry: the
+// ledger's idempotency key is razorpayPaymentId, so a repeat credits once.
 
 import { NextRequest, NextResponse } from "next/server";
 import { RazorpayGateway } from "@/lib/razorpay";
 import { SqlitePaymentStore } from "@/lib/db";
-import { findPlan, CUSTOM_PLAN_KEY } from "@/lib/billing.config";
+import { findPack, CUSTOM_PLAN_KEY } from "@/lib/billing.config";
+import { creditPurchase } from "@/lib/sparks-bridge";
 
 export const runtime = "nodejs";
 
 const gateway = new RazorpayGateway();
 const payments = new SqlitePaymentStore();
 
-const DAY_MS = 86_400_000;
 const PAID_EVENTS = new Set(["payment.captured", "order.paid"]);
 
 export async function POST(req: NextRequest) {
@@ -59,18 +66,36 @@ export async function POST(req: NextRequest) {
     if (orderId && paymentId) {
       try {
         const record = payments.getByOrderId(orderId);
-        // Custom pay-any-amount charges grant no access period (see verify route
-        // + latestForUser). Everything else gets its plan's period (default 30d).
-        const periodEndsAt =
-          record?.planKey === CUSTOM_PLAN_KEY
-            ? null
-            : Date.now() + (record ? findPlan(record.planKey)?.periodDays ?? 30 : 30) * DAY_MS;
-        const updated = payments.markPaid(orderId, paymentId, periodEndsAt);
+        // No plan key grants a time-based access period anymore — see
+        // verify/route.ts's comment (Sparks packs are metered, not periodDays).
+        const updated = payments.markPaid(orderId, paymentId, null);
         console.log(
           `[api/billing/webhook] ${updated ? "✓ paid" : "⚠ unknown order"} event=${event.event} order=${orderId}`,
         );
+
+        if (record && record.planKey !== CUSTOM_PLAN_KEY) {
+          const pack = findPack(record.planKey);
+          if (pack && record.playerId) {
+            const result = await creditPurchase({
+              playerId: record.playerId,
+              packKey: pack.key,
+              sparks: pack.sparks,
+              amountInr: pack.amountPaise / 100,
+              razorpayPaymentId: paymentId,
+            });
+            if (result.status !== 200) {
+              throw new Error(`sparks credit failed (bridge status ${result.status}) order=${orderId}`);
+            }
+            console.log(`[api/billing/webhook] ✓ sparks credited order=${orderId} pack=${pack.key}`);
+          } else if (pack) {
+            // No playerId on the record — pre-migration row or an upstream bug.
+            // Throw so this is visible (via Razorpay's retry alerts) rather than
+            // silently leaving a paid order with no Sparks credited.
+            throw new Error(`pack order has no playerId order=${orderId} plan=${record.planKey}`);
+          }
+        }
       } catch (err) {
-        console.error(`[api/billing/webhook] ✖ markPaid failed event=${event.event} order=${orderId}: ${(err as Error).message}`);
+        console.error(`[api/billing/webhook] ✖ payment processing failed event=${event.event} order=${orderId}: ${(err as Error).message}`);
         throw err;
       }
     }

@@ -7,8 +7,8 @@ const PAGE_URL = "https://games-lab.ariantra.com/upgrade";
 // Same asset as the root layout's fallback — set explicitly, not inherited
 // (2026-07-18 OG audit; see src/app/page.tsx for why).
 const SOCIAL_IMAGE = "https://ariantra.com/ariantra-site.png";
-const TITLE = "Plans & pricing — Ari";
-const DESCRIPTION = "More chances to build and play with Ari — pick the plan that fits your family.";
+const TITLE = "Buy Sparks — Ariantra";
+const DESCRIPTION = "Top up Sparks to keep building with Ari — one-time packs, pay only for what each ask uses, never expires.";
 
 export const metadata: Metadata = {
   title: TITLE,

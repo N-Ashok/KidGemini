@@ -1,10 +1,10 @@
 "use client";
-// Presentational plan card for the upgrade page. Renders one BillingPlan and raises onSelect.
+// Presentational pack card for the upgrade page. Renders one SparkPack and raises onSelect.
 
-import type { BillingPlan } from "@/types/billing.types";
+import type { SparkPack } from "@/types/billing.types";
 
 interface PlanCardProps {
-  plan: BillingPlan;
+  plan: SparkPack;
   highlight?: boolean;
   busy?: boolean;
   onSelect: () => void;
@@ -29,7 +29,7 @@ export function PlanCard({ plan, highlight = false, busy = false, onSelect }: Pl
         className="mt-6 flex items-center justify-center gap-2 rounded-full bg-neutral-800 px-4 py-3
                    text-base font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
       >
-        {busy ? "Opening…" : "Choose plan"}
+        {busy ? "Opening…" : "Buy this pack"}
       </button>
     </div>
   );

@@ -1,13 +1,18 @@
 "use client";
-// Container for the upgrade page. Requires sign-in, lists plans, and drives Razorpay Checkout:
+// Container for the upgrade page. Requires sign-in, lists Sparks packs, and drives Razorpay Checkout:
 //   1. POST /api/billing/order  → { orderId, keyId, amount, currency }
 //   2. open Razorpay Checkout with that order
 //   3. on success, POST /api/billing/verify (webhook is the source of truth; this is the fast UI confirm)
 // The key SECRET never reaches here — only the publishable keyId, returned per-order by the server.
+//
+// 2026-07-27 Phase 5: Sparks packs replaced the old yearly-access plans —
+// repeatable one-time top-ups, not a single "active plan" state, so there is
+// no longer an already-paid gate blocking a second purchase (dropped along
+// with the old /api/billing/status check).
 
 import { useEffect, useState } from "react";
 import { signIn, useSession } from "@/lib/useAriantraSession";
-import { BILLING_PLANS, findPlan } from "@/lib/billing.config";
+import { SPARK_PACKS, findPack } from "@/lib/billing.config";
 import { PlanCard } from "./PlanCard";
 
 const CHECKOUT_SRC = "https://checkout.razorpay.com/v1/checkout.js";
@@ -63,36 +68,26 @@ type Status = "idle" | "starting" | "success" | "error";
 
 export function UpgradePlans() {
   const { status: authStatus, data: session } = useSession();
-  const [pending, setPending] = useState<string | null>(null); // plan key being purchased
+  const [pending, setPending] = useState<string | null>(null); // pack key being purchased
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
-  const [alreadyPaid, setAlreadyPaid] = useState(false);
-  const [statusChecked, setStatusChecked] = useState(false);
   const [autoStarted, setAutoStarted] = useState(false);
 
-  useEffect(() => {
-    if (authStatus !== "authenticated") return;
-    fetch("/api/billing/status")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setAlreadyPaid(Boolean(d?.paid)))
-      .catch(() => {})
-      .finally(() => setStatusChecked(true));
-  }, [authStatus]);
-
   // Deep link from ariantra.com's pricing section: /upgrade?plan=<key> opens
-  // Checkout for that plan as soon as the signed-in, not-yet-paid state is known.
-  // Signed-out visitors see the sign-in gate first; the param survives sign-in
-  // because Auth.js returns to the same URL.
+  // Checkout for that pack as soon as the signed-in state is known. Signed-out
+  // visitors see the sign-in gate first; the param survives sign-in because
+  // Auth.js returns to the same URL. Packs are repeatable, so unlike the old
+  // yearly plans this never checks an "already paid" gate first.
   useEffect(() => {
-    if (autoStarted || alreadyPaid || !statusChecked || authStatus !== "authenticated") return;
+    if (autoStarted || authStatus !== "authenticated") return;
     const key = new URLSearchParams(window.location.search).get("plan");
-    if (key && findPlan(key)) {
+    if (key && findPack(key)) {
       setAutoStarted(true);
       void handleSelect(key);
     }
     // handleSelect is stable in practice (no memoization in this component).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authStatus, statusChecked, alreadyPaid, autoStarted]);
+  }, [authStatus, autoStarted]);
 
   async function handleSelect(planKey: string) {
     setStatus("idle");
@@ -120,7 +115,7 @@ export function UpgradePlans() {
         amount: order.amount,
         currency: order.currency,
         name: "Ari",
-        description: `${order.planLabel} plan`,
+        description: `${order.planLabel} — Ariantra Sparks`,
         prefill: { email: session?.user?.email ?? undefined, name: session?.user?.name ?? undefined },
         theme: { color: "#262626" },
         modal: { ondismiss: () => setPending(null) },
@@ -132,9 +127,13 @@ export function UpgradePlans() {
               body: JSON.stringify(resp),
             });
             if (!v.ok) throw new Error("Payment could not be verified.");
+            const result = (await v.json()) as { sparksCredited?: number; pending?: boolean };
             setStatus("success");
-            setMessage("Payment successful — thank you! 🎉");
-            setAlreadyPaid(true);
+            setMessage(
+              result.pending
+                ? "Payment received — we're confirming it. Your Sparks will land shortly."
+                : `Payment successful — ${(result.sparksCredited ?? 0).toLocaleString()} ⚡ added to your wallet! 🎉`,
+            );
           } catch {
             // Webhook is the source of truth, so the payment may still be recorded server-side.
             setStatus("error");
@@ -176,26 +175,20 @@ export function UpgradePlans() {
       <a href="/" className="self-start text-sm text-neutral-500 hover:text-neutral-700">
         ← Back to chat
       </a>
-      <h1 className="mt-6 text-3xl font-bold text-neutral-900">Choose your plan ✨</h1>
+      <h1 className="mt-6 text-3xl font-bold text-neutral-900">Buy Sparks ⚡</h1>
       <p className="mt-2 max-w-md text-sm text-neutral-600">
-        Every plan includes Ari and a year on the platform. Assisted plans add live
-        one-on-one classes with a teacher.
+        1 Spark = 1 paisa — you pay only for the AI work each ask actually
+        uses. Sparks never expire, and publishing a game is always free.
       </p>
 
-      {alreadyPaid && (
-        <p className="mt-6 rounded-kid bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
-          You have an active plan — thank you! 💚
-        </p>
-      )}
-
       <div className="mt-8 flex flex-col items-stretch justify-center gap-6 sm:flex-row">
-        {BILLING_PLANS.map((plan) => (
+        {SPARK_PACKS.map((pack) => (
           <PlanCard
-            key={plan.key}
-            plan={plan}
-            highlight={plan.key === "assisted8"}
-            busy={pending === plan.key}
-            onSelect={() => handleSelect(plan.key)}
+            key={pack.key}
+            plan={pack}
+            highlight={pack.key === "pack500"}
+            busy={pending === pack.key}
+            onSelect={() => handleSelect(pack.key)}
           />
         ))}
       </div>

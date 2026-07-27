@@ -80,6 +80,26 @@ export function redeemCoupon(sessionToken: string, code: string): Promise<Sparks
   return sparksPost({ sessionToken, redeem: { code } });
 }
 
+/** Phase 5: credit a Razorpay-paid Sparks pack. Server-to-server (like
+ *  arcade-partner.ts's inviteCredit) — the WEBHOOK caller has no live
+ *  session to replay, so playerId is passed explicitly (captured by
+ *  order/route.ts at order-creation time, when a session WAS live; see
+ *  PaymentRecord.playerId). Unlike billSparks, this is AWAITED by the
+ *  caller (never fire-and-forget) — a payment already succeeded, so the
+ *  caller must know whether the credit landed and decide how to react
+ *  (verify degrades gracefully; webhook throws to trigger a Razorpay
+ *  retry). razorpayPaymentId is the platform ledger's idempotency key, so
+ *  calling this twice for the same payment credits once. */
+export function creditPurchase(purchase: {
+  playerId: string;
+  packKey: string;
+  sparks: number;
+  amountInr: number;
+  razorpayPaymentId: string;
+}): Promise<SparksResult> {
+  return sparksPost({ purchase });
+}
+
 /** Parent-submitted share of the kid's game on Ariantra's social pages. */
 export function submitSocialShare(
   sessionToken: string,

@@ -14,6 +14,12 @@ export interface AriantraSession {
   /** Stable per-user key for db rows. Email-first for continuity with the
    *  pre-SSO Google accounts (`user:<email>`), then name, then playerId. */
   userId: string;
+  /** The PLATFORM's real ledger key (JWT `sub`) — distinct from `userId`
+   *  above, which is a derived display/db string. Needed wherever Ari calls
+   *  back into the platform's own identity space (e.g. crediting a Sparks
+   *  purchase from a webhook that has no live session to replay — Phase 5
+   *  payments, billing/verify + webhook routes). */
+  playerId: string;
   email?: string;
   name?: string;
   /** JWT iat (seconds) — lets PIN set/reset demand a FRESH login (§7). */
@@ -54,6 +60,7 @@ export async function verifyAriantraSession(
     const name = typeof payload.name === "string" ? payload.name : undefined;
     return {
       userId: `user:${email ?? name ?? payload.sub}`,
+      playerId: payload.sub,
       ...(email ? { email } : {}),
       ...(name ? { name } : {}),
       ...(typeof payload.iat === "number" ? { issuedAt: payload.iat } : {}),

@@ -1,13 +1,16 @@
-// Pins the 2026-07-11 pricing revamp (sold on ariantra.com, paid here):
-//   explorer  ₹1,200 / year — self-serve, fair-use limits
-//   assisted4 ₹3,990 — 4 live classes + 1yr unlimited create/publish
-//   assisted8 ₹10,000 — 8 live classes + 1yr unlimited create/publish, very high AI usage
-// Amounts are in paise. ariantra.com's pricing section deep-links to
-// /upgrade?plan=<key> — renaming a key breaks those links, so keys are pinned here.
+// Pins the 2026-07-27 Sparks-packs pricing (Phase 5 payments; sold on
+// ariantra.com/pricing.html, paid here):
+//   pack120 ₹120 → 12,000 ⚡ (≈ 3–4 finished games)
+//   pack200 ₹200 → 20,000 ⚡ (≈ 5–6 finished games)
+//   pack500 ₹500 → 50,000 ⚡ (≈ 12–15 finished games, "Best value")
+// Amounts are in paise. pricing.html's "Buy Sparks" deep-links to /upgrade —
+// renaming a key breaks any future ?pack=<key> deep link, so keys are pinned
+// here. Supersedes the 2026-07-11 yearly-plan tiers (explorer/assisted4/
+// assisted8), which nothing on the live site links to anymore.
 import { describe, it, expect } from "vitest";
 import {
-  BILLING_PLANS,
-  findPlan,
+  SPARK_PACKS,
+  findPack,
   validateCustomAmountPaise,
   rupeesToPaise,
   CUSTOM_AMOUNT_MIN_PAISE,
@@ -15,36 +18,38 @@ import {
   CUSTOM_PLAN_KEY,
 } from "./billing.config";
 
-describe("billing plans (2026-07-11 pricing)", () => {
-  it("sells exactly the three ariantra.com tiers", () => {
-    expect(BILLING_PLANS.map((p) => p.key)).toEqual(["explorer", "assisted4", "assisted8"]);
+describe("Sparks packs (2026-07-27 Phase 5 pricing)", () => {
+  it("sells exactly the three pricing.html packs", () => {
+    expect(SPARK_PACKS.map((p) => p.key)).toEqual(["pack120", "pack200", "pack500"]);
   });
 
-  it("explorer is ₹1,200 for a year", () => {
-    const p = findPlan("explorer");
-    expect(p?.amountPaise).toBe(120_000);
-    expect(p?.periodDays).toBe(365);
+  it("pack120 is ₹120 for 12,000 Sparks", () => {
+    const p = findPack("pack120");
+    expect(p?.amountPaise).toBe(12_000);
+    expect(p?.sparks).toBe(12_000);
   });
 
-  it("assisted4 is ₹3,990 with a year of platform access", () => {
-    const p = findPlan("assisted4");
-    expect(p?.amountPaise).toBe(399_000);
-    expect(p?.periodDays).toBe(365);
+  it("pack200 is ₹200 for 20,000 Sparks", () => {
+    const p = findPack("pack200");
+    expect(p?.amountPaise).toBe(20_000);
+    expect(p?.sparks).toBe(20_000);
   });
 
-  it("assisted8 is ₹10,000 with a year of platform access", () => {
-    const p = findPlan("assisted8");
-    expect(p?.amountPaise).toBe(1_000_000);
-    expect(p?.periodDays).toBe(365);
+  it("pack500 is ₹500 for 50,000 Sparks", () => {
+    const p = findPack("pack500");
+    expect(p?.amountPaise).toBe(50_000);
+    expect(p?.sparks).toBe(50_000);
   });
 
-  it("old plan keys are gone", () => {
-    expect(findPlan("monthly")).toBeUndefined();
-    expect(findPlan("annual")).toBeUndefined();
+  it("old yearly-plan keys are gone", () => {
+    expect(findPack("explorer")).toBeUndefined();
+    expect(findPack("assisted4")).toBeUndefined();
+    expect(findPack("assisted8")).toBeUndefined();
+    expect(findPack("monthly")).toBeUndefined();
   });
 
-  it("the custom sentinel is NOT a real plan (so it grants no entitlement)", () => {
-    expect(findPlan(CUSTOM_PLAN_KEY)).toBeUndefined();
+  it("the custom sentinel is NOT a real pack (so it grants no Sparks)", () => {
+    expect(findPack(CUSTOM_PLAN_KEY)).toBeUndefined();
   });
 });
 

@@ -3,10 +3,10 @@
 // publishable keyId so the browser can open Checkout. The key SECRET never leaves the server.
 
 import { NextRequest, NextResponse } from "next/server";
-import { resolveUserId } from "@/lib/auth-identity";
+import { resolveUserId, resolvePlayerId } from "@/lib/auth-identity";
 import { RazorpayGateway } from "@/lib/razorpay";
 import { SqlitePaymentStore } from "@/lib/db";
-import { findPlan, CURRENCY, CUSTOM_PLAN_KEY, validateCustomAmountPaise } from "@/lib/billing.config";
+import { findPack, CURRENCY, CUSTOM_PLAN_KEY, validateCustomAmountPaise } from "@/lib/billing.config";
 
 export const runtime = "nodejs";
 
@@ -16,6 +16,10 @@ const payments = new SqlitePaymentStore();
 export async function POST(req: NextRequest) {
   const userId = await resolveUserId();
   if (!userId) return NextResponse.json({ error: "auth_required" }, { status: 401 });
+  // Captured now (a live session is guaranteed here) so verify/webhook can
+  // credit the Sparks purchase later without needing a live session cookie —
+  // see PaymentRecord.playerId.
+  const playerId = await resolvePlayerId();
 
   let body: { planKey?: string; amountPaise?: number | string };
   try {
@@ -24,10 +28,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
-  // Two shapes: a fixed plan ({ planKey }) or an arbitrary pay-any-amount charge
-  // ({ amountPaise }). The custom amount is validated server-side (the browser's
-  // help is never trusted) and carries the CUSTOM_PLAN_KEY sentinel, which grants
-  // no entitlement downstream (verify/webhook stamp no period; latestForUser skips it).
+  // Two shapes: a fixed Sparks pack ({ planKey }) or an arbitrary pay-any-amount
+  // charge ({ amountPaise }). The custom amount is validated server-side (the
+  // browser's help is never trusted) and carries the CUSTOM_PLAN_KEY sentinel,
+  // which credits no Sparks downstream (verify/webhook skip the ledger bridge;
+  // latestForUser skips it too). The request field stays `planKey` — renaming
+  // it would be a breaking change to an already-public request shape for a
+  // rename that gains nothing.
   let amountPaise: number;
   let planKey: string;
   let planLabel: string;
@@ -38,11 +45,11 @@ export async function POST(req: NextRequest) {
     planKey = CUSTOM_PLAN_KEY;
     planLabel = "Custom amount";
   } else {
-    const plan = findPlan(body.planKey ?? "");
-    if (!plan) return NextResponse.json({ error: "unknown_plan" }, { status: 400 });
-    amountPaise = plan.amountPaise;
-    planKey = plan.key;
-    planLabel = plan.label;
+    const pack = findPack(body.planKey ?? "");
+    if (!pack) return NextResponse.json({ error: "unknown_plan" }, { status: 400 });
+    amountPaise = pack.amountPaise;
+    planKey = pack.key;
+    planLabel = pack.label;
   }
 
   try {
@@ -54,6 +61,7 @@ export async function POST(req: NextRequest) {
     });
     payments.create({
       userId,
+      playerId,
       planKey,
       amountPaise,
       currency: CURRENCY,

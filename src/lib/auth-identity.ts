@@ -11,3 +11,11 @@ export async function resolveUserId(): Promise<string | null> {
   const session = await getAriantraSession();
   return session?.userId ?? null;
 }
+
+/** The platform's real ledger key (distinct from resolveUserId's derived
+ *  display string) — needed wherever Ari must call back into the platform's
+ *  own identity space, e.g. crediting a Sparks purchase (billing routes). */
+export async function resolvePlayerId(): Promise<string | null> {
+  const session = await getAriantraSession();
+  return session?.playerId ?? null;
+}

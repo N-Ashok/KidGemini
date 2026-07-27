@@ -4,7 +4,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const resolveUserIdMock = vi.fn();
-vi.mock("@/lib/auth-identity", () => ({ resolveUserId: () => resolveUserIdMock() }));
+const resolvePlayerIdMock = vi.fn();
+vi.mock("@/lib/auth-identity", () => ({
+  resolveUserId: () => resolveUserIdMock(),
+  resolvePlayerId: () => resolvePlayerIdMock(),
+}));
 
 const createOrderMock = vi.fn();
 vi.mock("@/lib/razorpay", () => ({
@@ -37,6 +41,8 @@ function makeReq(body: unknown): NextRequest {
 describe("POST /api/billing/order", () => {
   beforeEach(() => {
     resolveUserIdMock.mockReset();
+    resolvePlayerIdMock.mockReset();
+    resolvePlayerIdMock.mockResolvedValue("player-1");
     createOrderMock.mockReset();
     createPaymentMock.mockReset();
   });
@@ -44,7 +50,7 @@ describe("POST /api/billing/order", () => {
   it("returns 401 and never calls Razorpay when unauthenticated", async () => {
     resolveUserIdMock.mockResolvedValue(null);
 
-    const res = await POST(makeReq({ planKey: "explorer" }));
+    const res = await POST(makeReq({ planKey: "pack120" }));
 
     expect(res.status).toBe(401);
     expect(createOrderMock).not.toHaveBeenCalled();
@@ -63,14 +69,14 @@ describe("POST /api/billing/order", () => {
     resolveUserIdMock.mockResolvedValue("user:kid@example.com");
     createOrderMock.mockResolvedValue({ id: "order_abc", amount: 69_900, currency: "INR" });
 
-    const res = await POST(makeReq({ planKey: "explorer" }));
+    const res = await POST(makeReq({ planKey: "pack120" }));
 
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json).toMatchObject({ orderId: "order_abc", amount: 69_900, currency: "INR", keyId: "rzp_test_123" });
     expect(createOrderMock).toHaveBeenCalledTimes(1);
     expect(createPaymentMock).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: "user:kid@example.com", planKey: "explorer", razorpayOrderId: "order_abc" }),
+      expect.objectContaining({ userId: "user:kid@example.com", playerId: "player-1", planKey: "pack120", razorpayOrderId: "order_abc" }),
     );
   });
 

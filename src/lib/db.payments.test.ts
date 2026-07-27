@@ -1,12 +1,19 @@
-// Entitlement-boundary test for the pay-any-amount feature (2026-07-24).
+// Entitlement-boundary test for the pay-any-amount feature (2026-07-24),
+// updated 2026-07-27 for Phase 5 Sparks packs: NO plan key grants a
+// time-based period anymore (Sparks are metered, not periodDays access —
+// see verify/route.ts's comment), so `isEntitled` is now always false. That
+// makes the platform-side `entitlement-service.ts` check permanently false
+// too — harmless today because it's RELAXED by default and never enforced
+// (see Ariantra-Platform TECH_DEBT.md), but worth pinning here so a future
+// re-enable of that flag doesn't get a silent "always false" surprise.
 //
-// A custom (arbitrary-amount) payment must NEVER affect entitlement:
-//   1. it grants no access on its own (₹1 can't buy a plan), and
-//   2. it must not MASK a real plan the user already holds — `isEntitled` reads
-//      only `latestForUser`, so if a newer custom row shadowed the plan row the
-//      user would silently lose access.
-// Runs against a REAL sqlite file (DATABASE_PATH) because the guard lives in the
-// SQL (`latestForUser` excludes CUSTOM_PLAN_KEY) — a mocked store can't prove it.
+// What THIS test still protects: `latestForUser`'s SQL guard that a custom
+// (arbitrary-amount) payment must not MASK a real pack purchase the user
+// already made — if a newer custom row shadowed the pack row, any future
+// entitlement model built on `latestForUser` would silently misread it.
+// Runs against a REAL sqlite file (DATABASE_PATH) because the guard lives in
+// the SQL (`latestForUser` excludes CUSTOM_PLAN_KEY) — a mocked store can't
+// prove it.
 import { afterAll, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -21,18 +28,18 @@ const { CUSTOM_PLAN_KEY } = await import("./billing.config");
 
 const store = new SqlitePaymentStore();
 const USER = "user:kid@example.com";
-const YEAR_FROM_NOW = Date.now() + 365 * 86_400_000;
+const PLAYER = "player-1";
 
-function payPlan(orderId: string) {
-  store.create({ userId: USER, planKey: "explorer", amountPaise: 120_000, currency: "INR", razorpayOrderId: orderId });
-  store.markPaid(orderId, `pay_${orderId}`, YEAR_FROM_NOW);
+function payPack(orderId: string) {
+  store.create({ userId: USER, playerId: PLAYER, planKey: "pack120", amountPaise: 12_000, currency: "INR", razorpayOrderId: orderId });
+  store.markPaid(orderId, `pay_${orderId}`, null); // packs grant Sparks, never a time period
 }
 function payCustom(orderId: string, amountPaise = 100) {
-  store.create({ userId: USER, planKey: CUSTOM_PLAN_KEY, amountPaise, currency: "INR", razorpayOrderId: orderId });
+  store.create({ userId: USER, playerId: PLAYER, planKey: CUSTOM_PLAN_KEY, amountPaise, currency: "INR", razorpayOrderId: orderId });
   store.markPaid(orderId, `pay_${orderId}`, null); // custom → no entitlement period
 }
 
-describe("custom pay-any-amount payments and entitlement", () => {
+describe("custom pay-any-amount payments and entitlement (Phase 5)", () => {
   it("a custom payment alone does NOT entitle the user", () => {
     payCustom("order_custom_only");
     const record = store.latestForUser(USER);
@@ -40,12 +47,15 @@ describe("custom pay-any-amount payments and entitlement", () => {
     expect(isEntitled(record)).toBe(false);
   });
 
-  it("a newer custom payment does NOT mask an existing paid plan", () => {
-    payPlan("order_plan_1");
-    payCustom("order_custom_after_plan"); // created later → would be 'latest' by createdAt
+  it("a newer custom payment does NOT mask an existing pack purchase", () => {
+    payPack("order_pack_1");
+    payCustom("order_custom_after_pack"); // created later → would be 'latest' by createdAt
     const record = store.latestForUser(USER);
-    expect(record?.planKey).toBe("explorer"); // the plan, not the donation
-    expect(isEntitled(record)).toBe(true);
+    expect(record?.planKey).toBe("pack120"); // the pack, not the donation
+    // No plan key grants a time period anymore — a real purchase is STILL
+    // not "entitled" in the old sense. This is expected, not a regression:
+    // Sparks metering is the real gate now (SparksService.canStart).
+    expect(isEntitled(record)).toBe(false);
   });
 
   it("the custom row is still persisted (recorded as paid) for reconciliation", () => {

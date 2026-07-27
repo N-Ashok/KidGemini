@@ -90,6 +90,7 @@ export function getDb(): Database.Database {
     CREATE TABLE IF NOT EXISTS payments (
       id TEXT PRIMARY KEY,
       userId TEXT NOT NULL,
+      playerId TEXT,
       planKey TEXT NOT NULL,
       amountPaise INTEGER NOT NULL,
       currency TEXT NOT NULL,
@@ -216,6 +217,15 @@ export function getDb(): Database.Database {
   const alertCols = db.prepare(`PRAGMA table_info(alerts)`).all() as Array<{ name: string }>;
   if (!alertCols.some((c) => c.name === "accountId")) {
     db.exec(`ALTER TABLE alerts ADD COLUMN accountId TEXT;`);
+  }
+  // Phase 5 Sparks payments (2026-07-27): the platform's real ledger key,
+  // captured at order-creation time so the webhook (no live session cookie
+  // to resolve identity from) can still credit a purchase. Pre-migration
+  // rows get NULL — they're all pre-Phase-5 yearly-plan purchases that never
+  // credit Sparks anyway, so a missing playerId there is harmless.
+  const paymentsCols = db.prepare(`PRAGMA table_info(payments)`).all() as Array<{ name: string }>;
+  if (!paymentsCols.some((c) => c.name === "playerId")) {
+    db.exec(`ALTER TABLE payments ADD COLUMN playerId TEXT;`);
   }
   // Index built HERE — not in the base CREATE block — because on a pre-existing DB
   // the column is added by the ALTER just above. Indexing alerts(accountId) in the
@@ -513,6 +523,7 @@ function mapPaymentRow(r: Record<string, unknown>): PaymentRecord {
   return {
     id: r.id as string,
     userId: r.userId as string,
+    playerId: (r.playerId as string) ?? null,
     planKey: r.planKey as string,
     amountPaise: r.amountPaise as number,
     currency: r.currency as string,
@@ -528,6 +539,7 @@ function mapPaymentRow(r: Record<string, unknown>): PaymentRecord {
 export class SqlitePaymentStore implements PaymentStore {
   create(input: {
     userId: string;
+    playerId: string | null;
     planKey: string;
     amountPaise: number;
     currency: string;
@@ -546,9 +558,9 @@ export class SqlitePaymentStore implements PaymentStore {
     getDb()
       .prepare(
         `INSERT INTO payments
-         (id, userId, planKey, amountPaise, currency, razorpayOrderId, razorpayPaymentId,
+         (id, userId, playerId, planKey, amountPaise, currency, razorpayOrderId, razorpayPaymentId,
           status, periodEndsAt, createdAt, updatedAt)
-         VALUES (@id, @userId, @planKey, @amountPaise, @currency, @razorpayOrderId,
+         VALUES (@id, @userId, @playerId, @planKey, @amountPaise, @currency, @razorpayOrderId,
           @razorpayPaymentId, @status, @periodEndsAt, @createdAt, @updatedAt)`,
       )
       .run(rec);

@@ -1,43 +1,46 @@
-// Billing tunables only (Open/Closed: change plans/prices here, not at call sites).
+// Billing tunables only (Open/Closed: change packs/prices here, not at call sites).
 // One-time charge model (Razorpay Orders) — chosen because the recurring Subscriptions API
-// requires pre-created Plans we don't have yet. Amounts are in paise (₹1,200 = 120_000).
+// requires pre-created Plans we don't have yet. Amounts are in paise (₹120 = 12_000).
 //
-// 2026-07-11 pricing revamp: plans mirror ariantra.com's pricing section, which
-// deep-links here as /upgrade?plan=<key> — keys are part of that public contract
-// (pinned by billing.config.test.ts). All plans grant a year of platform access;
-// entitlement differences (token caps, game limits) are not enforced yet ("rails
-// only", see docs/PRD.md §8).
+// 2026-07-27 Phase 5 payments: SPARK_PACKS mirror ariantra.com/pricing.html's
+// Sparks-pack table exactly (PRD-SPARKS.md closure plan). "Buy Sparks" links
+// to /upgrade — keys are a public contract (pinned by billing.config.test.ts)
+// in case a future deep link adds ?pack=<key>. Supersedes the 2026-07-11
+// yearly-access plans (explorer/assisted4/assisted8): nothing on the live
+// site links to those anymore, and the product model moved to Sparks
+// metering (SparksService.debitUsage) rather than a periodDays gate that was
+// never actually enforced ("rails only", docs/PRD.md §8).
 
-import type { BillingPlan } from "@/types/billing.types";
+import type { SparkPack } from "@/types/billing.types";
 
 export const CURRENCY = "INR";
 
-export const BILLING_PLANS: BillingPlan[] = [
+export const SPARK_PACKS: SparkPack[] = [
   {
-    key: "explorer",
-    label: "Explorer",
-    amountPaise: 120_000, // ₹1,200
-    periodDays: 365,
-    description: "₹1,200 / year — build on your own",
+    key: "pack120",
+    label: "Starter pack",
+    amountPaise: 12_000, // ₹120
+    sparks: 12_000,
+    description: "₹120 — 12,000 ⚡ (≈ 3–4 finished games)",
   },
   {
-    key: "assisted4",
-    label: "Assisted Starter",
-    amountPaise: 399_000, // ₹3,990
-    periodDays: 365,
-    description: "₹3,990 — 4 live classes + 1 year unlimited",
+    key: "pack200",
+    label: "Builder pack",
+    amountPaise: 20_000, // ₹200
+    sparks: 20_000,
+    description: "₹200 — 20,000 ⚡ (≈ 5–6 finished games)",
   },
   {
-    key: "assisted8",
-    label: "Assisted Pro",
-    amountPaise: 1_000_000, // ₹10,000
-    periodDays: 365,
-    description: "₹10,000 — 8 live classes + 1 year unlimited",
+    key: "pack500",
+    label: "Best value",
+    amountPaise: 50_000, // ₹500
+    sparks: 50_000,
+    description: "₹500 — 50,000 ⚡ (≈ 12–15 finished games)",
   },
 ];
 
-export function findPlan(key: string): BillingPlan | undefined {
-  return BILLING_PLANS.find((p) => p.key === key);
+export function findPack(key: string): SparkPack | undefined {
+  return SPARK_PACKS.find((p) => p.key === key);
 }
 
 // ── Pay-what-you-want (the /pay page) ────────────────────────────────────────

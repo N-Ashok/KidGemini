@@ -1,7 +1,7 @@
 /** Sparks bridge — contract + fail-safety. The platform owns the ledger;
  *  these tests pin what Ari SENDS and that failures never propagate. */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { billSparks, fetchWallet, redeemCoupon, submitSocialShare } from "./sparks-bridge";
+import { billSparks, fetchWallet, redeemCoupon, submitSocialShare, creditPurchase } from "./sparks-bridge";
 
 const okJson = (data: unknown) =>
   Promise.resolve({ status: 200, json: () => Promise.resolve(data) } as unknown as Response);
@@ -67,5 +67,35 @@ describe("reads and parent actions", () => {
     fetchMock.mockImplementation(() => Promise.reject(new Error("timeout")));
     const w = await fetchWallet("jwt");
     expect(w.status).toBe(502);
+  });
+});
+
+describe("creditPurchase — Phase 5 Sparks pack top-up (server-to-server, no sessionToken)", () => {
+  it("POSTs the purchase with playerId, pack details, and razorpayPaymentId as the idempotency key", async () => {
+    fetchMock.mockImplementation(() => okJson({ credited: 12_000, balance: 12_000 }));
+    const r = await creditPurchase({
+      playerId: "player-1",
+      packKey: "pack120",
+      sparks: 12_000,
+      amountInr: 120,
+      razorpayPaymentId: "pay_abc",
+    });
+    expect(r.status).toBe(200);
+    expect(r.data.credited).toBe(12_000);
+    const body = JSON.parse(fetchMock.mock.calls.at(-1)![1].body as string);
+    expect(body.sessionToken).toBeUndefined();
+    expect(body.purchase).toEqual({
+      playerId: "player-1",
+      packKey: "pack120",
+      sparks: 12_000,
+      amountInr: 120,
+      razorpayPaymentId: "pay_abc",
+    });
+  });
+
+  it("network failure surfaces as a 502 result — the caller decides whether that's fatal", async () => {
+    fetchMock.mockImplementation(() => Promise.reject(new Error("ECONNREFUSED")));
+    const r = await creditPurchase({ playerId: "player-1", packKey: "pack120", sparks: 12_000, amountInr: 120, razorpayPaymentId: "pay_x" });
+    expect(r.status).toBe(502);
   });
 });

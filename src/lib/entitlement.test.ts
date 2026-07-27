@@ -13,7 +13,8 @@ function record(overrides: Partial<PaymentRecord> = {}): PaymentRecord {
   return {
     id: "p1",
     userId: "user:kid@example.com",
-    planKey: "explorer",
+    playerId: "player-1",
+    planKey: "pack120",
     amountPaise: 120_000,
     currency: "INR",
     razorpayOrderId: "order_1",

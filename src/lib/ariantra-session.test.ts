@@ -29,6 +29,12 @@ describe("verifyAriantraSession", () => {
     expect(typeof s?.issuedAt).toBe("number"); // freshness gate needs iat
   });
 
+  it("V.9 exposes the raw platform playerId (JWT sub) — distinct from the derived userId", async () => {
+    const s = await verifyAriantraSession(await mint({}, {}), SECRET);
+    expect(s?.playerId).toBe("player-1");
+    expect(s?.userId).not.toBe(s?.playerId); // userId is email-derived, not the raw sub
+  });
+
   it("V.8 exposes issuedAt so PIN set/reset can demand a FRESH login (re-auth gate)", async () => {
     const now = Math.floor(Date.now() / 1000);
     const fresh = await verifyAriantraSession(await mint(), SECRET);

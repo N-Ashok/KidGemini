@@ -5,13 +5,16 @@
 // period is stamped, but NO entitlement is enforced yet — every signed-in user stays unlimited.
 // Recurring (Razorpay Subscriptions) needs pre-created Plans; this one-time model needs none.
 
-/** A purchasable plan = a one-time charge granting `periodDays` of access. Amounts in paise (₹1 = 100). */
-export interface BillingPlan {
-  key: string; // "explorer" | "assisted4" | "assisted8"
-  label: string; // shown on the plan card
+/** A purchasable Sparks top-up (Phase 5 payments) — a one-time charge that
+ *  credits `sparks` to the buyer's Platform ledger balance. Amounts in paise
+ *  (₹1 = 100). Repeatable: buying a pack twice credits twice, unlike the
+ *  superseded yearly-access plans this replaced. */
+export interface SparkPack {
+  key: string; // "pack120" | "pack200" | "pack500" — public contract, pinned by billing.config.test.ts
+  label: string; // shown on the pack card
   amountPaise: number; // charge amount in paise
-  periodDays: number; // access granted — used when entitlement is wired later
-  description: string; // human price line, e.g. "₹699 / month"
+  sparks: number; // Sparks credited to the Platform ledger on success
+  description: string; // human price line, e.g. "₹120 — 12,000 ⚡"
 }
 
 export type PaymentStatus = "created" | "paid" | "failed";
@@ -20,6 +23,11 @@ export type PaymentStatus = "created" | "paid" | "failed";
 export interface PaymentRecord {
   id: string;
   userId: string;
+  /** The platform's real ledger key (Phase 5), captured at order-creation
+   *  time from the live session — needed so the webhook (no live session)
+   *  can still credit the Sparks purchase. Null for pre-migration rows and
+   *  the CUSTOM_PLAN_KEY pay-any-amount charge (which credits nothing). */
+  playerId: string | null;
   planKey: string;
   amountPaise: number;
   currency: string; // "INR"
@@ -59,6 +67,7 @@ export interface PaymentStore {
   /** Record a freshly-created order in the "created" state. */
   create(input: {
     userId: string;
+    playerId: string | null;
     planKey: string;
     amountPaise: number;
     currency: string;

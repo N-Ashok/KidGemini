@@ -688,21 +688,26 @@ server-to-server contract as `arcade-partner.ts`).
   `PublishToArcade.tsx`). No card on republish (reward is once per game) or if
   the feed is unavailable — Sparks never wobble the publish flow.
 
-## Billing (`/upgrade`, `/pay`)
-- Razorpay one-time payments: plan cards, order creation, checkout
+## Billing (`/upgrade`, `/pay`) — Sparks packs (Phase 5, 2026-07-27)
+- Razorpay one-time payments: pack cards, order creation, checkout — same
+  rails as before, now selling `SPARK_PACKS` instead of yearly-access plans
 - Webhook with signature verification + idempotency (each event processed once)
-- Rails-only for now: paid rows stamp `periodEndsAt`; nothing gated on it yet
-- NOT linked from the kid UI (2026-07-11): the sidebar's "Go premium" tab was
-  removed — plans are sold on ariantra.com (Explorer ₹1,200/yr · Assisted
-  Starter ₹3,990/4 classes · Assisted Pro ₹10,000/8 classes). `/upgrade` stays
-  reachable by direct link only. Guarded by
-  `src/components/sidebar-no-premium.test.ts`
-- Plans (2026-07-11): `explorer` / `assisted4` / `assisted8` in
-  `src/lib/billing.config.ts`, pinned by `billing.config.test.ts` — the keys are
-  a public contract with ariantra.com's pricing cards, which deep-link to
+- A verified payment credits the platform Sparks ledger via a new `purchase`
+  action on `/api/studio/partner/sparks` (server-to-server, `playerId`
+  captured at order time — see `docs/BUG-FIX-LOG.md` 2026-07-27). No
+  time-based entitlement anymore: `periodEndsAt` is always `null`; Sparks
+  metering (`SparksService.canStart`/`debitUsage`) is the real usage gate.
+- NOT linked from the kid UI (2026-07-11, still true): the sidebar's "Go
+  premium" tab was removed — Sparks are sold on ariantra.com's pricing page,
+  which links to `/upgrade`. `/upgrade` stays reachable by direct link only.
+  Guarded by `src/components/sidebar-no-premium.test.ts`
+- Packs (2026-07-27, superseding the 2026-07-11 yearly plans): `pack120` /
+  `pack200` / `pack500` (₹120/₹200/₹500 → 12,000/20,000/50,000 ⚡) in
+  `src/lib/billing.config.ts`, pinned by `billing.config.test.ts` — the keys
+  are a public contract with ariantra.com's pricing cards, which deep-link to
   `/upgrade?plan=<key>`; after sign-in (param survives the Auth.js round-trip)
-  Checkout auto-opens for that plan unless the account already has an active
-  one (`upgrade-deeplink.test.ts`)
+  Checkout auto-opens for that pack — repeatable, no "already paid" gate,
+  since packs are top-ups, not a single active plan (`upgrade-deeplink.test.ts`)
 
 ## Ariantra integration
 - Shared Ariantra header on every page (`ArNav`): Home · Games · Games-Lab ·
