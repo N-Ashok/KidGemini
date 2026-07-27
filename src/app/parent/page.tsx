@@ -1,15 +1,20 @@
 "use client";
 // Parent dashboard — per-family PIN (PRD-PARENT-AUTH-ALERT-SCOPING Phase 1).
 // Flow: live parent session → alerts; otherwise verify the 4-digit PIN
-// (POST body, throttled server-side); first visit → set-PIN interstitial,
-// which requires a FRESH SSO login (the kid holding a parent's old session
-// can't set it). Guests see sign-up copy, never a PIN form (D3).
+// (POST body, throttled server-side); first visit or "forgot PIN" → set-PIN
+// interstitial, which requires a 6-digit email OTP (BUG-FIX-LOG 2026-07-27 —
+// REPLACED the old "fresh SSO login" gate: that gate re-used the platform
+// login, but a live Google browser session on a shared family device clears
+// it with no secret only the parent has, so a kid locked out of guessing the
+// PIN could just reset it). Guests see sign-up copy, never a PIN form (D3).
 
 import { useCallback, useEffect, useState } from "react";
 import { signIn, useSession } from "@/lib/useAriantraSession";
 import { whatsappShareUrl } from "@/lib/share-links";
 import { SparksParentCard } from "@/components/SparksParentCard";
 import type { ParentAlert } from "@/types/alert.types";
+
+type PinFlowMode = "first-time" | "reset";
 
 interface FamilyGame {
   slug: string;
@@ -43,7 +48,7 @@ const FAMILY_PROFILE_URL = `${STUDIO_BASE}/studio?profile=1&profileReturnTo=${en
 type View =
   | { kind: "loading" }
   | { kind: "verify" }
-  | { kind: "set" }
+  | { kind: "set"; mode: PinFlowMode }
   | { kind: "signed-out" }
   | { kind: "alerts"; alerts: ParentAlert[] };
 
@@ -52,6 +57,16 @@ export default function ParentPage() {
   const [pin, setPin] = useState("");
   const [pin2, setPin2] = useState("");
   const [error, setError] = useState("");
+  // Locked-out recovery: separate from `error` so the verify form can render
+  // a dedicated callout with a reset escape hatch instead of one red line
+  // with no way forward (BUG-FIX-LOG 2026-07-27).
+  const [lockedUntil, setLockedUntil] = useState<number | null>(null);
+  // PIN-reset OTP step (BUG-FIX-LOG 2026-07-27) — see requestOtp/handleSet.
+  const [otpRequested, setOtpRequested] = useState(false);
+  const [otpMaskedEmail, setOtpMaskedEmail] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+  const [otpSending, setOtpSending] = useState(false);
+  const [otpRequestError, setOtpRequestError] = useState("");
   // Multiplayer toggle (PRD-MULTIPLAYER.md Phase 4) — null = not fetched yet.
   const [games, setGames] = useState<FamilyGame[] | null>(null);
   const [togglingSlug, setTogglingSlug] = useState<string | null>(null);
@@ -191,6 +206,7 @@ export default function ParentPage() {
   async function handleVerify(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setLockedUntil(null);
     const res = await fetch("/api/parent/verify-pin", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -209,10 +225,12 @@ export default function ParentPage() {
       unlockAt?: number;
     };
     if (res.status === 401 && data.error === "signed_out") { setView({ kind: "signed-out" }); return; }
-    if (res.status === 404) { setView({ kind: "set" }); return; }
+    if (res.status === 404) { resetOtpState(); setView({ kind: "set", mode: "first-time" }); return; }
     if (res.status === 429) {
-      const at = data.unlockAt ? new Date(data.unlockAt).toLocaleTimeString() : "later";
-      setError(`Too many tries — locked until ${at}.`);
+      // Lockout only blocks re-guessing — reset (email OTP) still works, so
+      // the recovery callout below stays available immediately rather than
+      // making a locked-out parent wait it out.
+      setLockedUntil(data.unlockAt ?? null);
       return;
     }
     setError(
@@ -220,8 +238,60 @@ export default function ParentPage() {
     );
   }
 
+  function resetOtpState() {
+    setOtpRequested(false);
+    setOtpMaskedEmail("");
+    setOtpCode("");
+    setOtpRequestError("");
+  }
+
+  function startReset() {
+    setError("");
+    setLockedUntil(null);
+    setPin("");
+    setPin2("");
+    resetOtpState();
+    setView({ kind: "set", mode: "reset" });
+  }
+
+  async function requestOtp() {
+    setOtpRequestError("");
+    setOtpSending(true);
+    try {
+      const res = await fetch("/api/parent/pin-otp/request", { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        message?: string;
+        maskedEmail?: string;
+        retryAt?: number;
+      };
+      if (res.status === 401) { setView({ kind: "signed-out" }); return; }
+      if (res.ok) {
+        setOtpRequested(true);
+        setOtpMaskedEmail(data.maskedEmail ?? "your email");
+        setOtpCode("");
+        return;
+      }
+      if (res.status === 429) {
+        const at = data.retryAt ? new Date(data.retryAt).toLocaleTimeString() : "shortly";
+        setOtpRequestError(
+          data.error === "daily-limit"
+            ? `Too many codes requested today — try again after ${at}.`
+            : `Please wait a moment before requesting another code (around ${at}).`,
+        );
+        // A code from an earlier request may still be valid — let them enter it.
+        setOtpRequested(true);
+        return;
+      }
+      setOtpRequestError(data.message ?? "Couldn't send the code — try again.");
+    } finally {
+      setOtpSending(false);
+    }
+  }
+
   async function handleSet(e: React.FormEvent) {
     e.preventDefault();
+    if (view.kind !== "set") return;
     setError("");
     if (pin !== pin2) {
       setError("Those don't match — type the same 4 digits twice.");
@@ -230,23 +300,46 @@ export default function ParentPage() {
     const res = await fetch("/api/parent/pin", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ pin }),
+      body: JSON.stringify({ pin, otp: otpCode }),
     });
     if (res.ok) {
       setPin("");
       setPin2("");
+      resetOtpState();
       await loadAlerts();
       void loadGames();
       void loadScreenTime();
       return;
     }
-    const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      message?: string;
+      attemptsLeft?: number;
+    };
     if (res.status === 401) { setView({ kind: "signed-out" }); return; }
-    if (res.status === 403 && data.error === "stale_session") {
-      setError("For safety, sign in again first — then come straight back here.");
-      return;
+    switch (data.error) {
+      case "otp_not_requested":
+        setError('Request a code first — tap "Send code to my email" above.');
+        return;
+      case "otp_expired":
+        setError("That code expired — send a new one.");
+        setOtpRequested(false);
+        setOtpCode("");
+        return;
+      case "otp_too_many_attempts":
+        setError("Too many wrong codes — send a new one.");
+        setOtpRequested(false);
+        setOtpCode("");
+        return;
+      case "otp_wrong":
+        setError(
+          `Wrong code${typeof data.attemptsLeft === "number" ? ` — ${data.attemptsLeft} tries left` : ""}.`,
+        );
+        setOtpCode("");
+        return;
+      default:
+        setError(data.message ?? "That PIN won't work — pick 4 digits that aren't an easy pattern.");
     }
-    setError(data.message ?? "That PIN won't work — pick 4 digits that aren't an easy pattern.");
   }
 
   const pinInput = (value: string, set: (v: string) => void, placeholder: string, autoFocus = false) => (
@@ -297,49 +390,121 @@ export default function ParentPage() {
         <form onSubmit={handleVerify} className="card max-w-sm space-y-4">
           <label className="block text-lg font-semibold">Enter your parent PIN</label>
           {pinInput(pin, setPin, "••••", true)}
-          {error && <p className="text-sm font-medium text-danger-600">{error}</p>}
-          <button disabled={pin.length !== 4} className="btn-primary w-full disabled:opacity-40">
-            Unlock
-          </button>
-          <button
-            type="button"
-            onClick={() => { setError(""); setView({ kind: "set" }); }}
-            className="w-full text-sm text-brand-600 hover:underline"
-          >
-            First time here? Set your PIN →
-          </button>
+
+          {lockedUntil !== null ? (
+            <div className="space-y-3 rounded-kid border border-warn-500/40 bg-warn-50 p-4">
+              <p className="text-sm font-medium text-ink-900">
+                🔒 Too many tries — locked until{" "}
+                <span className="font-semibold">{new Date(lockedUntil).toLocaleTimeString()}</span>.
+              </p>
+              <p className="text-sm text-ink-700">
+                You don&rsquo;t have to wait — resetting your PIN works right away.
+              </p>
+              <button type="button" onClick={startReset} className="btn-primary w-full">
+                Forgot your PIN? Reset it now →
+              </button>
+            </div>
+          ) : (
+            <>
+              {error && <p className="text-sm font-medium text-danger-600">{error}</p>}
+              <button disabled={pin.length !== 4} className="btn-primary w-full disabled:opacity-40">
+                Unlock
+              </button>
+              <div className="flex items-center justify-between gap-2 pt-1 text-sm">
+                <button type="button" onClick={startReset} className="text-brand-600 hover:underline">
+                  Forgot your PIN?
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setError(""); resetOtpState(); setView({ kind: "set", mode: "first-time" }); }}
+                  className="text-ink-500 hover:underline"
+                >
+                  First time here?
+                </button>
+              </div>
+            </>
+          )}
         </form>
       )}
 
       {view.kind === "set" && (
-        <form onSubmit={handleSet} className="card max-w-sm space-y-4">
-          <label className="block text-lg font-semibold">Set your family&rsquo;s parent PIN</label>
-          <p className="text-sm text-ink-700">
-            4 digits. You&rsquo;ll use it to open this page and to approve putting games on the
-            internet. For safety this only works right after signing in — if it complains, sign
-            in again first.
-          </p>
-          {pinInput(pin, setPin, "New PIN", true)}
-          {pinInput(pin2, setPin2, "Same PIN again")}
-          {error && (
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-danger-600">{error}</p>
-              {error.includes("sign in again") && (
-                // reauth: a plain signIn() bounces straight back with the SAME
-                // old cookie (SSO short-circuit) and this error never clears.
-                <button type="button" onClick={() => signIn({ reauth: true })} className="btn-primary w-full">
-                  Sign in again
-                </button>
-              )}
-            </div>
+        <div className="card max-w-sm space-y-4">
+          <label className="block text-lg font-semibold">
+            {view.mode === "reset" ? "Reset your parent PIN" : "Set your family’s parent PIN"}
+          </label>
+
+          {!otpRequested ? (
+            <>
+              <p className="text-sm text-ink-700">
+                {view.mode === "reset" ? (
+                  <>
+                    First, we&rsquo;ll email a 6-digit code to confirm it&rsquo;s really you — a new
+                    PIN can&rsquo;t be set without it.
+                  </>
+                ) : (
+                  <>
+                    4 digits. You&rsquo;ll use it to open this page and to approve putting games on
+                    the internet. First, we&rsquo;ll email a 6-digit code to confirm it&rsquo;s really
+                    you.
+                  </>
+                )}
+              </p>
+              {otpRequestError && <p className="text-sm font-medium text-danger-600">{otpRequestError}</p>}
+              <button
+                type="button"
+                onClick={requestOtp}
+                disabled={otpSending}
+                className="btn-primary w-full disabled:opacity-40"
+              >
+                {otpSending ? "Sending…" : "Send code to my email"}
+              </button>
+            </>
+          ) : (
+            <form onSubmit={handleSet} className="space-y-4">
+              <p className="text-sm text-ink-700">
+                We sent a 6-digit code to <span className="font-semibold">{otpMaskedEmail}</span>. It
+                expires in 10 minutes.
+              </p>
+              {otpRequestError && <p className="text-sm font-medium text-danger-600">{otpRequestError}</p>}
+              <input
+                autoFocus
+                inputMode="numeric"
+                maxLength={6}
+                value={otpCode}
+                onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
+                placeholder="6-digit code"
+                className="w-full rounded-kid border-2 border-brand-100 px-4 py-3 text-center text-xl font-bold tracking-[0.3em] outline-none focus:border-brand-500"
+              />
+              {pinInput(pin, setPin, "New PIN", false)}
+              {pinInput(pin2, setPin2, "Same PIN again")}
+              {error && <p className="text-sm font-medium text-danger-600">{error}</p>}
+              <button
+                disabled={pin.length !== 4 || pin2.length !== 4 || otpCode.length !== 6}
+                className="btn-primary w-full disabled:opacity-40"
+              >
+                {view.mode === "reset" ? "Save new PIN" : "Save PIN"}
+              </button>
+              <button
+                type="button"
+                onClick={requestOtp}
+                disabled={otpSending}
+                className="w-full text-sm text-brand-600 hover:underline disabled:opacity-40"
+              >
+                {otpSending ? "Sending…" : "Resend code"}
+              </button>
+            </form>
           )}
-          <button
-            disabled={pin.length !== 4 || pin2.length !== 4}
-            className="btn-primary w-full disabled:opacity-40"
-          >
-            Save PIN
-          </button>
-        </form>
+
+          {view.mode === "reset" && (
+            <button
+              type="button"
+              onClick={() => { setError(""); setPin(""); setPin2(""); resetOtpState(); setView({ kind: "verify" }); }}
+              className="w-full text-sm text-ink-500 hover:underline"
+            >
+              ← Back to PIN entry
+            </button>
+          )}
+        </div>
       )}
 
       {view.kind === "alerts" && (

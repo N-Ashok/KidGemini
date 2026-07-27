@@ -633,6 +633,20 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   24h → 1h) and issues a 30-min HttpOnly parent-session cookie that gates
   `/api/alerts`. Guests see sign-up copy, never a PIN form (D3). The old
   shared `PARENT_PIN` env var (with its `"1234"` fallback!) is DELETED.
+  **Forgot-PIN recovery** (2026-07-27, BUG-FIX-LOG): "Forgot your PIN?" on
+  the verify screen, and a dedicated recovery callout the moment a lockout
+  hits (reset isn't blocked by the lockout — only re-guessing is), both
+  go straight to the set/reset screen — no waiting out a lock. Set/reset
+  itself requires a 6-digit code emailed to the account's own address
+  (`POST /api/parent/pin-otp/request` → `parent-pin-otp.ts`, 10-min expiry,
+  5-attempt budget, 60s resend cooldown, 5/24h send cap) — this REPLACED the
+  original fresh-SSO-login gate (2026-07-27, same day, round two): a live
+  Google session or a saved password on a shared family device satisfied
+  freshness with no secret only the parent has, so a locked-out kid could
+  reset the PIN themselves. Ari has no SMTP of its own — the code is emailed
+  via a platform bridge (`parent-pin-otp-bridge.ts` → the platform's
+  `x-admin-secret`-gated `/api/studio/partner/parent-pin-otp`, same pattern
+  as the Sparks bridge), reusing the platform's real `EmailSender`.
   INTERIM: alerts are still a global list until Phase 2 child scoping
   (platform TECH_DEBT #32)
 - Kids' transcripts stay local (SQLite) — never in git, never read by tooling

@@ -31,19 +31,6 @@ export interface AriantraSession {
   adult: boolean;
 }
 
-/** Re-auth gate: a session minted within the last 5 minutes. The kid holding
- *  a parent's live-but-old session must NOT reach PIN set/reset; missing iat
- *  fails closed. PRD-PARENT-AUTH-ALERT-SCOPING §7. */
-export const FRESH_SESSION_MAX_AGE_S = 5 * 60;
-
-export function isFreshSession(
-  session: Pick<AriantraSession, "issuedAt"> | null,
-  nowMs: number,
-): boolean {
-  if (!session || typeof session.issuedAt !== "number") return false;
-  return nowMs / 1000 - session.issuedAt <= FRESH_SESSION_MAX_AGE_S;
-}
-
 /** Pure verification — unit-tested; no Next imports so vitest runs it plain. */
 export async function verifyAriantraSession(
   token: string,

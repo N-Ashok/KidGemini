@@ -15,7 +15,7 @@ import type {
   UsageSummary,
 } from "@/types/usage.types";
 import type { IpLimitRecord, RateLimitStatus, RateLimitStore } from "@/types/rate-limit.types";
-import type { ParentAuthRecord, ParentAuthStore } from "@/types/parent-auth.types";
+import type { ParentAuthRecord, ParentAuthStore, ParentPinOtpRecord, ParentPinOtpStore } from "@/types/parent-auth.types";
 import type { ScreenTimeSettings, ScreenTimeDaily, ScreenTimeStore } from "@/types/screen-time.types";
 import { utcDayStart, deriveActiveMinutes } from "./screen-time";
 import { CUSTOM_PLAN_KEY } from "./billing.config";
@@ -152,6 +152,19 @@ export function getDb(): Database.Database {
       attempts INTEGER NOT NULL DEFAULT 0,
       lockedUntil INTEGER,
       lastLockoutAt INTEGER
+    );
+    -- PIN set/reset OTP (BUG-FIX-LOG 2026-07-27): replaces the old fresh-SSO
+    -- freshness gate on the write side of parent_auth above — see
+    -- parent-pin-otp.ts. One in-flight code per account; a fresh send
+    -- overwrites the row.
+    CREATE TABLE IF NOT EXISTS parent_pin_otp (
+      accountId TEXT PRIMARY KEY,
+      codeHash TEXT NOT NULL,
+      expiresAt INTEGER NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      sentAt INTEGER NOT NULL,
+      sendCount INTEGER NOT NULL DEFAULT 1,
+      windowStart INTEGER NOT NULL
     );
     -- Daily screen-time cap (PRD-SCREEN-TIME-CAP-MVP Part B). Keyed by the
     -- same SSO userId as parent_auth — one account per family, no separate
@@ -645,6 +658,44 @@ export class SqliteParentAuthStore implements ParentAuthStore {
            lastLockoutAt = @lastLockoutAt WHERE accountId = @accountId`,
       )
       .run({ accountId, ...fields });
+  }
+}
+
+export class SqliteParentPinOtpStore implements ParentPinOtpStore {
+  get(accountId: string): ParentPinOtpRecord | null {
+    const r = getDb().prepare(`SELECT * FROM parent_pin_otp WHERE accountId = ?`).get(accountId) as
+      | Record<string, unknown>
+      | undefined;
+    if (!r) return null;
+    return {
+      accountId: r.accountId as string,
+      codeHash: r.codeHash as string,
+      expiresAt: r.expiresAt as number,
+      attempts: r.attempts as number,
+      sentAt: r.sentAt as number,
+      sendCount: r.sendCount as number,
+      windowStart: r.windowStart as number,
+    };
+  }
+
+  put(record: ParentPinOtpRecord): void {
+    getDb()
+      .prepare(
+        `INSERT INTO parent_pin_otp (accountId, codeHash, expiresAt, attempts, sentAt, sendCount, windowStart)
+         VALUES (@accountId, @codeHash, @expiresAt, @attempts, @sentAt, @sendCount, @windowStart)
+         ON CONFLICT(accountId) DO UPDATE SET
+           codeHash = @codeHash, expiresAt = @expiresAt, attempts = @attempts,
+           sentAt = @sentAt, sendCount = @sendCount, windowStart = @windowStart`,
+      )
+      .run(record);
+  }
+
+  recordAttempt(accountId: string, attempts: number): void {
+    getDb().prepare(`UPDATE parent_pin_otp SET attempts = ? WHERE accountId = ?`).run(attempts, accountId);
+  }
+
+  clear(accountId: string): void {
+    getDb().prepare(`DELETE FROM parent_pin_otp WHERE accountId = ?`).run(accountId);
   }
 }
 

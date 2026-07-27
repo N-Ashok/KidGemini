@@ -214,6 +214,23 @@ npm run typecheck            # tsc --noEmit
 | `src/app/parent/page.tsx` (cap card) | _(no test harness — manual UAT)_ | "✓ Saved" confirmation appears after a successful save and clears the moment the cap input is edited again; "Current cap: N min/day" always visible, separate from the (possibly unsaved) edit field | 2026-07-15 (UAT: save had no confirmation at all — no way to tell it worked) |
 | `Ariantra-Platform/src/lib/auth/return-to.ts` (`isKidgeminiReturnTo`) | **`return-to.test.ts` K.1–K.7** | True for `kidgemini.ariantra.com` (prod) and `localhost:3001`/`127.0.0.1:3001` (dev, kidgemini's own port); false for every other platform host, relative paths, and dev :3000 (the platform's own port); false for garbage input | — |
 
+## Parent PIN forgot/reset recovery + email OTP gate (2026-07-27, BUG-FIX-LOG, two entries same day)
+
+`src/lib/parent-pin-flow.ts` and its test are DELETED (round two, same day) — that
+reauth-redirect resume mechanism only existed to survive the freshness gate's
+forced re-login; the OTP gate below has no redirect to resume.
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/lib/parent-pin-otp.ts` | **`parent-pin-otp.test.ts`** (18) | 6-digit zero-padded code format; hash never contains the plaintext; `canRequestOtp` cooldown + rolling daily-cap math (allow/refuse/reset-after-window); `nextOtpRecord` resets attempts on every fresh send even mid-verify of the old code; `verifyOtpAttempt` state machine — not-requested/expired/at-cap all skip re-checking the code, a wrong guess that spends the last attempt still returns `updatedAttempts` for the caller to persist | 2026-07-27 round two (freshness gate bypassable on a shared device) |
+| `src/lib/parent-pin-otp-bridge.ts` | **`parent-pin-otp-bridge.test.ts`** (3) | POSTs `{email, code}` with the `x-admin-secret` header to the platform bridge; never throws — network failure and a non-2xx both resolve to `false` | 2026-07-27 round two |
+| `src/app/api/parent/pin-otp/request/route.ts` | **`route.test.ts`** (6) | Any signed-in session may request (NO freshness check — pins the fix directly); cooldown → 429 with no second send; a failed platform-bridge send → 502 and the slot is NOT persisted (doesn't burn the cooldown for nothing); code is never present in the response body | 2026-07-27 round two |
+| `src/app/api/parent/pin/route.ts` | **`route.test.ts`** (9, rewritten from the freshness-gate version) | `otp` is now required in the body; no code ever requested → `otp_not_requested`; wrong code → `otp_wrong` with `attemptsLeft`, PIN untouched, code stays live for another try; expired → `otp_expired`; 5 wrong guesses → `otp_too_many_attempts` even against the eventually-correct code; success clears (single-use) the OTP record; set and reset share the identical gate | 2026-07-27 round two |
+| `src/lib/ariantra-session.ts`, `.test.ts` | (existing suite, trimmed) | `isFreshSession`/`FRESH_SESSION_MAX_AGE_S` deleted — confirm nothing else references them before reintroducing any "session age" check on an auth boundary | 2026-07-27 round two |
+| `src/app/parent/page.tsx` (verify/set views, `requestOtp`, `handleSet`) | _(no component-test harness — manual UAT; see BUG-FIX-LOG 2026-07-27 round two for what wasn't walked through live — no SMTP credentials in this dev environment)_ | "Forgot your PIN?" and the lockout recovery callout both reach the set screen; the set screen requires "Send code to my email" → enter the 6-digit code + new PIN before Save enables; Resend re-hits the request endpoint; every OTP error from the pin route maps to a specific inline message (not requested / expired / too many attempts / wrong code) | 2026-07-27 (both entries) |
+| **Platform repo** `src/lib/auth/email.ts`, `src/lib/email/recording-email-sender.ts` | **`recording-email-sender.test.ts`** EL.2b | `sendParentPinOtp` records `kind: 'parent_pin_otp'` with the OTP code handled as a live credential — metadata only, the code itself never lands in the log body | 2026-07-27 round two |
+| **Platform repo** `src/app/api/studio/partner/parent-pin-otp/route.ts` | **`parent-pin-otp.integration.test.ts`** (5) | `x-admin-secret` gate (same as Sparks bridge); email/code format validation → 422; successful send reaches `c.email.sendParentPinOtp`; the code never appears in the response | 2026-07-27 round two |
+
 ## Patch-based feature edits (2026-07-18, BUG-FIX-LOG class fix)
 
 | When to run | Test | What it pins | Bug-fix ref |
