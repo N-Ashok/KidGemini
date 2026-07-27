@@ -14,7 +14,7 @@ import type { ChainSummary } from "@/types/model-ledger.types";
 import { SafetyBlockedError } from "@/lib/model-runner";
 import {
   isGameEditTurn, isThreeConversionTurn, currentGameHtml, editReplyProse, looksLikeAttemptedEdit, looksLikeCompleteDocument, looksTruncatedDocument,
-  regenReplyProse, reconcileAssetMarkers, detectsNewGame, NEW_GAME_PROMPT_LINE, THREE_D_NEW_GAME_LINE, REBUILT_GAME_LINE, FRESH_GAME_LINE,
+  regenReplyProse, reconcileAssetMarkers, reconcileAssetMarkersWithReason, detectsNewGame, NEW_GAME_PROMPT_LINE, THREE_D_NEW_GAME_LINE, REBUILT_GAME_LINE, FRESH_GAME_LINE,
 } from "@/lib/game-edit";
 import { stripAssetMarkers } from "@/lib/assets/markers";
 import { applyPatch } from "@/lib/repair-prompt";
@@ -52,7 +52,7 @@ const estTokens = (t: string) => Math.ceil(t.length / 4);
 
 export async function POST(req: NextRequest) {
   const geo = resolveGeo(req);
-  let body: { message?: string; history?: ChatMessage[]; image?: unknown; replyId?: unknown; activeGameMessageId?: unknown; forceRebuild?: unknown; differentVersion?: unknown; persona?: unknown };
+  let body: { message?: string; attachmentText?: string; attachmentName?: string; history?: ChatMessage[]; image?: unknown; replyId?: unknown; activeGameMessageId?: unknown; forceRebuild?: unknown; differentVersion?: unknown; persona?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -75,7 +75,20 @@ export async function POST(req: NextRequest) {
     }
   };
 
-  const message = (body.message ?? "").trim();
+  // KNOWN_BUGS #7/#12 (2026-07-27): a re-attached text file that isn't a
+  // complete HTML document used to get folded, whole, into `message` by the
+  // client — so a ~100K-char game body could get scanned by the safety rules
+  // as if it were typed child speech. The client now sends the child's own
+  // typed text separately from any attachment content; `childText` is what
+  // the safety scan sees, `message` (reconstructed here, same shape as the
+  // client used to build) is what the model sees — model behavior unchanged,
+  // only the safety-scanned string changed.
+  const childText = (body.message ?? "").trim();
+  const attachmentText = typeof body.attachmentText === "string" ? body.attachmentText : undefined;
+  const attachmentName = typeof body.attachmentName === "string" ? body.attachmentName : undefined;
+  const message = attachmentText
+    ? `The child attached a file named "${attachmentName ?? "file"}". Its contents:\n\`\`\`\n${attachmentText}\n\`\`\`\n\n${childText || "Please take a look at this file."}`
+    : childText;
   // "Continue from here" (chat-rewind.ts): the client names an EARLIER game
   // message to build on instead of the newest one, for exactly this turn —
   // it clears its own pin once sent, so there's nothing to persist here.
@@ -342,7 +355,10 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 1. INPUT: instant deterministic check (no LLM latency) ────────────────
-  const inRules = rules.classifySync({ text: message, origin: "child" });
+  // Scans childText ONLY — never the reconstructed `message`, which can carry
+  // an attached file's full contents (KNOWN_BUGS #7/#12: that used to be what
+  // got scanned, and an oversized attachment could false-positive the rules).
+  const inRules = rules.classifySync({ text: childText, origin: "child" });
   console.log(`[api/chat] input-rules action=${inRules.action} persona=${persona.id} @${ms()}ms`);
   // Adult authoring mode (verified-adult bible-teacher persona, PRD §4): the
   // teacher is an adult author of their OWN typing, so a PII soft-block is not a
@@ -353,7 +369,7 @@ export async function POST(req: NextRequest) {
   const blockedByRules =
     persona.inputRuleMode === "adult" ? inRules.action === "hard_block" : inRules.action !== "allow";
   if (blockedByRules) {
-    if (persona.inputRuleMode !== "adult") alert("child", message, inRules);
+    if (persona.inputRuleMode !== "adult") alert("child", childText, inRules);
     return ndjson((send) => {
       send({ type: "blocked", text: KIND_REDIRECT });
     }, guestCookieHeader(setGuestCookie));
@@ -606,7 +622,18 @@ export async function POST(req: NextRequest) {
         // this line pins WHICH cause each remaining miss is, from the log alone.
         const inSource = currentHtml.includes(firstSearch);
         const afterMarkerStrip = !inSource && stripAssetMarkers(currentHtml).includes(stripAssetMarkers(firstSearch));
-        console.warn(`[api/chat]   first SEARCH head: "${head}" inSource=${inSource} afterMarkerStrip=${afterMarkerStrip}`);
+        // KNOWN_BUGS #5 closeout Step 0 (2026-07-27): self-classify the REMAINING
+        // misses (afterMarkerStrip=false) so a single prod occurrence is
+        // conclusive. searchSpansHead=true + afterMarkerStrip=false is the
+        // documented head-spanning residual (marker-strip alone can't reconcile a
+        // SEARCH that also covers the injected importmap/AR_ASSETS <head>
+        // content); reconcileBailed pins WHY reconcileAssetMarkers gave up at all.
+        const searchSpansHead = /<head|type="importmap"|AR_ASSETS/i.test(firstSearch);
+        const reason = reconcileAssetMarkersWithReason(currentHtml, reply);
+        const reconcileBailed = "bailed" in reason ? reason.bailed : "rescued";
+        console.warn(
+          `[api/chat]   first SEARCH head: "${head}" inSource=${inSource} afterMarkerStrip=${afterMarkerStrip} searchSpansHead=${searchSpansHead} reconcileBailed=${reconcileBailed}`,
+        );
       };
       let applied = applyPatch(currentHtml, full);
       // inSource=false rescue (KNOWN_BUGS #5): the model re-emitted asset markers

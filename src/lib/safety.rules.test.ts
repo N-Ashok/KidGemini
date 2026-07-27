@@ -45,3 +45,36 @@ describe("RulesClassifier — word-boundary false positives (BUG-FIX-LOG 2026-07
     expect(child("can you add a jump button to my platformer game").action).toBe("allow");
   });
 });
+
+/** Production bug (KNOWN_BUGS #7 / #12, 2026-07-27): an oversized message
+ *  (~100K chars of game source accidentally folded into a chat turn, see
+ *  BUG-FIX-LOG same date) raised the odds of an accidental SELF_HARM
+ *  whole-string substring hit. MAX_SCAN_CHARS bounds that unbounded scan —
+ *  PROFANITY is already per-token and structurally safer, so only the
+ *  whole-string SELF_HARM check needs a ceiling. */
+describe("RulesClassifier — MAX_SCAN_CHARS backstop (KNOWN_BUGS #7/#12)", () => {
+  it("still catches a self-harm phrase well within the ceiling", () => {
+    const v = child("i want to kill myself " + "x".repeat(500));
+    expect(v.action).toBe("hard_block");
+  });
+
+  it("catches a self-harm phrase placed inside the first 4000 chars of a huge message", () => {
+    const padded = "a".repeat(1000) + "i want to kill myself" + "b".repeat(50_000);
+    expect(child(padded).action).toBe("hard_block");
+  });
+
+  it("does NOT hard-block on a self-harm phrase that only appears well beyond the ceiling", () => {
+    const padded = "a".repeat(10_000) + "i want to kill myself" + "b".repeat(90_000);
+    expect(child(padded).action).toBe("allow");
+  });
+
+  it("does not false-positive on a huge benign payload (e.g. re-attached game source)", () => {
+    const gameLikeSource = "<html><head></head><body>".repeat(4000);
+    expect(child(gameLikeSource).action).toBe("allow");
+  });
+
+  it("still catches ordinary short profanity/self-harm messages unaffected by the ceiling", () => {
+    expect(child("you are an asshole").action).toBe("hard_block");
+    expect(child("i keep wanting to cut myself").action).toBe("hard_block");
+  });
+});

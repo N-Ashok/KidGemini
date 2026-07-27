@@ -7,7 +7,7 @@
 // can't be found in the stored (marker-stripped) source, so the patch fails and
 // the turn escalates to a full regeneration.
 import { describe, expect, it } from "vitest";
-import { reconcileAssetMarkers } from "./game-edit";
+import { reconcileAssetMarkers, reconcileAssetMarkersWithReason } from "./game-edit";
 import { applyPatch } from "./repair-prompt";
 import { injectAssets } from "./assets/inject";
 
@@ -97,5 +97,42 @@ neither is this
     // still fails — the rescue is honest, not a rubber stamp.
     expect(reconciled).not.toBeNull();
     expect(applyPatch(STORED, reconciled!).ok).toBe(false);
+  });
+});
+
+// KNOWN_BUGS #5 closeout Step 0 (2026-07-27): logSearchMiss needs to tell,
+// from the log alone, WHY reconciliation bailed on a given miss — these
+// mirror A.4/A.5/A.6 above but assert the specific reason, not just null.
+describe("reconcileAssetMarkersWithReason — bail-reason detail (KNOWN_BUGS #5 Step 0)", () => {
+  it("bails 'new-asset' when the reply's marker names something the stored game doesn't already reference", () => {
+    const addsDragon = REPLY.replace(/USES_MODELS: car/g, "USES_MODELS: car, dragon");
+    expect(reconcileAssetMarkersWithReason(STORED, addsDragon)).toEqual({ bailed: "new-asset" });
+  });
+
+  it("bails 'not-injected' when the current game was never run through injectAssets", () => {
+    const twoD = "<!doctype html><html><head></head><body><canvas></canvas></body></html>";
+    expect(reconcileAssetMarkersWithReason(twoD, REPLY)).toEqual({ bailed: "not-injected" });
+  });
+
+  it("bails 'no-marker' when the reply carries no asset marker at all", () => {
+    const plain = `Done!
+<<<<<<< SEARCH
+let carSpeed = 5;
+=======
+let carSpeed = 9;
+>>>>>>> REPLACE`;
+    expect(reconcileAssetMarkersWithReason(STORED, plain)).toEqual({ bailed: "no-marker" });
+  });
+
+  it("returns the reconciled html (not a bail) on the rescuable common case", () => {
+    const result = reconcileAssetMarkersWithReason(STORED, REPLY);
+    expect("html" in result).toBe(true);
+    expect(result).not.toHaveProperty("bailed");
+  });
+
+  it("reconcileAssetMarkers (the existing export) still agrees with the reason variant", () => {
+    expect(reconcileAssetMarkers(STORED, REPLY)).toBe(
+      (reconcileAssetMarkersWithReason(STORED, REPLY) as { html: string }).html,
+    );
   });
 });

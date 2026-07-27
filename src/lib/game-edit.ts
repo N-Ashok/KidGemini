@@ -177,12 +177,26 @@ export function looksTruncatedDocument(html: string): boolean {
  * Pure — no I/O. Deliberately conservative: it can only ever turn a failed
  * patch into a working one, never change a patch that already applied.
  */
-export function reconcileAssetMarkers(currentHtml: string, reply: string): string | null {
-  if (!hasAssetMarker(reply)) return null;
-  if (!looksInjected(currentHtml)) return null;
+/** Why reconciliation bailed (KNOWN_BUGS #5 closeout Step 0): pins which of
+ *  the three guards tripped, so a prod `inSource=false` miss is self-classifying
+ *  from the log line alone — no raw-source eyeballing needed to tell "nothing to
+ *  reconcile" from "this needed real re-injection" from "never injected at all". */
+export type ReconcileBailReason = "not-injected" | "new-asset" | "no-marker";
+
+export function reconcileAssetMarkersWithReason(
+  currentHtml: string,
+  reply: string,
+): { html: string } | { bailed: ReconcileBailReason } {
+  if (!hasAssetMarker(reply)) return { bailed: "no-marker" };
+  if (!looksInjected(currentHtml)) return { bailed: "not-injected" };
   const present = new Set(arAssetsKeys(currentHtml));
-  if (assetMarkerNames(reply).some((name) => !present.has(name))) return null;
-  return stripAssetMarkers(reply);
+  if (assetMarkerNames(reply).some((name) => !present.has(name))) return { bailed: "new-asset" };
+  return { html: stripAssetMarkers(reply) };
+}
+
+export function reconcileAssetMarkers(currentHtml: string, reply: string): string | null {
+  const result = reconcileAssetMarkersWithReason(currentHtml, reply);
+  return "html" in result ? result.html : null;
 }
 
 /** The model's self-declaration that the child asked for a genuinely DIFFERENT
@@ -280,6 +294,11 @@ Then return the change as one or more blocks in EXACTLY this format, and nothing
 >>>>>>> REPLACE
 Rules:
 - The SEARCH text must match the current source exactly and uniquely.
+- If a landmark comment (e.g. \`// --- PLAYER MOVEMENT ---\` or \`<!-- SCORING -->\`)
+  already exists near what you're changing, anchor your SEARCH block on that
+  landmark plus just the few nearby lines you need — a short, distinct anchor
+  is much less likely to be mistyped than a large block of code copied from
+  memory.
 - Change only what this request needs. Do not rename, restyle, reformat, or "improve" anything else — the child is proud of the game exactly as it plays right now.
 - Everything you don't put in a REPLACE block must stay byte-for-byte identical.
 - No prose after the patch blocks, no markdown fences, no full HTML document.`;

@@ -272,6 +272,14 @@ const GAME_BUILD_CONTRACT = `respond with a single HTML document wrapped in a
   accurately, include as many correct ones as you are sure of and build the
   game around that set: a smaller ACCURATE set is always better than a padded,
   made-up one.
+- Above each logically distinct part of the code (player movement/controls,
+  scoring, enemy/obstacle spawning, rendering, the start/game-over screens,
+  etc.), add a short, distinct landmark comment naming that part, e.g.
+  \`// --- PLAYER MOVEMENT ---\` or \`<!-- SCORING -->\`. A later request to
+  change this game will edit it by finding a small exact chunk of code, and a
+  short unique landmark is far easier to relocate exactly than a large block
+  of gameplay logic — this makes future edits land cleanly instead of
+  requiring the whole game to be rebuilt.
 - Keep it wholesome; work fully offline unless a CDN library is allowed above.`;
 
 // Exported so tests can pin the child-safety instruction (it replaced the

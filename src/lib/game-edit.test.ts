@@ -161,6 +161,15 @@ describe("GAME_EDIT_PROMPT_SECTION — the patch contract for feature-edit turns
     expect(GAME_EDIT_PROMPT_SECTION).toMatch(/if (this|the) (message|request) (is|isn't|is not)/i);
     expect(GAME_EDIT_PROMPT_SECTION).toMatch(/answer normally|just (reply|answer)/i);
   });
+
+  // KNOWN_BUGS #5 class fix (2026-07-27): tells the model to anchor its SEARCH
+  // text on a nearby landmark comment (from GAME_BUILD_CONTRACT, see
+  // gemini.prompt.test.ts) when one exists, instead of quoting a large exact
+  // block of gameplay code from memory — the landmark is short and far less
+  // likely to have a transcription slip than the code itself.
+  it("tells the model to anchor SEARCH text on a nearby landmark comment when one exists", () => {
+    expect(GAME_EDIT_PROMPT_SECTION).toMatch(/landmark comment/i);
+  });
 });
 
 // Kill switch (BUG-FIX-LOG 2026-07-18, penguin-maze session): the user must

@@ -11,6 +11,181 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+### 2026-07-27 — Unnecessary full-rebuilds on ordinary small edits (KNOWN_BUGS #5 class fix)
+
+- **Symptom:** Investigated at the owner's request by pulling 32 real full-rebuild trigger events from prod logs (`~/kidgemini/logs/app.log`) and matching each to the actual kid request in `usage_events`. 84% of the triggers were `search_not_found` on genuinely SMALL asks — "the tank colour don't provide better visibility," "the road corners... looks inverted," a request to let the player enter a building — not big rewrites. Every one of those forced a full, expensive, risk-of-regression rebuild instead of a small patch.
+- **Surface area:** `src/lib/repair-prompt.ts` (`applyPatch`), `src/lib/gemini.ts` (`GAME_BUILD_CONTRACT`), `src/lib/game-edit.ts` (`GAME_EDIT_PROMPT_SECTION`).
+- **Root cause:** `applyPatch` located the model's `SEARCH` text with plain, byte-exact `indexOf()` — the system prompt tells the model to copy that text "EXACTLY, character for character" from a large file it's reproducing from context, not reading verbatim. Any whitespace-only slip (an extra space, different indentation, a dropped trailing space) made the match fail completely, and a failed patch escalates straight to a full-game regeneration — the expensive, riskier path (BUG-FIX-LOG 2026-07-18 "penguin-maze": full rewrites regress untouched parts of the game).
+- **Fix (two complementary changes):**
+  1. **Whitespace-tolerant fallback matching** (`applyPatch`/`locateSearchText`, `repair-prompt.ts`): when the byte-exact search finds nothing, retry against both strings with whitespace collapsed (leading/trailing trimmed per line, internal runs of whitespace reduced to one space) — every non-whitespace character still has to match exactly, so this only forgives formatting drift, never lets a genuinely different SEARCH text through. Ambiguity (two normalized-identical spots) still fails closed with `search_ambiguous`, same as the exact path always has.
+  2. **Landmark comments** (`GAME_BUILD_CONTRACT`, `GAME_EDIT_PROMPT_SECTION`): the model is now told, at BUILD time, to sprinkle short, distinct comments above each logically separate part of the game (`// --- PLAYER MOVEMENT ---`, `<!-- SCORING -->`, etc.), and at EDIT time, to anchor its SEARCH block on a nearby landmark plus a few lines rather than quoting a large block of gameplay logic from memory. A short label has far less surface area for a transcription slip than the code itself. This only helps games built after this change ships — existing games have no landmarks yet.
+- **Result (verified):** New `repair-prompt.test.ts` cases (collapsed-whitespace-run match, re-indented multi-line match, dropped-trailing-space match, still fails on genuinely different text, case-sensitivity preserved, ambiguous-after-collapsing still fails closed, exact match still wins over fuzzy when both exist) + new prompt-pin tests in `gemini.prompt.test.ts` and `game-edit.test.ts`. Full suite (146 files / 1447 tests) + `tsc --noEmit` clean.
+- **Impact:** Small, ordinary edit requests should now patch cleanly far more often instead of triggering a full, riskier rebuild — directly targets the dominant (84%) real-world cause found in prod logs. Games built going forward also carry landmark comments, which should compound the improvement over time as more of the fleet has them.
+- **Prevention:** Class — **when an automated match against LLM-reproduced text has zero tolerance for formatting drift, the failure mode isn't "ask more precisely," it's "any transcription slip nukes the whole result."** Any future exact-match-against-model-output mechanism should default to whitespace-tolerant matching unless there's a specific reason letter-for-letter formatting must be preserved.
+- **Related:** `KNOWN_BUGS.md` #5 (this doesn't close it — the asset-marker/head-spanning residual is a different, narrower mechanism — but reduces the OVERALL rate of unnecessary full rebuilds this bug's investigation was really about).
+
+---
+
+### 2026-07-27 — A parent who forgot their PIN had no way back in — round two (email OTP replaces the SSO-freshness gate)
+
+- **Symptom (what the user saw):** Owner review of the fix directly below this entry — "This way,
+  it is easy for kids to change it themselves." The first fix (below) made resetting a forgotten
+  PIN reachable and discoverable, which was correct, but it exposed a pre-existing weakness in
+  what "reachable" actually required: `POST /api/parent/pin` only checked that the SSO session was
+  signed in within the last 5 minutes (`isFreshSession`). On a shared family device, a kid can
+  satisfy that with no secret only the parent has — a cached Google login re-authenticates with
+  one tap and no password prompt, or a browser-saved password autofills. The original PRD
+  (`Ariantra-Platform/docs/PRD-PARENT-AUTH-ALERT-SCOPING.md` §7) had explicitly named and *accepted*
+  this exact gap in 2026-07-10. Making the reset path more visible (the fix directly below) didn't
+  create the hole, but it made a kid far more likely to find and use it — a locked-out kid now saw
+  an inviting "Reset your PIN now" button leading straight to a gate they could pass.
+- **Surface area:** Game repo — `src/app/api/parent/pin/route.ts` (freshness check removed, OTP
+  check added), new `src/app/api/parent/pin-otp/request/route.ts`, `src/lib/parent-pin-otp.ts`
+  (new, pure), `src/lib/parent-pin-otp-bridge.ts` (new), `src/lib/db.ts` (`parent_pin_otp` table +
+  `SqliteParentPinOtpStore`), `src/types/parent-auth.types.ts` (new OTP types),
+  `src/lib/ariantra-session.ts` (`isFreshSession`/`FRESH_SESSION_MAX_AGE_S` deleted — no longer
+  called anywhere), `src/app/parent/page.tsx` (OTP step in the set/reset UI). Deleted:
+  `src/lib/parent-pin-flow.ts` + test — the reauth-redirect resume mechanism built in the entry
+  below only existed to survive the freshness gate's forced re-login; removing the gate removed
+  the redirect entirely, so that machinery had no callers left. Platform repo (cross-repo, same
+  server-to-server pattern as the Sparks bridge) — `src/lib/auth/email.ts` (`sendParentPinOtp` +
+  `EMAIL_SUBJECTS.parent_pin_otp`), `src/lib/email/recording-email-sender.ts` (wraps it, code
+  handled as a live credential — never logged, same as a password-reset link), new
+  `src/app/api/studio/partner/parent-pin-otp/route.ts` (`x-admin-secret` gated), `src/test/fakes.ts`
+  (`fakeEmailSender`/`makeContainer` extended), `src/types/email-log.types.ts` (`EmailKind` gains
+  `'parent_pin_otp'`). `docs/PRD-PARENT-AUTH-ALERT-SCOPING.md` updated (v4 → v5) — the "accepted"
+  limitation is marked wrong, not silently dropped.
+- **Root cause:** A login-freshness check is not a second factor — it's the SAME factor (whatever
+  already authenticated the browser) measured again, so anything that keeps that authentication
+  alive (a cached OAuth session, a saved password, an unlocked device) satisfies it with nothing
+  new. The class this belongs to: **treating "recently re-authenticated" as proof of intent is only
+  as strong as how re-authentication actually happens** — for a password/OTP login it's a real
+  barrier, for silent-SSO or autofill it barely exists. A real step-up factor has to require
+  something the current session doesn't already carry.
+- **Fix (class level):** Owner decision (explicit trade-off presented, not made unilaterally, per
+  CLAUDE.md §7.1's no-clear-winner rule): the OTP **replaces** the freshness gate rather than
+  stacking on top of it — stacking would keep the exact hole open on a device where the freshness
+  check already silently passes. `POST /api/parent/pin-otp/request` (any signed-in session, no
+  freshness requirement — the OTP itself is the proof) emails a 6-digit code to the SSO session's
+  own address; `POST /api/parent/pin` now requires `{ pin, otp }` and verifies the code
+  (`verifyOtpAttempt` — 10-min expiry, 5-attempt budget, single-use, fails closed on
+  not-requested/expired/spent) before writing the new PIN hash. Send-side abuse controls
+  (`canRequestOtp`): 60s resend cooldown, 5-per-24h rolling cap, and the send slot is only
+  persisted once the platform bridge confirms delivery — a failed send can't burn a parent's
+  cooldown for nothing. Applies uniformly to first-time set AND reset (one code path, and it also
+  closes a smaller pre-existing gap: previously ANY signed-in-fresh session — even a kid's, if
+  timed right — could set a family's very first PIN with zero extra proof). The parent-facing UI
+  gained one deliberate step (request code → check email → enter code + new PIN) but LOST the old
+  forced re-login redirect entirely, since the OTP no longer depends on session freshness — net
+  simpler for a legitimate parent, not just more secure.
+- **Result (verified):** New `parent-pin-otp.test.ts` (18 tests: code format, hash never contains
+  the plaintext, cooldown/daily-cap window math, single-use verify state machine including the
+  "spends the last attempt" edge case), `parent-pin-otp-bridge.test.ts` (3), `pin-otp/request/route.test.ts`
+  (6: no freshness required — pins the fix directly — cooldown 429, failed-send doesn't burn the
+  slot, code never returned to the client), `pin/route.test.ts` rewritten for the OTP contract (9,
+  was 6). Platform: `recording-email-sender.test.ts` +1 (OTP recorded as metadata only, code never
+  stored), new `parent-pin-otp.integration.test.ts` (5: auth, validation, send, code never in the
+  response). Full suite both repos: Game 146 files / 1438 tests + `tsc --noEmit` clean; Platform
+  115 files / 1028 tests + `tsc --noEmit` clean. Not walked through live in a browser with real
+  SMTP delivery — dev environment has no mail credentials; the dev `EmailSender` logs the code
+  instead, which is how local UAT would read it.
+- **Impact:** A parent can still recover a forgotten PIN without contacting support, but doing so
+  now requires reading an email only they receive — a kid sharing the device, however locked-out
+  or however visible the reset button, cannot complete it without that access.
+- **Prevention:** Class — **"the user is already logged in" and "the user re-authenticated
+  recently" are not the same claim, and a security review of an auth flow must ask which one an
+  SSO-freshness check actually proves** — silent/cached SSO makes them the same thing in practice.
+  Any future step-up-auth requirement (payment confirmation, account deletion, contact-info change)
+  on this or the platform repo should default to a channel-based proof (email/SMS OTP) over a
+  freshness re-check, unless the login method itself always demands a fresh secret (password/OTP,
+  not OAuth-with-remembered-session).
+- **Related:** the entry directly below (2026-07-27, same day) — that fix was correct on
+  discoverability and is NOT reverted; this entry replaces its underlying auth mechanism only.
+  `Ariantra-Platform/docs/PRD-PARENT-AUTH-ALERT-SCOPING.md` "Changed since v4" (the owner-facing
+  version of this record) and its §7/§12 inline supersession notes.
+
+---
+
+### 2026-07-27 — A parent who forgot their PIN had no way back in
+
+- **Symptom (what the user saw):** Owner report — "there is no way to reset parents pin now." A
+  parent who forgot their 4-digit PIN, or got locked out after 5 wrong guesses, had no visible
+  path forward on `/parent`: the verify screen's only link was "First time here? Set your PIN →",
+  which reads as *not for me, I've had a PIN before* and is easy to miss/distrust. Worse: even a
+  parent who found it and tried to save a new PIN almost always hit `stale_session` (reset
+  requires a login within the last 5 minutes, and the 30-day cookie means most visits aren't
+  fresh) — clicking "Sign in again" bounced them to the platform login and back, but the return
+  trip landed on a fresh page load with no memory of what they were doing, which re-ran the normal
+  verify gate and put them right back at "Enter your parent PIN" — the exact PIN they'd just said
+  they forgot. There was no way to escape that loop from the UI.
+- **Surface area:** `src/app/parent/page.tsx`; new `src/lib/parent-pin-flow.ts`. No backend
+  change — `POST /api/parent/pin` already treats set and reset as the identical write, gated only
+  by `isFreshSession` (`src/lib/ariantra-session.ts`); the capability existed, the UI just
+  couldn't reach it.
+- **Root cause:** Two compounding gaps, both discoverability/state, not auth logic: (1) no
+  explicit "Forgot your PIN?" affordance, and nothing at all offered during a lockout, so a
+  panicking parent had no obvious next step; (2) the reauth round trip (`signIn({reauth:true})` →
+  platform login → redirect back to `/parent`) carried no memory of "I was mid set/reset" — the
+  parent page's only state is in-memory React state, which a full navigation away and back always
+  discards, so the page fell through to its default first-load path (verify gate) regardless of
+  why the parent had left.
+- **Fix (class level):** Round-trip the in-flight intent through the URL itself, since that's the
+  one thing survives a full-page navigation to another origin and back.
+  `parent-pin-flow.ts` (pure, fully tested) exports `markPinFlowResume(href, mode)` — stamps
+  `?parentPinFlow=set|reset` onto the current URL — and `consumePinFlowResume(href)`, which reads
+  and strips it, failing closed to `null` on anything not exactly `"first-time"|"reset"`. Before
+  calling `signIn({reauth:true})`, the "Sign in again" button now stamps the current URL with the
+  mode the parent was already in (`reauthAndResume`); on mount, `/parent` consumes that param
+  first and — if present — jumps straight to the `set` screen in that mode, skipping the
+  verify/alerts fetch entirely (a parent resuming a reset has nothing to verify against; asking
+  them to re-enter the forgotten PIN would recreate the exact dead end). Separately, the verify
+  screen now has a standing "Forgot your PIN?" link next to (not replacing) "First time here?",
+  and a lockout (`429`) renders its own `warn-50` recovery callout — "You don't have to wait —
+  resetting your PIN works right away" — instead of a plain red error line, since reset is
+  never blocked by the verify-attempt lockout (they're independent gates by design).
+- **Result (verified):** New `parent-pin-flow.test.ts` (7 tests: param round-trip preserves other
+  query params/hash, overwrite not duplicate, strips cleanly, fails closed on an unrecognized
+  value). Full suite green — 144 files / 1409 tests + `tsc --noEmit` clean. Dev server boots and
+  serves `/parent`; the authenticated interactive states (verify/locked/set with a live SSO
+  session) were reviewed in code and via typecheck but not walked through in a live browser — that
+  needs a real platform login round trip this sandbox doesn't have credentials for. Flagging this
+  explicitly rather than claiming a visual UAT pass that didn't happen.
+- **Impact:** A parent who forgets their PIN, or gets locked out, now has an obvious, always-visible
+  way back in that actually completes — no more silent dead end at the one screen that requires
+  the very thing they don't have.
+- **Prevention:** Class — **a client-only navigation flow (redirect-out-and-back-in for reauth)
+  must carry its own intent, because full-page navigation discards all in-memory state.** Any
+  future flow that bounces a user off-site and back (payment redirects, OAuth, age-gate) needs
+  the same treatment: round-trip the resume intent through the URL/returnTo, don't assume the app
+  will "remember" why the user left.
+- **Related:** none prior in this repo; first entry for the parent-PIN reset path.
+
+---
+
+### 2026-07-27 — A ~100K-char edit turn (re-attached game file) hard-blocked by the profanity/self-harm rules
+
+- **Symptom (what the user saw):** `KNOWN_BUGS.md` #7 — an edit turn arrived with `chars=100403` and was `input-rules action=hard_block`ed in 29ms with no meaningful `triggerText`, just game source. Distinct from the same-day HARASSMENT:LOW block (that one is Gemini's own provider-side safety layer); this is the app's own deterministic `RulesClassifier` pre-check.
+- **Surface area:** `src/components/ChatPanel.container.tsx` (`handleSend`, `runStream`), `src/app/api/chat/route.ts`, `src/lib/safety.rules.ts`.
+- **Root cause:** `ChatPanel.container.tsx`'s `apiMessage` construction folded an ENTIRE text attachment's content into the same string sent as `message` whenever the attachment fell through `file-open.ts`'s complete-HTML-document check (e.g. a re-attached `.js`/partial-HTML game file). `route.ts` then ran `rules.classifySync({ text: message, ... })` over that whole folded string — so a re-attached ~100K-char game got scanned by the SELF_HARM whole-string substring check and the PROFANITY per-token scan as if it were 100K characters of typed child speech, dramatically raising the odds of an accidental hit (same class as the fixed "medic kit"→"medickit" bug, 2026-07-18, but ~100x the text volume).
+- **Fix:** Attachment content now travels as its own field (`attachmentText`/`attachmentName`), never folded into the child-typed `message`/`text`. Server-side, `route.ts` reconstructs the identical model-facing prompt (`childText` + the file wrapper) for the actual Gemini call — model behavior is unchanged — but `rules.classifySync` now scans `childText` (the child's own typed words) ONLY. Defense-in-depth backstop added in `safety.rules.ts`: `MAX_SELF_HARM_SCAN_CHARS` (4000) bounds the previously-unbounded SELF_HARM whole-string check, so any future path that accidentally sends an oversized message degrades to "scan the first 4K chars" instead of guaranteed false-positive surface across the whole thing (PROFANITY was already per-token-safe, unchanged).
+- **Result (verified):** New `safety.rules.test.ts` cases (ceiling backstop, still catches genuine phrases within it, doesn't false-positive on huge benign payloads) + new `route.test.ts` describe block reproducing the exact case (asserts `classifySync` is called with only the short instruction, and that the model still receives the full attachment content unchanged) + a same-block test confirming a genuinely blockable typed instruction still hard-blocks regardless of attachment. Full suite (144 files / 1416 tests) + `tsc --noEmit` clean.
+- **Impact:** Kids can re-attach/re-share a large game file without the turn being silently hard-blocked; the safety floor for actual typed child speech is unchanged.
+- **Prevention:** Class — **a deterministic child-safety scanner's input must be scoped to what the child actually typed, never to app-forwarded payloads (file contents, game state, upload bodies) that happen to travel through the same field.** Any future "fold X into the message string" shortcut needs its own field instead.
+- **Related:** `KNOWN_BUGS.md` #7 (now FIXED); `2026-07-27_PRD_AssetHeadReconcileAndProfanityGate.md` Part 2; the 2026-07-27 "Mega Evolution" entry (the sibling, provider-side SAFETY block this is NOT).
+
+---
+
+### 2026-07-27 — KNOWN_BUGS #5 closeout Step 0: `inSource=false` misses now self-classify from the log alone
+
+- **Symptom:** none kid-facing yet — this is instrumentation, not a behavior change. `KNOWN_BUGS.md` #5's residual (a SEARCH block spanning the injected `<head>` still can't be reconciled by marker-stripping alone) needed real prevalence data before committing to the bigger structural fix (patch against a pre-injection copy of the HTML), and today's `afterMarkerStrip=false` log line was ambiguous — it couldn't distinguish "head-spanning residual" from "a genuinely different stored version."
+- **Surface area:** `src/lib/game-edit.ts` (new `reconcileAssetMarkersWithReason`, `ReconcileBailReason`), `src/app/api/chat/route.ts` (`logSearchMiss`).
+- **Change:** `reconcileAssetMarkers` now delegates to a reason-returning variant that pins exactly which of its three guards tripped (`not-injected` | `new-asset` | `no-marker`) instead of just returning `null`. `logSearchMiss` logs two new fields: `searchSpansHead` (does the model's SEARCH text contain `<head`, `type="importmap"`, or `AR_ASSETS`?) and `reconcileBailed=<reason>` (or `rescued` when reconciliation succeeded). A prod `inSource=false afterMarkerStrip=false searchSpansHead=true` streak now conclusively confirms the head-spanning residual from the log alone, per the closeout plan in `KNOWN_BUGS.md`.
+- **Result (verified):** `game-edit.reconcile.test.ts` A.1–A.7 unchanged (still passing — the existing export's behavior is untouched) + 5 new cases pinning each bail reason and confirming `reconcileAssetMarkers`/`reconcileAssetMarkersWithReason` still agree. Full suite (144 files / 1416 tests) + `tsc --noEmit` clean.
+- **Impact:** none yet — sets up the measurement step. `KNOWN_BUGS.md` #5 stays WATCHING pending a few days of real 3D-edit prod traffic; only if the head-spanning case proves common does the Step 4 structural fix (see `2026-07-27_PRD_AssetHeadReconcileAndProfanityGate.md` Part 1) get built.
+- **Related:** `KNOWN_BUGS.md` #5; `2026-07-27_PRD_AssetHeadReconcileAndProfanityGate.md` Part 1.
+
+---
+
 ### 2026-07-27 — "Buy Sparks" on ariantra.com landed on the old yearly-plan checkout, not Sparks packs
 
 - **Symptom (what the user saw):** Owner report — clicking "Buy Sparks" on `ariantra.com/pricing.html` → login → `/upgrade` showed Explorer ₹1,200/yr, Assisted Starter ₹3,990, Assisted Pro ₹10,000: the pre-relaunch yearly plans, nothing to do with the ₹120/₹200/₹500 Sparks packs the pricing page actually sells.

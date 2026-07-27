@@ -70,4 +70,15 @@ describe("CHILD_SYSTEM_PROMPT (safety instruction, monitor replacement)", () => 
     expect(CHILD_SYSTEM_PROMPT).toMatch(/never\s+invent\s+or\s+make\s+up\s+names\s+or\s+facts/i);
     expect(CHILD_SYSTEM_PROMPT).toMatch(/smaller\s+ACCURATE\s+set\s+is\s+always\s+better/i);
   });
+
+  // KNOWN_BUGS #5 class fix (2026-07-27): 84% of real prod full-rebuild
+  // triggers were search_not_found on ordinary small edits — the model
+  // couldn't re-locate a plain code chunk it had to transcribe from memory.
+  // Landmark comments give edit turns a short, distinctive anchor to search
+  // for instead of a large exact block, so this instructs it at BUILD time
+  // (see GAME_EDIT_PROMPT_SECTION in game-edit.test.ts for the edit-side half).
+  it("instructs the model to sprinkle short landmark comments across distinct code sections", () => {
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/landmark comment/i);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/short,\s*distinct/i);
+  });
 });

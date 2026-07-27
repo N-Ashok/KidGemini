@@ -3,6 +3,25 @@
 Closes: KNOWN_BUGS.md #5 (residual) and #7/#12.
 Written: 2026-07-27.
 
+**Status update 2026-07-27 (implemented same day):**
+- **Part 2 shipped as FIXED**, not the originally-proposed Fix A/B split below.
+  The actual mechanism found on implementation: `ChatPanel.container.tsx`'s
+  `apiMessage` construction (not a mid-`route.ts` concatenation) folded a text
+  attachment's full content into `message` whenever it fell through
+  `file-open.ts`'s complete-HTML-document check. Fix: attachment content now
+  travels as its own `attachmentText`/`attachmentName` field; `route.ts`
+  reconstructs the identical model-facing prompt but scans only the child's
+  typed text. The `MAX_SCAN_CHARS` backstop shipped too, scoped to the
+  SELF_HARM whole-string check specifically (`MAX_SELF_HARM_SCAN_CHARS=4000`
+  in `safety.rules.ts`) per the owner's explicit decision: **don't scan
+  attachment content at all** (not "scan both, bounded" — the middle option
+  below was considered and rejected in favor of exclusion). See
+  `BUG-FIX-LOG.md` 2026-07-27 and `KNOWN_BUGS.md` #7 (now FIXED).
+- **Part 1 Step 0 (instrumentation) shipped.** `logSearchMiss` now logs
+  `searchSpansHead`/`reconcileBailed=<reason>`. Step 1 (prod log collection)
+  and the Step 4 structural-fix decision are still pending — see
+  `KNOWN_BUGS.md` #5 (still WATCHING).
+
 This PRD covers two independent, currently-open bugs. They share no code path
 and can ship separately, but are grouped here because both were raised in the
 same review pass. Each section is self-contained with its own Tech

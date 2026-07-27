@@ -143,3 +143,82 @@ describe("applyPatch (R.6 — patch, not regeneration)", () => {
     expect(applyPatch(html, reply)).toEqual({ ok: false, reason: "conflict_markers" });
   });
 });
+
+// Whitespace-tolerant fallback matching (KNOWN_BUGS #5 class fix, 2026-07-27):
+// production evidence showed 84% of full-rebuild triggers were search_not_found
+// on ordinary small edits ("fix the tank color", "the road corner looks
+// inverted") — not big asks. The model transcribes SEARCH text from a large
+// file it "remembers" rather than sees verbatim, and a single whitespace slip
+// (extra space, different indentation, a dropped trailing space) made the
+// exact byte-for-byte match fail and threw away the whole game to rebuild it.
+// This fallback tolerates whitespace-only drift while still requiring every
+// actual letter/word/punctuation character to match exactly — it must never
+// turn a genuinely wrong SEARCH into a false "found".
+describe("applyPatch — whitespace-tolerant fallback (KNOWN_BUGS #5 class fix, 2026-07-27)", () => {
+  it("matches when the model collapses a run of spaces the source has around an operator", () => {
+    // Whitespace RUNS collapse (one-or-more spaces treated alike) — but the
+    // fallback deliberately does NOT insert or remove a space that isn't
+    // there at all (see the case-sensitive-style test below): that would risk
+    // gluing tokens together, the exact class of bug the PROFANITY word-token
+    // matcher (safety.rules.ts) was hardened against ("medic kit" -> "medickit").
+    const src = "<script>let carSpeed  =  5;\nif(keys.up)car.y-=carSpeed;</script>";
+    const reply = "<<<<<<< SEARCH\nlet carSpeed = 5;\n=======\nlet carSpeed = 9;\n>>>>>>> REPLACE";
+    const r = applyPatch(src, reply);
+    expect(r).toMatchObject({ ok: true, mode: "patch" });
+    if (r.ok) {
+      expect(r.html).toContain("carSpeed = 9;");
+      expect(r.html).toContain("car.y-=carSpeed;"); // untouched code stays untouched
+    }
+  });
+
+  it("matches when the model re-indents a multi-line SEARCH block differently than the source", () => {
+    const src = "<script>\nfunction tick(){\n  if(alive){\n    score++;\n  }\n}\n</script>";
+    const reply =
+      "<<<<<<< SEARCH\nif(alive){\n  score++;\n}\n=======\nif(alive){\n  score += 2;\n}\n>>>>>>> REPLACE";
+    const r = applyPatch(src, reply);
+    expect(r).toMatchObject({ ok: true, mode: "patch" });
+    if (r.ok) expect(r.html).toContain("score += 2;");
+  });
+
+  it("matches when the model drops a trailing space the source has", () => {
+    const src = "<style>.car { color: red; } \n.track { color: gray; }</style>";
+    const reply = "<<<<<<< SEARCH\n.car { color: red; }\n=======\n.car { color: blue; }\n>>>>>>> REPLACE";
+    const r = applyPatch(src, reply);
+    expect(r).toMatchObject({ ok: true, mode: "patch" });
+    if (r.ok) expect(r.html).toContain("color: blue");
+  });
+
+  it("still fails closed when the text is genuinely different, not just re-whitespaced", () => {
+    const src = "<script>let carSpeed = 5;</script>";
+    const reply = "<<<<<<< SEARCH\nlet boatSpeed = 5;\n=======\nlet boatSpeed = 9;\n>>>>>>> REPLACE";
+    expect(applyPatch(src, reply)).toEqual({ ok: false, reason: "search_not_found" });
+  });
+
+  it("is case-sensitive — the fallback tolerates whitespace, never letter case", () => {
+    const src = "<script>let CarSpeed = 5;</script>";
+    const reply = "<<<<<<< SEARCH\nlet carSpeed = 5;\n=======\nlet carSpeed = 9;\n>>>>>>> REPLACE";
+    expect(applyPatch(src, reply)).toEqual({ ok: false, reason: "search_not_found" });
+  });
+
+  it("reports ambiguous when whitespace-collapsing makes two DIFFERENT-looking spots identical", () => {
+    // Neither line matches SEARCH byte-for-byte (both have an extra space
+    // somewhere), so the exact pass finds nothing and falls to the fuzzy
+    // pass — where both collapse to the same normalized text.
+    const src = "<script>let  x = 1;\nlet x  = 1;</script>";
+    const reply = "<<<<<<< SEARCH\nlet x = 1;\n=======\nlet x = 2;\n>>>>>>> REPLACE";
+    expect(applyPatch(src, reply)).toEqual({ ok: false, reason: "search_ambiguous" });
+  });
+
+  it("prefers an exact match over the fuzzy fallback when both exist", () => {
+    // "let x=1;" appears exactly once verbatim, and a whitespace-different
+    // sibling also exists — the exact one must win, not get flagged ambiguous.
+    const src = "<script>let x=1;\nlet  x = 1;</script>";
+    const reply = "<<<<<<< SEARCH\nlet x=1;\n=======\nlet x=2;\n>>>>>>> REPLACE";
+    const r = applyPatch(src, reply);
+    expect(r).toMatchObject({ ok: true, mode: "patch" });
+    if (r.ok) {
+      expect(r.html).toContain("let x=2;");
+      expect(r.html).toContain("let  x = 1;"); // the other one, untouched
+    }
+  });
+});

@@ -755,6 +755,12 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     // "🔄 Different one" (PRD-INSTANT-ALTERNATE): regenerate led by the fallback
     // model, so the kid gets a genuinely different take.
     differentVersion = false,
+    // A text-file attachment that fell through to the model path (KNOWN_BUGS
+    // #7/#12, 2026-07-27): sent as its OWN field, never folded into `text`,
+    // so the server can scan the child's typed words without an attached
+    // file's full contents ever reaching the safety rules classifier.
+    attachmentText?: string,
+    attachmentName?: string,
   ) {
     const setReply = (t: string, artifactHtml?: string, newGamePrompt?: boolean, threeDNewGame?: boolean) =>
       patchActive((c) => ({
@@ -814,6 +820,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
           history,
           replyId,
           ...(image ? { image } : {}),
+          ...(attachmentText ? { attachmentText, attachmentName } : {}),
           ...(activeGameMessageId ? { activeGameMessageId } : {}),
           ...(forceRebuild ? { forceRebuild: true } : {}),
           ...(differentVersion ? { differentVersion: true } : {}),
@@ -994,7 +1001,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         onSuccess?.();
         return;
       }
-      await runStream(text, history, replyId, attempt + 1, image, onSuccess, activeGameMessageId);
+      await runStream(text, history, replyId, attempt + 1, image, onSuccess, activeGameMessageId, undefined, undefined, attachmentText, attachmentName);
     }
   }
 
@@ -1100,16 +1107,16 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
       return;
     }
 
-    // What the model receives: text files fold their contents into the prompt;
-    // pictures travel as a real image part (base64) NEXT to the prompt — and are
-    // NOT stored in history (localStorage quota; single-turn context by design).
+    // What the model receives: a text file's contents travel as their OWN
+    // field (attachmentText, KNOWN_BUGS #7/#12 2026-07-27) — the server
+    // reconstructs the same "child attached a file..." prompt for the model,
+    // but only `text` (the child's own typed words) ever reaches the safety
+    // rules scan, never the attachment's full contents. Pictures travel as a
+    // real image part (base64) next to the prompt — and are NOT stored in
+    // history (localStorage quota; single-turn context by design).
     const isImage = attachment?.kind === "image";
-    const apiMessage =
-      attachment && attachment.kind === "text"
-        ? `The child attached a file named "${attachment.name}". Its contents:\n\`\`\`\n${attachment.content}\n\`\`\`\n\n${text || "Please take a look at this file."}`
-        : isImage
-          ? text || "Please take a look at this picture."
-          : text;
+    const isTextAttachment = attachment?.kind === "text";
+    const apiMessage = isImage ? text || "Please take a look at this picture." : text;
     // A fresh upload replaces the conversation's remembered picture; otherwise
     // keep sending the one from earlier this session (if any).
     const image = isImage
@@ -1148,6 +1155,9 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         opts?.onSuccess && (() => opts.onSuccess!(childId)),
         activeGameMessageId,
         opts?.forceRebuild ?? false,
+        undefined,
+        isTextAttachment ? attachment.content : undefined,
+        isTextAttachment ? attachment.name : undefined,
       );
     } finally {
       sendingRef.current = false;

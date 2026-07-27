@@ -68,9 +68,13 @@ vi.mock("@/lib/assets/inject", () => ({
 let ruleVerdict: { category: string | null; severity: string; action: string; reason: string } = {
   category: null, severity: "low", action: "allow", reason: "",
 };
+// Captures what text each call was actually scanned with (KNOWN_BUGS #7/#12
+// regression: an attached file's content must never reach this scan).
+const classifySyncCalls: Array<{ text: string; origin: string }> = [];
 vi.mock("@/lib/safety.rules", () => ({
   RulesClassifier: class {
-    classifySync() {
+    classifySync(input: { text: string; origin: string }) {
+      classifySyncCalls.push(input);
       return ruleVerdict;
     }
   },
@@ -194,6 +198,7 @@ beforeEach(() => {
   usedByUserSince.mockReturnValue(0);
   rateHit.mockReturnValue({ state: "ok" });
   ruleVerdict = { category: null, severity: "low", action: "allow", reason: "" };
+  classifySyncCalls.length = 0;
 });
 
 afterEach(() => {
@@ -1265,6 +1270,57 @@ describe("POST /api/chat — genuine input block keeps the gentle topic-change r
 
     expect(blocked?.text).toBe(KIND_REDIRECT);
     expect(blocked?.text).not.toBe(MODEL_GLITCH_RETRY);
+    expect(replyStreamMock).not.toHaveBeenCalled();
+  });
+});
+
+// KNOWN_BUGS #7/#12 (2026-07-27): a re-attached ~100K-char game body used to
+// get folded into `message` client-side and hard-blocked by the deterministic
+// rules scan. attachmentText now travels as its own field — this is the
+// regression test proving the rules classifier only ever sees the child's
+// own typed words, never the attachment's contents.
+describe("POST /api/chat — attachment content never reaches the safety rules scan (KNOWN_BUGS #7/#12)", () => {
+  beforeEach(() => {
+    authMock.mockResolvedValue(null);
+    replyStreamMock.mockReturnValue(one("ok"));
+  });
+
+  it("scans only the short typed instruction, not a huge attached file's contents", async () => {
+    const hugeAttachment = "<html><head></head><body>".repeat(5000); // ~125K chars, benign
+    const res = await POST(
+      makeReq({
+        message: "can you fix the jump button",
+        attachmentText: hugeAttachment,
+        attachmentName: "my-game.js",
+        history: [],
+      }),
+    );
+    await res.text();
+
+    expect(classifySyncCalls).toHaveLength(1);
+    expect(classifySyncCalls[0]!.text).toBe("can you fix the jump button");
+    expect(classifySyncCalls[0]!.text.length).toBeLessThan(100);
+    // The model still receives the full attachment content — only the safety
+    // scan's input narrowed, not what the model is told.
+    const [{ message: modelMessage }] = replyStreamMock.mock.calls[0]!;
+    expect(modelMessage).toContain(hugeAttachment);
+    expect(modelMessage).toContain("can you fix the jump button");
+  });
+
+  it("still hard-blocks when the child's OWN typed instruction is the problem, attachment or not", async () => {
+    ruleVerdict = { category: "profanity", severity: "high", action: "hard_block", reason: "Matched blocked term (rule)." };
+    const res = await POST(
+      makeReq({
+        message: "something the rules block",
+        attachmentText: "<html><head></head><body>ordinary game code</body></html>",
+        attachmentName: "my-game.html",
+        history: [],
+      }),
+    );
+    const text = await res.text();
+    const blocked = text.trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.type === "blocked");
+
+    expect(blocked?.text).toBe(KIND_REDIRECT);
     expect(replyStreamMock).not.toHaveBeenCalled();
   });
 });

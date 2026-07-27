@@ -141,6 +141,82 @@ export type PatchResult =
   | { ok: true; html: string; mode: "patch" | "regeneration" }
   | { ok: false; reason: string };
 
+type MatchRange = { start: number; end: number };
+
+/** All indices where `needle` occurs in `haystack` (overlap-tolerant — matches
+ *  the previous ambiguity check's "does it occur more than once" semantics). */
+function findAllIndices(haystack: string, needle: string): number[] {
+  if (!needle) return [];
+  const indices: number[] = [];
+  let from = 0;
+  while (true) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx === -1) break;
+    indices.push(idx);
+    from = idx + 1;
+  }
+  return indices;
+}
+
+/** Collapses whitespace for fuzzy matching while keeping a map back to the
+ *  ORIGINAL string's indices, one entry per emitted character: trims leading
+ *  whitespace on every line, collapses internal whitespace runs to a single
+ *  space, and drops trailing whitespace before a newline. Never touches
+ *  letter case or any non-whitespace character. */
+function normalizeForMatch(s: string): { text: string; map: number[] } {
+  let text = "";
+  const map: number[] = [];
+  let atLineStart = true;
+  let pendingSpace = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!;
+    if (ch === "\n") {
+      text += "\n";
+      map.push(i);
+      atLineStart = true;
+      pendingSpace = false;
+      continue;
+    }
+    if (ch === " " || ch === "\t" || ch === "\r") {
+      if (!atLineStart) pendingSpace = true;
+      continue;
+    }
+    if (pendingSpace) {
+      text += " ";
+      map.push(i - 1);
+      pendingSpace = false;
+    }
+    text += ch;
+    map.push(i);
+    atLineStart = false;
+  }
+  return { text, map };
+}
+
+/** Finds where `search` occurs in `source` — exact byte match first, and only
+ *  when that finds NOTHING does it retry ignoring whitespace-only drift
+ *  (KNOWN_BUGS #5 class fix, 2026-07-27: an LLM transcribing a chunk of a
+ *  large file from memory occasionally slips on spacing/indentation alone,
+ *  even when the actual code it means is unambiguous — that used to fail the
+ *  whole patch and force a full, riskier rebuild). Every non-whitespace
+ *  character still has to match exactly; this never turns a genuinely
+ *  different SEARCH into a false "found". */
+function locateSearchText(source: string, search: string): MatchRange | "ambiguous" | null {
+  const exact = findAllIndices(source, search);
+  if (exact.length === 1) return { start: exact[0]!, end: exact[0]! + search.length };
+  if (exact.length > 1) return "ambiguous";
+
+  const { text: normSource, map } = normalizeForMatch(source);
+  const { text: normSearch } = normalizeForMatch(search);
+  if (!normSearch) return null;
+  const fuzzy = findAllIndices(normSource, normSearch);
+  if (fuzzy.length === 0) return null;
+  if (fuzzy.length > 1) return "ambiguous";
+  const startNorm = fuzzy[0]!;
+  const endNorm = startNorm + normSearch.length - 1;
+  return { start: map[startNorm]!, end: map[endNorm]! + 1 };
+}
+
 /**
  * Applies the model's SEARCH/REPLACE blocks to the current source (R.6).
  * Falls back to a full-document reply (the slow path §7.1 warns about) so a
@@ -151,10 +227,10 @@ export function applyPatch(html: string, reply: string): PatchResult {
   if (blocks.length > 0) {
     let out = html;
     for (const [, search, replace] of blocks) {
-      const idx = out.indexOf(search!);
-      if (idx === -1) return { ok: false, reason: "search_not_found" };
-      if (out.indexOf(search!, idx + 1) !== -1) return { ok: false, reason: "search_ambiguous" };
-      out = out.slice(0, idx) + replace! + out.slice(idx + search!.length);
+      const range = locateSearchText(out, search!);
+      if (range === null) return { ok: false, reason: "search_not_found" };
+      if (range === "ambiguous") return { ok: false, reason: "search_ambiguous" };
+      out = out.slice(0, range.start) + replace! + out.slice(range.end);
     }
     return { ok: true, html: out, mode: "patch" };
   }

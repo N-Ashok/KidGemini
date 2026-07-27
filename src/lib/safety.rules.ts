@@ -73,6 +73,14 @@ const PROFANITY = [
 // boundaries ("kill myself", "cut myself") and needs the merge to be caught.
 const SELF_HARM = ["suicide", "killmyself", "killyourself", "selfharm", "cutmyself"];
 
+// Defense-in-depth ceiling (KNOWN_BUGS #7/#12, 2026-07-27): SELF_HARM is the
+// only unbounded whole-string check here (PROFANITY is per-token, already
+// safe at any length). A genuine child message is never anywhere near this
+// long; bounding it means an oversized payload that reaches this classifier
+// by accident degrades to "scan the first 4K chars" instead of a guaranteed
+// false-positive surface across the whole thing.
+const MAX_SELF_HARM_SCAN_CHARS = 4000;
+
 const PII: Array<{ re: RegExp; label: string }> = [
   { re: /\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/, label: "phone number" },
   { re: /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/, label: "email" },
@@ -94,7 +102,7 @@ export class RulesClassifier implements SafetyClassifier {
   }
 
   classifySync(input: { text: string; origin: "child" | "model" }): SafetyVerdict {
-    const norm = normalize(input.text);
+    const norm = normalize(input.text.slice(0, MAX_SELF_HARM_SCAN_CHARS));
     for (const w of SELF_HARM) {
       if (norm.includes(w)) {
         return { action: "hard_block", category: HARD, severity: "high", reason: `Matched blocked term (rule).` };
