@@ -21,6 +21,28 @@ describe("buildChatContents", () => {
     expect(c[2]!.parts).toEqual([{ text: "make a game" }]);
   });
 
+  // BUG-FIX-LOG 2026-07-27: provider HARASSMENT:LOW false positives on kids'
+  // battle games clear when truthful "I am a game designer" context rides in
+  // the USER turn (verified live — the system prompt saying the same thing did
+  // NOT clear them). The context is a SEPARATE leading part of the final user
+  // turn so the child's own words stay intact.
+  it("prepends safetyContext as its own leading part of the final user turn only", () => {
+    const c = buildChatContents({ history, message: "add mega evolution", safetyContext: "ctx" });
+    expect(c[2]!.parts).toEqual([{ text: "ctx" }, { text: "add mega evolution" }]);
+    // history turns must never carry the injected context
+    expect(JSON.stringify(c.slice(0, -1))).not.toContain("ctx");
+  });
+
+  it("keeps safetyContext first even when a picture rides on the final turn", () => {
+    const image = { mimeType: "image/jpeg" as const, data: "aGVsbG8=" };
+    const c = buildChatContents({ history, message: "use this", image, safetyContext: "ctx" });
+    expect(c[c.length - 1]!.parts).toEqual([
+      { text: "ctx" },
+      { inlineData: { mimeType: "image/jpeg", data: "aGVsbG8=" } },
+      { text: "use this" },
+    ]);
+  });
+
   it("attaches an uploaded picture as inlineData next to the final message text", () => {
     const image = { mimeType: "image/jpeg" as const, data: "aGVsbG8=" };
     const c = buildChatContents({ history, message: "what is in this picture?", image });

@@ -19,6 +19,7 @@ Where it's assembled:
 | Per-turn system assembly | `src/lib/gemini.ts:301` · `buildTurnSystemInstruction()` |
 | Which sections turn on | `src/lib/gemini.ts:565` · `configFor()` |
 | Contents (history + message) | `src/lib/gemini.ts:407` · `buildChatContents()` |
+| Child-builder safety-context injection | `src/lib/gemini.ts` · `CHILD_BUILDER_CONTEXT`, `buildContents()` |
 | History trim + game inlining | `src/lib/history-trim.ts` · `trimHistory()` |
 | Anthropic body (`system` + `messages`) | `src/lib/providers/anthropic-generation.ts:37` · `buildAnthropicBody()` |
 | Route that fires it | `src/app/api/chat/route.ts:49` (`trimHistory` at line 88) |
@@ -52,6 +53,16 @@ The base system prompt AND the Gemini safety thresholds are selected by a
   (LOW). Pinned in `persona/persona.test.ts` + `gemini.safety-config.test.ts`.
 - `buildTurnSystemInstruction(..., persona)` layers the asset/edit/multiplayer
   sections on top of the persona base, same as before.
+- **CHILD_BUILDER_CONTEXT (2026-07-27):** for `default`-persona game-**build**
+  turns only (`isGameBuildTurn`), `buildContents()`/`buildChatContents()`
+  (`gemini.ts`) prepend a truthful "a child game designer is building their own
+  fictional, cartoon-style game" line as its own leading part of the final
+  **user turn** (contents, not the system prompt) — never merged into the
+  child's own words. This is NOT a threshold change (the table above is
+  unchanged); it corrects Gemini misreading benign battle-game language
+  (trainers/gyms/rivals) as HARASSMENT — live-verified the same framing in the
+  *system prompt* did NOT clear the block, only in the user turn does. See
+  BUG-FIX-LOG.md 2026-07-27, `gemini.safety-context.test.ts`.
 
 The `BIBLE_TEACHER_SYSTEM_PROMPT` framing (verbatim intent): a warm assistant for a
 **Sunday-school teacher** building games for children 7-14; **scripture-faithful**
