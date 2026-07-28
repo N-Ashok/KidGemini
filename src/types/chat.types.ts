@@ -40,6 +40,12 @@ export interface ChatMessage {
    *  this a later Regenerate on this exact reply would fall back to
    *  whatever's newest instead of redoing against the same pinned version. */
   basedOnMessageId?: string;
+  /** 3 "what to try next" suggestion chips (2026-07-28 PRD
+   *  Game/docs/2026-07-27_PRD_KidHintsAndNextBestAsk.md), gated behind
+   *  NEXT_PUBLIC_ENABLE_KID_HINTS server-side — present only when the server
+   *  chose to send them, so the client needs no flag-awareness of its own,
+   *  just render-if-present (ChatPanel.container.tsx). */
+  nextAskHints?: string[];
   createdAt: number;
 }
 

@@ -9,6 +9,7 @@
 
 import { isGameBuildTurn } from "./builder-mode";
 import { arAssetsKeys, assetMarkerNames, hasAssetMarker, looksInjected, stripAssetMarkers, THREE_MARKER } from "./assets/markers";
+import { hidePartialNextAskLine } from "./next-ask-sentinel";
 import type { ChatMessage } from "@/types/chat.types";
 
 // Deliberately NOT importing from gemini.ts or history-trim.ts here: gemini.ts
@@ -314,19 +315,26 @@ export const EDIT_STREAM_WORKING_LINE = "Making your change… ✨";
  *  catches a marker still arriving at the stream tail) and swaps in a
  *  friendly working line. */
 export function streamingDisplayText(partial: string): string {
+  // Kid hints (2026-07-28 PRD): a trailing NEXT_ASKS sentinel line is an
+  // internal signal too, same class as NEW_GAME_SENTINEL below — hide it (and
+  // any prefix of it building token by token) BEFORE the rest of this
+  // function runs, so the raw "idea | idea | idea" line never flashes in the
+  // bubble while it streams in. No-op on ordinary text (next-ask-sentinel.ts).
+  const withoutNextAsk = hidePartialNextAskLine(partial);
+
   // A new-game self-declaration (NEW_GAME_SENTINEL) is an internal signal, not
   // an answer — hide it (and any prefix of it building token by token) so the
   // ugly token never flashes in the bubble before `done` swaps in the friendly
   // prompt. Only when the sentinel IS the whole partial (fail toward not hiding
   // real prose that merely happens to start with the same letters is a non-issue
   // — the token is unique and all-caps).
-  const trimmed = partial.trim();
+  const trimmed = withoutNextAsk.trim();
   if (trimmed && (NEW_GAME_SENTINEL.startsWith(trimmed) || trimmed === NEW_GAME_SENTINEL)) {
     return EDIT_STREAM_WORKING_LINE;
   }
-  const idx = partial.search(/<{4}/);
-  if (idx === -1) return partial;
-  const prose = partial.slice(0, idx).trim();
+  const idx = withoutNextAsk.search(/<{4}/);
+  if (idx === -1) return withoutNextAsk;
+  const prose = withoutNextAsk.slice(0, idx).trim();
   return prose ? `${prose}\n\n${EDIT_STREAM_WORKING_LINE}` : EDIT_STREAM_WORKING_LINE;
 }
 

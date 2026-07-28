@@ -23,6 +23,8 @@ import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
 import { newUnknownThreeImports, unknownThreeImports } from "@/lib/assets/three-import-lint";
 import { CURATED_IMPORT_NAMES } from "@/lib/assets/prompt-catalog";
 import { ensureMultiplayerMarker } from "@/lib/multiplayer-gate";
+import { parseNextAskLine } from "@/lib/next-ask-sentinel";
+import { buildFallbackNextAskHints, kidHintsEnabled } from "@/lib/next-ask-hints";
 import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
 import { RulesClassifier } from "@/lib/safety.rules";
@@ -586,6 +588,13 @@ export async function POST(req: NextRequest) {
     // Set when the model self-declared a whole-new-game request (PRD §11): the
     // done event carries it so the client shows the two-button consent prompt.
     let newGamePrompt = false;
+    // Kid hints / next-ask chips (2026-07-28 PRD): the model's own contextual
+    // suggestions, parsed out of the fresh-build branch below. Stays undefined
+    // on an edit/patch turn (never requested there — next-ask-sentinel.ts) or
+    // when the model's sentinel line was missing/malformed; the fallback pool
+    // fills the gap right before `send`, so a kid only ever gets zero chips
+    // when the flag is off entirely.
+    let nextAskHints: string[] | undefined;
 
     // Patch-based feature edits (BUG-FIX-LOG class fix, 2026-07-18): a
     // follow-up request on an already-good game is answered with a targeted
@@ -807,8 +816,27 @@ export async function POST(req: NextRequest) {
         }
       }
     } else {
-      let { text: prose, artifactHtml, wasFenced } = extractArtifact(full);
-      let displaySource = full; // the raw text the wasFenced display path echoes
+      // Kid hints / next-ask chips: strip the model's trailing NEXT_ASKS
+      // sentinel out of the RAW reply BEFORE extractArtifact ever sees it, so
+      // both the extracted prose AND the raw wasFenced-display path
+      // (`displaySource` below) stay sentinel-free — extracting from `prose`
+      // alone would miss it on the wasFenced path, which echoes `full`
+      // verbatim rather than reconstructing from `prose`. Only trusted when
+      // the code fence still closes cleanly AFTER stripping the line — that
+      // guarantees the sentinel was genuinely tacked on after the fence
+      // closed, not embedded inside the game/HTML itself (an unclosed/bare
+      // reply is left completely untouched).
+      let workingFull = full;
+      if (kidHintsEnabled()) {
+        const parsed = parseNextAskLine(full);
+        if (parsed && extractArtifact(parsed.cleanedText).wasFenced) {
+          workingFull = parsed.cleanedText;
+          nextAskHints = parsed.ideas;
+        }
+      }
+
+      let { text: prose, artifactHtml, wasFenced } = extractArtifact(workingFull);
+      let displaySource = workingFull; // the raw text the wasFenced display path echoes
 
       // Never ship a game the model reported "done" on but left truncated.
       const guard = await completeTruncatedBuild(artifactHtml);
@@ -874,7 +902,38 @@ export async function POST(req: NextRequest) {
       }
       }
     }
-    send({ type: "done", text: displayText, artifactHtml: deliverableHtml, ...(newGamePrompt ? { newGamePrompt: true } : {}) });
+
+    // Kid hints / next-ask chips — final defensive pass. The primary parse
+    // above only covers the main fresh-build reply; several secondary retry
+    // paths (truncation recovery, the import-lint corrective retry, and the
+    // edit branch's own forceFullRegen fallback) can ALSO carry a
+    // model-generated NEXT_ASKS line, since forceFullRegen turns are treated
+    // as fresh-build turns by gemini.ts's configFor (isEdit=false) and can
+    // still receive the prompt section. Rather than instrument every one of
+    // those branches individually, catch any stray trailing sentinel on the
+    // FINAL displayText here — parseNextAskLine is strict and side-effect-free,
+    // so this is a safe no-op on ordinary chat text. Falls back to the static
+    // pool (next-ask-hints.ts) only for a genuine game turn (deliverableHtml
+    // set) that still has no hints — never on a refusal/clarification/new-game
+    // prompt turn, so suggestion chips never sit under a non-answer.
+    if (kidHintsEnabled()) {
+      const trailing = parseNextAskLine(displayText);
+      if (trailing) {
+        displayText = trailing.cleanedText;
+        if (!nextAskHints) nextAskHints = trailing.ideas;
+      }
+      if (!nextAskHints && deliverableHtml) {
+        nextAskHints = buildFallbackNextAskHints(persona.id === "bible-teacher" ? "bible-teacher" : undefined);
+      }
+    }
+
+    send({
+      type: "done",
+      text: displayText,
+      artifactHtml: deliverableHtml,
+      ...(newGamePrompt ? { newGamePrompt: true } : {}),
+      ...(nextAskHints ? { nextAskHints } : {}),
+    });
     // Keep the finished result server-side even if nobody is listening — a
     // disconnected client polls /api/chat/result instead of re-generating.
     if (replyId) trackTurn(() => turnResults.complete(replyId, userId, displayText, deliverableHtml, Date.now()));

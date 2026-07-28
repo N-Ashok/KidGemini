@@ -153,6 +153,19 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 - **Starter chips** (2026-07-08): 4 random game prompts from a 500-strong pool
   (`src/lib/game-suggestions.ts`, 10 mechanics × 50 themes) — fresh picks every
   load and every new chat, so kids don't see the same four twice
+- **Next-ask chips** (2026-07-28, flag OFF by default —
+  `NEXT_PUBLIC_ENABLE_KID_HINTS`, `docs/2026-07-27_PRD_KidHintsAndNextBestAsk.md`):
+  after a fresh-build turn, 3 "what to try next" chips — 2 concrete/buildable,
+  1 open-ended "what if" imagination-spark — piggybacked on the SAME chat call
+  via a trailing `NEXT_ASKS:` sentinel line the model appends and route.ts
+  parses/strips server-side (`src/lib/next-ask-sentinel.ts`), so it's
+  genuinely contextual to the game just built at near-zero added cost (no
+  second API call). Falls back to a static local pool
+  (`src/lib/next-ask-hints.ts` + `src/lib/imagination-hints.ts`) on the very
+  first turn, on edit/patch turns (never requested there — the SEARCH/REPLACE
+  contract can't safely carry a trailing sentinel), or whenever the model's
+  line is missing/malformed. Only attached when a turn actually produced a
+  playable game — never under a refusal, clarification, or new-game prompt
 - Sandboxed HTML game artifacts the AI can build in-chat — Preview/Code tabs
   (code pane scrolls), download/copy; on mobile the panel is fullscreen with a
   "← Chat" back button, and any game message shows a "🎮 Open game" chip to

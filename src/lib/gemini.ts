@@ -15,6 +15,8 @@ import {
   GAME_EDIT_STRICT_RETRY_SECTION, REPEATED_REQUEST_SECTION, FRESH_GAME_LINE,
 } from "./game-edit";
 import { PERSONAS, type PersonaId } from "./persona/persona";
+import { NEXT_ASK_PROMPT_SECTION } from "./next-ask-sentinel";
+import { kidHintsEnabled } from "./next-ask-hints";
 import { fallbackChain, isModelGone, shouldTryNextModel } from "./model-fallback";
 import { runOneShotChain, runStreamChain, type ProviderChunk, type FinishReason, type ProviderGenerator } from "./model-runner";
 import { chainFor, specFor } from "./model-registry";
@@ -364,6 +366,11 @@ export function buildTurnSystemInstruction(
   isEdit = false,
   repeated = false,
   persona: PersonaId = "default",
+  // Kid hints / next-ask chips (2026-07-28 PRD): fresh-build turns only —
+  // never combined with isEdit (see next-ask-sentinel.ts's header comment for
+  // why the edit/patch contract can't safely carry this too). Default false
+  // keeps every existing call site (and the prompt-pin tests) unchanged.
+  nextAsk = false,
 ): string {
   const base = personaBasePrompt(persona);
   const sections = [
@@ -372,6 +379,7 @@ export function buildTurnSystemInstruction(
     ...(multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),
     ...(isEdit ? [GAME_EDIT_PROMPT_SECTION] : []),
     ...(repeated ? [REPEATED_REQUEST_SECTION] : []),
+    ...(nextAsk && !isEdit ? [NEXT_ASK_PROMPT_SECTION] : []),
   ].filter(Boolean);
   return sections.length ? `${base}\n\n${sections.join("\n\n")}` : base;
 }
@@ -667,10 +675,13 @@ export class GeminiChatModel implements ChatModel {
     // Penguin-maze hardening 2026-07-18: an identical re-send means the last
     // reply claimed success without the change appearing — tell the model.
     const repeated = isRepeatedRequest(input.message, input.history);
-    console.log(`[gemini] builder mode — thinking on, extended output, persona=${persona.id}, catalogs: 3d=${gates.three} audio=${gates.audio} multiplayer=${wantsMultiplayer} edit=${isEdit} repeated=${repeated}`);
+    // Kid hints / next-ask chips (2026-07-28 PRD): fresh-build turns only —
+    // never on an edit turn, see next-ask-sentinel.ts's header comment.
+    const nextAsk = kidHintsEnabled() && !isEdit;
+    console.log(`[gemini] builder mode — thinking on, extended output, persona=${persona.id}, catalogs: 3d=${gates.three} audio=${gates.audio} multiplayer=${wantsMultiplayer} edit=${isEdit} repeated=${repeated} nextAsk=${nextAsk}`);
     return {
       ...GEN_CONFIG,
-      systemInstruction: buildTurnSystemInstruction(gates, wantsMultiplayer, isEdit, repeated, persona.id),
+      systemInstruction: buildTurnSystemInstruction(gates, wantsMultiplayer, isEdit, repeated, persona.id, nextAsk),
       safetySettings: persona.safetySettings,
       ...builderGenOverrides(process.env),
     };

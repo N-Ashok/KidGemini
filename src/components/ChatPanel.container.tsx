@@ -199,6 +199,11 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   // First-run coach state (docs/PRD-IDEA-BUTTON.md §coach): intro once, one
   // wiggle-only re-nudge if the feature stays unused, then silence forever.
   const [coachStore, setCoachStore] = useState<CoachStore>(defaultCoachStore());
+  // A mic capture interrupted by a verify/repair cover unmounting the tab
+  // mid-speech (BUG-FIX-LOG draft-recovery) — held here (survives the
+  // unmount) and handed back to IdeaMicTab on its next mount so the kid sees
+  // and can edit/finish/discard it, instead of it being silently dropped.
+  const [pendingIdeaDraft, setPendingIdeaDraft] = useState<string | null>(null);
 
   // Cross-browser chat-history bug (2026-07-16): "I lose chat though I log
   // into the same account... tied to the browser rather than the account."
@@ -762,7 +767,13 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     attachmentText?: string,
     attachmentName?: string,
   ) {
-    const setReply = (t: string, artifactHtml?: string, newGamePrompt?: boolean, threeDNewGame?: boolean) =>
+    const setReply = (
+      t: string,
+      artifactHtml?: string,
+      newGamePrompt?: boolean,
+      threeDNewGame?: boolean,
+      nextAskHints?: string[],
+    ) =>
       patchActive((c) => ({
         ...c,
         messages: c.messages.map((m) =>
@@ -773,6 +784,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
                 artifactHtml,
                 ...(newGamePrompt ? { newGamePrompt: true } : {}),
                 ...(threeDNewGame ? { threeDNewGame: true } : {}),
+                ...(nextAskHints ? { nextAskHints } : {}),
               }
             : m,
         ),
@@ -870,7 +882,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
           const line = buffer.slice(0, nl).trim();
           buffer = buffer.slice(nl + 1);
           if (!line) continue;
-          const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null; newGamePrompt?: boolean; threeDNewGame?: boolean };
+          const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null; newGamePrompt?: boolean; threeDNewGame?: boolean; nextAskHints?: string[] };
           if (ev.type === "thinking") {
             if (ev.text) setThinkingLine(ev.text);
           } else if (ev.type === "delta") {
@@ -888,7 +900,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             setThinkingLine(null);
             console.warn(`[chat] ↻ fallback model restart @${Date.now() - startedAt}ms — partial reply cleared`);
           } else if (ev.type === "done") {
-            setReply(ev.text ?? acc, ev.artifactHtml ?? undefined, ev.newGamePrompt, ev.threeDNewGame);
+            setReply(ev.text ?? acc, ev.artifactHtml ?? undefined, ev.newGamePrompt, ev.threeDNewGame, ev.nextAskHints);
             setArtifact((a) => nextArtifact({ type: "done", artifactHtml: ev.artifactHtml }, a));
             setBusy(false);
             finalized = true;
@@ -1039,6 +1051,19 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     // The feature has been used — the mic coach's re-nudge is off forever.
     setCoachStore((s) => (s.everCaptured ? s : { ...s, everCaptured: true }));
     return true;
+  }
+
+  /** The mic tab unmounted mid-capture (a verify/repair cover coming up) —
+   *  hold the transcript so the tab's next mount can restore it, rather than
+   *  it being silently dropped. */
+  function handleIdeaInterrupted(text: string) {
+    setPendingIdeaDraft(text);
+  }
+
+  /** The tab has restored (and resumed listening on) the held draft — clear
+   *  it so a later, unrelated remount doesn't replay the same text. */
+  function handleIdeaDraftConsumed() {
+    setPendingIdeaDraft(null);
   }
 
   async function handleSend(
@@ -1411,6 +1436,29 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
                 ))}
               </div>
             )}
+            {/* Next-ask chips (2026-07-28 PRD): "what to try next" suggestions
+                after an assistant turn. Server-gated (NEXT_PUBLIC_ENABLE_KID_HINTS)
+                — the field is only ever present when the server sent it, so no
+                client-side flag check is needed here. Never shown mid-stream. */}
+            {!busy &&
+              active.messages.length > 1 &&
+              (() => {
+                const last = active.messages[active.messages.length - 1];
+                if (!last || last.role !== "assistant" || !last.nextAskHints?.length) return null;
+                return (
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    {last.nextAskHints.map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => handleSend(s)}
+                        className="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-50"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
           </div>
         </div>
         {active.activeGameMessageId && (
@@ -1519,6 +1567,9 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             onCoachDone={() => setCoachStore((s) => ({ ...s, seen: true }))}
             nudgeMic={shouldRenudge(coachStore)}
             onNudgeShown={() => setCoachStore((s) => ({ ...s, renudged: true }))}
+            pendingIdeaDraft={pendingIdeaDraft}
+            onIdeaInterrupted={handleIdeaInterrupted}
+            onIdeaDraftConsumed={handleIdeaDraftConsumed}
           />
         </div>
       )}
