@@ -75,6 +75,41 @@ export function adultSafetyBlockMessage(safetyInfo?: string): string {
   );
 }
 
+// ── Community Help (docs/PRD-COMMUNITY-HELP.md Phase 1) ─────────────────────
+// A reply can take up to 16 hours (owner call 2026-07-28), so the promise is
+// "by tomorrow": 16h from any waking hour lands inside the next day, which
+// makes it the one span that always holds — and a duration a 7-year-old can
+// picture. Never "soon" or "shortly": one admin can't keep those, and a broken
+// promise is worse than none (PRD §3.9).
+
+export const HELP_SENT =
+  "Sent! A helper at Ariantra will look at your game and write back **by tomorrow**. 🌟 Keep playing — I'll save their answer right here.";
+
+// The POST failed and the local retries are spent. Until then the kid sees
+// nothing at all — a send that's still retrying isn't news.
+export const HELP_SEND_OFFLINE = "I'll send this to a helper as soon as you're back online. 📶";
+
+// The persistent strip on a chat with a ticket still out. It says there is
+// NOTHING TO DO on purpose: a doubting kid otherwise re-files the same ask.
+export const HELP_WAITING_STRIP = "Still with the helper — nothing for you to do";
+
+// The answer almost always arrives while they're gone, so the banner names the
+// gap. A reply with no explanation of the delay reads as a stranger appearing
+// mid-conversation.
+export const HELP_REPLY_AWAY = "📬 A helper answered while you were away — tap to read";
+
+export const HELP_HELPED_THANKS = "Yay! 🎉 Want to try that change now?";
+export const HELP_STILL_STUCK =
+  "Thanks for telling me — I've put your game back in front of the helper. 🆘";
+
+// The one-time proactive nudge. Doesn't claim anyone is looking yet.
+export const HELP_NUDGE = "Stuck on this one? A grown-up at Ariantra can take a look. 🆘";
+
+// Shown ON the sheet, before sending — every capture point carries its own
+// purpose-limitation copy.
+export const HELP_CAPTURE_NOTICE =
+  "We'll send what's on your screen and the error notes — not your whole chat. Your grown-up can read everything in the Parent area.";
+
 // Auto-split success (owner ask 2026-07-23): the full ask was too big to finish
 // in one go, so instead of a dead-end we BUILT A WORKING STARTER VERSION with a
 // small set and offer to add the rest — which lands as a reliable edit/patch

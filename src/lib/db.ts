@@ -23,6 +23,23 @@ import type { PaymentRecord, PaymentStore } from "@/types/billing.types";
 import type { ChatHistoryStore, ConvoSummary } from "@/types/chat-history.types";
 import type { TurnResult, TurnResultStore } from "@/types/turn-result.types";
 import type { Conversation, Workspace } from "@/types/chat.types";
+import type {
+  HelpAuditEntry,
+  HelpCreateResult,
+  HelpReply,
+  HelpStore,
+  HelpTicket,
+  HelpTicketWithReplies,
+  NewHelpTicket,
+} from "@/types/help.types";
+import {
+  DEDUPE_WINDOW_MS,
+  MAX_OPEN_TICKETS,
+  MAX_TRANSCRIPT_CHARS,
+  MAX_VERDICT_CHARS,
+  PRUNE_TEXT_AFTER_MS,
+} from "./help.config";
+import { MAX_REPORT_CHARS } from "./error-report";
 import { evaluate } from "./rate-limit";
 
 let db: Database.Database | null = null;
@@ -200,6 +217,54 @@ export function getDb(): Database.Database {
       createdAt INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_screen_time_pings ON screen_time_pings(accountId, createdAt);
+    -- Community Help Phase 1 (docs/PRD-COMMUNITY-HELP.md): a stuck child's
+    -- ticket to a real person. accountId holds the SAME identity string as
+    -- alerts.accountId (user:<email> signed in, guest:<uuid> otherwise) so the
+    -- parent mirror keys off one value; guest-ness is the prefix, not a column.
+    -- Deliberately NO ownerType/ownerId (PRD §3.5): per-child scoping hasn't
+    -- shipped, so those get the same PRAGMA-guarded ALTER as alerts when it does.
+    -- errorReport is buildErrorReport() output — bounded, and by construction
+    -- free of game source; the source is only ever loaded by a separate,
+    -- audited admin action (help_audit below).
+    CREATE TABLE IF NOT EXISTS help_tickets (
+      id TEXT PRIMARY KEY,
+      accountId TEXT NOT NULL,
+      reasonCode TEXT NOT NULL,
+      transcript TEXT,
+      errorReport TEXT,
+      verifyVerdict TEXT,
+      conversationId TEXT,
+      messageId TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+    -- Oldest-first queue scan (help-sla.ts): ASC, not DESC — a newest-first
+    -- queue is how the ticket that waited all night gets buried.
+    CREATE INDEX IF NOT EXISTS idx_help_status ON help_tickets(status, createdAt);
+    CREATE INDEX IF NOT EXISTS idx_help_account ON help_tickets(accountId, createdAt DESC);
+    -- One-way replies (PRD §3.8): cannedId non-NULL = a library reply needing
+    -- no review; NULL = free text, flagged as the exception in the queue. The
+    -- child can never write here — 👍/😕 only moves help_tickets.status.
+    CREATE TABLE IF NOT EXISTS help_replies (
+      id TEXT PRIMARY KEY,
+      ticketId TEXT NOT NULL,
+      cannedId TEXT,
+      body TEXT NOT NULL,
+      authorRef TEXT NOT NULL,
+      createdAt INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_help_replies_ticket ON help_replies(ticketId, createdAt);
+    -- Audit for admin actions that widen what a ticket exposes — today just
+    -- "load the game source", which is never implicit (PRD §3.4/§3.7).
+    CREATE TABLE IF NOT EXISTS help_audit (
+      id TEXT PRIMARY KEY,
+      ticketId TEXT NOT NULL,
+      action TEXT NOT NULL,
+      authorRef TEXT NOT NULL,
+      createdAt INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_help_audit_ticket ON help_audit(ticketId, createdAt);
   `);
   // Migration (2026-07-14): real billed token counts. Pre-existing DBs lack
   // the columns — add them, then backfill billed=estimate so history keeps
@@ -973,4 +1038,170 @@ export class SqliteTurnResultStore implements TurnResultStore {
     if (!row) return null;
     return { status: row.status, text: row.text ?? undefined, artifactHtml: row.artifactHtml };
   }
+}
+
+/** Community Help tickets + replies (docs/PRD-COMMUNITY-HELP.md Phase 1).
+ *
+ *  TENANCY: every kid-facing statement carries `AND accountId = @accountId`, on
+ *  writes as well as reads, so a valid ticket id belonging to someone else is
+ *  still refused (fail closed — a ticket carries the child's own words). The
+ *  admin methods are deliberately UNSCOPED and must only ever be reached
+ *  through the ADMIN_SECRET gate. */
+export class SqliteHelpStore implements HelpStore {
+  create(accountId: string, input: NewHelpTicket, now: number): HelpCreateResult {
+    const db = getDb();
+    // Retention swept on write, the same idiom turn_results.start() and
+    // recordPing() use — no scheduler to forget to run (PRD §7).
+    this.pruneClosedText(now);
+
+    // Dedupe BEFORE the cap: a kid re-tapping the same reason on the same game
+    // out of doubt must never be told "too many" — they get the existing ticket
+    // back and see success (PRD §3.6).
+    const dupe = db
+      .prepare(
+        `SELECT * FROM help_tickets
+          WHERE accountId = @accountId AND reasonCode = @reasonCode
+            AND IFNULL(messageId, '') = IFNULL(@messageId, '')
+            AND status <> 'closed' AND createdAt > @since
+          ORDER BY createdAt DESC LIMIT 1`,
+      )
+      .get({
+        accountId,
+        reasonCode: input.reasonCode,
+        messageId: input.messageId ?? null,
+        since: now - DEDUPE_WINDOW_MS,
+      }) as HelpTicket | undefined;
+    if (dupe) return { ok: true, ticket: dupe, deduped: true };
+
+    const open = db
+      .prepare(`SELECT COUNT(*) AS n FROM help_tickets WHERE accountId = ? AND status <> 'closed'`)
+      .get(accountId) as { n: number };
+    if (open.n >= MAX_OPEN_TICKETS) return { ok: false, reason: "too_many_open" };
+
+    const ticket: HelpTicket = {
+      id: newId(),
+      accountId,
+      reasonCode: input.reasonCode,
+      transcript: trim(input.transcript, MAX_TRANSCRIPT_CHARS),
+      // The client already bounds this (error-report.ts MAX_REPORT_CHARS); the
+      // server does not take that on trust.
+      errorReport: trim(input.errorReport, MAX_REPORT_CHARS),
+      verifyVerdict: trim(input.verifyVerdict, MAX_VERDICT_CHARS),
+      conversationId: input.conversationId ?? null,
+      messageId: input.messageId ?? null,
+      status: "open",
+      createdAt: now,
+      updatedAt: now,
+    };
+    db.prepare(
+      `INSERT INTO help_tickets
+         (id, accountId, reasonCode, transcript, errorReport, verifyVerdict,
+          conversationId, messageId, status, createdAt, updatedAt)
+       VALUES
+         (@id, @accountId, @reasonCode, @transcript, @errorReport, @verifyVerdict,
+          @conversationId, @messageId, @status, @createdAt, @updatedAt)`,
+    ).run(ticket);
+    return { ok: true, ticket, deduped: false };
+  }
+
+  listOwn(accountId: string, limit = 20): HelpTicketWithReplies[] {
+    const rows = getDb()
+      .prepare(`SELECT * FROM help_tickets WHERE accountId = ? ORDER BY createdAt DESC LIMIT ?`)
+      .all(accountId, limit) as HelpTicket[];
+    return this.withReplies(rows);
+  }
+
+  getById(ticketId: string): HelpTicketWithReplies | null {
+    const row = getDb().prepare(`SELECT * FROM help_tickets WHERE id = ?`).get(ticketId) as
+      | HelpTicket
+      | undefined;
+    return row ? this.withReplies([row])[0]! : null;
+  }
+
+  listForAdmin(scope: "open" | "answered" | "all", limit = 100): HelpTicketWithReplies[] {
+    // ASC: oldest first. Against a 16h reply target (help-sla.ts) the ticket
+    // that has been waiting longest is the one that needs answering.
+    const where =
+      scope === "all" ? "1 = 1" : scope === "answered" ? "status = 'answered'" : "status <> 'closed'";
+    const rows = getDb()
+      .prepare(`SELECT * FROM help_tickets WHERE ${where} ORDER BY createdAt ASC LIMIT ?`)
+      .all(limit) as HelpTicket[];
+    return this.withReplies(rows);
+  }
+
+  addReply(
+    ticketId: string,
+    reply: { cannedId: string | null; body: string; authorRef: string },
+    now: number,
+  ): HelpReply | null {
+    const db = getDb();
+    const exists = db.prepare(`SELECT id FROM help_tickets WHERE id = ?`).get(ticketId) as
+      | { id: string }
+      | undefined;
+    if (!exists) return null;
+
+    const row: HelpReply = { id: newId(), ticketId, ...reply, createdAt: now };
+    db.prepare(
+      `INSERT INTO help_replies (id, ticketId, cannedId, body, authorRef, createdAt)
+       VALUES (@id, @ticketId, @cannedId, @body, @authorRef, @createdAt)`,
+    ).run(row);
+    // A closed ticket stays closed: an answer arriving after the kid said
+    // "that helped" shouldn't drag it back into their waiting state.
+    db.prepare(
+      `UPDATE help_tickets SET status = 'answered', updatedAt = @now WHERE id = @ticketId AND status <> 'closed'`,
+    ).run({ ticketId, now });
+    return row;
+  }
+
+  judgeOwn(accountId: string, ticketId: string, helped: boolean, now: number): boolean {
+    const res = getDb()
+      .prepare(
+        `UPDATE help_tickets SET status = @status, updatedAt = @now
+          WHERE id = @ticketId AND accountId = @accountId`,
+      )
+      .run({ ticketId, accountId, now, status: helped ? "closed" : "open" });
+    return res.changes > 0;
+  }
+
+  recordAudit(ticketId: string, action: string, authorRef: string, now: number): void {
+    getDb()
+      .prepare(
+        `INSERT INTO help_audit (id, ticketId, action, authorRef, createdAt)
+         VALUES (@id, @ticketId, @action, @authorRef, @createdAt)`,
+      )
+      .run({ id: newId(), ticketId, action, authorRef, createdAt: now });
+  }
+
+  auditFor(ticketId: string): HelpAuditEntry[] {
+    return getDb()
+      .prepare(`SELECT * FROM help_audit WHERE ticketId = ? ORDER BY createdAt ASC`)
+      .all(ticketId) as HelpAuditEntry[];
+  }
+
+  pruneClosedText(now: number): number {
+    // Keeps the structured row (reason code, timings, resolution) — the
+    // analytics value was never in the text (PRD §7).
+    const res = getDb()
+      .prepare(
+        `UPDATE help_tickets SET transcript = NULL, errorReport = NULL
+          WHERE status = 'closed' AND updatedAt < @cutoff
+            AND (transcript IS NOT NULL OR errorReport IS NOT NULL)`,
+      )
+      .run({ cutoff: now - PRUNE_TEXT_AFTER_MS });
+    return res.changes;
+  }
+
+  private withReplies(tickets: HelpTicket[]): HelpTicketWithReplies[] {
+    if (tickets.length === 0) return [];
+    const stmt = getDb().prepare(`SELECT * FROM help_replies WHERE ticketId = ? ORDER BY createdAt ASC`);
+    return tickets.map((t) => ({ ...t, replies: stmt.all(t.id) as HelpReply[] }));
+  }
+}
+
+/** Bound a client-supplied string, keeping NULL as NULL (an empty string is
+ *  stored as NULL too — "no transcript" and "" mean the same thing here). */
+function trim(value: string | null | undefined, max: number): string | null {
+  const text = value?.trim();
+  if (!text) return null;
+  return text.length > max ? text.slice(0, max) : text;
 }

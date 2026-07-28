@@ -45,6 +45,14 @@ export interface VerifyControllerState {
   /** §9.1 question when repair is exhausted/bailed — never a stack trace. */
   question: string | null;
   outcome: VerifyOutcome | null;
+  /** Repairs spent on this generation, and the failure code we finished on
+   *  (null when clean). Added for Community Help (PRD-COMMUNITY-HELP §3.1/§3.2):
+   *  the 🆘 tab offers repair FIRST while the machine can still help, and only
+   *  nudges toward a human once these say it genuinely gave up. Already tracked
+   *  internally for telemetry — surfaced so the decision can be made in a pure
+   *  helper (lib/stuck-signal.ts) rather than guessed in the UI. */
+  repairAttempts: number;
+  failureCode: string | null;
 }
 
 export interface VerifyControllerDeps {
@@ -91,6 +99,8 @@ export class PreviewVerifyController {
       kidLine: null,
       question: null,
       outcome: null,
+      repairAttempts: 0,
+      failureCode: null,
     };
   }
 
@@ -279,6 +289,8 @@ export class PreviewVerifyController {
       kidLine: null,
       question,
       outcome,
+      repairAttempts: this.attempt,
+      failureCode: clean ? null : finalCode,
     });
   }
 }

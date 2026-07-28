@@ -68,7 +68,30 @@ import {
 } from "@/lib/turn-recovery";
 import { savePendingTurn, clearPendingTurn, loadPendingTurn, type PendingTurn } from "@/lib/pending-turn";
 import { savePendingMessage, loadPendingMessage, clearPendingMessage } from "@/lib/pending-message";
+import { clearHelpAsk, loadHelpAsk } from "@/lib/help-ask";
 import { waitLine } from "@/lib/wait-line";
+import { HelpTab } from "./HelpTab";
+import { HelpReplyCard } from "./HelpReplyCard";
+import {
+  deriveHelpView,
+  helpButtonEnabled,
+  helpNudgeEnabled,
+  loadSeenReplies,
+  markRepliesSeen,
+  sentAgoLabel,
+  ticketForConversation,
+  type HelpTicketView,
+} from "@/lib/help-client";
+import { shouldOfferHelp } from "@/lib/stuck-signal";
+import {
+  HELP_HELPED_THANKS,
+  HELP_REPLY_AWAY,
+  HELP_SEND_OFFLINE,
+  HELP_SENT,
+  HELP_STILL_STUCK,
+  HELP_WAITING_STRIP,
+} from "@/lib/chat-copy";
+import type { HelpReasonCode } from "@/types/help.types";
 import { useWakeLock } from "./useWakeLock";
 import { RenameNoticeBanner } from "./RenameNoticeBanner";
 import { ScreenTimeNudgeBanner } from "./ScreenTimeNudgeBanner";
@@ -287,6 +310,22 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     void handleSend(pending.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authStatus, activeId]);
+
+  // 📚 Help Gallery handoff (docs/PRD-COMMUNITY-HELP.md §4.2): the kid tapped
+  // "✨ Ask Ari this" on /help, which stored the prompt and navigated here.
+  // Sent through the ordinary handleSend path — nothing bypasses safety, and
+  // consumed once so a reload can't rebuild the same game again. Works for
+  // guests too, unlike the auth-recovery path above.
+  const helpAskRef = useRef(false);
+  useEffect(() => {
+    if (helpAskRef.current || !hydratedFromStore.current) return;
+    const ask = loadHelpAsk(window.localStorage);
+    if (!ask) return;
+    helpAskRef.current = true;
+    clearHelpAsk(window.localStorage);
+    void handleSend(ask);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
 
   /** Fetch the next page of the server Recents index (30/page). Reentrant-safe.
    *  Returns the fetched page (not the accumulated `remoteIndex` state, which
@@ -599,6 +638,128 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
 
   function patchActive(fn: (c: Conversation) => Conversation) {
     setConvos((list) => list.map((c) => (c.id === activeId ? fn(c) : c)));
+  }
+
+  // ── Community Help (docs/PRD-COMMUNITY-HELP.md Phase 1) ────────────────────
+  // A reply can take up to 16 hours, so this state is rebuilt from the SERVER
+  // on every boot (lib/help-client.ts) — never held only in memory, which is
+  // how the leave-and-come-back reply got lost (BUG-FIX-LOG 2026-07-28).
+  const helpOn = helpButtonEnabled();
+  const [helpTickets, setHelpTickets] = useState<HelpTicketView[]>([]);
+  const [helpSeen, setHelpSeen] = useState<string[]>([]);
+  const [helpBusy, setHelpBusy] = useState(false);
+  /** Which generation we already nudged for — one offer per game, ever. */
+  const [helpNudgedGen, setHelpNudgedGen] = useState<string | null>(null);
+  /** Asks that changed nothing on screen: the "I don't know what to say to
+   *  Ari" signal no repair can reach (stuck-signal.ts). */
+  const asksWithoutSwapRef = useRef<number[]>([]);
+  const [helpDiagnostics, setHelpDiagnostics] = useState<{
+    generationId: string;
+    verifyFailed: boolean;
+    repairAttempts: number;
+    errorReport: string | null;
+    verifyVerdict: string | null;
+  } | null>(null);
+
+  async function refreshHelp() {
+    try {
+      const res = await fetch("/api/help");
+      if (!res.ok) return;
+      const body = (await res.json()) as { tickets?: HelpTicketView[] };
+      setHelpTickets(body.tickets ?? []);
+    } catch {
+      /* offline — the waiting strip simply doesn't render this session */
+    }
+  }
+
+  useEffect(() => {
+    if (!helpOn) return;
+    setHelpSeen(loadSeenReplies(window.localStorage));
+    void refreshHelp();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [helpOn]);
+
+  const helpView = useMemo(() => deriveHelpView(helpTickets, helpSeen), [helpTickets, helpSeen]);
+  const helpWaitingHere = ticketForConversation(helpView.waiting, activeId);
+  const helpAnsweredHere = ticketForConversation(helpView.answered, activeId);
+
+  /** Once the card is on screen, the 📬 badge has done its job. */
+  useEffect(() => {
+    const ids = helpAnsweredHere?.replies.map((r) => r.id) ?? [];
+    if (!ids.length || ids.every((id) => helpSeen.includes(id))) return;
+    markRepliesSeen(window.localStorage, ids);
+    setHelpSeen((s) => Array.from(new Set([...s, ...ids])));
+  }, [helpAnsweredHere, helpSeen]);
+
+  /** An Ari-voice line, pinned to the chat it belongs to (never `activeId` at
+   *  call time — the kid may have switched chats while the POST was in flight). */
+  function sayInChat(convoId: string, text: string) {
+    setConvos((list) =>
+      list.map((c) =>
+        c.id === convoId
+          ? {
+              ...c,
+              messages: [
+                ...c.messages,
+                { id: crypto.randomUUID(), role: "assistant", text, createdAt: Date.now() } as ChatMessage,
+              ],
+            }
+          : c,
+      ),
+    );
+  }
+
+  async function fileHelpTicket(reasonCode: HelpReasonCode, transcript?: string) {
+    const convoId = activeIdRef.current;
+    const convo = convosRef.current.find((c) => c.id === convoId);
+    // The game the kid is looking at — an artifact REFERENCE, never its source.
+    const gameMsg = [...(convo?.messages ?? [])].reverse().find((m) => m.artifactHtml);
+
+    setHelpBusy(true);
+    try {
+      const res = await fetch("/api/help", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          reasonCode,
+          transcript: transcript ?? null,
+          conversationId: convoId,
+          messageId: gameMsg?.id ?? null,
+          errorReport: helpDiagnostics?.errorReport ?? null,
+          verifyVerdict: helpDiagnostics?.verifyVerdict ?? null,
+        }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { message?: string };
+      // The server's refusals carry their own kid-facing copy (the open-ticket
+      // cap explains what frees a slot) — never a generic failure.
+      sayInChat(convoId, res.ok ? HELP_SENT : (body.message ?? HELP_SEND_OFFLINE));
+      if (res.ok) await refreshHelp();
+    } catch {
+      // Capture ≠ send: the kid hears the honest offline line, not an error.
+      sayInChat(convoId, HELP_SEND_OFFLINE);
+    } finally {
+      setHelpBusy(false);
+    }
+  }
+
+  async function judgeHelpReply(ticket: HelpTicketView, helped: boolean) {
+    const convoId = ticket.conversationId ?? activeIdRef.current;
+    setHelpBusy(true);
+    try {
+      const res = await fetch("/api/help/feedback", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ticketId: ticket.id, helped }),
+      });
+      if (res.ok) {
+        sayInChat(convoId, helped ? HELP_HELPED_THANKS : HELP_STILL_STUCK);
+        await refreshHelp();
+      }
+    } catch {
+      /* offline — the card stays, so they can tap again later */
+    } finally {
+      setHelpBusy(false);
+    }
   }
 
   const abortRef = useRef<AbortController | null>(null);
@@ -979,6 +1140,12 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
           } else if (ev.type === "done") {
             setReply(ev.text ?? acc, ev.artifactHtml ?? undefined, ev.newGamePrompt, ev.threeDNewGame, ev.nextAskHints);
             setPreview((a) => nextArtifact({ type: "done", artifactHtml: ev.artifactHtml }, a));
+            // Community Help's second stuck signal (stuck-signal.ts): asks that
+            // produced NO new game. A turn that swapped the artifact clears the
+            // run, so a kid iterating happily is never nudged toward a human.
+            asksWithoutSwapRef.current = ev.artifactHtml
+              ? []
+              : [...asksWithoutSwapRef.current, Date.now()].slice(-5);
             setBusy(false);
             finalized = true;
             turnOk = true;
@@ -1415,6 +1582,48 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             </span>
           </div>
         )}
+        {/* Community Help status strips. Server-derived (help-client.ts), so a
+            wait that spans a reload — or three days — is still visible, and an
+            answer that landed while the kid was away announces the gap rather
+            than appearing out of nowhere. */}
+        {helpOn && helpAnsweredHere && (
+          <div className="mx-4 mt-2 flex items-center gap-2 rounded-full border border-brand-100 bg-brand-50 px-3 py-1.5 text-xs font-extrabold text-brand-700">
+            <span className="min-w-0 truncate">{HELP_REPLY_AWAY}</span>
+          </div>
+        )}
+        {/* An answer that landed on a DIFFERENT chat. Without this the reply is
+            invisible until the kid happens to reopen that game — and after a
+            16h wait, they usually won't. handleSelect fetches server-only chats,
+            so this works even on a fresh device. */}
+        {helpOn &&
+          !helpAnsweredHere &&
+          (() => {
+            const elsewhere = helpView.answered.find(
+              (t) => t.conversationId && t.conversationId !== activeId,
+            );
+            if (!elsewhere?.conversationId) return null;
+            const title =
+              convos.find((c) => c.id === elsewhere.conversationId)?.title ??
+              remoteIndex.find((r) => r.id === elsewhere.conversationId)?.title ??
+              "your game";
+            return (
+              <button
+                type="button"
+                onClick={() => handleSelect(elsewhere.conversationId!)}
+                className="mx-4 mt-2 flex items-center gap-2 rounded-full border border-brand-100 bg-brand-50 px-3 py-1.5 text-xs font-extrabold text-brand-700 hover:bg-brand-100"
+              >
+                <span className="min-w-0 truncate">📬 A helper answered about {title} — tap to read</span>
+              </button>
+            );
+          })()}
+        {helpOn && !helpAnsweredHere && helpWaitingHere && (
+          <div className="mx-4 mt-2 flex items-center gap-2 rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-extrabold text-neutral-500">
+            <span aria-hidden>⏳</span>
+            <span className="min-w-0 truncate">
+              Waiting for a helper · {sentAgoLabel(helpWaitingHere.createdAt, Date.now()).replace("sent ", "")}
+            </span>
+          </div>
+        )}
         <div
           ref={scrollRef}
           onWheel={handleManualScroll}
@@ -1493,6 +1702,20 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
               */}
               </div>
             ))}
+            {/* The helper's reply, at the end of the chat where the kid asked.
+                Styled as neither Ari nor a kid, one-way, parent-mirrored. */}
+            {helpOn && helpAnsweredHere && (
+              <HelpReplyCard
+                ticket={helpAnsweredHere}
+                busy={helpBusy}
+                onJudge={(helped) => void judgeHelpReply(helpAnsweredHere, helped)}
+              />
+            )}
+            {helpOn && !helpAnsweredHere && helpWaitingHere && (
+              <p className="self-start rounded-2xl border border-dashed border-neutral-200 bg-neutral-50 px-3 py-2 text-sm font-semibold text-neutral-500">
+                ⏳ {HELP_WAITING_STRIP}
+              </p>
+            )}
             {busy && active.messages[active.messages.length - 1]?.text === "" && (
               <p className="animate-pulse text-neutral-400">
                 {(() => {
@@ -1648,6 +1871,35 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             pendingIdeaDraft={pendingIdeaDraft}
             onIdeaInterrupted={handleIdeaInterrupted}
             onIdeaDraftConsumed={handleIdeaDraftConsumed}
+            // 🆘 Community Help. The slot keeps this panel presentational: the
+            // ticket state, the POST and the copy all live in the container.
+            helpTab={
+              helpOn ? (
+                <HelpTab
+                  onFile={(reason, transcript) => void fileHelpTicket(reason, transcript)}
+                  waiting={Boolean(helpWaitingHere)}
+                  // Same tab: a second tab is a worse place for a kid to end
+                  // up than the chat they came from, and the gallery hands the
+                  // prompt back through help-ask.ts on the way in.
+                  onBrowseHelp={() => window.location.assign("/help")}
+                  nudge={
+                    helpNudgeEnabled() &&
+                    !helpWaitingHere &&
+                    !helpAnsweredHere &&
+                    shouldOfferHelp({
+                      generationId: helpDiagnostics?.generationId ?? null,
+                      failedRepairs: helpDiagnostics?.repairAttempts ?? 0,
+                      verifyFailed: helpDiagnostics?.verifyFailed ?? false,
+                      asksWithoutSwap: asksWithoutSwapRef.current,
+                      nudgedGenerationId: helpNudgedGen,
+                      now: Date.now(),
+                    })
+                  }
+                  onNudgeShown={() => setHelpNudgedGen(helpDiagnostics?.generationId ?? null)}
+                />
+              ) : undefined
+            }
+            onDiagnostics={setHelpDiagnostics}
           />
         </div>
       )}

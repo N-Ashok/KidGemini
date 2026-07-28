@@ -29,6 +29,8 @@ function initialState(html: string): VerifyControllerState {
     kidLine: null,
     question: null,
     outcome: null,
+    repairAttempts: 0,
+    failureCode: null,
   };
 }
 

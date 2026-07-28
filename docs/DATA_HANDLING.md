@@ -20,6 +20,41 @@ Every chat turn and repair call writes a row to SQLite's `usage_events` table
 This is a full-fidelity, indefinite, un-redacted record of what a child asked
 for and what the AI generated for them, on a children's product.
 
+## Community Help tickets (added 2026-07-28, Phase 1)
+
+`help_tickets` and `help_replies` (`src/lib/db.ts`, `SqliteHelpStore`) hold what
+a stuck child sent to a human, plus what the human sent back:
+
+- `reasonCode` — one of six fixed picture reasons; never free prose
+- `transcript` — the child's own words, ONLY when they used 🎤 Something else
+- `errorReport` — `buildErrorReport()` output, bounded to 4,000 chars and by
+  construction free of generated game source (`src/lib/error-report.ts`)
+- `verifyVerdict`, `conversationId`, `messageId` — the diagnosis and an artifact
+  *reference*; the game's HTML is never stored on the ticket
+- `help_replies.body` — the exact text an adult sent to a child, with
+  `cannedId` marking whether it came from the reviewed library
+  (`src/lib/help-canned.ts`) or was typed by hand
+
+**Deliberately NOT carried:** the generated game, and the chat history. Loading
+a game's source is a separate admin action that writes a `help_audit` row
+(`action = 'load_source'`) — it is never fetched implicitly with a ticket.
+
+**Who can read it:** the child (own tickets only, `GET /api/help`, and never the
+answering admin's identity); the parent (`GET /api/parent/help`, behind the
+PIN-verified parent session — every reply ALSO writes a `ParentAlert` so it
+surfaces in the alerts list without opting in); an operator holding
+`ADMIN_SECRET` (`POST /api/admin/help`). Tenancy is enforced per statement,
+writes included — a valid ticket id belonging to another identity is refused.
+
+**Retention, narrower than the rest of this document:** `pruneClosedText(now)`
+drops `transcript` and `errorReport` 30 days after a ticket is closed
+(`PRUNE_TEXT_AFTER_MS`, `src/lib/help.config.ts`), keeping the structured row —
+the analytics value is in the reason codes and timings, not the text. The
+*structured* rows still inherit the indefinite-retention posture below, so this
+feature slightly enlarges that open question rather than answering it. The prune
+runs on every ticket write (same sweep-on-write idiom as `turn_results.start()`
+and `recordPing()`), so there is no scheduler to forget.
+
 ## Who can read it
 
 `GET /api/usage` (`src/app/api/usage/route.ts`) — gated by `ADMIN_SECRET`

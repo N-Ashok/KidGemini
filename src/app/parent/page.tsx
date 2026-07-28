@@ -13,8 +13,31 @@ import { signIn, useSession } from "@/lib/useAriantraSession";
 import { whatsappShareUrl } from "@/lib/share-links";
 import { SparksParentCard } from "@/components/SparksParentCard";
 import type { ParentAlert } from "@/types/alert.types";
+import type { HelpReasonCode, HelpTicketStatus } from "@/types/help.types";
 
 type PinFlowMode = "first-time" | "reset";
+
+/** What GET /api/parent/help returns. The helper stays anonymous here too —
+ *  which admin answered is not a parent's business, only what was said. */
+interface ParentHelpTicket {
+  id: string;
+  reasonCode: HelpReasonCode;
+  status: HelpTicketStatus;
+  transcript: string | null;
+  createdAt: number;
+  updatedAt: number;
+  replies: Array<{ id: string; body: string; createdAt: number; canned: boolean }>;
+}
+
+/** Plain-English reasons — a parent shouldn't have to decode `wont_move`. */
+const HELP_REASON_TEXT: Record<HelpReasonCode, string> = {
+  wont_move: "The game wouldn’t move",
+  blank: "The screen was blank",
+  looks_wrong: "It looked wrong",
+  no_sound: "There was no sound",
+  dont_know: "Didn’t know what to ask",
+  other: "Something else (their own words)",
+};
 
 interface FamilyGame {
   slug: string;
@@ -92,7 +115,25 @@ export default function ParentPage() {
   // router/URL involvement, matching this page's existing pattern. Only read
   // when view.kind === "alerts"; declared unconditionally alongside the rest
   // of this component's state so hook order stays stable.
-  const [activeTab, setActiveTab] = useState<"safety" | "sparks" | "alerts" | "family-profile">("safety");
+  const [activeTab, setActiveTab] = useState<
+    "safety" | "sparks" | "alerts" | "help" | "family-profile"
+  >("safety");
+  // Community Help (docs/PRD-COMMUNITY-HELP.md §3.6/§3.8 c.3): every word a
+  // helper sent your child, readable without opting in to anything. Replies
+  // ALSO write a ParentAlert, so the Alerts tab carries them too — this tab is
+  // the full thread, in order, with each ticket's outcome.
+  const [helpTickets, setHelpTickets] = useState<ParentHelpTicket[] | null>(null);
+  useEffect(() => {
+    if (activeTab !== "help" || helpTickets) return;
+    void (async () => {
+      try {
+        const res = await fetch("/api/parent/help", { cache: "no-store" });
+        setHelpTickets(res.ok ? ((await res.json()).tickets as ParentHelpTicket[]) : []);
+      } catch {
+        setHelpTickets([]);
+      }
+    })();
+  }, [activeTab, helpTickets]);
 
   const loadAlerts = useCallback(async (): Promise<boolean> => {
     const res = await fetch("/api/alerts");
@@ -523,6 +564,7 @@ export default function ParentPage() {
                 { key: "safety", icon: "🛡️", label: "Safety & Security" },
                 { key: "sparks", icon: "⚡", label: "Sparks Management" },
                 { key: "alerts", icon: "🔔", label: "Alerts" },
+                { key: "help", icon: "🆘", label: "Help requests" },
                 { key: "family-profile", icon: "👨‍👩‍👧", label: "Family profile" },
               ] as const
             ).map((tab) => (
@@ -747,6 +789,54 @@ export default function ParentPage() {
                   <p className="mt-2 font-medium text-ink-900">“{a.triggerText}”</p>
                   <p className="mt-1 text-ink-700">{a.reason}</p>
                   <p className="mt-1 text-sm text-ink-500">Action: {a.action}</p>
+                </article>
+              ))}
+            </>
+          )}
+
+          {activeTab === "help" && (
+            <>
+              <article className="card border-l-4 border-brand-300">
+                <h2 className="text-lg font-semibold">🆘 Help requests</h2>
+                <p className="mt-1 text-sm text-ink-700">
+                  When your child gets stuck they can ask a grown-up at Ariantra for help. Every reply is
+                  shown here in full — your child cannot write back, and no one can start a conversation
+                  with them. Replies usually arrive within a day.
+                </p>
+              </article>
+
+              {helpTickets === null && <p className="text-ink-500">Loading…</p>}
+              {helpTickets?.length === 0 && (
+                <p className="text-ink-500">No help requests yet. 🎉</p>
+              )}
+              {helpTickets?.map((t) => (
+                <article key={t.id} className="card border-l-4 border-ink-700">
+                  <div className="flex items-center justify-between text-sm text-ink-500">
+                    <span>
+                      {HELP_REASON_TEXT[t.reasonCode] ?? t.reasonCode} ·{" "}
+                      {t.status === "open"
+                        ? "waiting for a helper"
+                        : t.status === "answered"
+                          ? "answered"
+                          : "sorted"}
+                    </span>
+                    <time>{new Date(t.createdAt).toLocaleString()}</time>
+                  </div>
+                  {t.transcript && (
+                    <p className="mt-2 font-medium text-ink-900">“{t.transcript}”</p>
+                  )}
+                  {t.replies.length === 0 && (
+                    <p className="mt-2 text-ink-500">No reply yet.</p>
+                  )}
+                  {t.replies.map((r) => (
+                    <div key={r.id} className="mt-2 rounded-xl bg-neutral-50 px-3 py-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+                        A helper at Ariantra · {r.canned ? "standard reply" : "written by hand"}
+                      </p>
+                      <p className="mt-1 text-ink-900">{r.body}</p>
+                      <time className="text-xs text-ink-500">{new Date(r.createdAt).toLocaleString()}</time>
+                    </div>
+                  ))}
                 </article>
               ))}
             </>

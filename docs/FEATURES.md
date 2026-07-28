@@ -709,6 +709,64 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   seen — same-day repeats count once; guest streaks undercount across cookie
   clears
 
+## Community Help 🆘 (2026-07-28 — PRD-COMMUNITY-HELP Phases 1–2)
+
+A stuck child can reach a real person, and browse ready-made asks. Both ship
+**behind flags that default OFF** (`NEXT_PUBLIC_ENABLE_HELP_BUTTON`, and
+separately `NEXT_PUBLIC_ENABLE_HELP_NUDGE`): turning the first one on creates an
+obligation — once a child can ask a person for help, someone has to be there.
+
+**Phase 1 — the 🆘 queue**
+- A 🆘 tab docked on the game preview under the 🎤 Idea tab and deliberately
+  quieter than it (`HelpTab.tsx`; the Idea Button stays the happy path). Same
+  dock grammar: circular icon, always-visible caption, no hover-only tooltip.
+- Tap → six **picture reasons**, each with 🔊 read-aloud, so a pre-reader can
+  file unassisted: 🕹️ won't move · ⬜ blank · 🎨 looks wrong · 🔇 no sound ·
+  🤷 don't know what to ask (→ the Phase 2 gallery, not the queue) · 🎤
+  something else (reuses the Idea Button's speech path). Structured
+  `reasonCode`s, never free prose — the histogram is what writes the gallery's
+  backlog.
+- The ticket carries the reason, an optional transcript, the bounded
+  `buildErrorReport()` diagnosis, the verify verdict and an artifact
+  *reference*. **Never the game's source, never the chat history.** Guests can
+  file (the guest wall must not block asking for help).
+- **A reply can take up to 16 hours**, so the promise is "by tomorrow" (never
+  "soon") and the wait state is rebuilt from `GET /api/help` on every boot: a
+  persistent "⏳ Waiting for a helper" strip, a 📬 banner when an answer landed
+  *while the kid was away*, and a cross-chat tap-through when it landed on a
+  different game. One constant drives both the promise and the queue's
+  colouring (`src/lib/help-sla.ts`, `HELP_REPLY_TARGET_HOURS = 16`).
+- Proactive nudge (own flag) once the repair loop has genuinely given up, or
+  three asks in ~5 minutes changed nothing on screen (`src/lib/stuck-signal.ts`).
+  One offer per game, dismissible, never modal.
+- Operator queue at **`/admin/help`** — `ADMIN_SECRET` in a POST body,
+  timing-safe, 503 when unset (same shape as `/admin`). Oldest-first, waiting
+  time colour-coded against the 16h target. **Canned replies first**
+  (`src/lib/help-canned.ts`); free text is the marked exception, is screened by
+  the same deterministic safety rules as chat input (profanity *and* PII, so no
+  helper hands a child contact details), and is refused entirely for guest
+  tickets (no parent to mirror it to). "Load game source" is a separate action
+  that writes a `help_audit` row.
+- The reply is **one-way**: 👍 That helped closes, 😕 Still stuck reopens, and
+  there is no text field — no channel to an adult is ever created. The card
+  reads "A helper at Ariantra" with its own visual treatment: never styled as
+  Ari, never as another kid.
+- **Every reply writes exactly one `ParentAlert`** (`origin: "system"`), so a
+  parent can read every word an adult said to their child without opting in —
+  plus a **🆘 Help requests tab** in `/parent` showing each thread in full.
+
+**Phase 2 — the 📚 Help Gallery (`/help`)**
+- Team-authored cards (`src/lib/help-cards.ts`) — zero user content, therefore
+  zero runtime moderation, which is what makes this phase cheap.
+- Every card ends in one tap: **✨ Ask Ari this** hands the card's prompt back
+  through `help-ask.ts` and sends it via the normal `handleSend` → `/api/chat`
+  path. Nothing bypasses safety; nothing is generated server-side.
+- 🔊 on every card, SSR-readable content, a skeleton on nav (`loading.tsx`).
+
+**Not built, on purpose:** Phase 3 (kid↔kid community) stays deferred behind the
+PRD's six gates, and nothing in the UI hints at it — no "coming soon", no empty
+social tab.
+
 ## Sparks ⚡ (metered currency — Ari side, 2026-07-25)
 
 The PLATFORM owns the ledger (platform repo `docs/PRD-SPARKS.md`); Ari reports

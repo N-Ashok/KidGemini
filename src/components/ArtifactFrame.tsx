@@ -73,6 +73,23 @@ interface ArtifactFrameProps {
   pendingIdeaDraft?: string | null;
   onIdeaInterrupted?: (text: string) => void;
   onIdeaDraftConsumed?: () => void;
+  /** 🆘 Community Help tab (docs/PRD-COMMUNITY-HELP.md §3.2), rendered in the
+   *  same overlay box as the 🎤 Idea tab so it tracks the scaled device frame.
+   *  A SLOT rather than props: the tab's own state (sheet, mic, nudge) belongs
+   *  to the container, and this panel stays presentational. Absent = flag off. */
+  helpTab?: React.ReactNode;
+  /** Reported once per generation, when the verify/repair loop settles: what
+   *  the machine concluded, plus the SAME bounded diagnosis the grown-up
+   *  "copy error details" button produces. The container needs both — to decide
+   *  whether to nudge toward a human (lib/stuck-signal.ts) and to attach the
+   *  report to a 🆘 ticket without ever attaching game source. */
+  onDiagnostics?: (d: {
+    generationId: string;
+    verifyFailed: boolean;
+    repairAttempts: number;
+    errorReport: string | null;
+    verifyVerdict: string | null;
+  }) => void;
   /** Which themed leaderboard seed the preview WYSIWYG runtime uses
    *  (PRD-PREVIEW-WYSIWYG): 'bible' on the bible-teacher surface, else 'default'. */
   previewTheme?: PreviewTheme;
@@ -128,6 +145,8 @@ export function ArtifactFrame({
   pendingIdeaDraft,
   onIdeaInterrupted,
   onIdeaDraftConsumed,
+  helpTab,
+  onDiagnostics,
   previewTheme = "default",
   bibleTeacher = false,
   editTarget,
@@ -298,6 +317,34 @@ export function ArtifactFrame({
       setTab("console");
     }
   };
+
+  // Community Help bridge: hand the settled verdict + the bounded diagnosis up
+  // once per generation. Deliberately gated on phase "done" — mid-verify
+  // numbers would make the stuck signal fire while the machine is still trying.
+  const onDiagnosticsRef = useRef(onDiagnostics);
+  onDiagnosticsRef.current = onDiagnostics;
+  useEffect(() => {
+    if (state.phase !== "done" || !state.outcome) return;
+    onDiagnosticsRef.current?.({
+      generationId: docKey,
+      verifyFailed: state.outcome === "failed" || state.outcome === "bailed",
+      repairAttempts: state.repairAttempts,
+      errorReport: extremeError
+        ? buildErrorReport({
+            gameTitle: titleOf(state.currentHtml) || undefined,
+            outcome: state.outcome,
+            failureCode: state.failureCode,
+            errors: consoleMessages,
+            userAgent: typeof navigator === "undefined" ? undefined : navigator.userAgent,
+            at: new Date().toISOString(),
+          })
+        : null,
+      verifyVerdict: state.failureCode ? `${state.outcome}:${state.failureCode}` : state.outcome,
+    });
+    // consoleMessages intentionally out of the deps: a late error arriving after
+    // the loop settled shouldn't re-report the same generation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.phase, state.outcome, state.repairAttempts, docKey]);
 
   const tabBtn = (t: Tab) =>
     `rounded-full px-3 py-1 text-sm font-medium ${
@@ -675,6 +722,8 @@ export function ArtifactFrame({
                   onInterrupted={onIdeaInterrupted ?? (() => {})}
                 />
               )}
+              {/* Same gate as the mic tab: never over the verify/repair cover. */}
+              {!covered && helpTab}
             </div>
           </div>
           {/* §8.1 — the cover card. The iframe is RENDERED AND PAINTING under

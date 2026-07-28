@@ -10,7 +10,7 @@ repo. All AI + safety + billing logic is server-side; the browser never sees
 secrets or the raw Gemini API.
 
 ```
-Browser ── pages: / (chat) · /parent · /admin · /upgrade
+Browser ── pages: / (chat) · /help · /parent · /admin · /admin/help · /upgrade
    │
    ▼ API routes (runtime: nodejs)
 /api/chat      → history trim (newest game + last 12 msgs, lib/history-trim.ts)
@@ -20,6 +20,16 @@ Browser ── pages: / (chat) · /parent · /admin · /upgrade
 /api/safety    → standalone safety checks (Flash-Lite classifier)
 /api/alerts    → parent alert feed (PIN-gated)
 /api/usage     → usage/cost admin feed
+/api/help      → 🆘 Community Help: a stuck child files a picture-reason ticket
+                 (guests allowed; identity server-resolved; game source never
+                 accepted) and reads their OWN tickets + replies, with the
+                 answering admin's identity stripped. /api/help/feedback is the
+                 only thing a child sends back: 👍 closes, 😕 reopens, no text
+/api/parent/help → the same tickets for the PIN-verified parent, in full — the
+                 accountability surface (replies also write a ParentAlert)
+/api/admin/help → operator queue: list (oldest-first, 16h target) · reply
+                 (canned-first; free text screened; guests canned-only) ·
+                 source (separate, audited — never implicit with a ticket)
 /api/billing/* → Razorpay order + verified/idempotent webhook
 /api/session   → SSO whoami (verifies shared ariantra_session cookie)
 /api/logout    → clears the .ariantra.com session cookie (signs out ALL surfaces)
@@ -34,6 +44,8 @@ Browser ── pages: / (chat) · /parent · /admin · /upgrade
    │
    ▼ src/lib/db.ts — Store interfaces (AlertStore, UsageStore, RateLimitStore, PaymentStore)
 SQLite (better-sqlite3, WAL): alerts · usage_events · ip_limits · payments · webhook_events
+                              · conversations · turn_results · parent_auth · screen_time_*
+                              · help_tickets · help_replies · help_audit
 ```
 
 - Stores are behind interfaces (dependency inversion) — swapping SQLite for
