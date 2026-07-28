@@ -6,7 +6,7 @@
 // and persistence logic live in lib/preview-pane.ts.
 
 import { useState } from "react";
-import { clampPanelWidth } from "@/lib/preview-pane";
+import { clampPanelWidth, nextDragState } from "@/lib/preview-pane";
 
 interface PanelResizeHandleProps {
   width: number;
@@ -30,16 +30,32 @@ export function PanelResizeHandle({ width, onResize, onCommit }: PanelResizeHand
   function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
-    setDragging(true);
+    setDragging(nextDragState("down", dragging));
   }
   function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
     if (!dragging) return;
     onResize(widthFromPointer(e.clientX));
   }
-  function onPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+  // Shared end-of-drag path for "up" AND "cancel"/lost-capture — see
+  // nextDragState's BUG-FIX-LOG comment. Both carry a clientX, so both can
+  // still commit the last live position rather than silently dropping it.
+  function endDrag(event: "up" | "cancel", clientX: number) {
     if (!dragging) return;
-    setDragging(false);
-    onCommit(widthFromPointer(e.clientX));
+    setDragging(nextDragState(event, dragging));
+    onCommit(widthFromPointer(clientX));
+  }
+  function onPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    endDrag("up", e.clientX);
+  }
+  // The browser can lose pointer capture mid-drag WITHOUT ever firing
+  // pointerup (tab/window blur, right-click, a touch gesture cancelled by
+  // the OS) — without these, `dragging` stayed stuck true and the
+  // click-blocking shield below never unmounted (kid report 2026-07-28).
+  function onPointerCancel(e: React.PointerEvent<HTMLDivElement>) {
+    endDrag("cancel", e.clientX);
+  }
+  function onLostPointerCapture(e: React.PointerEvent<HTMLDivElement>) {
+    endDrag("cancel", e.clientX);
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
@@ -63,6 +79,8 @@ export function PanelResizeHandle({ width, onResize, onCommit }: PanelResizeHand
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
+        onLostPointerCapture={onLostPointerCapture}
         onKeyDown={onKeyDown}
         className="group absolute inset-y-0 left-0 z-20 hidden w-2 -translate-x-1/2 cursor-col-resize touch-none items-center justify-center focus-visible:outline-none md:flex"
       >

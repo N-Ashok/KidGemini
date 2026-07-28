@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { NEXT_ASKS_PREFIX, hidePartialNextAskLine, parseNextAskLine } from "./next-ask-sentinel";
+import { editReplyProse, streamingDisplayText } from "./game-edit";
+import { applyPatch } from "./repair-prompt";
+import { NEXT_ASKS_PREFIX, hidePartialNextAskLine, parseNextAskLine, resolveNextAsk } from "./next-ask-sentinel";
 
 const VALID_LINE = `${NEXT_ASKS_PREFIX} Add a power-up | Make the dragon faster | What if it happened underwater?`;
 
@@ -105,5 +107,94 @@ describe("hidePartialNextAskLine", () => {
     const acc =
       '...</html>\n```\n\nNEXT_ASKS: "Can you add some colorful flowers that give extra points?" | "Make';
     expect(hidePartialNextAskLine(acc)).toBe("...</html>\n```");
+  });
+});
+
+// BUG-FIX-LOG (kid report, 2026-07-28): "unrelated suggestions" appeared on a
+// memory-game/turtle chat after an edit. Root cause: gemini.ts's configFor
+// used to compute nextAsk from the feature flag ALONE, so every internal
+// retry/regeneration one-shot (which reaches the same configFor, and whose
+// forceFullRegen bypasses isEdit) silently got asked for NEXT_ASKS too — not
+// just the primary stream the kid actually sees. resolveNextAsk requires an
+// EXPLICIT per-call opt-in instead.
+describe("resolveNextAsk — only an EXPLICIT opt-in may request NEXT_ASKS, never the flag alone", () => {
+  it("true when explicitly asked for", () => {
+    expect(resolveNextAsk(true)).toBe(true);
+  });
+  it("the actual bug: omitting the opt-in must default to false, not inherit the flag", () => {
+    expect(resolveNextAsk(undefined)).toBe(false);
+  });
+  it("false stays false", () => {
+    expect(resolveNextAsk(false)).toBe(false);
+  });
+});
+
+// Owner approval 2026-07-28: edit turns get contextual suggestions too, via a
+// single trailing line after the patch blocks. The line must be inert against
+// the patch pipeline — these pin the parsing side of that claim.
+describe("parseNextAskLine on an EDIT-shaped reply (trailing line after patch blocks)", () => {
+  const EDIT_REPLY = [
+    "I made the cards blue for you!",
+    "<<<<<<< SEARCH",
+    "  background: red;",
+    "=======",
+    "  background: blue;",
+    ">>>>>>> REPLACE",
+    `${NEXT_ASKS_PREFIX} Add a power-up | Make it faster | What if it was underwater?`,
+  ].join("\n");
+
+  it("extracts the ideas from after the last REPLACE", () => {
+    const result = parseNextAskLine(EDIT_REPLY);
+    expect(result).not.toBeNull();
+    expect(result!.ideas).toHaveLength(3);
+  });
+
+  it("leaves the patch blocks byte-identical after stripping", () => {
+    const cleaned = parseNextAskLine(EDIT_REPLY)!.cleanedText;
+    expect(cleaned).toBe(
+      "I made the cards blue for you!\n<<<<<<< SEARCH\n  background: red;\n=======\n  background: blue;\n>>>>>>> REPLACE",
+    );
+    // The sigils the patch regex anchors on must survive untouched.
+    expect(cleaned).toContain("<<<<<<< SEARCH");
+    expect(cleaned).toContain("=======");
+    expect(cleaned).toContain(">>>>>>> REPLACE");
+    expect(cleaned).not.toContain(NEXT_ASKS_PREFIX);
+  });
+
+  it("an edit reply WITHOUT the line is left exactly as-is", () => {
+    const noLine = "I made the cards blue!\n<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLACE";
+    expect(parseNextAskLine(noLine)).toBeNull();
+  });
+
+  // THE SAFETY CLAIM, asserted rather than argued: permitting a trailing line
+  // must not change the patch outcome in ANY way. applyPatch anchors on the
+  // SEARCH/REPLACE sigils and ignores surrounding text — this proves it end to
+  // end, and would fail loudly if that ever stopped being true.
+  it("applyPatch produces an IDENTICAL result with and without the trailing line", () => {
+    const html = "<html><style>  background: red;</style></html>";
+    const withLine = applyPatch(html, EDIT_REPLY);
+    const without = applyPatch(html, parseNextAskLine(EDIT_REPLY)!.cleanedText);
+    expect(withLine).toEqual(without);
+    expect(withLine.ok).toBe(true);
+    if (withLine.ok) {
+      expect(withLine.mode).toBe("patch");
+      expect(withLine.html).toContain("background: blue;");
+      expect(withLine.html).not.toContain(NEXT_ASKS_PREFIX);
+    }
+  });
+
+  // The kid must never see the line, even mid-stream: streamingDisplayText
+  // cuts everything from the first `<<<<` onward, and the sentinel arrives
+  // after the blocks — so it is already behind that cut.
+  it("never leaks through the streaming display path", () => {
+    expect(streamingDisplayText(EDIT_REPLY)).not.toContain(NEXT_ASKS_PREFIX);
+    // …including while the line is still arriving token by token.
+    const midStream = EDIT_REPLY.slice(0, EDIT_REPLY.indexOf("| Make it faster"));
+    expect(streamingDisplayText(midStream)).not.toContain(NEXT_ASKS_PREFIX);
+  });
+
+  // And the final displayed prose is the one sentence only.
+  it("never leaks through editReplyProse (what the child actually reads)", () => {
+    expect(editReplyProse(EDIT_REPLY)).toBe("I made the cards blue for you!");
   });
 });

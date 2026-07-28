@@ -8,18 +8,33 @@
 // line is missing or fails validation, so a kid is never left with zero
 // suggestions.
 
-import { suggestionsFor } from "./game-suggestions";
 import { BIBLE_IMAGINATION_HINTS, IMAGINATION_HINTS, pickImaginationHints } from "./imagination-hints";
+import { BIBLE_TWEAK_SUGGESTIONS, TWEAK_SUGGESTIONS, pickTweakSuggestions } from "./tweak-suggestions";
 
-/** 2 concrete/mechanic chips + 1 imagination-spark chip — the same 2+1 mix
- *  guidance given to the model in next-ask-sentinel.ts's prompt section, so
- *  the fallback and the model-generated path feel like the same feature. */
+/**
+ * 2 concrete "change THIS game" chips + 1 imagination-spark chip — the same
+ * 2+1 mix guidance given to the model in next-ask-sentinel.ts's prompt
+ * section, so the fallback and the model-generated path feel like one feature.
+ *
+ * The concrete two come from tweak-suggestions.ts, NOT game-suggestions.ts.
+ * BUG-FIX-LOG 2026-07-28 (kid report, turtle memory game): this originally
+ * called suggestionsFor(), whose entries are all "Make me a {mechanic} game
+ * {theme}" — brand-new-game STARTERS meant for the blank first screen. Shown
+ * as "what to try next" they read as completely unrelated to the game on
+ * screen, and tapping one abandons it to build something else entirely.
+ *
+ * Only ever called when a game actually exists (route.ts gates on
+ * deliverableHtml), so "change this game" phrasing is always the right register.
+ */
 export function buildFallbackNextAskHints(
   persona: "bible-teacher" | undefined,
   rand: () => number = Math.random,
 ): string[] {
-  const pool = persona === "bible-teacher" ? BIBLE_IMAGINATION_HINTS : IMAGINATION_HINTS;
-  return [...suggestionsFor(persona, 2, rand), ...pickImaginationHints(1, rand, pool)];
+  const bible = persona === "bible-teacher";
+  return [
+    ...pickTweakSuggestions(2, rand, bible ? BIBLE_TWEAK_SUGGESTIONS : TWEAK_SUGGESTIONS),
+    ...pickImaginationHints(1, rand, bible ? BIBLE_IMAGINATION_HINTS : IMAGINATION_HINTS),
+  ];
 }
 
 /** Server-side kill switch (rollout: default OFF until UAT'd with real kids).

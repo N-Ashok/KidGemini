@@ -1,10 +1,17 @@
 # PRD: Kid Hints & Next-Best-Ask in Ari Chat
 
-**Status:** Next-ask chips (§6.1–6.7 style, model-generated + static fallback) built
-2026-07-28, behind `NEXT_PUBLIC_ENABLE_KID_HINTS` (default OFF) — see
-`docs/FEATURES.md`'s "Next-ask chips" entry for the as-built design, which diverged
-from this PRD's original idle-timer trigger (now: fires on every fresh-build turn,
-suggestions come from the model itself via a sentinel line, not a static pool alone).
+**Status:** Next-ask chips built 2026-07-28, behind `NEXT_PUBLIC_ENABLE_KID_HINTS`
+(default OFF) — see `docs/FEATURES.md`'s "Next-ask chips" entry for the as-built design,
+which diverged from this PRD's original idle-timer trigger. As built: fires after every
+BUILD and every EDIT; suggestions come from the model itself (contextual to the game on
+screen) via a trailing sentinel line, with a static "change this game" pool
+(`tweak-suggestions.ts`) only as the fallback.
+
+Two bugs found during owner UAT and fixed the same day (BUG-FIX-LOG 2026-07-28): the
+fallback originally served brand-new-game STARTERS after an edit ("Make me a flying game
+with monkeys 🐵" under a turtle memory game — unrelated, and destructive when tapped),
+and internal retry/regeneration calls could silently inherit the suggestion instruction.
+
 Remaining PRD scope (post-build goal/controls hint, idle nudge, post-publish hint,
 multiplayer-invite hint, returning-kid hint) is NOT built — still a design doc for
 those. Owner UAT + flag flip still pending.

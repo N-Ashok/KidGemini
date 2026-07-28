@@ -11,6 +11,156 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+### 2026-07-28 — Internal asset markers could render as raw text in the child's chat bubble
+
+- **Symptom:** on an edit that adds sound, the chat bubble showed the friendly sentence followed
+  by literal `<!--USES_AUDIO: pop, chime-->`. Cosmetic only — the game and its sounds work — but
+  to a 7-year-old an unexplained code fragment reads as "I broke it".
+- **How it was found:** not reported by a user. Spotted in the output of the edit-turn A/B run
+  for the next-ask feature, and deliberately chased rather than assumed unrelated (a
+  misdiagnosis earlier the same day came from reading past exactly this kind of detail).
+- **Surface area:** `src/lib/assets/markers.ts`, `src/lib/game-edit.ts`.
+- **Root cause (pre-existing, unrelated to next-ask chips):** asset markers are instructions to
+  our own injector, invisible while inside game CODE (they are HTML comments). The model
+  sometimes writes one ABOVE its patch instead of inside the document. `editReplyProse` builds
+  the kid-facing line as `reply.split(/<{7} SEARCH/)[0]` — everything before the first patch
+  block, verbatim — and `stripAssetMarkers` was applied to source manipulation and HTML but
+  NEVER to displayed prose (confirmed by grepping every call site). So a marker in that region
+  went straight to the bubble. `streamingDisplayText` had the same gap, and worse: it only cuts
+  at `<{4}`, and a marker is a single `<`, so it also flashed live while streaming.
+- **Fix:** new `stripAssetMarkersForDisplay` (markers.ts) — `stripAssetMarkers` plus removal of
+  an unterminated `<!--…` tail, which complete-marker regexes cannot match and which is the
+  common state token-by-token mid-stream. Applied to the three kid-facing prose paths:
+  `editReplyProse`, `regenReplyProse`, `streamingDisplayText`. Deliberately NOT applied to
+  fenced code blocks — markers there are part of the code the child chose to look at, and
+  stripping them is a separate design question.
+- **Result (verified):** unit tests cover the exact observed wording plus all three marker types,
+  the marker-only-prose edge case (must still fall back to a friendly line, never blank), and
+  four partial-marker streaming states. Live: the leak-producing audio edit re-run 3× — marker
+  present in the raw model stream all 3 times, absent from displayed text all 3 times. Then a
+  throwaway harness replayed a REAL captured stream through `streamingDisplayText` at all 2,142
+  character prefixes — zero leaks at any point. `tsc --noEmit` clean; 154 files / 1538 tests pass.
+
+---
+
+### 2026-07-28 — Next-ask chips suggested starting a BRAND-NEW game instead of continuing this one
+
+- **Symptom:** Kid report — "in the memory game with turtle, after an edit very unrelated
+  suggestions are there." The chips under a turtle memory game read e.g. `Make me a maze game
+  with trains 🚂` · `Make me a flying game with monkeys 🐵`.
+- **Surface area:** `src/lib/next-ask-hints.ts` (`buildFallbackNextAskHints`), new
+  `src/lib/tweak-suggestions.ts`.
+- **Root cause (confirmed, not inferred):** on an edit turn the model is never asked for
+  suggestions (`nextAsk=false` — by design, the SEARCH/REPLACE contract), so route.ts falls back
+  to `buildFallbackNextAskHints`. That function called `suggestionsFor()` — the **starter pool**
+  from `game-suggestions.ts`, whose 500 entries are ALL `Make me a {mechanic} game {theme}`.
+  Those exist for the BLANK first-message screen; their entire purpose is to start a brand-new
+  game. Served as "what to try next" on a game already in progress they are both nonsensical
+  and destructive: tapping one abandons the kid's game to build a different one. The model was
+  never involved — these strings were generated locally by our own fallback.
+- **How it was found:** the reporter pushed back on an earlier misdiagnosis and asked what the
+  edit turn actually sends and receives. Tracing it showed the edit reply contained ONLY the
+  prose line + patch hunks — no suggestions at all — which pinned the chips to our own fallback
+  code rather than anything the model returned. The exact failing strings had already appeared
+  in an earlier live-test transcript and been read past.
+- **Fix:** new `src/lib/tweak-suggestions.ts` — a "change THIS game" pool
+  (`Add a power-up I can collect ⭐`, `Make it a little faster`, `Add a second level`, …) plus a
+  bible-teacher variant, replacing the starter pool in `buildFallbackNextAskHints`. The
+  imagination-spark third chip is unchanged (it was already appropriate). The fallback only ever
+  fires when a game exists (route.ts gates on `deliverableHtml`), so "change this game" phrasing
+  is always the right register.
+- **Result (verified):** regression tests assert no fallback hint may ever match `^Make me a `
+  (in both `tweak-suggestions.test.ts` and `next-ask-hints.test.ts`, the latter probing five
+  different `rand` values across both personas). `tsc --noEmit` clean; full suite passes.
+- **Follow-up, same day (owner-approved, now shipped):** the generic pool was the *safe* fix but
+  still not game-aware, so edit turns now ALSO get real contextual suggestions from the model,
+  via `NEXT_ASK_EDIT_PROMPT_SECTION` — one trailing line after the last `>>>>>>> REPLACE`.
+  The concern that blocked this originally ("no prose after the patch blocks" is a hardened
+  rule) was investigated rather than assumed: `applyPatch` anchors on the SEARCH/REPLACE sigils
+  and ignores all other text, `editReplyProse` displays only what precedes the first block, and
+  `streamingDisplayText` cuts at the first `<<<<` — so the line is mechanically inert on every
+  path. Asserted in `next-ask-sentinel.test.ts` (including an `applyPatch`-produces-identical-
+  output test), and measured live: same base game + same 5 edit prompts, flag on vs off →
+  **5/5 clean `✓ edit patch` in both arms**, no leaked sentinel, and suggestions became
+  turtle-specific ("Make the turtles make a bubble sound when they match!"). The static pool
+  remains the fallback for a missing/malformed line. Caveat: n=5 per arm — small. If edit-patch
+  failures rise in prod, this prompt section is the first thing to revert (it's one `isEdit`
+  branch in `buildTurnSystemInstruction`).
+
+---
+
+### 2026-07-28 — Next-ask chips could show suggestions for a different game than what's on screen
+
+- **Symptom:** Kid report — on a turtle memory-matching game, after an edit, the "what to try
+  next" suggestion chips were unrelated to the game.
+- **Surface area:** `src/lib/gemini.ts` (`configFor`), `src/app/api/chat/route.ts`.
+- **Root cause:** the next-ask feature flag gated a PROMPT SECTION, but `configFor`'s `nextAsk`
+  was computed from the flag alone (`kidHintsEnabled() && !isEdit`) — and `configFor` is the
+  SAME choke point every retry/regeneration one-shot in route.ts goes through
+  (`completeTruncatedBuild`'s corrective retry, the import-lint corrective retry,
+  `strictEditRetry`, and — the likely actual culprit here — the edit branch's OWN
+  `forceFullRegen` fallback, which fires whenever a patch attempt fails to apply cleanly).
+  Because `forceFullRegen` bypasses `isEdit` in that same function, every one of those internal
+  calls silently ALSO got asked to invent 3 NEXT_ASKS suggestions whenever the flag was on — not
+  just the one primary stream the kid actually watches. On an edit that fell back to a full
+  rebuild, that meant the suggestions could reflect whatever the REBUILD turned out to be, not
+  necessarily the game ultimately shown.
+- **Fix:** `nextAsk` is now an EXPLICIT per-call opt-in (`resolveNextAsk`,
+  `src/lib/next-ask-sentinel.ts`), never re-derived from the flag inside `configFor`. Only
+  route.ts's one true primary `chatModel.replyStream()` call passes `nextAsk: kidHintsEnabled()`;
+  every retry/regeneration call omits it, so it's `false` there regardless of
+  `forceFullRegen`/`isEdit`.
+- **⚠ CORRECTION (same day):** this entry originally dismissed the fallback-pool behavior below
+  as "by-design, not a bug". That was WRONG — it was the actual reported bug. See the next
+  entry ("Next-ask chips suggested starting a brand-new game…"), which is the real root cause
+  and fix. The `resolveNextAsk` change described above is still correct and worth keeping, but
+  it hardened a *latent* issue and did NOT fix what the kid reported. Recorded rather than
+  rewritten, per this log's fix-forward rule — the misdiagnosis is itself the lesson: the
+  reproduction was sitting in my own live-test output (`Make me a maze game with trains 🚂`
+  returned after an edit) and I read past it.
+- **Result (verified):** new `resolveNextAsk` unit tests (`next-ask-sentinel.test.ts`) pin the
+  exact regression (an omitted opt-in must default to false, not inherit the flag). `tsc --noEmit`
+  and full suite (153 files / 1517 tests) pass. Live end-to-end re-run against the real Gemini
+  API: built a turtle memory game (contextual suggestions confirmed), then sent a follow-up edit
+  that patched cleanly — server log confirms `edit=true nextAsk=false` on that turn, and the
+  `done` event carries a clean fallback-pool suggestion set with no leaked `NEXT_ASKS` text.
+- **Open question for the reporter:** was the GAME PREVIEW itself also replaced by something
+  unrelated (not just the suggestion chip text)? If so, that's a separate, likely pre-existing
+  full-regeneration fidelity issue (this codebase has several prior BUG-FIX-LOG entries about
+  edit regeneration going off-track) — worth a fresh report with the exact prompt used, since
+  this fix only addresses the suggestion-chip mismatch, not what the rebuilt game contains.
+
+---
+
+### 2026-07-28 — Resize-handle drag could get stuck, blocking every click until a refresh
+
+- **Symptom:** Kid/owner report — pulling the middle divider to resize the preview pane, then
+  clicking into the game area or the chat, sometimes did nothing at all. Recovering required
+  refreshing the page. Happened multiple times.
+- **Surface area:** `src/components/PanelResizeHandle.tsx` (pull-to-resize handle, added in
+  `32e1642`), `src/lib/preview-pane.ts`.
+- **Root cause:** while dragging, a full-viewport transparent shield
+  (`fixed inset-0 z-[120]`) is mounted so pointer events keep tracking smoothly even when the
+  cursor crosses the game's iframe (which would otherwise swallow them). The shield was torn
+  down ONLY inside the `onPointerUp` handler. If the browser fired `pointercancel` instead —
+  which happens whenever pointer capture is lost mid-drag without a clean release (tab/window
+  blur, a right-click during the drag, an interrupted touch gesture) — `dragging` never went
+  back to `false`, so the shield stayed mounted forever, silently intercepting every subsequent
+  click across the whole page.
+- **Fix:** extracted the drag start/end decision into a pure, testable function
+  (`nextDragState`, `src/lib/preview-pane.ts` — this repo's established pattern: policy logic in
+  `lib/`, the component stays presentational) that treats `"cancel"` exactly like `"up"` — both
+  end the drag. Wired `onPointerCancel` AND `onLostPointerCapture` (belt-and-braces — different
+  browsers can fire either) to the same end-of-drag path `onPointerUp` already used, so the
+  shield unmounts and the last live width still gets committed/persisted, however the drag ends.
+- **Result (verified):** New `nextDragState` test (`preview-pane.test.ts`) pins the exact
+  transition that was missing (`cancel` while dragging → not dragging). `tsc --noEmit` and the
+  full suite (150 files / 1494 tests) pass. Not manually reproduced in a live browser session
+  (pointercancel needs a real OS-level interruption to trigger) — the fix targets the confirmed
+  code-level gap (no cancel/lost-capture handler existed at all), not a guessed cause.
+
+---
+
 ### 2026-07-27 — Unnecessary full-rebuilds on ordinary small edits (KNOWN_BUGS #5 class fix)
 
 - **Symptom:** Investigated at the owner's request by pulling 32 real full-rebuild trigger events from prod logs (`~/kidgemini/logs/app.log`) and matching each to the actual kid request in `usage_events`. 84% of the triggers were `search_not_found` on genuinely SMALL asks — "the tank colour don't provide better visibility," "the road corners... looks inverted," a request to let the player enter a building — not big rewrites. Every one of those forced a full, expensive, risk-of-regression rebuild instead of a small patch.

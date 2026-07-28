@@ -401,7 +401,11 @@ export async function POST(req: NextRequest) {
     if (replyId) trackTurn(() => turnResults.start(replyId, userId, Date.now()));
     try {
       console.log(`[api/chat] streaming… @${ms()}ms`);
-      for await (const chunk of chatModel.replyStream({ history, message, image, activeGameMessageId, forceRebuild, preferAlternateModel, persona: persona.id, onLedger: mkLedger("chat") })) {
+      // nextAsk is an EXPLICIT opt-in, deliberately set ONLY on this one true
+      // primary stream — never on any retry/regeneration one-shot below
+      // (BUG-FIX-LOG 2026-07-28: see gemini.ts's configFor for why those must
+      // never inherit it, even when the flag is on).
+      for await (const chunk of chatModel.replyStream({ history, message, image, activeGameMessageId, forceRebuild, preferAlternateModel, persona: persona.id, onLedger: mkLedger("chat"), nextAsk: kidHintsEnabled() })) {
         if (chunk.kind === "thought") {
           // Thought summaries drive the kid-facing planning line during the
           // silent thinking phase. kidThoughtLine fails closed (null = drop):
@@ -610,6 +614,23 @@ export async function POST(req: NextRequest) {
     // isThreeConversionTurn predicate), so `full` is a whole 3D game, not a patch —
     // fall through to the fresh-build branch that extracts it.
     if (!forceRebuild && !isThreeConversionTurn(message, history, activeGameMessageId) && isGameEditTurn(message, history, activeGameMessageId)) {
+      // Kid hints on EDIT turns (owner approval 2026-07-28): the model appends
+      // one trailing NEXT_ASKS line after the patch blocks
+      // (NEXT_ASK_EDIT_PROMPT_SECTION). Strip it off the RAW reply here, before
+      // ANY of the edit machinery reads it — applyPatch, detectsNewGame,
+      // looksLikeAttemptedEdit, logSearchMiss, reconcileAssetMarkers and
+      // editReplyProse all take `full`, so cleaning it once at the top keeps
+      // every one of them on byte-identical input to what they saw before this
+      // feature existed. (Each is independently immune to a trailing line —
+      // see NEXT_ASK_EDIT_PROMPT_SECTION — but not depending on that is
+      // cheaper than relying on it.)
+      if (kidHintsEnabled()) {
+        const parsed = parseNextAskLine(full);
+        if (parsed) {
+          nextAskHints = parsed.ideas;
+          full = parsed.cleanedText;
+        }
+      }
       const currentHtml = currentGameHtml(history, activeGameMessageId)!; // isGameEditTurn guarantees a game exists
       // Debug trail (2026-07-18 search_not_found class): make it obvious from
       // the log alone WHICH source a patch was applied against, and — on a
@@ -925,6 +946,11 @@ export async function POST(req: NextRequest) {
       if (!nextAskHints && deliverableHtml) {
         nextAskHints = buildFallbackNextAskHints(persona.id === "bible-teacher" ? "bible-teacher" : undefined);
       }
+      // Invariant: chips only ever accompany a REAL game. An edit turn that
+      // turned out to be off-topic chat (no patch attempted, no game delivered)
+      // can still have carried a parsed sentinel — game-change suggestions
+      // under a plain conversational reply would make no sense.
+      if (!deliverableHtml) nextAskHints = undefined;
     }
 
     send({

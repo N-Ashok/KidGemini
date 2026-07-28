@@ -155,17 +155,28 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   load and every new chat, so kids don't see the same four twice
 - **Next-ask chips** (2026-07-28, flag OFF by default —
   `NEXT_PUBLIC_ENABLE_KID_HINTS`, `docs/2026-07-27_PRD_KidHintsAndNextBestAsk.md`):
-  after a fresh-build turn, 3 "what to try next" chips — 2 concrete/buildable,
+  after a build OR an edit, 3 "what to try next" chips — 2 concrete/buildable,
   1 open-ended "what if" imagination-spark — piggybacked on the SAME chat call
   via a trailing `NEXT_ASKS:` sentinel line the model appends and route.ts
-  parses/strips server-side (`src/lib/next-ask-sentinel.ts`), so it's
-  genuinely contextual to the game just built at near-zero added cost (no
-  second API call). Falls back to a static local pool
-  (`src/lib/next-ask-hints.ts` + `src/lib/imagination-hints.ts`) on the very
-  first turn, on edit/patch turns (never requested there — the SEARCH/REPLACE
-  contract can't safely carry a trailing sentinel), or whenever the model's
-  line is missing/malformed. Only attached when a turn actually produced a
-  playable game — never under a refusal, clarification, or new-game prompt
+  parses/strips server-side (`src/lib/next-ask-sentinel.ts`), so they're
+  genuinely contextual to the game in front of the kid at near-zero added cost
+  (no second API call). **Edit turns use their own prompt variant**
+  (`NEXT_ASK_EDIT_PROMPT_SECTION`): one trailing line after the last
+  `>>>>>>> REPLACE`, carving a single explicit exception out of
+  `GAME_EDIT_PROMPT_SECTION`'s "nothing after the patch blocks" rule. That line
+  is inert against the whole patch pipeline — `applyPatch` anchors on the
+  SEARCH/REPLACE sigils and ignores other text, `editReplyProse` shows only
+  what precedes the first block, and `streamingDisplayText` cuts at the first
+  `<<<<` — all three asserted in `next-ask-sentinel.test.ts`, and a live 5-edit
+  A/B measured identical patch compliance (5/5 clean both with and without).
+  Falls back to a static local pool (`src/lib/tweak-suggestions.ts` +
+  `src/lib/imagination-hints.ts`) whenever the model's line is missing or
+  malformed. That pool holds "change THIS game" ideas, never
+  `game-suggestions.ts`'s brand-new-game starters — serving those after an edit
+  was a real reported bug (BUG-FIX-LOG 2026-07-28): unrelated to the game on
+  screen, and tapping one abandons it. Chips are only ever attached when the
+  turn produced a playable game — never under a refusal, clarification,
+  off-topic reply, or new-game prompt
 - Sandboxed HTML game artifacts the AI can build in-chat — Preview/Code tabs
   (code pane scrolls), download/copy; on mobile the panel is fullscreen with a
   "← Chat" back button, and any game message shows a "🎮 Open game" chip to

@@ -39,6 +39,26 @@ export function hasAssetMarker(text: string): boolean {
   return stripAssetMarkers(text) !== text;
 }
 
+/**
+ * Display-safe variant for KID-FACING PROSE ONLY (BUG-FIX-LOG 2026-07-28).
+ * Markers are internal instructions to our own asset injector; a child should
+ * never read one. They are invisible inside game CODE (an HTML comment), but
+ * when the model writes one above its patch instead of inside the document it
+ * lands in the chat bubble as literal `<!--USES_AUDIO: pop, chime-->` text,
+ * which reads to a 7-year-old as "I broke it".
+ *
+ * Differs from stripAssetMarkers in also dropping a marker that is still
+ * ARRIVING — an unterminated `<!--…` tail mid-stream, which the complete-marker
+ * regexes cannot match by definition. NEVER use this for source manipulation:
+ * there an unterminated comment must survive byte-for-byte, and dropping a
+ * trailing fragment would corrupt the game.
+ */
+export function stripAssetMarkersForDisplay(text: string): string {
+  return stripAssetMarkers(text)
+    .replace(/<!--(?:(?!-->)[\s\S])*$/, "")
+    .trimEnd();
+}
+
 /** Every asset NAME referenced by USES_MODELS / USES_AUDIO markers in `text`
  *  (lower-cased, de-duped). USES_THREE carries no name — the engine is implied. */
 export function assetMarkerNames(text: string): string[] {

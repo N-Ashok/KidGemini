@@ -8,7 +8,7 @@
 // instead of bug fixes.
 
 import { isGameBuildTurn } from "./builder-mode";
-import { arAssetsKeys, assetMarkerNames, hasAssetMarker, looksInjected, stripAssetMarkers, THREE_MARKER } from "./assets/markers";
+import { arAssetsKeys, assetMarkerNames, hasAssetMarker, looksInjected, stripAssetMarkers, stripAssetMarkersForDisplay, THREE_MARKER } from "./assets/markers";
 import { hidePartialNextAskLine } from "./next-ask-sentinel";
 import type { ChatMessage } from "@/types/chat.types";
 
@@ -260,11 +260,12 @@ export const REBUILT_GAME_LINE =
  *  REBUILT_GAME_LINE when it wrote code only. Never leaks fences, raw HTML,
  *  or a misleading "small change done" default into the chat bubble. */
 export function regenReplyProse(reply: string): string {
-  const prose = reply
-    .replace(/```(?:\w+)?[\s\S]*?(?:```|$)/g, "") // fenced blocks, even unclosed/truncated
-    .replace(/<!doctype html[\s\S]*$/i, "")
-    .replace(/<html[\s>][\s\S]*$/i, "")
-    .trim();
+  const prose = stripAssetMarkersForDisplay(
+    reply
+      .replace(/```(?:\w+)?[\s\S]*?(?:```|$)/g, "") // fenced blocks, even unclosed/truncated
+      .replace(/<!doctype html[\s\S]*$/i, "")
+      .replace(/<html[\s>][\s\S]*$/i, ""),
+  ).trim();
   if (!prose || /```|<\w+[\s>]/.test(prose) || prose === FRESH_GAME_LINE) return REBUILT_GAME_LINE;
   return prose;
 }
@@ -274,7 +275,10 @@ export function regenReplyProse(reply: string): string {
  *  to applyPatch() unchanged — its regex scans for patch blocks anywhere in
  *  the text, so this split only affects what's DISPLAYED in the chat. */
 export function editReplyProse(reply: string): string {
-  const prose = reply.split(/<{7} SEARCH/)[0]!.trim();
+  // stripAssetMarkersForDisplay (BUG-FIX-LOG 2026-07-28): the model sometimes
+  // writes `<!--USES_AUDIO: …-->` ABOVE its patch rather than inside the game
+  // document, which put the raw marker in the child's chat bubble.
+  const prose = stripAssetMarkersForDisplay(reply.split(/<{7} SEARCH/)[0]!).trim();
   return prose || DEFAULT_EDIT_LINE;
 }
 
@@ -332,9 +336,14 @@ export function streamingDisplayText(partial: string): string {
   if (trimmed && (NEW_GAME_SENTINEL.startsWith(trimmed) || trimmed === NEW_GAME_SENTINEL)) {
     return EDIT_STREAM_WORKING_LINE;
   }
+  // Asset markers are internal (BUG-FIX-LOG 2026-07-28) — strip them here too,
+  // or one written above the patch flashes as raw `<!--USES_AUDIO: …-->` text
+  // while the reply streams, before the final prose split ever runs. The
+  // display variant also swallows a marker still mid-arrival, which is the
+  // common case token by token.
   const idx = withoutNextAsk.search(/<{4}/);
-  if (idx === -1) return withoutNextAsk;
-  const prose = withoutNextAsk.slice(0, idx).trim();
+  if (idx === -1) return stripAssetMarkersForDisplay(withoutNextAsk);
+  const prose = stripAssetMarkersForDisplay(withoutNextAsk.slice(0, idx)).trim();
   return prose ? `${prose}\n\n${EDIT_STREAM_WORKING_LINE}` : EDIT_STREAM_WORKING_LINE;
 }
 

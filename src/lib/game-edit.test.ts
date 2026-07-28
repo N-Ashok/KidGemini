@@ -135,6 +135,34 @@ describe("editReplyProse — splits the kid-facing line from the SEARCH/REPLACE 
   it("returns the whole trimmed text when no patch marker is present at all", () => {
     expect(editReplyProse("just a friendly reply, no patch")).toBe("just a friendly reply, no patch");
   });
+
+  // BUG-FIX-LOG 2026-07-28, found in live testing: the model wrote its internal
+  // asset marker ABOVE the patch instead of inside the game document, so the
+  // raw `<!--USES_AUDIO: …-->` landed in the child's chat bubble. Markers are
+  // instructions to our own injector — a child must never read one.
+  it("never leaks an internal asset marker into the kid-facing line", () => {
+    const reply =
+      "I've added some happy sounds to celebrate your turtle matching skills!\n\n" +
+      "<!--USES_AUDIO: pop, chime-->\n" +
+      "<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE";
+    const prose = editReplyProse(reply);
+    expect(prose).toBe("I've added some happy sounds to celebrate your turtle matching skills!");
+    expect(prose).not.toContain("USES_AUDIO");
+    expect(prose).not.toContain("<!--");
+  });
+
+  it("strips the 3D/model markers from the kid-facing line too", () => {
+    for (const marker of ["<!--USES_THREE-->", "<!--USES_MODELS: car, tree-->"]) {
+      const prose = editReplyProse(`Made it 3D!\n${marker}\n<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLACE`);
+      expect(prose).toBe("Made it 3D!");
+    }
+  });
+
+  it("still returns the friendly default if a marker was the ONLY prose", () => {
+    const reply = `<!--USES_AUDIO: pop-->\n<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLACE`;
+    expect(editReplyProse(reply)).toMatch(/\S/); // never blank
+    expect(editReplyProse(reply)).not.toContain("USES_AUDIO");
+  });
 });
 
 describe("GAME_EDIT_PROMPT_SECTION — the patch contract for feature-edit turns", () => {
@@ -339,6 +367,19 @@ describe("streamingDisplayText — raw patch hunks never reach the bubble mid-st
     expect(shown).toContain(EDIT_STREAM_WORKING_LINE);
     expect(shown).not.toContain("<<<");
     expect(shown).not.toContain("const x = 1;");
+  });
+
+  // BUG-FIX-LOG 2026-07-28: an asset marker written above the patch would
+  // otherwise FLASH as raw text while the reply streamed, before the final
+  // prose split ran — including while the marker itself was half-arrived.
+  it("never flashes an internal asset marker mid-stream, complete or partial", () => {
+    const complete = "Adding happy sounds!\n\n<!--USES_AUDIO: pop, chime-->";
+    expect(streamingDisplayText(complete)).toBe("Adding happy sounds!");
+    // …and token by token, while the marker is still unterminated.
+    for (const tail of ["<!--", "<!--USES", "<!--USES_AUDIO:", "<!--USES_AUDIO: pop,"]) {
+      const shown = streamingDisplayText(`Adding happy sounds!\n\n${tail}`);
+      expect(shown, `leaked while streaming "${tail}"`).toBe("Adding happy sounds!");
+    }
   });
 
   it("hides even a PARTIAL marker still arriving at the stream tail", () => {

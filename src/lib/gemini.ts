@@ -15,8 +15,7 @@ import {
   GAME_EDIT_STRICT_RETRY_SECTION, REPEATED_REQUEST_SECTION, FRESH_GAME_LINE,
 } from "./game-edit";
 import { PERSONAS, type PersonaId } from "./persona/persona";
-import { NEXT_ASK_PROMPT_SECTION } from "./next-ask-sentinel";
-import { kidHintsEnabled } from "./next-ask-hints";
+import { NEXT_ASK_EDIT_PROMPT_SECTION, NEXT_ASK_PROMPT_SECTION, resolveNextAsk } from "./next-ask-sentinel";
 import { fallbackChain, isModelGone, shouldTryNextModel } from "./model-fallback";
 import { runOneShotChain, runStreamChain, type ProviderChunk, type FinishReason, type ProviderGenerator } from "./model-runner";
 import { chainFor, specFor } from "./model-registry";
@@ -379,7 +378,11 @@ export function buildTurnSystemInstruction(
     ...(multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),
     ...(isEdit ? [GAME_EDIT_PROMPT_SECTION] : []),
     ...(repeated ? [REPEATED_REQUEST_SECTION] : []),
-    ...(nextAsk && !isEdit ? [NEXT_ASK_PROMPT_SECTION] : []),
+    // Edit turns get their OWN variant (a single trailing line after the
+    // patch blocks, carving one explicit exception out of the section above);
+    // fresh builds get the plain one. Must stay LAST so the edit variant can
+    // reference GAME_EDIT_PROMPT_SECTION's closing rule.
+    ...(nextAsk ? [isEdit ? NEXT_ASK_EDIT_PROMPT_SECTION : NEXT_ASK_PROMPT_SECTION] : []),
   ].filter(Boolean);
   return sections.length ? `${base}\n\n${sections.join("\n\n")}` : base;
 }
@@ -651,7 +654,7 @@ export class GeminiChatModel implements ChatModel {
    *  class fix 2026-07-18): when a patch attempt fails to apply, the fallback
    *  regeneration call must NOT get the edit-patch instruction again — it
    *  needs a full file back this time. */
-  private configFor(input: { history: ChatMessage[]; message: string; forceFullRegen?: boolean; activeGameMessageId?: string; persona?: PersonaId }) {
+  private configFor(input: { history: ChatMessage[]; message: string; forceFullRegen?: boolean; activeGameMessageId?: string; persona?: PersonaId; nextAsk?: boolean }) {
     // The persona has ALREADY been fail-closed by the route (resolvePersona
     // against the verified session); configFor trusts the id it is handed and
     // never re-derives it from client input. `default` when unset — every
@@ -675,9 +678,10 @@ export class GeminiChatModel implements ChatModel {
     // Penguin-maze hardening 2026-07-18: an identical re-send means the last
     // reply claimed success without the change appearing — tell the model.
     const repeated = isRepeatedRequest(input.message, input.history);
-    // Kid hints / next-ask chips (2026-07-28 PRD): fresh-build turns only —
-    // never on an edit turn, see next-ask-sentinel.ts's header comment.
-    const nextAsk = kidHintsEnabled() && !isEdit;
+    // Kid hints / next-ask chips — see resolveNextAsk's own doc comment
+    // (next-ask-sentinel.ts) for why this must stay an explicit per-call
+    // opt-in rather than being re-derived from the flag here.
+    const nextAsk = resolveNextAsk(input.nextAsk);
     console.log(`[gemini] builder mode — thinking on, extended output, persona=${persona.id}, catalogs: 3d=${gates.three} audio=${gates.audio} multiplayer=${wantsMultiplayer} edit=${isEdit} repeated=${repeated} nextAsk=${nextAsk}`);
     return {
       ...GEN_CONFIG,
@@ -790,7 +794,7 @@ export class GeminiChatModel implements ChatModel {
   /** Streaming reply — yields answer deltas AND thought summaries as they're
    *  generated. Thought parts (part.thought, includeThoughts in builder mode)
    *  become the kid-facing planning line; they are NOT part of the answer. */
-  async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; activeGameMessageId?: string; forceRebuild?: boolean; preferAlternateModel?: boolean; persona?: PersonaId; onLedger?: (summary: ChainSummary) => void }): AsyncGenerator<StreamChunk> {
+  async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; activeGameMessageId?: string; forceRebuild?: boolean; preferAlternateModel?: boolean; persona?: PersonaId; onLedger?: (summary: ChainSummary) => void; nextAsk?: boolean }): AsyncGenerator<StreamChunk> {
     const ai = getClient();
     // "🔄 Different one" (PRD-INSTANT-ALTERNATE, on-demand option): lead the
     // chain with the FALLBACK model so the regeneration is a genuinely different

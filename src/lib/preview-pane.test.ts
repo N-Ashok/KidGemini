@@ -7,6 +7,7 @@ import {
   keyToPanelAction,
   loadPanelWidth,
   nextArtifact,
+  nextDragState,
   nextExpandOnManualToggle,
   PANEL_DEFAULT_W,
   PANEL_MIN_W,
@@ -137,6 +138,26 @@ describe("panel width persistence — same never-throw contract as chat-store", 
       throw new Error("QuotaExceededError");
     };
     expect(() => savePanelWidth(s, 500)).not.toThrow();
+  });
+});
+
+// BUG-FIX-LOG (kid report, 2026-07-28): dragging the resize handle, then
+// having the browser fire pointercancel instead of pointerup — a tab/window
+// blur, a right-click, an interrupted touch gesture — left `dragging` stuck
+// `true` forever in PanelResizeHandle.tsx, so its full-viewport click-blocking
+// shield never unmounted; the kid had to refresh the page to click anything.
+describe("nextDragState — a drag must ALWAYS end, however it ends", () => {
+  it("down starts a drag", () => {
+    expect(nextDragState("down", false)).toBe(true);
+  });
+  it("up ends a drag (the expected path)", () => {
+    expect(nextDragState("up", true)).toBe(false);
+  });
+  it("cancel ALSO ends a drag — the actual bug: this used to be un-handled", () => {
+    expect(nextDragState("cancel", true)).toBe(false);
+  });
+  it("cancel while not even dragging stays not-dragging (idempotent)", () => {
+    expect(nextDragState("cancel", false)).toBe(false);
   });
 });
 

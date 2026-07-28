@@ -79,6 +79,26 @@ export function keyToPanelAction(key: string, expanded: boolean): "collapse" | n
   return key === "Escape" && expanded ? "collapse" : null;
 }
 
+/** Pointer events the resize handle (PanelResizeHandle.tsx) reacts to. */
+export type DragPointerEvent = "down" | "up" | "cancel";
+
+/**
+ * The drag flag driving the full-viewport shield PanelResizeHandle renders
+ * while dragging. BUG-FIX-LOG (kid report 2026-07-28): only "up" ended the
+ * drag — a "pointercancel" (pointer capture lost mid-drag: tab/window blur,
+ * right-click, a touch gesture interrupted, or the cursor crossing the
+ * game's iframe boundary in some browsers) left `dragging` stuck `true`
+ * forever, so the click-blocking shield never unmounted and the kid had to
+ * refresh the page to click anything again. "cancel" must end the drag
+ * exactly like "up" — it is NOT a resume-later pause, the drag is simply
+ * over and whatever width was last live-applied stands.
+ */
+export function nextDragState(event: DragPointerEvent, dragging: boolean): boolean {
+  if (event === "down") return true;
+  if (event === "up" || event === "cancel") return false;
+  return dragging;
+}
+
 /**
  * Identity of the document the preview iframe should hold. The verify
  * controller's `round` restarts per game, so two DIFFERENT games can carry the
