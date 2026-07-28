@@ -34,6 +34,10 @@
   --ar-dark-dim: #94a3b8;
   --ar-dark-faint: #64748b;
   --ar-dark-border: rgba(255, 255, 255, 0.1);
+  --ar-duration-fast: 0.15s;
+  --ar-duration-base: 0.2s;
+  --ar-z-nav: 100;
+  --ar-z-panel: 110;
 }
 
 /* Stop iOS Safari inflating text on rotation to landscape (all surfaces
@@ -52,7 +56,7 @@ html {
 .ar-nav {
   position: sticky;
   top: 0;
-  z-index: 100;
+  z-index: var(--ar-z-nav);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   background: rgba(255, 255, 255, 0.95);
@@ -80,7 +84,7 @@ html {
   text-decoration: none;
   font-weight: 600;
   font-size: 14px;
-  transition: color 0.15s;
+  transition: color var(--ar-duration-fast);
 }
 .ar-link:hover {
   color: var(--ar-accent);
@@ -105,7 +109,7 @@ html {
   border-radius: var(--ar-radius-pill);
   background: var(--ar-accent);
   white-space: nowrap;
-  transition: background 0.15s;
+  transition: background var(--ar-duration-fast);
   display: inline-block;
 }
 .ar-cta:hover {
@@ -139,7 +143,7 @@ html {
   height: 2px;
   background: var(--ar-text);
   border-radius: 2px;
-  transition: transform 0.2s, opacity 0.2s;
+  transition: transform var(--ar-duration-base), opacity var(--ar-duration-base);
 }
 .ar-nav-toggle:checked ~ .ar-nav-right .ar-nav-burger span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
 .ar-nav-toggle:checked ~ .ar-nav-right .ar-nav-burger span:nth-child(2) { opacity: 0; }
@@ -157,6 +161,116 @@ html {
   .ar-signin-label { display: none; }
 }
 
+/* ── Chat-page hover-to-reveal nav (Ari "/" only, 2026-07-28) ───────────
+   Gated in React by pathname === "/" (Game's ArNav.tsx) — these classes are
+   only ever applied there, but the rules themselves are pathname-agnostic
+   CSS, scoped instead to desktop widths (mobile keeps the always-visible
+   slim bar + menu sheet below). .ar-nav--auto-hide sits ABOVE 860px only:
+   below that the tab bar is primary nav and the top bar must stay put. */
+@media (min-width: 861px) {
+  .ar-nav--auto-hide {
+    transform: translateY(-100%);
+    transition: transform var(--ar-duration-base);
+  }
+  .ar-nav--auto-hide.ar-nav--revealed {
+    transform: translateY(0);
+  }
+  /* Invisible strip pinned to the very top of the viewport — hovering it (or
+     tabbing focus into the hidden nav) reveals the bar. Sits one z-step above
+     the nav so it stays hoverable even while the nav is translated off-screen. */
+  .ar-nav-hover-strip {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 16px;
+    z-index: calc(var(--ar-z-nav) + 1);
+  }
+}
+
+/* ── Mobile menu icon + link sheet (chat page only, ≤860px) ─────────────
+   The slim mobile bar keeps logo + CTA (existing behavior); this adds a
+   hamburger-style icon button that opens a bottom sheet listing the same
+   links .ar-nav-links has on desktop. Styled with the same tokens as the
+   rest of the kit (radius/shadow/color) — never hardcoded. */
+.ar-nav-menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 36px;
+  height: 36px;
+  padding: 6px;
+  border: 1px solid var(--ar-border);
+  border-radius: var(--ar-radius-sm);
+  background: var(--ar-surface);
+  color: var(--ar-text);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+@media (max-width: 860px) {
+  .ar-nav-menu-btn { display: inline-flex; }
+}
+.ar-nav-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--ar-z-panel);
+  background: rgba(16, 24, 40, 0.4);
+}
+.ar-nav-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: calc(var(--ar-z-panel) + 1);
+  background: var(--ar-surface);
+  border-top-left-radius: var(--ar-radius-lg);
+  border-top-right-radius: var(--ar-radius-lg);
+  box-shadow: var(--ar-shadow-lift);
+  padding: 8px 8px calc(16px + env(safe-area-inset-bottom));
+  transform: translateY(0);
+  transition: transform var(--ar-duration-base);
+}
+.ar-nav-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+.ar-nav-sheet-title {
+  font-family: var(--ar-font);
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--ar-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.ar-nav-sheet-close {
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--ar-border);
+  border-radius: var(--ar-radius-sm);
+  background: var(--ar-surface2);
+  color: var(--ar-text);
+  cursor: pointer;
+}
+.ar-nav-sheet-links {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 4px 8px;
+}
+.ar-nav-sheet-links .ar-link {
+  padding: 12px 12px;
+  border-radius: var(--ar-radius-sm);
+  font-size: 16px;
+}
+.ar-nav-sheet-links .ar-link:hover,
+.ar-nav-sheet-links .ar-link:active {
+  background: var(--ar-surface2);
+}
+
 /* ── Bottom tab bar (mobile "app" nav, 2026-07-08) ─────────────────────
    Fixed, thumb-reachable, icon+label per tab — the native-app pattern.
    Desktop keeps the top .ar-nav-links menu; this is mobile-only. */
@@ -168,7 +282,7 @@ html {
     bottom: 0;
     left: 0;
     right: 0;
-    z-index: 100;
+    z-index: var(--ar-z-nav);
     background: rgba(255, 255, 255, 0.98);
     border-top: 1px solid var(--ar-border);
     box-shadow: 0 -4px 16px rgba(16, 24, 40, 0.08);
@@ -192,7 +306,7 @@ html {
   font-size: 10.5px;
   font-weight: 600;
   border-radius: var(--ar-radius-sm);
-  transition: color 0.15s;
+  transition: color var(--ar-duration-fast);
 }
 .ar-tab-icon { font-size: 20px; line-height: 1; }
 .ar-tab.on { color: var(--ar-accent); }
@@ -322,7 +436,7 @@ html {
   padding: 6px 12px;
   border: 1px solid var(--ar-dark-border);
   border-radius: var(--ar-radius-pill);
-  transition: color 0.15s, border-color 0.15s;
+  transition: color var(--ar-duration-fast), border-color var(--ar-duration-fast);
 }
 .ar-footer-social a:hover { color: var(--ar-accent); border-color: var(--ar-accent); }
 .ar-footer-bottom {

@@ -15,6 +15,11 @@ export const TAIL_MINUTES = 2;
 /** Client heartbeat cadence (ScreenTimeHeartbeat.tsx) — how often to ping
  *  while the tab is visible. */
 export const HEARTBEAT_INTERVAL_MS = 60_000;
+/** How many minutes BEFORE the daily cap the child-facing nudge banner shows
+ *  (PRD-SCREEN-TIME.md §9 Decision 6, closed 2026-07-28 — D3 was in-app only;
+ *  this is the child-facing half, distinct from the parent email at the cap
+ *  itself). Edge-triggered once per day in `recomputeAndMaybeAlert`. */
+export const NUDGE_BEFORE_CAP_MINUTES = 5;
 
 /** UTC-midnight boundary for `nowMs`'s day — mirrors the boundary
  *  `chat/route.ts` already uses for `signedInDailyTokenLimit`. */

@@ -21,7 +21,26 @@ export interface ScreenTimeDaily {
   /** ms epoch the cap-crossed alert fired, or null — debounces to exactly
    *  one alert per account per day. */
   alertedAt: number | null;
+  /** ms epoch the "nearing cap" child-facing nudge fired, or null —
+   *  debounces to exactly one nudge signal per account per day (Feature 4,
+   *  2026-07-28). Independent of `alertedAt`: the nudge fires BEFORE the cap
+   *  (`NUDGE_BEFORE_CAP_MINUTES`), the alert fires AT/AFTER it. */
+  nudgedAt: number | null;
   updatedAt: number;
+}
+
+/** Return of `recomputeAndMaybeAlert` — both flags are edge-triggered: true
+ *  ONLY on the call where that threshold is newly crossed for the day, false
+ *  on every subsequent call (even though the account stays over threshold). */
+export interface ScreenTimeRecomputeResult {
+  activeMinutes: number;
+  capMinutes: number | null;
+  /** True only on the single call where `activeMinutes` first reaches
+   *  `capMinutes - NUDGE_BEFORE_CAP_MINUTES` today. */
+  nearingCap: boolean;
+  /** True only on the single call where `activeMinutes` first reaches
+   *  `capMinutes` today — same edge-trigger `alertedAt` always guarded. */
+  capExceeded: boolean;
 }
 
 export interface ScreenTimeStore {
@@ -36,6 +55,8 @@ export interface ScreenTimeStore {
   recordPing(accountId: string, nowMs: number): void;
   /** Recompute today's tally from recorded pings, upsert it, and — if a cap
    *  is set, just crossed, and not yet alerted today — record exactly one
-   *  ParentAlert and stamp alertedAt. Fail-open at the CALL SITE, not here. */
-  recomputeAndMaybeAlert(accountId: string, userLabel: string | null, nowMs: number): void;
+   *  ParentAlert and stamp alertedAt. Fail-open at the CALL SITE, not here.
+   *  Also edge-triggers the "nearing cap" nudge flag (nudgedAt) in the SAME
+   *  pass — see `ScreenTimeRecomputeResult`. */
+  recomputeAndMaybeAlert(accountId: string, userLabel: string | null, nowMs: number): ScreenTimeRecomputeResult;
 }

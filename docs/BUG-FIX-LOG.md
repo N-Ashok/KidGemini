@@ -11,6 +11,116 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+### 2026-07-28 — "Ask, switch tab/chat, come back" lost the answer: tab-close recovery gave the server 6 seconds and deleted its own bookmark
+
+- **Symptom (owner report):** "if we ask something on a chat and leave when it is working to some
+  chat or other tab and come back, expectation is that it should get completed — but most of the
+  time it fails or stops midway." The waiting bubble stayed frozen on partial code or
+  "📶 Reconnecting… hang tight!" forever, even though the server had finished (or was still
+  finishing) the reply.
+- **Surface area:** `src/components/ChatPanel.container.tsx` (mount bootstrap, `runStream`,
+  write-through effect), `src/lib/turn-resume.ts`, new `src/lib/turn-recovery.ts`.
+- **Root cause:** three compounding client-side mistakes in the tab-close recovery path — the
+  server half was never at fault (`/api/chat`'s ndjson producer no-ops its writes after a
+  disconnect and still records `turnResults.complete`, so the generation *does* finish with nobody
+  listening):
+  1. **The bookmark was deleted before the reply was collected.** `clearPendingTurn` ran *first*,
+     then a single poll. Miss it once and the finished reply was unreachable forever.
+  2. **6 seconds of patience, and `running` treated as final** (`maxMs: 6_000`, with the comment
+     "`running` turns are stale by now"). That assumption is simply false: a build takes 30–180s,
+     so a kid returning promptly almost always hit `running` — i.e. the common case was coded as
+     the dead case. The LIVE retry path in the same file waits 240s for exactly this reason.
+  3. **Recovery ran BEFORE the chat bootstrap**, so the cross-browser auto-restore
+     (`setConvos([convo])`) could replace the list and wipe a just-recovered reply; and it blocked
+     the Recents index behind its poll.
+  Two adjacent leaks made "leave to some chat" worse: the finished-turn write-through persisted
+  `activeId`'s chat instead of the chat the turn belonged to (switch chats mid-build ⇒ the reply
+  never reached the server, so it vanished on the next device/cache clear), and `setArtifact` /
+  `setThinkingLine` were unguarded, so a background chat's game popped into the chat on screen.
+- **Fix:** recovery now behaves like the live path. `pollTurnOutcome` (new, in `turn-resume.ts`)
+  reports *which* ending it reached — `done` / `running` / `error` / `unknown` — instead of
+  reply-or-null, and `pollTurnResult` is a thin wrapper over it (all existing callers/tests
+  unchanged). New pure module `turn-recovery.ts` holds the decisions: `keepBookmark` (only a
+  `running` turn younger than `RECOVERY_MAX_AGE_MS` = 15 min keeps the bookmark — a deploy/crash
+  leaves a `running` row nobody is generating, which must not produce a permanent "still
+  finishing" note), `applyRecoveredReply` (patches the turn's OWN chat by `replyId`, reporting
+  `patched: false` when the bubble isn't on this device), and `noteStillWorking` (an idempotent,
+  swappable in-bubble note — no stacking across a minutes-long poll). The container's
+  `recoverPendingTurn` runs in `bootstrap().finally()` (after the auto-restore, never blocking the
+  index), pulls the chat from `/api/chats/:id` if this device never cached it, tells the kid
+  "Ari is still finishing this one — it'll pop in here", polls with the full `RESUME_MAX_MS`
+  budget, keeps the bookmark on `running` for the next load, and PUTs the recovered convo so other
+  devices see it. Write-through is now keyed to `turnConvoIdRef` (the turn's chat), and the preview
+  / thinking line only move when the turn's chat is the one on screen.
+- **Verified:** `src/lib/turn-recovery.test.ts` (13) + `src/lib/turn-resume.test.ts` (11,
+  incl. the outcome matrix and a guard that the default budget stays in minutes) — full suite
+  155 files / 1554 tests green, `npm run typecheck` clean. The pure helpers are the regression
+  guard; this repo's Vitest runs in the `node` environment, so there is no DOM render test for the
+  container wiring itself.
+- **Impact:** the leave-and-come-back promise now actually holds — a reply finished while the kid
+  was away lands in its chat on the next visit (or the visit after that, while the server is still
+  working), and a reply built while they read another chat is persisted under the right chat
+  instead of only locally. Known remaining limitation (`docs/KNOWN_BUGS.md`): `busy` is still a
+  single global, so a build in chat A also shows chat B as busy — ideas typed there queue on B's
+  own line and drain after, so nothing is lost, but the composer state is shared.
+
+---
+
+### 2026-07-28 — Parents never got an email when a child exceeded their daily screen-time cap (PRD v1 recommendation shipped only half)
+
+- **Symptom:** `../Ariantra-Platform/docs/PRD-SCREEN-TIME.md` §9 Decision 6 recommended BOTH an
+  email alert (D1) and an in-app Parent-tab log (D3) for v1 — only D3 (`SqliteAlertStore`, this
+  repo) ever shipped. A parent whose child hit the daily cap had no signal unless they happened to
+  open the Parent tab themselves.
+- **Surface area:** `src/lib/screen-time.ts`, `src/lib/db.ts` (`SqliteScreenTimeStore`), new
+  `src/lib/screen-time-alert-bridge.ts`, `src/app/api/screen-time/heartbeat/route.ts`, new
+  `src/lib/screen-time-events.ts`, `src/components/ScreenTimeHeartbeat.tsx`, new
+  `src/lib/screen-time-nudge.ts` + `src/components/ScreenTimeNudgeBanner.tsx`,
+  `src/components/ChatPanel.container.tsx`; Platform repo: `src/lib/auth/email.ts`,
+  `src/lib/email/recording-email-sender.ts`, new
+  `src/app/api/studio/partner/screen-time-alert/route.ts`.
+- **Root cause:** scope cut during the original PRD-SCREEN-TIME-CAP-MVP push — D1 was never
+  re-decided, just quietly dropped, and nothing flagged the gap against the PRD's own
+  recommendation.
+- **Fix:** `SqliteScreenTimeStore.recomputeAndMaybeAlert` now returns edge-triggered
+  `{ activeMinutes, capMinutes, nearingCap, capExceeded }` — a new `nudgedAt` guard column
+  alongside the existing `alertedAt` (same ALTER-on-missing-column migration idiom as
+  `billedPromptTokens`), computed in the SAME query pass, no extra DB round-trip. On a fresh
+  `capExceeded` crossing with a resolvable `session.email`, `/api/screen-time/heartbeat` fires a
+  fire-and-forget (`void ...catch()`, never awaited) call to the platform's new
+  `/api/studio/partner/screen-time-alert` bridge (`AUTH_JWT_SECRET` as the shared `x-admin-secret`
+  header value, same convention as `parent-pin-otp`) — the heartbeat's fail-open `{ok:true}` 200
+  contract is untouched even if the platform is down. `db.ts` stays DB-only: the bridge call lives
+  in the route, not the store. The existing in-app alert (`SqliteAlertStore`) is unchanged. A new
+  child-facing element (not in the original D1/D3 scope): a warm, non-alarming in-chat nudge
+  banner ("You've been chatting for a while today — almost time to wrap up soon! 🌙") fires
+  `NUDGE_BEFORE_CAP_MINUTES` (5) before the cap, via its own edge-triggered `nearingCap` flag and a
+  tiny pub/sub module (`screen-time-events.ts`) — needed because the always-mounted
+  `ScreenTimeHeartbeat` and the chat-page-scoped banner aren't in a parent/child relationship.
+  Shown-tracking mirrors `rename-notice.ts`'s localStorage pattern but resets once per UTC day
+  (a new cap window each day should re-show, unlike the rename notice's forever-once).
+- **Result (verified):** new regression tests — `db.screen-time.test.ts` (capExceeded and
+  nearingCap each true on exactly the first crossing call, false on repeats, same day);
+  `heartbeat/route.test.ts` H.5-H.8 (response echoes the flags; bridge fires only on capExceeded +
+  email; a rejected/failed bridge call never changes the 200 response); new
+  `screen-time-alert-bridge.test.ts`, `screen-time-events.test.ts`, `screen-time-nudge.test.ts`.
+  Full suite (153 files / 1513 tests) + `tsc --noEmit` clean in this repo; Platform repo's full
+  suite (117 files / 1040 tests) + `tsc --noEmit` clean too, including new
+  `screen-time-alert.integration.test.ts` (403 without/with-wrong secret, 400 on each invalid
+  field, successful send recorded on the fake `EmailSender`) and a `recording-email-sender.test.ts`
+  case confirming the new `screen_time_alert` `EmailKind` records metadata only, no usage detail
+  in the log body.
+- **Prevention:** Class — **a PRD recommendation with two co-equal parts (D1 + D3) shipping only
+  one part is a silent scope cut, not a completed decision**, and nothing in the original rollout
+  flagged the other half as still owed. `docs/PRD-SCREEN-TIME.md` §9 now carries a dated note
+  closing the gap explicitly, so future readers see it as resolved, not as still-recommended.
+- **Related:** `../Ariantra-Platform/docs/BUG_LOG.md` #46 (same date, cross-repo entry for this
+  same gap); `../Ariantra-Platform/docs/PRD-SCREEN-TIME.md` §9 Decision 6 (dated note added same
+  day); 2026-07-27 "parent who forgot their PIN" entries below (same `x-admin-secret` bridge
+  convention this reuses, unchanged).
+
+---
+
 ### 2026-07-28 — Internal asset markers could render as raw text in the child's chat bubble
 
 - **Symptom:** on an edit that adds sound, the chat bubble showed the friendly sentence followed
@@ -158,6 +268,105 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
   full suite (150 files / 1494 tests) pass. Not manually reproduced in a live browser session
   (pointercancel needs a real OS-level interruption to trigger) — the fix targets the confirmed
   code-level gap (no cancel/lost-capture handler existed at all), not a guessed cause.
+
+---
+
+### 2026-07-28 — Composer and idea-capture textareas felt cramped on a small chat window
+
+- **Symptom:** Owner observation — the text box inside the chat window reads as a fixed box, and
+  on a small chat window the scrollbar it shows eats into that box, so it doesn't feel like all
+  of the box's real estate is being used. Same complaint for the idea-capturing box.
+- **Surface area:** `src/components/Composer.tsx`, `src/components/IdeaMicTab.tsx`.
+- **Root cause (two distinct issues, one per box):**
+  1. `IdeaMicTab`'s draft textarea was a **fixed `rows={2}`** with no auto-grow — unlike the
+     composer, it never got taller than two lines. A kid's dictated idea running past that (very
+     common — the coach's own demo line is a full sentence) triggered a native scrollbar almost
+     immediately, well before the card had any real shortage of space around it.
+  2. Both textareas used the **default OS scrollbar** once they did overflow (`overflow-y-auto`
+     on the composer; the browser's implicit textarea scrollbar on the idea box). At the default
+     15-17px width, that reads as a chunk of the box turned into dead gray space rather than "the
+     box is full."
+- **Fix:**
+  1. `IdeaMicTab`'s textarea now auto-grows with the draft (same pattern as `Composer.tsx`'s
+     existing `MAX_TEXTAREA_PX` effect) up to `MAX_DRAFT_TEXTAREA_PX` (120px, ~5-6 lines) before
+     it scrolls, instead of clamping at 2 rows.
+  2. Both textareas now use a thin, minimal scrollbar — `scrollbarWidth: "thin"` (Firefox) plus
+     Tailwind arbitrary `[&::-webkit-scrollbar]` variants (WebKit) styled with the same neutral/
+     brand tokens already used in each surface — so the rare case that still overflows doesn't
+     read as wasted space either.
+- **Result (verified):** `tsc --noEmit` and full suite (146 files / 1450 tests) clean (no new
+  test surface — this is layout/CSS, not logic). Visual pass: headless-browser screenshots at a
+  390px mobile width, typing 6 lines into each box — the idea box now shows 3+ lines comfortably
+  before scrolling (was ~2), and the scrollbar in both boxes is a thin brand/neutral-toned bar
+  instead of the full OS default.
+- **Prevention:** n/a — UX polish, not a bug class.
+- **Related:** none.
+
+### 2026-07-27 — Idea mic capture silently dropped by a verify/repair cover
+
+- **Symptom:** Owner report — a kid taps the Idea button and starts speaking; if the update
+  already in flight finishes while they're mid-sentence, the idea just vanishes with no trace.
+- **Surface area:** `src/components/IdeaMicTab.tsx`, `src/components/ArtifactFrame.tsx`,
+  `src/components/ChatPanel.container.tsx`, `src/lib/idea-mic.ts`.
+- **Root cause:** `ArtifactFrame`'s verify/repair cover (`covered = state.phase !== "done"`)
+  unmounts `IdeaMicTab` whenever it comes up (`{!covered && onCaptureIdea && <IdeaMicTab .../>}`).
+  Per `usePreviewVerify.ts`, that cycle restarts on **every** html change — not just the first
+  generation, so any tweak-triggered rebuild could interrupt a capture, not only a brand-new game.
+  The tab's own unmount cleanup called `discardAndStop()` unconditionally, discarding whatever
+  transcript was mid-capture but not yet committed via "Next idea"/"Done."
+- **Fix (owner explicitly rejected auto-committing the interrupted text — mid-cutoff speech is
+  often a fragment, and queuing it unreviewed risks a build attempt on garbage; wanted it staged
+  for the kid to review/edit instead, reusing the tab's existing editable review bar rather than
+  building a new surface):**
+  1. `IdeaMicTab`'s unmount cleanup now reads the live transcript via a ref (the previous effect
+     had `discardAndStop` — stable, empty deps — as its only dependency, so its cleanup closure
+     was fixed at mount time and would only ever have seen the EMPTY initial draft; a plain
+     closure read here would have been the exact same class of stale-closure bug named in
+     CLAUDE.md §9.2) and hands it up via a new `onInterrupted(text)` prop instead of discarding it.
+  2. The parent (`ChatPanel.container.tsx`) holds it in `pendingIdeaDraft` state, which survives
+     the tab's unmount/remount cycle, and passes it back down as `pendingDraft`.
+  3. On the tab's next mount, `pendingDraft` restores straight into the *existing* editable
+     listening/review bar (`initialMicTabState`, `lib/idea-mic.ts`) and resumes listening so
+     speech keeps appending onto it — the kid sees exactly what they said and can edit, continue,
+     finish, or discard it themselves via the same Next idea/Done/Never mind choices, never
+     auto-queued and never silently dropped. `onDraftConsumed()` clears the parent's copy once
+     picked up so a later, unrelated remount can't replay stale text.
+- **Result (verified):** New `idea-mic.test.ts` cases for `initialMicTabState` (opens into
+  "listening" with a non-empty pending draft, stays "tucked" on empty/whitespace/absent). Full
+  suite (146 files / 1450 tests, 1 pre-existing skip) + `tsc --noEmit` clean.
+- **Prevention:** Class — **an unmount driven by unrelated app state (here, a verify/repair
+  cycle) must never be the only path that decides whether in-progress user input survives.**
+  Any future overlay/cover that conditionally unmounts an input-capturing component needs the
+  same hand-off-not-discard treatment, and any effect reading component state inside its cleanup
+  must do so via a ref if the effect's own deps could leave that cleanup closure stale.
+- **Related:** none prior in this surface; first instance of this class here.
+
+### 2026-07-27 — Full-screen preview toolbar ate real estate for controls kids barely touch there
+
+- **Symptom:** Owner observation — in full-screen preview, the top 2-3 bars (tabs, idea-queue
+  chip, Invite, Publish, Full Screen toggle, Close, plus a second bar for the device switcher/
+  Rotate) took up a lot of vertical space, while the two things kids actually touch there are the
+  floating Idea mic tab and Exit Full Screen.
+- **Surface area:** `src/components/ArtifactFrame.tsx` (UX improvement, not a regression — no
+  prior behavior was broken; `expanded` never varied header layout before this change).
+- **Fix:** When `expanded` is true, the header collapses to one thin bar — Exit Full Screen
+  (prominent) + a "•••" overflow menu holding everything else (Preview/Code/Console tabs, device
+  switcher + Rotate, Invite, Publish, idea-queue chip, Close). Split view (`expanded` false) is
+  unchanged. Menu closes on an outside click/tap or on picking a tab (device/Rotate/Invite/
+  Publish stay open — a kid comparing device sizes, or an action about to open its own modal
+  anyway, shouldn't also lose the menu). Scoped to desktop full screen only, matching what was
+  reported; mobile's always-full-width panel layout is untouched.
+- **Result (verified):** `tsc --noEmit` and full suite (146 files / 1450 tests) clean; no new
+  regression risk to split-view/mobile since that JSX branch is unchanged, just reused via shared
+  `tabsGroup`/`deviceSwitcher`/`inviteButton`/`publishButton` consts instead of being duplicated.
+  Visual pass (headless-browser screenshots, desktop 1440px + mobile 375px, seeded chat/game via
+  localStorage — no live Gemini call needed) caught one real issue before it shipped: the new
+  overflow menu and `IdeaMicTab`'s first-run coach popup are both `z-30`, and the coach popup
+  renders later in the DOM (inside the preview area, after the header) — so on equal z-index it
+  was painting on top of and obscuring the open menu. Fixed by raising the menu to `z-50`, which
+  is above every other in-panel overlay; confirmed fixed by re-shooting the same screenshot.
+- **Prevention:** n/a — UX improvement, not a bug class.
+- **Related:** none.
 
 ---
 

@@ -88,6 +88,11 @@ export default function ParentPage() {
   // the parent with no idea it worked) — clears the moment they edit again,
   // so it can never lie about an unsaved change.
   const [capSaved, setCapSaved] = useState(false);
+  // 4-tab restructure (PRD parent-tabs, 2026-07-28) — client-state only, no
+  // router/URL involvement, matching this page's existing pattern. Only read
+  // when view.kind === "alerts"; declared unconditionally alongside the rest
+  // of this component's state so hook order stays stable.
+  const [activeTab, setActiveTab] = useState<"safety" | "sparks" | "alerts" | "family-profile">("safety");
 
   const loadAlerts = useCallback(async (): Promise<boolean> => {
     const res = await fetch("/api/alerts");
@@ -509,218 +514,262 @@ export default function ParentPage() {
 
       {view.kind === "alerts" && (
         <section className="space-y-3">
-          <article className="card flex flex-wrap items-center justify-between gap-4 border-l-4 border-brand-300">
-            <div>
-              <h2 className="text-lg font-semibold">👨‍👩‍👧 Your family profile</h2>
-              <p className="mt-1 text-sm text-ink-700">
-                Add a parent&rsquo;s contact details (stored encrypted, never shown to anyone) so we
-                can reach you about your child&rsquo;s games — it&rsquo;s also needed before a game
-                can be published. The same page has <strong>Sharing &amp; privacy</strong>: whether
-                their games can be shared outside Ariantra, show up in the public catalog, what name
-                details go with them, and who can see their creator profile. Set once — your child
-                shares freely within it after, no PIN each time.
-              </p>
-            </div>
-            <a href={FAMILY_PROFILE_URL} className="btn-primary whitespace-nowrap">
-              Open family profile →
-            </a>
-          </article>
+          {/* 4-tab strip (PRD parent-tabs) — client-state only, matches this
+              page's existing pattern of no router/URL involvement. Each tab
+              gets a small leading icon so the strip reads at a glance. */}
+          <div role="tablist" aria-label="Parent dashboard sections" className="flex flex-wrap gap-2 border-b border-neutral-200 pb-2">
+            {(
+              [
+                { key: "safety", icon: "🛡️", label: "Safety & Security" },
+                { key: "sparks", icon: "⚡", label: "Sparks Management" },
+                { key: "alerts", icon: "🔔", label: "Alerts" },
+                { key: "family-profile", icon: "👨‍👩‍👧", label: "Family profile" },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+                  activeTab === tab.key
+                    ? "bg-brand-500 text-white"
+                    : "bg-neutral-100 text-ink-700 hover:bg-neutral-200"
+                }`}
+              >
+                <span className="text-xs" aria-hidden="true">{tab.icon}</span>
+                {tab.label}
+              </button>
+            ))}
+          </div>
 
-          {/* Sparks: exact balance + full statement + parent-only share reward
-              (PRD-SPARKS Phase 4 — precision is parent-facing by design). */}
-          <SparksParentCard />
+          {activeTab === "safety" && (
+            <>
+              {screenTime && (
+                <article className="card space-y-3 border-l-4 border-brand-300">
+                  <div>
+                    <h2 className="text-lg font-semibold">⏱️ Daily screen-time alert</h2>
+                    <p className="mt-1 text-sm text-ink-700">
+                      We&rsquo;ll send you one alert here if they go over this many minutes today.
+                      Nothing is blocked — your child keeps playing.
+                    </p>
+                  </div>
+                  <p className="text-sm text-ink-700">
+                    Today: <span className="font-semibold text-ink-900">{screenTime.todayActiveMinutes} min</span>
+                    {" · "}
+                    Current cap:{" "}
+                    <span className="font-semibold text-ink-900">
+                      {screenTime.dailyCapMinutes != null ? `${screenTime.dailyCapMinutes} min/day` : "not set"}
+                    </span>
+                  </p>
+                  <form onSubmit={saveScreenTimeCap} className="flex flex-wrap items-center gap-3">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={1440}
+                      placeholder="No cap"
+                      value={capInput}
+                      onChange={(e) => { setCapInput(e.target.value); setCapSaved(false); }}
+                      className="w-28 rounded-kid border-2 border-brand-100 px-3 py-2 text-center font-semibold outline-none focus:border-brand-500"
+                    />
+                    <span className="text-sm text-ink-500">minutes / day</span>
+                    <button disabled={capSaving} className="btn-primary disabled:opacity-40">
+                      {capSaving ? "Saving…" : "Save"}
+                    </button>
+                    {capSaved && <span className="text-sm font-semibold text-emerald-600">✓ Saved</span>}
+                  </form>
+                  {capError && <p className="text-sm font-medium text-danger-600">{capError}</p>}
+                </article>
+              )}
 
-          {/* PRD-SHARING Phase 1 (S2, "parent pride push") — a STANDING
-              section, not just a one-time notification: every published
-              game gets a Share button here, always available, not tied to
-              the moment right after a fresh publish. Consent is account-
-              level (Sharing & Privacy in the family profile), so one
-              shareEnabled flag from loadGames() covers every row. */}
-          {games && games.length > 0 && shareEnabled !== null && (
-            <article className="card space-y-3 border-l-4 border-brand-300">
-              <div>
-                <h2 className="text-lg font-semibold">📤 Share your child&rsquo;s games</h2>
-                <p className="mt-1 text-sm text-ink-700">
-                  Parent shares tend to reach parent groups — a different, often better audience
-                  than a kid&rsquo;s own friends for the same game.
-                </p>
-              </div>
-              {!shareEnabled ? (
-                <div className="rounded-kid border border-neutral-200 bg-neutral-50 p-3 text-sm text-ink-700">
-                  🔒 Sharing isn&rsquo;t turned on yet — turn it on in your{" "}
-                  <a href={FAMILY_PROFILE_URL} className="font-semibold text-brand-600 hover:underline">
-                    family profile → Sharing &amp; Privacy
-                  </a>
-                  , then come back — it applies immediately.
-                </div>
-              ) : (
-                <ul className="divide-y divide-neutral-100">
-                  {games.filter((g) => g.status === "published").map((g) => (
-                    <li key={g.slug} className="py-2">
-                      <div className="flex items-center justify-between gap-3">
+              {/* PRD-SHARING Phase 1 (S2, "parent pride push") — a STANDING
+                  section, not just a one-time notification: every published
+                  game gets a Share button here, always available, not tied to
+                  the moment right after a fresh publish. Consent is account-
+                  level (Sharing & Privacy in the family profile), so one
+                  shareEnabled flag from loadGames() covers every row. */}
+              {games && games.length > 0 && shareEnabled !== null && (
+                <article className="card space-y-3 border-l-4 border-brand-300">
+                  <div>
+                    <h2 className="text-lg font-semibold">📤 Share your child&rsquo;s games</h2>
+                    <p className="mt-1 text-sm text-ink-700">
+                      Parent shares tend to reach parent groups — a different, often better audience
+                      than a kid&rsquo;s own friends for the same game.
+                    </p>
+                  </div>
+                  {!shareEnabled ? (
+                    <div className="rounded-kid border border-neutral-200 bg-neutral-50 p-3 text-sm text-ink-700">
+                      🔒 Sharing isn&rsquo;t turned on yet — turn it on in your{" "}
+                      <a href={FAMILY_PROFILE_URL} className="font-semibold text-brand-600 hover:underline">
+                        family profile → Sharing &amp; Privacy
+                      </a>
+                      , then come back — it applies immediately.
+                    </div>
+                  ) : (
+                    <ul className="divide-y divide-neutral-100">
+                      {games.filter((g) => g.status === "published").map((g) => (
+                        <li key={g.slug} className="py-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="truncate font-medium text-ink-900">{g.name}</div>
+                              <div className="truncate text-xs text-ink-500">{g.slug}.ariantra.com</div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => openShare(g)}
+                              className="shrink-0 rounded-full border border-brand-500 px-3.5 py-1.5 text-xs font-bold text-brand-600 hover:bg-brand-50"
+                            >
+                              📤 Share
+                            </button>
+                          </div>
+                          {shareOpenSlug === g.slug && (
+                            shareConfirmedSlug === g.slug ? (
+                              <div className="mt-2 rounded-kid border border-emerald-200 bg-emerald-50 p-3 text-center text-sm font-semibold text-emerald-700">
+                                🎉 Nice! Thanks for sharing.
+                              </div>
+                            ) : (
+                              <div className="mt-2 rounded-kid border border-neutral-200 bg-neutral-50 p-3">
+                                <textarea
+                                  value={shareMessage}
+                                  onChange={(e) => setShareMessage(e.target.value)}
+                                  rows={2}
+                                  className="mb-2 w-full rounded-lg border border-neutral-200 bg-white p-2 text-sm outline-none focus:border-brand-500"
+                                />
+                                <div className="flex flex-wrap gap-2">
+                                  <a
+                                    href={whatsappShareUrl(shareMessage)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={() => setShareConfirmedSlug(g.slug)}
+                                    className="rounded-full bg-[#25d366] px-3.5 py-1.5 text-xs font-bold text-white no-underline"
+                                  >
+                                    💬 WhatsApp
+                                  </a>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (navigator.share) {
+                                        navigator.share({ text: shareMessage, url: `https://${g.slug}.ariantra.com/` })
+                                          .then(() => setShareConfirmedSlug(g.slug)).catch(() => {});
+                                      } else setShareConfirmedSlug(g.slug);
+                                    }}
+                                    className="rounded-full bg-brand-500 px-3.5 py-1.5 text-xs font-bold text-white"
+                                  >
+                                    📲 More…
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      navigator.clipboard?.writeText(`https://${g.slug}.ariantra.com/`).catch(() => {});
+                                      setShareConfirmedSlug(g.slug);
+                                    }}
+                                    className="rounded-full border border-neutral-200 bg-white px-3.5 py-1.5 text-xs font-bold text-ink-700"
+                                  >
+                                    🔗 Copy link
+                                  </button>
+                                </div>
+                              </div>
+                            )
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </article>
+              )}
+
+              {games && games.length > 0 && (
+                <article className="card space-y-3 border-l-4 border-brand-300">
+                  <div>
+                    <h2 className="text-lg font-semibold">🎮 Multiplayer</h2>
+                    <p className="mt-1 text-sm text-ink-700">
+                      Turn "Play together" on or off for each of your child&rsquo;s published games.
+                      Off means friends can&rsquo;t invite each other into a live game.
+                    </p>
+                  </div>
+                  <ul className="divide-y divide-neutral-100">
+                    {games.map((g) => (
+                      <li key={g.slug} className="flex items-center justify-between gap-3 py-2">
                         <div className="min-w-0">
                           <div className="truncate font-medium text-ink-900">{g.name}</div>
-                          <div className="truncate text-xs text-ink-500">{g.slug}.ariantra.com</div>
+                          <div className="truncate text-xs text-ink-500">{g.slug}.ariantra.com · {g.status}</div>
                         </div>
                         <button
                           type="button"
-                          onClick={() => openShare(g)}
-                          className="shrink-0 rounded-full border border-brand-500 px-3.5 py-1.5 text-xs font-bold text-brand-600 hover:bg-brand-50"
+                          role="switch"
+                          aria-checked={g.multiplayer === true}
+                          aria-label={`Multiplayer for ${g.name}`}
+                          disabled={togglingSlug === g.slug}
+                          onClick={() => void toggleMultiplayer(g.slug, !g.multiplayer)}
+                          className={`relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                            g.multiplayer ? "bg-brand-500" : "bg-neutral-300"
+                          }`}
                         >
-                          📤 Share
+                          <span
+                            className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+                              g.multiplayer ? "translate-x-5" : "translate-x-0.5"
+                            }`}
+                          />
                         </button>
-                      </div>
-                      {shareOpenSlug === g.slug && (
-                        shareConfirmedSlug === g.slug ? (
-                          <div className="mt-2 rounded-kid border border-emerald-200 bg-emerald-50 p-3 text-center text-sm font-semibold text-emerald-700">
-                            🎉 Nice! Thanks for sharing.
-                          </div>
-                        ) : (
-                          <div className="mt-2 rounded-kid border border-neutral-200 bg-neutral-50 p-3">
-                            <textarea
-                              value={shareMessage}
-                              onChange={(e) => setShareMessage(e.target.value)}
-                              rows={2}
-                              className="mb-2 w-full rounded-lg border border-neutral-200 bg-white p-2 text-sm outline-none focus:border-brand-500"
-                            />
-                            <div className="flex flex-wrap gap-2">
-                              <a
-                                href={whatsappShareUrl(shareMessage)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={() => setShareConfirmedSlug(g.slug)}
-                                className="rounded-full bg-[#25d366] px-3.5 py-1.5 text-xs font-bold text-white no-underline"
-                              >
-                                💬 WhatsApp
-                              </a>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (navigator.share) {
-                                    navigator.share({ text: shareMessage, url: `https://${g.slug}.ariantra.com/` })
-                                      .then(() => setShareConfirmedSlug(g.slug)).catch(() => {});
-                                  } else setShareConfirmedSlug(g.slug);
-                                }}
-                                className="rounded-full bg-brand-500 px-3.5 py-1.5 text-xs font-bold text-white"
-                              >
-                                📲 More…
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  navigator.clipboard?.writeText(`https://${g.slug}.ariantra.com/`).catch(() => {});
-                                  setShareConfirmedSlug(g.slug);
-                                }}
-                                className="rounded-full border border-neutral-200 bg-white px-3.5 py-1.5 text-xs font-bold text-ink-700"
-                              >
-                                🔗 Copy link
-                              </button>
-                            </div>
-                          </div>
-                        )
-                      )}
-                    </li>
-                  ))}
-                </ul>
+                      </li>
+                    ))}
+                  </ul>
+                </article>
               )}
-            </article>
+            </>
           )}
 
-          {games && games.length > 0 && (
-            <article className="card space-y-3 border-l-4 border-brand-300">
+          {activeTab === "sparks" && (
+            <>
+              {/* Sparks: exact balance + full statement + parent-only share reward
+                  (PRD-SPARKS Phase 4 — precision is parent-facing by design). */}
+              <SparksParentCard />
+            </>
+          )}
+
+          {activeTab === "alerts" && (
+            <>
+              <h2 className="text-xl font-semibold">Safety alerts ({view.alerts.length})</h2>
+              {view.alerts.length === 0 && <p className="text-ink-500">No alerts yet. 🎉</p>}
+              {view.alerts.map((a) => (
+                <article
+                  key={a.id}
+                  className={`card border-l-4 ${accent[a.severity] ?? "border-brand-300"}`}
+                >
+                  <div className="flex items-center justify-between text-sm text-ink-500">
+                    <span>
+                      {a.severity.toUpperCase()} · {a.category ?? "general"} · from {a.origin}
+                    </span>
+                    <time>{new Date(a.createdAt).toLocaleString()}</time>
+                  </div>
+                  <p className="mt-2 font-medium text-ink-900">“{a.triggerText}”</p>
+                  <p className="mt-1 text-ink-700">{a.reason}</p>
+                  <p className="mt-1 text-sm text-ink-500">Action: {a.action}</p>
+                </article>
+              ))}
+            </>
+          )}
+
+          {activeTab === "family-profile" && (
+            <article className="card flex flex-wrap items-center justify-between gap-4 border-l-4 border-brand-300">
               <div>
-                <h2 className="text-lg font-semibold">🎮 Multiplayer</h2>
+                <h2 className="text-lg font-semibold">👨‍👩‍👧 Your family profile</h2>
                 <p className="mt-1 text-sm text-ink-700">
-                  Turn "Play together" on or off for each of your child&rsquo;s published games.
-                  Off means friends can&rsquo;t invite each other into a live game.
+                  Add a parent&rsquo;s contact details (stored encrypted, never shown to anyone) so we
+                  can reach you about your child&rsquo;s games — it&rsquo;s also needed before a game
+                  can be published. The same page has <strong>Sharing &amp; privacy</strong>: whether
+                  their games can be shared outside Ariantra, show up in the public catalog, what name
+                  details go with them, and who can see their creator profile. Set once — your child
+                  shares freely within it after, no PIN each time.
                 </p>
               </div>
-              <ul className="divide-y divide-neutral-100">
-                {games.map((g) => (
-                  <li key={g.slug} className="flex items-center justify-between gap-3 py-2">
-                    <div className="min-w-0">
-                      <div className="truncate font-medium text-ink-900">{g.name}</div>
-                      <div className="truncate text-xs text-ink-500">{g.slug}.ariantra.com · {g.status}</div>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={g.multiplayer === true}
-                      aria-label={`Multiplayer for ${g.name}`}
-                      disabled={togglingSlug === g.slug}
-                      onClick={() => void toggleMultiplayer(g.slug, !g.multiplayer)}
-                      className={`relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
-                        g.multiplayer ? "bg-brand-500" : "bg-neutral-300"
-                      }`}
-                    >
-                      <span
-                        className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
-                          g.multiplayer ? "translate-x-5" : "translate-x-0.5"
-                        }`}
-                      />
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <a href={FAMILY_PROFILE_URL} className="btn-primary whitespace-nowrap">
+                Open family profile →
+              </a>
             </article>
           )}
-
-          {screenTime && (
-            <article className="card space-y-3 border-l-4 border-brand-300">
-              <div>
-                <h2 className="text-lg font-semibold">⏱️ Daily screen-time alert</h2>
-                <p className="mt-1 text-sm text-ink-700">
-                  We&rsquo;ll send you one alert here if they go over this many minutes today.
-                  Nothing is blocked — your child keeps playing.
-                </p>
-              </div>
-              <p className="text-sm text-ink-700">
-                Today: <span className="font-semibold text-ink-900">{screenTime.todayActiveMinutes} min</span>
-                {" · "}
-                Current cap:{" "}
-                <span className="font-semibold text-ink-900">
-                  {screenTime.dailyCapMinutes != null ? `${screenTime.dailyCapMinutes} min/day` : "not set"}
-                </span>
-              </p>
-              <form onSubmit={saveScreenTimeCap} className="flex flex-wrap items-center gap-3">
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={1440}
-                  placeholder="No cap"
-                  value={capInput}
-                  onChange={(e) => { setCapInput(e.target.value); setCapSaved(false); }}
-                  className="w-28 rounded-kid border-2 border-brand-100 px-3 py-2 text-center font-semibold outline-none focus:border-brand-500"
-                />
-                <span className="text-sm text-ink-500">minutes / day</span>
-                <button disabled={capSaving} className="btn-primary disabled:opacity-40">
-                  {capSaving ? "Saving…" : "Save"}
-                </button>
-                {capSaved && <span className="text-sm font-semibold text-emerald-600">✓ Saved</span>}
-              </form>
-              {capError && <p className="text-sm font-medium text-danger-600">{capError}</p>}
-            </article>
-          )}
-
-          <h2 className="text-xl font-semibold">Safety alerts ({view.alerts.length})</h2>
-          {view.alerts.length === 0 && <p className="text-ink-500">No alerts yet. 🎉</p>}
-          {view.alerts.map((a) => (
-            <article
-              key={a.id}
-              className={`card border-l-4 ${accent[a.severity] ?? "border-brand-300"}`}
-            >
-              <div className="flex items-center justify-between text-sm text-ink-500">
-                <span>
-                  {a.severity.toUpperCase()} · {a.category ?? "general"} · from {a.origin}
-                </span>
-                <time>{new Date(a.createdAt).toLocaleString()}</time>
-              </div>
-              <p className="mt-2 font-medium text-ink-900">“{a.triggerText}”</p>
-              <p className="mt-1 text-ink-700">{a.reason}</p>
-              <p className="mt-1 text-sm text-ink-500">Action: {a.action}</p>
-            </article>
-          ))}
         </section>
       )}
     </main>

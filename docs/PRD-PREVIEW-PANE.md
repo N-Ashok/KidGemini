@@ -33,6 +33,20 @@ There is no draft/current split — history *is* the version store.
 - The toggle is disabled while the verify cover is up (same reason as the
   device switcher: probes must measure the game at a stable panel size).
 - Expanded state resets when the panel is closed (✕ / new chat / switch chat).
+- **Toolbar collapse (2026-07-27, BUG-FIX-LOG "Full-screen preview toolbar ate
+  real estate"):** owner observation — full screen's two header bars (tabs,
+  idea-queue chip, Invite, Publish, ⤢ toggle, ✕; then a second bar for the
+  device switcher/Rotate) took real estate for controls kids barely touch
+  there, when what they actually use is the floating Idea mic tab + Exit Full
+  Screen. When `expanded`, the header now collapses to one thin bar — Exit
+  Full Screen (prominent) + a "•••" overflow menu holding everything else.
+  Split view is unchanged (same two bars, same markup — shared via
+  `tabsGroup`/`deviceSwitcher`/`inviteButton`/`publishButton` consts in
+  `ArtifactFrame.tsx` so the two layouts can't drift). The menu closes on an
+  outside click or on picking a tab; device/Rotate/Invite/Publish stay open.
+  Scoped to desktop full screen only — mobile's always-full-width layout
+  (which shows some of the same controls unconditionally, e.g. the idea-queue
+  chip) is untouched.
 
 ### 2. Old game stays playable while an update generates
 

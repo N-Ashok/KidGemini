@@ -65,11 +65,21 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   escalates honestly by elapsed time (`wait-line.ts`: 🧱 → "calling in a
   faster helper 🤖⚡" → 🔧 → 🦖) — never a frozen spinner. Env knob:
   `GEMINI_STALL_SWITCH_MS`
-- **Tab-close recovery** (2026-07-13): the device bookmarks its in-flight turn
-  (`pending-turn.ts`); if the tab closes mid-generation, the next app load
-  collects the server-finished reply from `turn_results` into the waiting
-  bubble and syncs it into durable history — the reply is part of the chat
-  whenever the kid comes back (24h window, matching the server TTL)
+- **Tab-close recovery** (2026-07-13, made patient 2026-07-28): the device
+  bookmarks its in-flight turn (`pending-turn.ts`); if the kid closes the tab,
+  navigates away, or switches to another chat in a new tab mid-generation, the
+  next app load collects the server-finished reply from `turn_results` into the
+  waiting bubble and syncs it into durable history — the reply is part of the
+  chat whenever the kid comes back (24h window, matching the server TTL).
+  Because `/api/chat` finishes the turn with nobody listening, the returning
+  app **waits for it** (`pollTurnOutcome`, minutes not seconds — a build takes
+  1–3 min) and says so in the bubble ("Ari is still finishing this one — it'll
+  pop in here"); the bookmark is released only once the turn is done, failed,
+  or too old to still be real (`turn-recovery.ts`, `RECOVERY_MAX_AGE_MS`), so a
+  reply that's still cooking is picked up by the visit after that. A turn also
+  keeps writing into ITS OWN chat when the kid opens another one — including
+  the server write-through — while the preview and thinking line stay with
+  whatever chat is on screen (BUG-FIX-LOG 2026-07-28)
 - **Live dictation** (2026-07-10): while the mic is on, words appear in the
   composer AS the kid speaks (interim results stream in, then firm up when
   the recognizer finalizes them — `composeDictation`/`splitSpeechResults` in

@@ -16,8 +16,8 @@ import type {
 } from "@/types/usage.types";
 import type { IpLimitRecord, RateLimitStatus, RateLimitStore } from "@/types/rate-limit.types";
 import type { ParentAuthRecord, ParentAuthStore, ParentPinOtpRecord, ParentPinOtpStore } from "@/types/parent-auth.types";
-import type { ScreenTimeSettings, ScreenTimeDaily, ScreenTimeStore } from "@/types/screen-time.types";
-import { utcDayStart, deriveActiveMinutes } from "./screen-time";
+import type { ScreenTimeSettings, ScreenTimeDaily, ScreenTimeStore, ScreenTimeRecomputeResult } from "@/types/screen-time.types";
+import { utcDayStart, deriveActiveMinutes, NUDGE_BEFORE_CAP_MINUTES } from "./screen-time";
 import { CUSTOM_PLAN_KEY } from "./billing.config";
 import type { PaymentRecord, PaymentStore } from "@/types/billing.types";
 import type { ChatHistoryStore, ConvoSummary } from "@/types/chat-history.types";
@@ -177,11 +177,15 @@ export function getDb(): Database.Database {
     -- One row per (account, UTC calendar day). activeMinutes is a cached
     -- tally derived from screen_time_pings timestamps (see screen-time.ts);
     -- alertedAt debounces the cap-crossed alert to once per account per day.
+    -- nudgedAt (Feature 4, 2026-07-28) is the SAME idea for the child-facing
+    -- "nearing cap" banner, fired NUDGE_BEFORE_CAP_MINUTES before alertedAt —
+    -- a separate guard because the two thresholds cross at different times.
     CREATE TABLE IF NOT EXISTS screen_time_daily (
       accountId TEXT NOT NULL,
       dayStart INTEGER NOT NULL,
       activeMinutes INTEGER NOT NULL DEFAULT 0,
       alertedAt INTEGER,
+      nudgedAt INTEGER,
       updatedAt INTEGER NOT NULL,
       PRIMARY KEY (accountId, dayStart)
     );
@@ -239,6 +243,16 @@ export function getDb(): Database.Database {
   const paymentsCols = db.prepare(`PRAGMA table_info(payments)`).all() as Array<{ name: string }>;
   if (!paymentsCols.some((c) => c.name === "playerId")) {
     db.exec(`ALTER TABLE payments ADD COLUMN playerId TEXT;`);
+  }
+  // Nudge debounce column (Feature 4, 2026-07-28): the child-facing "nearing
+  // cap" banner needs its own once-per-day guard, separate from alertedAt
+  // (which debounces the parent email/in-app alert at the cap itself, not
+  // before it). Same ALTER-on-missing-column idiom as billedPromptTokens
+  // above — pre-existing DBs get the column added at boot; fresh DBs get it
+  // from the CREATE TABLE block.
+  const screenTimeDailyCols = db.prepare(`PRAGMA table_info(screen_time_daily)`).all() as Array<{ name: string }>;
+  if (!screenTimeDailyCols.some((c) => c.name === "nudgedAt")) {
+    db.exec(`ALTER TABLE screen_time_daily ADD COLUMN nudgedAt INTEGER;`);
   }
   // Index built HERE — not in the base CREATE block — because on a pre-existing DB
   // the column is added by the ALTER just above. Indexing alerts(accountId) in the
@@ -755,11 +769,12 @@ export class SqliteScreenTimeStore implements ScreenTimeStore {
       dayStart: r.dayStart as number,
       activeMinutes: r.activeMinutes as number,
       alertedAt: (r.alertedAt as number | null) ?? null,
+      nudgedAt: (r.nudgedAt as number | null) ?? null,
       updatedAt: r.updatedAt as number,
     };
   }
 
-  recomputeAndMaybeAlert(accountId: string, userLabel: string | null, nowMs: number): void {
+  recomputeAndMaybeAlert(accountId: string, userLabel: string | null, nowMs: number): ScreenTimeRecomputeResult {
     const dayStart = utcDayStart(nowMs);
     const rows = getDb()
       .prepare(
@@ -772,18 +787,28 @@ export class SqliteScreenTimeStore implements ScreenTimeStore {
 
     const existing = this.getToday(accountId, dayStart);
     const cap = this.getSettings(accountId)?.dailyCapMinutes ?? null;
+
+    // Cap-crossed alert (parent tab + email upstream) — unchanged edge-trigger.
     const alreadyAlerted = existing?.alertedAt != null;
     const shouldAlert = !alreadyAlerted && cap !== null && activeMinutes >= cap;
     const alertedAt = shouldAlert ? nowMs : (existing?.alertedAt ?? null);
 
+    // Nearing-cap nudge (Feature 4, 2026-07-28) — same edge-trigger shape,
+    // own guard column, own (earlier) threshold. Computed in this same pass
+    // so there's no extra DB round-trip.
+    const alreadyNudged = existing?.nudgedAt != null;
+    const nudgeThreshold = cap !== null ? cap - NUDGE_BEFORE_CAP_MINUTES : null;
+    const shouldNudge = !alreadyNudged && nudgeThreshold !== null && activeMinutes >= nudgeThreshold;
+    const nudgedAt = shouldNudge ? nowMs : (existing?.nudgedAt ?? null);
+
     getDb()
       .prepare(
-        `INSERT INTO screen_time_daily (accountId, dayStart, activeMinutes, alertedAt, updatedAt)
-         VALUES (@accountId, @dayStart, @activeMinutes, @alertedAt, @updatedAt)
+        `INSERT INTO screen_time_daily (accountId, dayStart, activeMinutes, alertedAt, nudgedAt, updatedAt)
+         VALUES (@accountId, @dayStart, @activeMinutes, @alertedAt, @nudgedAt, @updatedAt)
          ON CONFLICT(accountId, dayStart) DO UPDATE SET
-           activeMinutes = @activeMinutes, alertedAt = @alertedAt, updatedAt = @updatedAt`,
+           activeMinutes = @activeMinutes, alertedAt = @alertedAt, nudgedAt = @nudgedAt, updatedAt = @updatedAt`,
       )
-      .run({ accountId, dayStart, activeMinutes, alertedAt, updatedAt: nowMs });
+      .run({ accountId, dayStart, activeMinutes, alertedAt, nudgedAt, updatedAt: nowMs });
 
     if (shouldAlert) {
       this.alerts.record({
@@ -796,6 +821,8 @@ export class SqliteScreenTimeStore implements ScreenTimeStore {
         reason: `${userLabel ?? "Your child"} has used Ari for ${activeMinutes} min today — your cap is ${cap} min.`,
       });
     }
+
+    return { activeMinutes, capMinutes: cap, nearingCap: shouldNudge, capExceeded: shouldAlert };
   }
 }
 

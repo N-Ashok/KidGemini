@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pollTurnResult } from "./turn-resume";
+import { pollTurnResult, pollTurnOutcome, RESUME_MAX_MS } from "./turn-resume";
 
 const noSleep = () => Promise.resolve();
 const json = (body: unknown, status = 200) =>
@@ -80,6 +80,55 @@ describe("pollTurnResult — resume instead of re-generate", () => {
     });
     expect(out).toBeNull(); // budget exhaustion, not early bail…
     expect(calls).toBe(11); // …proven by using ALL ticks of the 40s budget (0..40s every 4s)
+  });
+
+  // Tab-close recovery needs the REASON, not just reply-or-null: "still
+  // generating" must keep the device's bookmark for the next load, while
+  // "gone" must drop it (BUG-FIX-LOG 2026-07-28).
+  describe("pollTurnOutcome — distinguishes still-cooking from gone", () => {
+    it("reports `running` when the budget runs out on a live, still-generating server", async () => {
+      const alwaysRunning = (async () => json({ status: "running" })) as typeof fetch;
+      expect(await pollTurnOutcome("r1", { fetchFn: alwaysRunning, sleep: noSleep, maxMs: 12_000, intervalMs: 4_000 })).toEqual({
+        status: "running",
+      });
+    });
+
+    it("reports `unknown` on 404 and on a server that never answered", async () => {
+      expect(await pollTurnOutcome("r1", { fetchFn: (async () => json({}, 404)) as typeof fetch, sleep: noSleep })).toEqual({
+        status: "unknown",
+      });
+      const dead = (async () => { throw new Error("connection refused"); }) as typeof fetch;
+      expect(await pollTurnOutcome("r1", { fetchFn: dead, sleep: noSleep, unreachableMaxMs: 8_000, intervalMs: 4_000 })).toEqual({
+        status: "unknown",
+      });
+    });
+
+    it("reports `error` on a server-side failure, and `done` with the reply", async () => {
+      expect(await pollTurnOutcome("r1", { fetchFn: (async () => json({ status: "error" })) as typeof fetch, sleep: noSleep })).toEqual({
+        status: "error",
+      });
+      expect(
+        await pollTurnOutcome("r1", {
+          fetchFn: (async () => json({ status: "done", text: "hi", artifactHtml: null })) as typeof fetch,
+          sleep: noSleep,
+        }),
+      ).toEqual({ status: "done", text: "hi", artifactHtml: null });
+    });
+
+    it("onRunning fires per waiting tick, so the UI can say it's still working", async () => {
+      let calls = 0;
+      const fetchFn = (async () =>
+        ++calls < 3 ? json({ status: "running" }) : json({ status: "done", text: "ok", artifactHtml: null })) as typeof fetch;
+      const seen: number[] = [];
+      await pollTurnOutcome("r1", { fetchFn, sleep: noSleep, intervalMs: 4_000, onRunning: (ms) => seen.push(ms) });
+      expect(seen).toEqual([0, 4_000]);
+    });
+
+    // The regression itself: recovery used to hand this poll a 6s budget, so a
+    // build that takes minutes was declared dead the moment the kid came back.
+    it("defaults to minutes of patience, not seconds", () => {
+      expect(RESUME_MAX_MS).toBeGreaterThanOrEqual(120_000);
+    });
   });
 
   // Stop button during "Reconnecting…" (same bug report): the poll loop was

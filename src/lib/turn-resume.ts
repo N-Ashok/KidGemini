@@ -9,6 +9,20 @@ export interface ResumedTurn {
   artifactHtml: string | null;
 }
 
+/** What the poll actually learned. `pollTurnResult` flattens this to
+ *  reply-or-null, which is right for the LIVE retry path (it re-generates on
+ *  anything else) but WRONG for tab-close recovery: "still running" and "gone"
+ *  need opposite treatment there — one must keep the recovery bookmark for the
+ *  next app load, the other must drop it. See BUG-FIX-LOG 2026-07-28. */
+export type TurnOutcome =
+  | ({ status: "done" } & ResumedTurn)
+  /** The server is STILL generating; we ran out of poll budget, not hope. */
+  | { status: "running" }
+  /** Server-side failure — nothing will ever arrive. */
+  | { status: "error" }
+  /** 404 / never reachable: no such turn on this server, for this identity. */
+  | { status: "unknown" };
+
 /** How long to keep polling while the server still says `running`. Generous
  *  on purpose: builder turns think for minutes under load, and waiting is
  *  free while re-generating costs tokens. */
@@ -34,15 +48,28 @@ export const UNREACHABLE_MAX_MS = 20_000;
  */
 export async function pollTurnResult(
   replyId: string,
-  opts: {
-    fetchFn?: typeof fetch;
-    sleep?: (ms: number) => Promise<void>;
-    maxMs?: number;
-    intervalMs?: number;
-    unreachableMaxMs?: number;
-    shouldStop?: () => boolean;
-  } = {},
+  opts: PollOpts = {},
 ): Promise<ResumedTurn | null> {
+  const outcome = await pollTurnOutcome(replyId, opts);
+  return outcome.status === "done" ? { text: outcome.text, artifactHtml: outcome.artifactHtml } : null;
+}
+
+export interface PollOpts {
+  fetchFn?: typeof fetch;
+  sleep?: (ms: number) => Promise<void>;
+  maxMs?: number;
+  intervalMs?: number;
+  unreachableMaxMs?: number;
+  shouldStop?: () => boolean;
+  /** Called after every tick that found the turn still `running` — lets the UI
+   *  say "still finishing this" instead of sitting silent for minutes. */
+  onRunning?: (waitedMs: number) => void;
+}
+
+/** Same poll as `pollTurnResult`, but reports WHICH ending it reached.
+ *  A `shouldStop` break reports `running`: the turn isn't finished and isn't
+ *  gone — the caller decides what a stop means. */
+export async function pollTurnOutcome(replyId: string, opts: PollOpts = {}): Promise<TurnOutcome> {
   const fetchFn = opts.fetchFn ?? fetch;
   const sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   const maxMs = opts.maxMs ?? RESUME_MAX_MS;
@@ -51,21 +78,23 @@ export async function pollTurnResult(
 
   let reached = false; // any HTTP response at all proves a live server
   for (let waited = 0; ; waited += intervalMs) {
-    if (opts.shouldStop?.()) return null;
+    if (opts.shouldStop?.()) return { status: "running" };
     try {
       const res = await fetchFn(`/api/chat/result?replyId=${encodeURIComponent(replyId)}`, { cache: "no-store" });
       reached = true;
-      if (res.status === 404) return null; // unknown turn (old server / never started) — re-generate
+      if (res.status === 404) return { status: "unknown" }; // old server / never started — re-generate
       if (res.ok) {
         const body = (await res.json()) as { status: string; text?: string; artifactHtml?: string | null };
-        if (body.status === "done") return { text: body.text ?? "", artifactHtml: body.artifactHtml ?? null };
-        if (body.status === "error") return null; // server-side failure — re-generate
-        // `running` → fall through and keep waiting
+        if (body.status === "done") return { status: "done", text: body.text ?? "", artifactHtml: body.artifactHtml ?? null };
+        if (body.status === "error") return { status: "error" }; // server-side failure — re-generate
+        opts.onRunning?.(waited); // `running` → fall through and keep waiting
       }
     } catch {
       /* offline tick — keep polling until the (right) budget runs out */
     }
-    if (waited + intervalMs > (reached ? maxMs : Math.min(maxMs, unreachableMaxMs))) return null;
+    if (waited + intervalMs > (reached ? maxMs : Math.min(maxMs, unreachableMaxMs))) {
+      return reached ? { status: "running" } : { status: "unknown" };
+    }
     await sleep(intervalMs);
   }
 }

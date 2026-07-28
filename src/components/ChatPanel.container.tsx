@@ -58,12 +58,20 @@ import { loadSidebarCollapsed, saveSidebarCollapsed } from "@/lib/sidebar-pane";
 import type { ConvoSummary } from "@/types/chat-history.types";
 import { suggestionsFor } from "@/lib/game-suggestions";
 import { shouldAutoRetry } from "@/lib/stream-recovery";
-import { pollTurnResult } from "@/lib/turn-resume";
-import { savePendingTurn, clearPendingTurn, loadPendingTurn } from "@/lib/pending-turn";
+import { pollTurnResult, pollTurnOutcome } from "@/lib/turn-resume";
+import {
+  applyRecoveredReply,
+  noteStillWorking,
+  keepBookmark,
+  RECOVERY_WORKING_NOTE,
+  RECOVERY_LOST_NOTE,
+} from "@/lib/turn-recovery";
+import { savePendingTurn, clearPendingTurn, loadPendingTurn, type PendingTurn } from "@/lib/pending-turn";
 import { savePendingMessage, loadPendingMessage, clearPendingMessage } from "@/lib/pending-message";
 import { waitLine } from "@/lib/wait-line";
 import { useWakeLock } from "./useWakeLock";
 import { RenameNoticeBanner } from "./RenameNoticeBanner";
+import { ScreenTimeNudgeBanner } from "./ScreenTimeNudgeBanner";
 
 const KIND_FALLBACK = "Let's talk about something else! How about a game? 🌟";
 
@@ -121,6 +129,18 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   const [convos, setConvos] = useState<Conversation[]>([newConversation(workspace)]);
   const [activeId, setActiveId] = useState(convos[0]!.id);
   const [busy, setBusy] = useState(false);
+  // Live mirrors for the async paths (recovery polls, in-flight streams) that
+  // must read TODAY's list/selection rather than their render's closure —
+  // same idiom as remoteIndexRef below.
+  const convosRef = useRef<Conversation[]>(convos);
+  convosRef.current = convos;
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+  // Which chat the in-flight turn belongs to (set at send time). A kid who
+  // switches chats mid-generation still gets that reply written through to the
+  // server under ITS chat, and the preview/thinking line of a background chat
+  // no longer leaks into whatever they're looking at (BUG-FIX-LOG 2026-07-28).
+  const turnConvoIdRef = useRef<string | null>(null);
   // Latest kid-safe thought summary from the model's thinking phase — shown in
   // place of the static "Thinking…" so planning feels alive (2026-07-11).
   // Server-filtered (kid-thought.ts); reset at every stream start.
@@ -307,53 +327,11 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   useEffect(() => {
     if (syncedRef.current) return;
     syncedRef.current = true;
+    // Read the bookmark NOW, synchronously: by the time bootstrap resolves the
+    // auth-resume effect may already have started a fresh turn and overwritten
+    // it, and recovery must never adopt (or clear) a LIVE turn's bookmark.
+    const pendingAtMount = loadPendingTurn(window.localStorage);
     const bootstrap = async () => {
-      // Tab-close recovery: an in-flight turn from a previous visit? Collect
-      // its finished reply from the server into the waiting bubble — the
-      // reply belongs in the chat whenever the kid comes back (owner
-      // decision 2026-07-13). Quick poll only; `running` turns are stale by
-      // now (the stream died with the tab) so one miss is final.
-      try {
-        const pending = loadPendingTurn(window.localStorage);
-        if (pending) {
-          clearPendingTurn(window.localStorage);
-          const resumed = await pollTurnResult(pending.replyId, { maxMs: 6_000, intervalMs: 2_000 });
-          if (resumed) {
-            console.log(`[chat] ↻ recovered a finished reply from a previous visit`);
-            setConvos((list) => {
-              const next = list.map((c) =>
-                c.id !== pending.convoId
-                  ? c
-                  : {
-                      ...c,
-                      messages: c.messages.map((m) =>
-                        m.id === pending.replyId
-                          ? { ...m, text: resumed.text, artifactHtml: resumed.artifactHtml ?? undefined }
-                          : m,
-                      ),
-                    },
-              );
-              const convo = next.find((c) => c.id === pending.convoId);
-              if (convo) {
-                // Fire-and-forget: the recovered turn is now part of durable history too.
-                void fetch(`/api/chats/${encodeURIComponent(convo.id)}`, {
-                  method: "PUT",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ convo }),
-                }).catch((err) => {
-                  // Breadcrumb only (2026-07-17) — client-side, no user-facing
-                  // change. This exact failure class ("I lose chat across
-                  // browsers") is what this recovery path exists to prevent.
-                  console.warn("[chat] recovered-turn persist failed", err);
-                });
-              }
-              return next;
-            });
-          }
-        }
-      } catch {
-        /* recovery is best-effort — never block the app load */
-      }
       try {
         const saved = loadChats(window.localStorage, workspace);
         if (saved?.convos.length && !window.localStorage.getItem(SYNC_FLAG)) {
@@ -401,20 +379,108 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         }
       }
     };
-    void bootstrap();
+    // Recovery runs AFTER the bootstrap settles, never before it (BUG-FIX-LOG
+    // 2026-07-28): the auto-restore above REPLACES the convo list, which used
+    // to wipe a just-recovered reply — and a poll that now waits minutes must
+    // not hold the sidebar/index behind it. `.finally` so both the
+    // edit-entry early return and a thrown bootstrap still recover.
+    void bootstrap().finally(() => void recoverPendingTurn(pendingAtMount));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot bootstrap
   }, []);
 
-  // Write-through: when a turn finishes (busy true→false), persist the active
-  // conversation server-side. Not per-delta — a game streams ~200KB and we
-  // don't want a PUT per token. Fire-and-forget: a failed sync costs nothing
+  /**
+   * Leave-and-come-back recovery (BUG-FIX-LOG 2026-07-28). `/api/chat` finishes
+   * the turn whether or not a browser is still listening, so when the kid
+   * closed the tab / switched to another chat in a new tab / locked the phone
+   * mid-generation, the reply is either DONE on the server or still cooking —
+   * hardly ever lost. So we WAIT for it (the same generous budget the live
+   * retry path uses), and the device's bookmark survives until the turn is
+   * done-or-gone, so even a later visit can still collect it.
+   *
+   * The previous version did the opposite of all three: it deleted the
+   * bookmark up front, polled for 6s, and treated `running` as final — which
+   * is the normal state of a build that takes minutes. That is why coming back
+   * "most of the time" showed a reply frozen mid-stream.
+   */
+  const recoveredRef = useRef(false);
+  async function recoverPendingTurn(pending: PendingTurn | null) {
+    if (recoveredRef.current || !pending) return;
+    recoveredRef.current = true;
+    // A turn started on THIS page (auth-resume, or a fast first message) owns
+    // the bookmark and has its own live retry+resume path — stay out of its way.
+    if (abortRef.current) return;
+    try {
+      // The waiting chat may live only on the server (a fresh browser, or a
+      // chat this device never cached): pull it in so the reply has a bubble.
+      if (!convosRef.current.some((c) => c.id === pending.convoId)) {
+        try {
+          const res = await fetch(`/api/chats/${encodeURIComponent(pending.convoId)}`, { cache: "no-store" });
+          if (res.ok) {
+            const { convo } = (await res.json()) as { convo: Conversation };
+            setConvos((list) => (list.some((c) => c.id === convo.id) ? list : [...list, convo]));
+          }
+        } catch {
+          /* offline — the local copy (if any) is still worth patching */
+        }
+      }
+      // Say what's happening in the bubble itself instead of leaving a frozen
+      // half-answer sitting there for the length of the poll.
+      setConvos((list) => noteStillWorking(list, pending, RECOVERY_WORKING_NOTE).convos);
+      const outcome = await pollTurnOutcome(pending.replyId);
+      if (keepBookmark(outcome, Date.now() - pending.startedAt)) {
+        // Still generating past our budget: keep the bookmark AND the note —
+        // the next app load picks the collection back up (24h TTL).
+        console.log("[chat] ↻ previous turn still generating — bookmark kept for the next visit");
+        return;
+      }
+      // Release only if the bookmark is still OURS — a turn sent while we were
+      // polling has replaced it, and that one still needs its own recovery.
+      if (loadPendingTurn(window.localStorage)?.replyId === pending.replyId) {
+        clearPendingTurn(window.localStorage);
+      }
+      if (outcome.status !== "done") {
+        console.warn(`[chat] ↻ previous turn unrecoverable (${outcome.status})`);
+        setConvos((list) => noteStillWorking(list, pending, RECOVERY_LOST_NOTE).convos);
+        return;
+      }
+      console.log("[chat] ↻ recovered a finished reply from a previous visit");
+      setConvos((list) => {
+        const { convos: next, patched } = applyRecoveredReply(list, pending, outcome);
+        if (!patched) return list; // bubble gone (deleted/rewound chat) — nothing to fill
+        const convo = next.find((c) => c.id === pending.convoId);
+        // Fire-and-forget: the recovered turn is now part of durable history too.
+        if (convo) {
+          void fetch(`/api/chats/${encodeURIComponent(convo.id)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ convo }),
+          }).catch((err) => {
+            // Breadcrumb only (2026-07-17) — client-side, no user-facing
+            // change. This exact failure class ("I lose chat across
+            // browsers") is what this recovery path exists to prevent.
+            console.warn("[chat] recovered-turn persist failed", err);
+          });
+        }
+        return next;
+      });
+    } catch {
+      /* recovery is best-effort — never break the app load */
+    }
+  }
+
+  // Write-through: when a turn finishes (busy true→false), persist the chat
+  // THAT TURN belongs to. Not per-delta — a game streams ~200KB and we don't
+  // want a PUT per token. Fire-and-forget: a failed sync costs nothing
   // (localStorage still has it; the next finished turn re-syncs the whole convo).
+  // Keyed on the turn's own chat, not `activeId` (BUG-FIX-LOG 2026-07-28): a kid
+  // who opened another chat while the game built had the reply land locally but
+  // never reach the server — it vanished on the next device or cache clear.
   const prevBusyRef = useRef(false);
   useEffect(() => {
     const wasBusy = prevBusyRef.current;
     prevBusyRef.current = busy;
     if (!wasBusy || busy) return; // only on the finished-turn transition
-    const c = convos.find((x) => x.id === activeId);
+    const c = convos.find((x) => x.id === (turnConvoIdRef.current ?? activeId));
     if (!c || c.messages.length < 2) return; // greeting-only chat — nothing to keep
     fetch(`/api/chats/${encodeURIComponent(c.id)}`, {
       method: "PUT",
@@ -790,6 +856,17 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         ),
       }));
 
+    // This turn's chat, pinned for the whole stream (including silent retries):
+    // the kid may open another chat while it builds. Chat-bubble writes always
+    // target it (patchActive closes over the same activeId), but the SHARED
+    // surfaces — game preview, thinking line — must only move when that chat is
+    // the one on screen, or chat B suddenly shows chat A's game.
+    const turnConvoId = activeId;
+    turnConvoIdRef.current = turnConvoId;
+    const onScreen = () => activeIdRef.current === turnConvoId;
+    const setPreview = (fn: Parameters<typeof setArtifact>[0]) => { if (onScreen()) setArtifact(fn); };
+    const setThinking = (line: string | null) => { if (onScreen()) setThinkingLine(line); };
+
     // Phase-aware stall guard: builder turns THINK silently before the first
     // token (bounded budget, see builder-mode.ts) — give the start more rope,
     // then expect steady deltas once streaming has begun.
@@ -814,7 +891,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     let turnOk = false;
     let acc = "";
     setBusy(true);
-    setThinkingLine(null);
+    setThinking(null);
     // Tab-close recovery bookmark: if the kid leaves entirely mid-generation,
     // the next app load finds this and collects the finished reply from the
     // server (turn_results) into the waiting bubble. Cleared on a normal finish.
@@ -884,7 +961,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
           if (!line) continue;
           const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null; newGamePrompt?: boolean; threeDNewGame?: boolean; nextAskHints?: string[] };
           if (ev.type === "thinking") {
-            if (ev.text) setThinkingLine(ev.text);
+            if (ev.text) setThinking(ev.text);
           } else if (ev.type === "delta") {
             if (!firstTokenAt) { firstTokenAt = Date.now(); console.log(`[chat] first token @${firstTokenAt - startedAt}ms`); }
             acc += ev.text ?? "";
@@ -897,11 +974,11 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             acc = "";
             firstTokenAt = 0; // new model thinks first — back to the generous first-token stall budget
             setReply("");
-            setThinkingLine(null);
+            setThinking(null);
             console.warn(`[chat] ↻ fallback model restart @${Date.now() - startedAt}ms — partial reply cleared`);
           } else if (ev.type === "done") {
             setReply(ev.text ?? acc, ev.artifactHtml ?? undefined, ev.newGamePrompt, ev.threeDNewGame, ev.nextAskHints);
-            setArtifact((a) => nextArtifact({ type: "done", artifactHtml: ev.artifactHtml }, a));
+            setPreview((a) => nextArtifact({ type: "done", artifactHtml: ev.artifactHtml }, a));
             setBusy(false);
             finalized = true;
             turnOk = true;
@@ -909,7 +986,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             console.log(`[chat] ✓ shown @${Date.now() - startedAt}ms artifact=${ev.artifactHtml ? "yes" : "no"}`);
           } else if (ev.type === "retract") {
             setReply(ev.text ?? KIND_FALLBACK);
-            setArtifact((a) => nextArtifact({ type: "retract" }, a)); // safety: always blank
+            setPreview((a) => nextArtifact({ type: "retract" }, a)); // safety: always blank
             finalized = true;
             console.warn(`[chat] retracted by safety monitor`);
           } else if (ev.type === "blocked") {
@@ -1006,7 +1083,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
       if (resumed) {
         console.log(`[chat] ↻ resumed the finished reply from the server (no re-generation)`);
         setReply(resumed.text, resumed.artifactHtml ?? undefined);
-        setArtifact((a) => nextArtifact({ type: "done", artifactHtml: resumed.artifactHtml }, a));
+        setPreview((a) => nextArtifact({ type: "done", artifactHtml: resumed.artifactHtml }, a));
         clearPendingTurn(window.localStorage);
         setBusy(false);
         setQueueHold(null); // the reply landed intact — the line may drain
@@ -1325,6 +1402,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         </div>
         <div className="px-4 pt-3">
           <RenameNoticeBanner />
+          <ScreenTimeNudgeBanner />
         </div>
         {/* Edit-a-launched-game binding banner (approved mockup 2026-07-24):
             always visible while a chat is bound to a published game, so
@@ -1343,7 +1421,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
           onTouchMove={handleManualScroll}
           className="min-h-0 flex-1 overflow-y-auto"
         >
-          <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-8">
+          <div className="mx-auto w-full max-w-full xl:max-w-3xl space-y-6 px-4 py-8">
             {active.messages.map((m, i) => (
               <div key={m.id} id={`msg-${m.id}`}>
               <MessageItem

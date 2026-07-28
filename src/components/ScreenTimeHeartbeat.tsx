@@ -6,10 +6,22 @@
 // actual tab switch/minimize, never when focus moves into the iframe.
 // Renders nothing. Signed-in only — guests are covered by the existing
 // guest-gate elsewhere, not screen-time.
+//
+// Feature 4 (2026-07-28): the heartbeat response now carries `nearingCap` —
+// read it and emit it via screen-time-events.ts so the nudge banner, which
+// lives inside the chat page tree (not a child of this globally-mounted
+// component), can react.
 
 import { useEffect } from "react";
 import { useSession } from "@/lib/useAriantraSession";
 import { HEARTBEAT_INTERVAL_MS } from "@/lib/screen-time";
+import { emitNearingCap } from "@/lib/screen-time-events";
+
+interface HeartbeatResponse {
+  ok: boolean;
+  nearingCap?: boolean;
+  capExceeded?: boolean;
+}
 
 export function ScreenTimeHeartbeat() {
   const session = useSession();
@@ -19,7 +31,12 @@ export function ScreenTimeHeartbeat() {
 
     const ping = () => {
       if (document.visibilityState !== "visible") return;
-      void fetch("/api/screen-time/heartbeat", { method: "POST" }).catch(() => {});
+      void fetch("/api/screen-time/heartbeat", { method: "POST" })
+        .then((res) => (res.ok ? (res.json() as Promise<HeartbeatResponse>) : null))
+        .then((data) => {
+          if (data?.nearingCap) emitNearingCap();
+        })
+        .catch(() => {});
     };
 
     ping(); // immediate tick so a short session (e.g. just playing, no chat) still counts

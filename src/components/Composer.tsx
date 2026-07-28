@@ -145,7 +145,7 @@ export function Composer({ disabled, busy, queueing, queueFull, onSend, onStop }
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 pb-4">
+    <div className="mx-auto w-full max-w-full xl:max-w-3xl px-4 pb-4">
       {micError && !isListening && (
         <div className="mb-2">
           <MicRecoveryCard
@@ -227,7 +227,13 @@ export function Composer({ disabled, busy, queueing, queueFull, onSend, onStop }
           // ALSO arrive via the recognizer (doubled words). Read-only while
           // the mic is on — Enter-to-send still works; ⏸ Pause to edit.
           readOnly={isListening}
-          className="max-h-40 flex-1 resize-none overflow-y-auto bg-transparent py-2.5 text-[15px] leading-6 text-neutral-800 outline-none placeholder:text-neutral-400 focus-visible:ring-0 focus-visible:ring-offset-0"
+          // Thin, minimal scrollbar (2026-07-28: a full-width OS scrollbar
+          // ate a visible chunk of the box once the kid's text hit max-h-40,
+          // reading as wasted space rather than "the box is full"). Firefox
+          // via the standard property; WebKit via arbitrary variants — same
+          // neutral tokens used everywhere else in this bar.
+          style={{ scrollbarWidth: "thin", scrollbarGutter: "stable" }}
+          className="max-h-40 flex-1 resize-none overflow-y-auto bg-transparent py-2.5 pr-1 text-[15px] leading-6 text-neutral-800 outline-none placeholder:text-neutral-400 focus-visible:ring-0 focus-visible:ring-offset-0 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-neutral-300"
         />
 
         <div className="flex shrink-0 items-center gap-1">

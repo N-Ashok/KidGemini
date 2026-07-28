@@ -11,7 +11,7 @@ vi.mock("server-only", () => ({}));
 process.env.DATABASE_PATH = ":memory:";
 
 import { SqliteScreenTimeStore } from "./db";
-import { utcDayStart, TAIL_MINUTES } from "./screen-time";
+import { utcDayStart, TAIL_MINUTES, NUDGE_BEFORE_CAP_MINUTES } from "./screen-time";
 import type { AlertStore, ParentAlert } from "@/types/alert.types";
 
 class FakeAlertStore implements AlertStore {
@@ -97,6 +97,68 @@ describe("SqliteScreenTimeStore", () => {
 
     expect(alerts.calls.length).toBe(1);
     expect(alerts.calls[0]).toMatchObject({ origin: "system", action: "allow", severity: "low", category: null });
+  });
+
+  // Feature 4 (2026-07-28) — edge-trigger dedup on the RETURN VALUE, not just
+  // the AlertStore side effect: capExceeded/nearingCap must be true only on
+  // the single call that newly crosses each threshold, never on repeats.
+  it("capExceeded is true on exactly the first call after crossing the cap, false after", () => {
+    const account = "user:cap-exceeded-edge@x.com";
+    const store = new SqliteScreenTimeStore(new FakeAlertStore());
+    store.putSettings(account, TAIL_MINUTES); // a single ping's tail alone reaches this cap
+
+    store.recordPing(account, Date.now());
+    const first = store.recomputeAndMaybeAlert(account, "Kid", Date.now());
+    expect(first.capExceeded).toBe(true);
+
+    vi.advanceTimersByTime(60_000);
+    store.recordPing(account, Date.now());
+    const second = store.recomputeAndMaybeAlert(account, "Kid", Date.now());
+    expect(second.capExceeded).toBe(false);
+
+    vi.advanceTimersByTime(60_000);
+    store.recordPing(account, Date.now());
+    const third = store.recomputeAndMaybeAlert(account, "Kid", Date.now());
+    expect(third.capExceeded).toBe(false);
+  });
+
+  it("nearingCap is true on exactly the first call after crossing (cap - NUDGE_BEFORE_CAP_MINUTES), false after", () => {
+    const account = "user:nearing-cap-edge@x.com";
+    const store = new SqliteScreenTimeStore(new FakeAlertStore());
+    // Cap set well above the nudge threshold so the two thresholds don't
+    // collide in this test — isolates the nudge edge-trigger.
+    const cap = TAIL_MINUTES + NUDGE_BEFORE_CAP_MINUTES + 3;
+    store.putSettings(account, cap);
+
+    // Accrue minutes below the nudge threshold first — no nudge yet.
+    store.recordPing(account, Date.now());
+    const before = store.recomputeAndMaybeAlert(account, "Kid", Date.now());
+    expect(before.nearingCap).toBe(false);
+    expect(before.capExceeded).toBe(false);
+
+    // Advance enough gap-counted minutes to cross (cap - NUDGE_BEFORE_CAP_MINUTES)
+    // without reaching the cap itself.
+    vi.advanceTimersByTime(NUDGE_BEFORE_CAP_MINUTES * 60_000);
+    store.recordPing(account, Date.now());
+    const crossing = store.recomputeAndMaybeAlert(account, "Kid", Date.now());
+    expect(crossing.nearingCap).toBe(true);
+    expect(crossing.capExceeded).toBe(false);
+
+    // A repeat call the same day must not re-fire the nudge.
+    vi.advanceTimersByTime(30_000);
+    store.recordPing(account, Date.now());
+    const repeat = store.recomputeAndMaybeAlert(account, "Kid", Date.now());
+    expect(repeat.nearingCap).toBe(false);
+  });
+
+  it("recomputeAndMaybeAlert returns activeMinutes and capMinutes alongside the edge-triggered flags", () => {
+    const account = "user:return-shape@x.com";
+    const store = new SqliteScreenTimeStore(new FakeAlertStore());
+    store.putSettings(account, 30);
+    store.recordPing(account, Date.now());
+
+    const result = store.recomputeAndMaybeAlert(account, "Kid", Date.now());
+    expect(result).toMatchObject({ activeMinutes: TAIL_MINUTES, capMinutes: 30 });
   });
 
   it("a second same-day recompute does not re-alert", () => {
