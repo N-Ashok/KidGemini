@@ -5,7 +5,7 @@
 // with several ideas shouldn't have to re-tap between each one); 🗑 Never mind
 // still ends the session.
 import { describe, expect, it } from "vitest";
-import { nextMicTabState, type MicTabEvent, type MicTabState } from "./idea-mic";
+import { initialMicTabState, nextMicTabState, type MicTabEvent, type MicTabState } from "./idea-mic";
 
 describe("nextMicTabState — full transition table", () => {
   const table: Array<[MicTabState, MicTabEvent, MicTabState]> = [
@@ -37,5 +37,26 @@ describe("nextMicTabState — full transition table", () => {
 
   it.each(table)("%s + %s → %s", (from, ev, to) => {
     expect(nextMicTabState(from, ev)).toBe(to);
+  });
+});
+
+// BUG-FIX-LOG: a verify/repair cover unmounting IdeaMicTab mid-capture used
+// to silently discard the whole transcript (discardAndStop, no handoff). The
+// fix hands the interrupted text up to a pendingDraft the tab restores on
+// remount — this reopens straight into "listening" (the review bar) so the
+// kid sees exactly what they said and can edit/finish/discard it themselves,
+// instead of either losing it or having it auto-queued unreviewed.
+describe("initialMicTabState — resuming an interrupted draft", () => {
+  it("opens straight into the review bar when a pending draft exists", () => {
+    expect(initialMicTabState("make the dino purple")).toBe("listening");
+  });
+
+  it("ignores a whitespace-only draft (nothing worth reviewing)", () => {
+    expect(initialMicTabState("   ")).toBe("tucked");
+  });
+
+  it("stays tucked with no pending draft", () => {
+    expect(initialMicTabState(null)).toBe("tucked");
+    expect(initialMicTabState(undefined)).toBe("tucked");
   });
 });

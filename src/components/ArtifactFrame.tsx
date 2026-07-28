@@ -67,6 +67,12 @@ interface ArtifactFrameProps {
   onCoachDone?: () => void;
   nudgeMic?: boolean;
   onNudgeShown?: () => void;
+  /** A transcript the mic tab was mid-capturing when a verify/repair cover
+   *  unmounted it (BUG-FIX-LOG draft-recovery) — restored into the review
+   *  bar on the next mount instead of silently dropped. */
+  pendingIdeaDraft?: string | null;
+  onIdeaInterrupted?: (text: string) => void;
+  onIdeaDraftConsumed?: () => void;
   /** Which themed leaderboard seed the preview WYSIWYG runtime uses
    *  (PRD-PREVIEW-WYSIWYG): 'bible' on the bible-teacher surface, else 'default'. */
   previewTheme?: PreviewTheme;
@@ -119,6 +125,9 @@ export function ArtifactFrame({
   onCoachDone,
   nudgeMic,
   onNudgeShown,
+  pendingIdeaDraft,
+  onIdeaInterrupted,
+  onIdeaDraftConsumed,
   previewTheme = "default",
   bibleTeacher = false,
   editTarget,
@@ -127,6 +136,21 @@ export function ArtifactFrame({
   const [tab, setTab] = useState<Tab>("preview");
   const [publishing, setPublishing] = useState(false);
   const [inviting, setInviting] = useState(false);
+  // Fullscreen decluttering: kids in full screen mostly touch two things —
+  // Exit Full Screen and the Idea mic tab (which floats over the game, not
+  // in this bar). Everything else (tabs, device switcher, Rotate, Publish,
+  // Invite, Close) moves into this overflow menu so the header shrinks to
+  // one thin bar instead of the two full-width bars split view uses.
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const overflowRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!overflowOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) setOverflowOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [overflowOpen]);
   // ⏳ chip → bottom sheet with the waiting line (PRD-IDEA-QUEUE-V2 §4.2).
   const [queueOpen, setQueueOpen] = useState(false);
   const queueCount = queuedIdeas?.length ?? 0;
@@ -280,174 +304,271 @@ export function ArtifactFrame({
       tab === t ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-100"
     } disabled:opacity-40`;
 
+  // Shared between the split-view bars and the full-screen overflow menu
+  // (below) — the two layouts show the same controls, just grouped
+  // differently, so the markup lives once.
+  const tabsGroup = (
+    <>
+      <button onClick={() => setTab("preview")} className={tabBtn("preview")}>
+        ▶ Preview
+      </button>
+      {/* Leaving Preview unmounts the iframe (tabs conditionally render) —
+          mid-verify that would blind the probes, so hold the kid here for
+          the ~2.5s testing window. */}
+      <button onClick={() => setTab("code")} className={tabBtn("code")} disabled={covered}>
+        {"</>"} Code
+      </button>
+      {consoleAvailable && (
+        <button onClick={() => setTab("console")} className={`relative ${tabBtn("console")}`} disabled={covered}>
+          🛠 <span className="hidden sm:inline">Console</span>
+          {errorCount > 0 && (
+            <span className="ml-1 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+              {errorCount}
+            </span>
+          )}
+        </button>
+      )}
+    </>
+  );
+
+  const deviceSwitcher = tab === "preview" && (
+    <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Preview device size">
+      {DEVICE_PRESETS.map((d) => (
+        <button
+          key={d.id}
+          onClick={() => setDevice(d.id)}
+          disabled={covered}
+          title={d.hint}
+          aria-pressed={device === d.id}
+          className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+            device === d.id ? "bg-neutral-900 text-white" : "text-neutral-500 hover:bg-neutral-100"
+          } disabled:opacity-40`}
+        >
+          {d.label}
+        </button>
+      ))}
+      {/* Rotate (2026-07-16) — landscape preview for tablet/phone. ALWAYS
+          rendered (disabled, not hidden, for non-orientable Fit/Laptop) —
+          hiding it entirely meant it only appeared AFTER first picking
+          Tablet/Phone, so nobody discovered it existed. */}
+      <button
+        onClick={() => setOrientation((o) => (o === "portrait" ? "landscape" : "portrait"))}
+        disabled={covered || !deviceById(device).orientable}
+        title={
+          !deviceById(device).orientable
+            ? "Pick Tablet or Phone to rotate"
+            : orientation === "portrait"
+              ? "Rotate to landscape"
+              : "Rotate to portrait"
+        }
+        aria-label={orientation === "portrait" ? "Rotate to landscape" : "Rotate to portrait"}
+        aria-pressed={orientation === "landscape"}
+        className="flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium text-neutral-500 hover:bg-neutral-100 disabled:opacity-40"
+      >
+        <span
+          aria-hidden
+          className={`text-base leading-none transition-transform ${orientation === "landscape" ? "rotate-90" : ""}`}
+        >
+          ⟳
+        </span>
+        <span className="hidden sm:inline">Rotate</span>
+      </button>
+    </div>
+  );
+
+  // Invite a friend to test (PRD-MULTIPLAYER.md Phase 4) — ONLY for games
+  // the model actually built multiplayer (MULTIPLAYER_MARKER); on any other
+  // game this button would be a dead end (no friend session to join).
+  const inviteButton = !busy && state.currentHtml.includes(MULTIPLAYER_MARKER) && (
+    <button
+      onClick={() => setInviting(true)}
+      className="rounded-full border-2 border-orange-500 px-3 py-1.5 text-sm font-extrabold text-orange-600"
+      aria-label="Invite a friend to test"
+    >
+      🎮 <span className="hidden sm:inline">Invite</span>
+    </button>
+  );
+
+  const publishButton = !busy && (
+    <button
+      onClick={() => setPublishing(true)}
+      className="rounded-full bg-orange-500 px-3 py-1.5 text-sm font-extrabold text-white shadow shadow-orange-500/30"
+      aria-label={editTarget ? "Publish update" : "Publish"}
+    >
+      🚀 <span className="hidden sm:inline">{editTarget ? "Publish update" : "Publish"}</span>
+    </button>
+  );
+
   return (
     <aside className="relative flex h-full w-full flex-col bg-white">
-      <header className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          {/* Mobile-only: the frame covers the whole screen there, so give an
-              explicit way back to the conversation (✕ alone wasn't found). */}
-          <button
-            onClick={onClose}
-            className="rounded-lg px-2 py-1 text-sm font-medium text-neutral-600 hover:bg-neutral-100 md:hidden"
-            aria-label="Back to chat"
-          >
-            ← Chat
-          </button>
-          <button onClick={() => setTab("preview")} className={tabBtn("preview")}>
-            ▶ Preview
-          </button>
-          {/* Leaving Preview unmounts the iframe (tabs conditionally render) —
-              mid-verify that would blind the probes, so hold the kid here for
-              the ~2.5s testing window. */}
-          <button onClick={() => setTab("code")} className={tabBtn("code")} disabled={covered}>
-            {"</>"} Code
-          </button>
-          {consoleAvailable && (
-            <button onClick={() => setTab("console")} className={`relative ${tabBtn("console")}`} disabled={covered}>
-              🛠 <span className="hidden sm:inline">Console</span>
-              {errorCount > 0 && (
-                <span className="ml-1 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                  {errorCount}
-                </span>
-              )}
-            </button>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {/* The Idea Queue chip (PRD-IDEA-QUEUE-V2 §4.2): the line's presence
-              and state, visible from INSIDE the game. Hidden on desktop split
-              view (the card is right there beside the panel); shown on mobile
-              and full screen, where this panel covers the chat. A held line
-              shows ⏸ in warn tint — a stalled queue must never be invisible. */}
-          {queueCount > 0 && (
-            <button
-              onClick={() => setQueueOpen(true)}
-              aria-label={
-                queueHold
-                  ? `Your idea line is paused — ${queueCount} waiting`
-                  : `${queueCount} idea${queueCount === 1 ? "" : "s"} lined up`
-              }
-              title={queueHold ? "Your line is paused — tap to decide" : "Your ideas, lined up"}
-              className={`rounded-full px-3 py-1.5 text-sm font-extrabold ${
-                expanded ? "" : "md:hidden"
-              } ${
-                queueHold
-                  ? "border-2 border-warn-500 bg-warn-50 text-warn-600"
-                  : "border-2 border-brand-300 bg-brand-50 text-brand-600"
-              }`}
-            >
-              {queueHold ? "⏸" : "⏳"} {queueCount}
-            </button>
-          )}
-          {/* Invite a friend to test (PRD-MULTIPLAYER.md Phase 4) — ONLY for
-              games the model actually built multiplayer (MULTIPLAYER_MARKER);
-              on any other game this button would be a dead end (no friend
-              session to join). Sits before Arcade — testing comes before
-              publishing. */}
-          {!busy && state.currentHtml.includes(MULTIPLAYER_MARKER) && (
-            <button
-              onClick={() => setInviting(true)}
-              className="rounded-full border-2 border-orange-500 px-3 py-1.5 text-sm font-extrabold text-orange-600"
-              aria-label="Invite a friend to test"
-            >
-              🎮 <span className="hidden sm:inline">Invite</span>
-            </button>
-          )}
-          {/* Publish lives HERE (not a bar under the game — that sat exactly on
-              kids' on-screen controls). Compact pill, hidden while streaming. */}
-          {!busy && (
-            <button
-              onClick={() => setPublishing(true)}
-              className="rounded-full bg-orange-500 px-3 py-1.5 text-sm font-extrabold text-white shadow shadow-orange-500/30"
-              aria-label={editTarget ? "Publish update" : "Publish"}
-            >
-              🚀 <span className="hidden sm:inline">{editTarget ? "Publish update" : "Publish"}</span>
-            </button>
-          )}
-          {/* Full-screen toggle — the main view control for this panel, so it
-              gets the prominent treatment (labeled pill, not a bare glyph).
-              md+ only (mobile is already full screen). Disabled while the
-              verify cover is up, same reason as the device switcher: the
-              probes must measure the game at a stable size. */}
+      {expanded ? (
+        // Full screen: kids here mostly touch two things — Exit Full Screen
+        // and the Idea mic tab (floats over the game, not in this bar). One
+        // thin bar instead of split view's two — everything else (tabs,
+        // device switcher, Rotate, Publish, Invite, Close) moves into the
+        // "•••" overflow menu (BUG: the two full bars ate real estate for
+        // controls kids barely touch in full screen).
+        <header className="relative flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-2">
           {onToggleExpand && (
             <button
               onClick={onToggleExpand}
               disabled={covered}
-              className="btn-ghost hidden !min-h-0 gap-1.5 !px-3 !py-1.5 text-sm font-semibold disabled:opacity-40 md:inline-flex"
-              aria-label={expanded ? "Exit full screen" : "Full screen"}
-              aria-pressed={expanded}
-              title={expanded ? "Exit full screen (Esc)" : "Full screen"}
+              className="btn-ghost !min-h-0 gap-1.5 !px-3 !py-1.5 text-sm font-semibold disabled:opacity-40"
+              aria-label="Exit full screen"
+              aria-pressed={true}
+              title="Exit full screen (Esc)"
             >
-              {expanded ? "⤡" : "⤢"} {expanded ? "Exit Full Screen" : "Full Screen"}
+              ⤡ Exit Full Screen
             </button>
           )}
-          <button
-            onClick={onClose}
-            className="rounded-lg px-2 py-1 text-neutral-600 hover:bg-neutral-100"
-            aria-label="Close"
-          >
-            ✕
-          </button>
-        </div>
-      </header>
-
-      <div className="flex items-center justify-between gap-2 border-b border-neutral-100 px-4 py-1.5">
-        <p className="hidden truncate text-xs text-neutral-400 sm:block">
-          Made by AI · runs safely in a sandbox
-        </p>
-        {/* Device switcher: "how does it look on a phone?" — resizes the SAME
-            iframe (no reload); disabled while the verify cover is up so the
-            probes always measure the game at panel size. */}
-        {tab === "preview" && (
-          <div className="flex items-center gap-1" role="group" aria-label="Preview device size">
-            {DEVICE_PRESETS.map((d) => (
+          <div ref={overflowRef} className="flex shrink-0 items-center gap-1">
+            {queueCount > 0 && (
               <button
-                key={d.id}
-                onClick={() => setDevice(d.id)}
-                disabled={covered}
-                title={d.hint}
-                aria-pressed={device === d.id}
-                className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                  device === d.id ? "bg-neutral-900 text-white" : "text-neutral-500 hover:bg-neutral-100"
-                } disabled:opacity-40`}
+                onClick={() => setQueueOpen(true)}
+                aria-label={
+                  queueHold
+                    ? `Your idea line is paused — ${queueCount} waiting`
+                    : `${queueCount} idea${queueCount === 1 ? "" : "s"} lined up`
+                }
+                title={queueHold ? "Your line is paused — tap to decide" : "Your ideas, lined up"}
+                className={`rounded-full px-3 py-1.5 text-sm font-extrabold ${
+                  queueHold
+                    ? "border-2 border-warn-500 bg-warn-50 text-warn-600"
+                    : "border-2 border-brand-300 bg-brand-50 text-brand-600"
+                }`}
               >
-                {d.label}
+                {queueHold ? "⏸" : "⏳"} {queueCount}
               </button>
-            ))}
-            {/* Rotate (2026-07-16) — landscape preview for tablet/phone.
-                ALWAYS rendered (disabled, not hidden, for non-orientable
-                Fit/Laptop) — hiding it entirely meant it only appeared AFTER
-                first picking Tablet/Phone, so nobody discovered it existed.
-                2026-07-17: the icon was a lone 12px glyph with no visible
-                label — the `title` tooltip it relied on for meaning never
-                shows on touch, so on a phone it just looked like a tiny,
-                unlabeled mark. Bigger icon + a real label + a rotating
-                animation that mirrors the actual state fix both. */}
+            )}
             <button
-              onClick={() => setOrientation((o) => (o === "portrait" ? "landscape" : "portrait"))}
-              disabled={covered || !deviceById(device).orientable}
-              title={
-                !deviceById(device).orientable
-                  ? "Pick Tablet or Phone to rotate"
-                  : orientation === "portrait"
-                    ? "Rotate to landscape"
-                    : "Rotate to portrait"
-              }
-              aria-label={orientation === "portrait" ? "Rotate to landscape" : "Rotate to portrait"}
-              aria-pressed={orientation === "landscape"}
-              className="flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium text-neutral-500 hover:bg-neutral-100 disabled:opacity-40"
+              onClick={() => setOverflowOpen((v) => !v)}
+              aria-haspopup="true"
+              aria-expanded={overflowOpen}
+              aria-label="More options"
+              className="rounded-full px-3 py-1.5 text-lg font-bold leading-none text-neutral-500 hover:bg-neutral-100"
             >
-              <span
-                aria-hidden
-                className={`text-base leading-none transition-transform ${orientation === "landscape" ? "rotate-90" : ""}`}
-              >
-                ⟳
-              </span>
-              <span className="hidden sm:inline">Rotate</span>
+              •••
             </button>
+            {overflowOpen && (
+              <div
+                role="menu"
+                aria-label="More options"
+                // Picking a tab shows the result right away — closing here
+                // reads as "done choosing." Device/Rotate/Invite/Publish stay
+                // open (a kid comparing device sizes, or a modal that's about
+                // to cover the screen anyway) — only the tab row closes it.
+                onClick={(e) => {
+                  if ((e.target as HTMLElement).closest("[data-close-overflow]")) setOverflowOpen(false);
+                }}
+                // z-50: the Idea mic tab's first-run coach popup (IdeaMicTab)
+                // is ALSO z-30 and renders later in the DOM (it's inside the
+                // preview area, after this header) — equal z-index falls
+                // back to paint order, so the coach card was winning and
+                // covering the menu (caught in the visual pass). This menu
+                // must always show on top of it while open.
+                className="absolute right-2 top-full z-50 mt-1 w-72 max-w-[calc(100vw-1rem)] rounded-kid border border-neutral-200 bg-white p-2 shadow-lg"
+              >
+                <div data-close-overflow className="flex flex-wrap items-center gap-1 border-b border-neutral-100 pb-2">
+                  {tabsGroup}
+                </div>
+                {deviceSwitcher && <div className="border-b border-neutral-100 py-2">{deviceSwitcher}</div>}
+                <div className="flex flex-col gap-1.5 pt-2">
+                  {inviteButton}
+                  {publishButton}
+                  <button
+                    data-close-overflow
+                    onClick={onClose}
+                    className="rounded-lg px-3 py-1.5 text-left text-sm text-neutral-600 hover:bg-neutral-100"
+                  >
+                    ✕ Close preview
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </header>
+      ) : (
+        <>
+          <header className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-2.5">
+            <div className="flex items-center gap-2">
+              {/* Mobile-only: the frame covers the whole screen there, so give
+                  an explicit way back to the conversation (✕ alone wasn't
+                  found). */}
+              <button
+                onClick={onClose}
+                className="rounded-lg px-2 py-1 text-sm font-medium text-neutral-600 hover:bg-neutral-100 md:hidden"
+                aria-label="Back to chat"
+              >
+                ← Chat
+              </button>
+              {tabsGroup}
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              {/* The Idea Queue chip (PRD-IDEA-QUEUE-V2 §4.2): the line's
+                  presence and state, visible from INSIDE the game. Hidden on
+                  desktop split view (the card is right there beside the
+                  panel); shown on mobile, where this panel covers the chat.
+                  A held line shows ⏸ in warn tint — a stalled queue must
+                  never be invisible. */}
+              {queueCount > 0 && (
+                <button
+                  onClick={() => setQueueOpen(true)}
+                  aria-label={
+                    queueHold
+                      ? `Your idea line is paused — ${queueCount} waiting`
+                      : `${queueCount} idea${queueCount === 1 ? "" : "s"} lined up`
+                  }
+                  title={queueHold ? "Your line is paused — tap to decide" : "Your ideas, lined up"}
+                  className={`rounded-full px-3 py-1.5 text-sm font-extrabold md:hidden ${
+                    queueHold
+                      ? "border-2 border-warn-500 bg-warn-50 text-warn-600"
+                      : "border-2 border-brand-300 bg-brand-50 text-brand-600"
+                  }`}
+                >
+                  {queueHold ? "⏸" : "⏳"} {queueCount}
+                </button>
+              )}
+              {inviteButton}
+              {publishButton}
+              {/* Full-screen toggle — the main view control for this panel,
+                  so it gets the prominent treatment (labeled pill, not a bare
+                  glyph). md+ only (mobile is already full screen). Disabled
+                  while the verify cover is up, same reason as the device
+                  switcher: the probes must measure the game at a stable
+                  size. */}
+              {onToggleExpand && (
+                <button
+                  onClick={onToggleExpand}
+                  disabled={covered}
+                  className="btn-ghost hidden !min-h-0 gap-1.5 !px-3 !py-1.5 text-sm font-semibold disabled:opacity-40 md:inline-flex"
+                  aria-label="Full screen"
+                  aria-pressed={false}
+                  title="Full screen"
+                >
+                  ⤢ Full Screen
+                </button>
+              )}
+              <button
+                onClick={onClose}
+                className="rounded-lg px-2 py-1 text-neutral-600 hover:bg-neutral-100"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+          </header>
+
+          <div className="flex items-center justify-between gap-2 border-b border-neutral-100 px-4 py-1.5">
+            <p className="hidden truncate text-xs text-neutral-400 sm:block">
+              Made by AI · runs safely in a sandbox
+            </p>
+            {/* Device switcher: "how does it look on a phone?" — resizes the
+                SAME iframe (no reload); disabled while the verify cover is up
+                so the probes always measure the game at panel size. */}
+            {deviceSwitcher}
+          </div>
+        </>
+      )}
 
       {/* PRD-PREVIEW-PANE §2 — an update is streaming in the chat: the game on
           screen is the PREVIOUS version, still fully playable. Say so, so it
@@ -549,6 +670,9 @@ export function ArtifactFrame({
                   onCoachDone={onCoachDone}
                   nudge={nudgeMic}
                   onNudgeShown={onNudgeShown}
+                  pendingDraft={pendingIdeaDraft}
+                  onDraftConsumed={onIdeaDraftConsumed}
+                  onInterrupted={onIdeaInterrupted ?? (() => {})}
                 />
               )}
             </div>

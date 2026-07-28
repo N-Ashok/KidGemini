@@ -20,7 +20,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { composeDictation } from "@/lib/speech-transcript";
-import { nextMicTabState, TAB_AUTO_TUCK_MS, type MicTabState } from "@/lib/idea-mic";
+import { initialMicTabState, nextMicTabState, TAB_AUTO_TUCK_MS, type MicTabState } from "@/lib/idea-mic";
 import { COACH_LINE } from "@/lib/idea-coach";
 import { MicRecoveryCard } from "./MicRecoveryCard";
 import { useSpeechInput } from "./useSpeechInput";
@@ -47,17 +47,42 @@ interface IdeaMicTabProps {
   nudge?: boolean;
   /** The reminder has played — never show it again. */
   onNudgeShown?: () => void;
+  /** A transcript interrupted by an unmount (e.g. a verify/repair cover)
+   *  last time round — restored into the review bar on this mount instead
+   *  of being lost. Consumed once; see onDraftConsumed. */
+  pendingDraft?: string | null;
+  /** pendingDraft has been picked up (restored + listening resumed) — the
+   *  parent should clear its held copy so a LATER unrelated remount doesn't
+   *  replay stale text. */
+  onDraftConsumed?: () => void;
+  /** Unmounting mid-capture (not a kid-initiated Done/Never mind): hand up
+   *  whatever transcript exists so far instead of discarding it. */
+  onInterrupted: (text: string) => void;
 }
 
 // Same silence gap as the composer's dictation nudge (Composer.tsx).
 const NUDGE_MS = 5000;
 // The wiggle-only reminder runs two wiggle cycles (globals.css) then rests.
 const RENUDGE_ANIM_MS = 3000;
+// Grows with the draft like the composer's textarea (Composer.tsx MAX_TEXTAREA_PX)
+// instead of a fixed 2 rows — a fixed box scrolled almost as soon as a kid said
+// more than a sentence, which read as the box being cramped rather than full.
+const MAX_DRAFT_TEXTAREA_PX = 120;
 
-export function IdeaMicTab({ onIdea, queued, coach, onCoachDone, nudge, onNudgeShown }: IdeaMicTabProps) {
-  const [tab, setTab] = useState<MicTabState>("tucked");
+export function IdeaMicTab({
+  onIdea,
+  queued,
+  coach,
+  onCoachDone,
+  nudge,
+  onNudgeShown,
+  pendingDraft,
+  onDraftConsumed,
+  onInterrupted,
+}: IdeaMicTabProps) {
+  const [tab, setTab] = useState<MicTabState>(() => initialMicTabState(pendingDraft));
   // Committed (finalized) speech for the CURRENT capture; interim rides on top.
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(() => pendingDraft?.trim() ?? "");
   // The line refused the last commit (full, trailing build row) — keep the
   // transcript and say why until the next successful action (PRD v2 §3.4).
   const [lineFull, setLineFull] = useState(false);
@@ -66,6 +91,7 @@ export function IdeaMicTab({ onIdea, queued, coach, onCoachDone, nudge, onNudgeS
   // controls) but still draggable if a game puts something there instead.
   const [topPct, setTopPct] = useState(8);
   const dragRef = useRef<{ startY: number; startPct: number; moved: boolean } | null>(null);
+  const draftAreaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const {
     isListening,
@@ -79,6 +105,15 @@ export function IdeaMicTab({ onIdea, queued, coach, onCoachDone, nudge, onNudgeS
   } = useSpeechInput((text) => setDraft((v) => (v ? `${v} ${text}` : text)));
 
   const display = composeDictation(draft, interim);
+
+  // Auto-grow (mirrors Composer.tsx) — the textarea grows with the draft up
+  // to MAX_DRAFT_TEXTAREA_PX before it scrolls, instead of a fixed 2 rows.
+  useEffect(() => {
+    const el = draftAreaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, MAX_DRAFT_TEXTAREA_PX)}px`;
+  }, [draft]);
 
   // ── First-run coach ────────────────────────────────────────────────────
   // The bubble text + demo animation ARE the onboarding — no auto voice-over
@@ -129,8 +164,44 @@ export function IdeaMicTab({ onIdea, queued, coach, onCoachDone, nudge, onNudgeS
     return () => clearTimeout(t);
   }, [tab, display]);
 
-  // Leaving the preview (unmount) mid-capture: stop the mic, drop the draft.
-  useEffect(() => () => discardAndStop(), [discardAndStop]);
+  // Resume an interrupted draft (BUG-FIX-LOG: a verify/repair cover used to
+  // unmount this tab mid-capture and silently drop whatever the kid was
+  // saying). `draft`/`tab` already restored it via useState initializers
+  // above — this just resumes the mic so speech keeps appending onto it
+  // seamlessly, and acks the parent so a later unrelated remount doesn't
+  // replay the same text. Runs once per mount, not on every render.
+  useEffect(() => {
+    if (pendingDraft?.trim()) {
+      clearError();
+      start();
+    }
+    onDraftConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Read inside the unmount cleanup below via a ref — `discardAndStop` is
+  // stable (empty deps in useSpeechInput), so that effect's cleanup closure
+  // is fixed at mount time; without a ref it would only ever see the EMPTY
+  // initial `display`, not whatever was actually said before the unmount.
+  const displayRef = useRef(display);
+  displayRef.current = display;
+  const onInterruptedRef = useRef(onInterrupted);
+  onInterruptedRef.current = onInterrupted;
+
+  // Leaving the preview (unmount) mid-capture — e.g. a verify/repair cover
+  // (ArtifactFrame's `covered`) coming up right as the kid is speaking: stop
+  // the mic, but hand up whatever was said so far instead of dropping it.
+  // Never auto-commits to the build queue — the parent only holds it so the
+  // NEXT mount can restore it into the review bar for the kid to edit/finish/
+  // discard themselves (PRD-IDEA-BUTTON.md §draft-recovery).
+  useEffect(
+    () => () => {
+      const text = displayRef.current.trim();
+      if (text) onInterruptedRef.current(text);
+      discardAndStop();
+    },
+    [discardAndStop],
+  );
 
   if (!isSupported) return null;
 
@@ -364,12 +435,17 @@ export function IdeaMicTab({ onIdea, queued, coach, onCoachDone, nudge, onNudgeS
               shows as a non-editable trailing hint since it's about to be
               overwritten by the recognizer anyway. */}
           <textarea
+            ref={draftAreaRef}
             aria-label="Your idea — tap to fix a typo"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="…"
             rows={2}
-            className="mt-2 w-full resize-none rounded-xl bg-brand-50 px-3 py-2 text-sm leading-snug text-neutral-800 outline-none placeholder:text-neutral-400 focus:ring-2 focus:ring-brand-500"
+            // Thin scrollbar for the rare case a draft still outgrows
+            // MAX_DRAFT_TEXTAREA_PX — a full OS scrollbar in this small card
+            // read as wasted space rather than "the box is full."
+            style={{ scrollbarWidth: "thin" }}
+            className="mt-2 max-h-[120px] w-full resize-none overflow-y-auto rounded-xl bg-brand-50 px-3 py-2 text-sm leading-snug text-neutral-800 outline-none placeholder:text-neutral-400 focus:ring-2 focus:ring-brand-500 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-brand-300"
           />
           {interim && (
             <p aria-live="polite" className="mt-1 px-1 text-xs text-neutral-400">

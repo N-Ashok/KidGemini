@@ -110,6 +110,29 @@ voice-over was UAT'd as intrusive/low-quality and removed; see BUG-FIX-LOG):
 - **Reduced motion:** no wiggle/typewriter/fly — static bubble; Hear it still
   works (still no auto voice).
 
+## 3c. Draft recovery across a verify/repair cover — added 2026-07-27
+
+`ArtifactFrame`'s verify/repair cover (`covered = state.phase !== "done"`) unmounts
+`IdeaMicTab` while it's up (restarts on **every** html change, not just the first
+generation — `usePreviewVerify.ts`). If a kid is mid-capture when that happens, the tab's
+unmount used to `discardAndStop()` unconditionally — the transcript vanished with no trace
+(BUG-FIX-LOG 2026-07-27, "Idea mic capture silently dropped by a verify/repair cover").
+
+**Owner decision:** don't auto-commit the interrupted text into the build queue — a
+mid-cutoff transcript is often just a fragment, and queuing it unreviewed risks a build
+attempt on garbage. Stage it for the kid to review instead, reusing the tab's existing
+editable listening/review bar (§2) rather than a new surface.
+
+- On unmount mid-capture, `IdeaMicTab` hands the live transcript up via `onInterrupted(text)`.
+- The parent (`ChatPanel.container.tsx`) holds it in `pendingIdeaDraft` — survives the
+  unmount/remount cycle the cover drives.
+- On the tab's next mount, `initialMicTabState` (`lib/idea-mic.ts`) opens straight into
+  "listening" with the draft pre-filled and the mic resumed, so speech keeps appending onto
+  it — same "Next idea 🏁 Done / 🗑 Never mind" choices as any other capture. Never
+  auto-queued, never silently dropped.
+- `onDraftConsumed()` clears the parent's copy once picked up, so a later, unrelated
+  remount can't replay stale text.
+
 ## 4. Scale ceilings
 
 localStorage shared with chats; idea records are short strings — negligible

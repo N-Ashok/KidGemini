@@ -35,3 +35,11 @@ export function nextMicTabState(state: MicTabState, event: MicTabEvent): MicTabS
 
 /** Idle gap before a slid-out (not listening) tab tucks itself away. */
 export const TAB_AUTO_TUCK_MS = 6000;
+
+/** The tab's starting state on mount. A pendingDraft (BUG-FIX-LOG: a verify/
+ *  repair cover unmounting the tab mid-capture) reopens straight into the
+ *  review bar — the kid sees exactly what they said and can edit/finish/
+ *  discard it, never having it silently dropped OR auto-queued unreviewed. */
+export function initialMicTabState(pendingDraft: string | null | undefined): MicTabState {
+  return pendingDraft?.trim() ? "listening" : "tucked";
+}
