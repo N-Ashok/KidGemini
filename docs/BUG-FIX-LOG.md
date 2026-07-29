@@ -11,6 +11,35 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+### 2026-07-29 — The chat page's hover-to-reveal nav is gone: it cost a mouse trip and reclaimed no space at all
+
+- **Symptom (owner report):** "in ari chat the nav menu hides and when i go it reappears on
+  hovering, it is an useless thing let the nav menu be fixed."
+- **Surface area:** `src/components/ArNav.tsx`, and the rules' source of truth
+  `Ariantra-Platform/scripts/build-brand-css.mjs` (→ regenerated
+  `public/brand/ariantra-brand.v1.css`, synced into this repo).
+- **What it was:** shipped one day earlier (2026-07-28) to buy vertical space while chatting — on
+  `/` only, the nav slid off the top after 1.2s and came back on hovering a 16px invisible strip.
+- **Why it was wrong, beyond taste:** the hide was `transform: translateY(-100%)`, and a transform
+  **does not affect layout**. `<ArNav/>` is a direct flex child of `body`
+  (`display:flex; flex-direction:column`, `globals.css`), so its ~56px row stayed reserved whether
+  the bar was painted there or not. The chat area never grew by a single pixel — the feature moved
+  the bar out of sight, left its empty white strip behind, and charged a deliberate trip to the top
+  of the screen for every use. It also had no touch equivalent (the rules were gated
+  `@media (min-width: 861px)`), so desktop and mobile navigation diverged for no reason.
+- **Fix:** the nav renders a plain `.ar-nav` on every route again — the reveal state, timers,
+  pointer/focus handlers and hover strip are deleted from `ArNav.tsx`, and the modifier +
+  hover-strip rules are deleted from the brand-kit **generator** rather than left as dead CSS, so a
+  stray class name in any consuming app can't resurrect the behaviour. Regenerated with
+  `npm run build:brand` and synced with `scripts/sync-brand.sh` (never hand-edit `public/brand/`).
+- **Verified:** `ar-nav-fixed.test.ts` (6) pins both halves — no modifier/hover-strip class and no
+  reveal timers or pointer handlers in the component, and no such **rules** in the generated CSS
+  (prose in the header comment is allowed, a rule is not) — plus the nav itself is still styled, so
+  this removed a behaviour and not the bar. Typecheck + full suite + build clean.
+- **Lesson:** an auto-hide that uses `transform` on an in-flow element hides the pixels but keeps
+  the space. If a future change really needs the vertical room, it has to take the element **out of
+  flow** (`position: fixed` + compensating padding) and answer the touch story first.
+
 ### 2026-07-28 — "Ask, switch tab/chat, come back" lost the answer: tab-close recovery gave the server 6 seconds and deleted its own bookmark
 
 - **Symptom (owner report):** "if we ask something on a chat and leave when it is working to some

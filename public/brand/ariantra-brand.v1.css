@@ -161,32 +161,15 @@ html {
   .ar-signin-label { display: none; }
 }
 
-/* ── Chat-page hover-to-reveal nav (Ari "/" only, 2026-07-28) ───────────
-   Gated in React by pathname === "/" (Game's ArNav.tsx) — these classes are
-   only ever applied there, but the rules themselves are pathname-agnostic
-   CSS, scoped instead to desktop widths (mobile keeps the always-visible
-   slim bar + menu sheet below). .ar-nav--auto-hide sits ABOVE 860px only:
-   below that the tab bar is primary nav and the top bar must stay put. */
-@media (min-width: 861px) {
-  .ar-nav--auto-hide {
-    transform: translateY(-100%);
-    transition: transform var(--ar-duration-base);
-  }
-  .ar-nav--auto-hide.ar-nav--revealed {
-    transform: translateY(0);
-  }
-  /* Invisible strip pinned to the very top of the viewport — hovering it (or
-     tabbing focus into the hidden nav) reveals the bar. Sits one z-step above
-     the nav so it stays hoverable even while the nav is translated off-screen. */
-  .ar-nav-hover-strip {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 16px;
-    z-index: calc(var(--ar-z-nav) + 1);
-  }
-}
+/* ── The nav never auto-hides (removed 2026-07-29) ──────────────────────
+   A chat-page hover-to-reveal auto-hide lived here for one day
+   (.ar-nav--auto-hide / .ar-nav--revealed / .ar-nav-hover-strip, 2026-07-28).
+   The owner reversed it: a bar you have to go looking for costs a deliberate
+   trip to the top of the screen on every use, to save one 56px strip, and
+   hidden-until-hover has no touch equivalent so desktop and mobile diverged.
+   Deliberately NOT kept as dead CSS — leaving the rules would let a stray
+   class name in any consuming app silently resurrect the behaviour. Both
+   repos' navs now render a plain .ar-nav on every route. */
 
 /* ── Mobile menu icon + link sheet (chat page only, ≤860px) ─────────────
    The slim mobile bar keeps logo + CTA (existing behavior); this adds a

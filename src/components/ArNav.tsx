@@ -31,7 +31,7 @@
 // Environment-aware cross-links: `next dev` keeps navigation on localhost
 // (platform app on :3000 by convention) so local dev never ejects to prod.
 // NODE_ENV is inlined per build — server & client render identical hrefs.
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { signIn, useSession } from "@/lib/useAriantraSession";
 import { isTabActive, mobileTabs } from "@/lib/nav-tabs";
@@ -48,81 +48,29 @@ const STUDIO_URL = DEV ? "http://localhost:3000/studio" : "https://studio.ariant
 // means starting a new chat — "/" — not a cross-site hop (guarded by ar-cta.test.ts).
 const CREATE_URL = "/";
 
-// Auto-hide is chat-page-only (owner decision, unified-booping-moon plan
-// Feature 2): the nav eats vertical space while chatting/building, but on
-// every other Ari route (/parent, /wallet, /assets, ...) it must stay exactly
-// as it always has. `revealed` briefly shows the bar on first paint so the
-// hide isn't jarring, then auto-hides; hovering the top strip (or focusing
-// into the nav via keyboard) reveals it again, CSS-only (transform, no
-// remount) via `.ar-nav--auto-hide`/`.ar-nav--revealed` in the brand kit CSS.
-const INITIAL_REVEAL_MS = 1200;
-const HIDE_GRACE_MS = 300;
+// The nav is ALWAYS VISIBLE, on every route including the chat page.
+//
+// A chat-page-only hover-to-reveal auto-hide shipped 2026-07-28 to buy vertical
+// space while building; the owner reversed it a day later ("it is an useless
+// thing let the nav menu be fixed"), and they're right: a bar you have to go
+// looking for costs a deliberate mouse trip to the top of the screen every time,
+// while the space it saved was one 56px strip. Hidden-until-hover navigation
+// also has no touch equivalent, so the desktop and mobile behaviours diverged
+// for no reason. The reveal-modifier and hover-strip rules were deleted from the
+// brand kit generator too (Ariantra-Platform scripts/build-brand-css.mjs), so a
+// class name re-added here would style nothing. Both halves are pinned by
+// ar-nav-fixed.test.ts, which greps this file — hence no class names in prose.
 
 export function ArNav() {
   const { status } = useSession();
   const pathname = usePathname();
   const isChatRoute = pathname === "/";
 
-  const [revealed, setRevealed] = useState(false);
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
-  const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  function clearHideTimeout() {
-    if (hideTimeoutRef.current !== null) {
-      clearTimeout(hideTimeoutRef.current);
-      hideTimeoutRef.current = null;
-    }
-  }
-
-  function reveal() {
-    clearHideTimeout();
-    setRevealed(true);
-  }
-
-  function scheduleHide() {
-    clearHideTimeout();
-    hideTimeoutRef.current = setTimeout(() => setRevealed(false), HIDE_GRACE_MS);
-  }
-
-  // First paint: show briefly, then auto-hide. Only on the chat route — other
-  // routes never call setRevealed at all, so the class below never applies.
-  useEffect(() => {
-    if (!isChatRoute) return;
-    setRevealed(true);
-    const initialHide = setTimeout(() => setRevealed(false), INITIAL_REVEAL_MS);
-    return () => {
-      clearTimeout(initialHide);
-      clearHideTimeout();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isChatRoute]);
-
-  const navClassName = isChatRoute
-    ? `ar-nav ar-nav--auto-hide${revealed ? " ar-nav--revealed" : ""}`
-    : "ar-nav";
 
   return (
     <>
-      {/* Hover trigger: a thin invisible strip pinned to the top of the
-          viewport (desktop only via CSS, see @media in the brand kit) so
-          moving the pointer near the top reveals the hidden bar. */}
-      {isChatRoute && (
-        <div className="ar-nav-hover-strip" aria-hidden="true" onMouseEnter={reveal} />
-      )}
-      <header
-        className={navClassName}
-        {...(isChatRoute
-          ? {
-              onMouseEnter: reveal,
-              onMouseLeave: scheduleHide,
-              // React attaches focus/blur at the root as focusin/focusout, so
-              // these behave like "focus-within" for the whole header —
-              // tabbing into any link reveals the bar; tabbing out hides it.
-              onFocus: reveal,
-              onBlur: scheduleHide,
-            }
-          : {})}
-      >
+      <header className="ar-nav">
         <div className="ar-nav-inner">
           <a href={WWW_URL} aria-label="Ariantra AI Foundry" className="ar-logo">
             <span className="ar-logo-word">Ariantra</span>

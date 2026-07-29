@@ -202,6 +202,12 @@ npm run typecheck            # tsc --noEmit
 | `src/lib/gemini.ts` (hedge race/watchdog), `src/lib/wait-line.ts`, `src/lib/pending-turn.ts`, container bootstrap recovery | **`gemini.fallback.test.ts`** F.10–F.13 + **`wait-line.test.ts`** | Silent model → hedge race (slow model may still win, no restart); first answer token commits, loser abandoned; ONE hedge per turn, both-silent walks the chain; wait line escalates and never freezes; pending-turn bookmark round-trips, 24h TTL, corrupt-safe | — (feature; kid-wait ceiling) |
 | `src/lib/turn-recovery.ts`, `src/lib/turn-resume.ts` (`pollTurnOutcome`), `ChatPanel.container.tsx` (`recoverPendingTurn`, write-through effect, `runStream`'s `setPreview`/`setThinking`) | **`turn-recovery.test.ts`** (13) + **`turn-resume.test.ts`** outcome block | Leave-and-come-back: `keepBookmark` keeps the device bookmark ONLY while the turn is `running` **and** younger than `RECOVERY_MAX_AGE_MS` (a deploy leaves a `running` row nobody is generating) and drops it on done/error/unknown; `pollTurnOutcome` separates "still cooking" from "gone" (`running` vs `unknown` on budget exhaustion, per whether the server ever answered) and the default budget stays in MINUTES, never seconds; `applyRecoveredReply` targets the turn's own chat by `replyId` and reports `patched:false` for a chat/bubble absent on this device (caller fetches it) ; `noteStillWorking` is idempotent and swappable so a minutes-long poll can't stack notes | BUG-FIX-LOG 2026-07-28 (6-second recovery + bookmark deleted up front lost the answer) |
 
+## Shared chrome — the nav never auto-hides (2026-07-29)
+
+| When to run | Test | What it pins | Bug-fix ref |
+|---|---|---|---|
+| `src/components/ArNav.tsx`, `Ariantra-Platform/scripts/build-brand-css.mjs` (nav rules), after any `npm run build:brand` + `scripts/sync-brand.sh` | **`ar-nav-fixed.test.ts`** (6) | The nav renders a plain `.ar-nav` on every route: no reveal modifier, no hover strip, no reveal/hide timers, no pointer handlers on the header — AND the generated brand CSS defines no such rules, so a class name re-added in either repo would style nothing (prose in the CSS header comment is allowed; a rule is not). Also asserts the nav is still styled, so a future "cleanup" can't delete the bar while satisfying the negatives | BUG-FIX-LOG 2026-07-29 (hover-to-reveal cost a mouse trip and reclaimed no space — `transform` doesn't affect layout) |
+
 ## Community Help 🆘 + 📚 gallery (2026-07-28, docs/PRD-COMMUNITY-HELP.md)
 
 | When to run | Test | What it pins | Bug-fix ref |
