@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Re-paint the Kenney Blocky Characters atlas into football kits (2026-07-26,
-docs/2026-07-26_PRD_SportsAssets.md §2.2).
+"""Re-paint the Kenney Blocky Characters atlas into sports kits (2026-07-26,
+docs/2026-07-26_PRD_SportsAssets.md §2.2; cricket whites added 2026-07-29,
+docs/2026-07-29_PRD_CricketAssets.md).
 
 Input: the kit's texture-b.png (character-b, "man": red top + blue jeans).
 Outputs (deterministic — the append-only asset host depends on stable bytes):
   footballer       — red jersey kept, jeans re-painted white (shorts/socks)
   footballer_blue  — jersey re-hued blue, jeans re-painted white
+  cricketer        — BOTH jersey and jeans drained to white (cricket whites)
 
 Color rules were measured off the actual atlas (probe session 2026-07-26):
   jersey red  hue ~355-360, sat ~0.67   → cleanly separable from
@@ -14,7 +16,7 @@ Color rules were measured off the actual atlas (probe session 2026-07-26):
   hair        hue ~240,     sat ~0.13 (low sat ⇒ untouched)
 Shading survives because only hue/sat move; value is preserved.
 
-Usage: retexture-footballer.py <in.png> <out.png> red|blue
+Usage: retexture-footballer.py <in.png> <out.png> red|blue|whites
 """
 import colorsys
 import sys
@@ -38,8 +40,8 @@ def is_jeans(h: float, s: float) -> bool:
 
 def main() -> None:
     src, dest, kit = sys.argv[1], sys.argv[2], sys.argv[3]
-    if kit not in ("red", "blue"):
-        raise SystemExit(f"kit must be red|blue, got {kit!r}")
+    if kit not in ("red", "blue", "whites"):
+        raise SystemExit(f"kit must be red|blue|whites, got {kit!r}")
     im = Image.open(src).convert("RGBA")
     px = im.load()
     w, h = im.size
@@ -50,6 +52,11 @@ def main() -> None:
             if is_jeans(hue, sat):
                 # Jeans → white shorts and socks: drain the color, lift the
                 # value a touch, keep the shading gradient.
+                nr, ng, nb = colorsys.hsv_to_rgb(hue, sat * 0.06, min(val * 1.25, 0.96))
+            elif kit == "whites" and is_jersey(hue, sat):
+                # Cricket whites: same drain as the trousers above, so top and
+                # bottom match. Value is preserved, so Kenney's baked shading
+                # (and therefore the fold/crease detail) survives.
                 nr, ng, nb = colorsys.hsv_to_rgb(hue, sat * 0.06, min(val * 1.25, 0.96))
             elif kit == "blue" and is_jersey(hue, sat):
                 nr, ng, nb = colorsys.hsv_to_rgb(BLUE_KIT_HUE, sat, val)

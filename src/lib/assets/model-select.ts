@@ -36,6 +36,15 @@ export function peopleModels(available: ReadonlySet<string>): string[] {
   return modelsWithRig("kenney_blocky", available);
 }
 
+/** The soldier characters (Quaternius CharacterArmature, 2026-07-29 military
+ *  batch 2). A SEPARATE rig from the Kenney people with entirely different
+ *  clip names — telling the model a soldier has a "sprint" or "emote-yes" clip
+ *  is exactly the confident-but-wrong instruction the rig split exists to
+ *  prevent, so they get their own prompt line. */
+export function soldierModels(available: ReadonlySet<string>): string[] {
+  return modelsWithRig("quaternius_soldier", available);
+}
+
 /** Genre triggers. Membership lives on the assets (asset-taxonomy.ts), so
  *  adding a model can no longer desync from selection or the prompt hints. */
 export const GENRES: readonly GenreDef[] = [
@@ -95,7 +104,21 @@ export const GENRES: readonly GenreDef[] = [
     // triggers are matched against their message, never rendered back out.
     id: "sports",
     label: "sports / football",
-    trigger: /\b(sports?|soccer|football(er)?s?|goals?|goal\s?keeper|penalt(y|ies)|kick(ing|s)?|strikers?|match(es)?|beyblades?|spinning\s?tops?|battle\s?tops?)\b/i,
+    // Cricket words added 2026-07-29. Deliberately NOT the bare words "ball",
+    // "run", "over" or "bat" — every other kind of game uses those, and
+    // over-triggering would drag the whole cricket set into unrelated prompts
+    // (pinned by test). "bat" alone also collides with the animal.
+    trigger: /\b(sports?|soccer|football(er)?s?|goals?|goal\s?keeper|penalt(y|ies)|kick(ing|s)?|strikers?|match(es)?|beyblades?|spinning\s?tops?|battle\s?tops?|cricket(ers?)?|wickets?|stumps?|bails?|batsm[ae]n|batters?|bowlers?|bowling|innings|sixers?|umpires?|googly|crease)\b/i,
+  },
+  {
+    // Military batch (2026-07-29, docs/2026-07-29_PRD_MilitaryAssets.md).
+    // "soldier"/"gun" are TRIGGER words, not model names: kids say them for a
+    // war game, and matching them routes the ask to the tanks and forts we DO
+    // ship. Triggers are matched against the child's message and never
+    // rendered back out, so this teaches no weapon the library doesn't have.
+    id: "military",
+    label: "army / battle vehicles",
+    trigger: /\b(army|armies|militar(y|ies)|tanks?|soldiers?|wars?|battles?|combat|troops?|bases?|bunkers?|turrets?|cannons?|artillery|forts?|fortress(es)?|sandbags?|barricades?|defen[cs]e|camo(uflage)?|guns?)\b/i,
   },
 ];
 

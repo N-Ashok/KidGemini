@@ -612,6 +612,63 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   mouth, and kick-as-impulse with friction; duel games (air hockey,
   battle tops) get paddle-half clamps and spin/velocity decay. Static and
   manifest-derived, so prompt caching is unaffected (~250 tokens)
+- **Military: tanks, armored vehicles, fortifications** (2026-07-29,
+  `docs/2026-07-29_PRD_MilitaryAssets.md`): 16 CC0 models — four visibly
+  distinct tanks (tank / tank_desert / tank_toy / tank_rusty, so "my tank vs
+  the enemy tank" has real sides), armored_truck, armored_pickup, turret,
+  turret_cannon, cannon, sandbags, sandbags_small, barricade, bunker,
+  watchtower, radar, chain_fence. New `military` genre + trigger (army, tank,
+  soldier, war, battle, base, turret, defence…). **Scope: vehicles and
+  fortifications only** — no soldier characters and no hand-held weapons, even
+  though CC0 versions exist; the batch sits beside the fantasy-siege set
+  (catapult, trebuchet) and inside the register `safety.config.ts` already
+  allows for cartoon tank games. A test enforces that scope. "soldier"/"gun"
+  Per-model byte budget raised 100 KB → 150 KB (owner decision) so the
+  realistic tanks could ship
+- **Military batch 2: soldiers + hand-held weapons** (2026-07-29, same PRD
+  §3e; owner reversed batch 1's scope — "it is all part of kids games these
+  days"): 20 more CC0 models — `soldier`, `hazmat`, rifle / assault_rifle /
+  sniper_rifle / shotgun / submachine_gun / pistol / revolver, rocket_launcher
+  / grenade_launcher / bazooka, grenade / landmine / bullets, flare_gun, plus
+  sci-fi laser_gun / space_rifle / space_pistol and a shield. **No
+  safety-policy change was needed** — `safety.config.ts` already treats
+  fictional weapons in a child's own game as not-dangerous and cartoon
+  video-game action as not-violence. The two soldiers are a **different rig**
+  from the Kenney people (Quaternius `CharacterArmature`: Idle, Run, Run_Gun,
+  Idle_Shoot, Jump, Wave, Death), so they get their own prompt clause that
+  teaches only the clips ALL of them have — `soldier` has no walk clip. The
+  catalog also tells the model weapons are separate objects to parent onto a
+  soldier
+- **Movement playbook + physics engine** (2026-07-29,
+  `docs/2026-07-29_PRD_Physics.md`; owner ask: "it don't follow driving
+  physics, rotating physics, jumping"): the prompt previously taught NOTHING
+  about motion outside the football playbook, so every car/jump/spin was
+  reinvented per turn. `PHYSICS_PROMPT_SECTION` now teaches delta-time
+  integration (with the `Math.min(delta, 0.05)` clamp that stops a
+  backgrounded tab teleporting the player through the floor), jump feel
+  (coyote time + variable height + faster fall), driving as speed+heading with
+  **turn rate scaled by speed** so a parked car can't pirouette, angular
+  velocity with decay, roll tied to `distance / radius`, and restitution with a
+  rest threshold. PLUS a real rigid-body engine — **cannon-es**, MIT, vendored
+  as the second immutable engine (`physics.{hash}.js`, 82 KB): a game opts in
+  with `<!--USES_PHYSICS-->` and imports from `cannon-es`, guarded by
+  `cannon-import-lint.ts`. The engine clause renders ONLY when the manifest
+  carries the bundle (never teach a dead import) and tells the model NOT to use
+  it for ordinary platformers/runners/driving, where the playbook maths feels
+  better and costs nothing. rapier3d was measured and rejected: 1.53 MB WASM
+  breaches the 2 MB first-load cap, and it is Apache-2.0
+- **Cricket set** (2026-07-29, `docs/2026-07-29_PRD_CricketAssets.md`):
+  cricket_bat, cricket_ball, wicket (stumps + bails as one model), cricket_pitch,
+  sight_screen, cricketer, trophy. **First-party CC0 — there was nothing to
+  download:** a 14-term sweep found ZERO CC0 cricket assets and only two CC-BY
+  bats at any license, so even relaxing the licence policy would not have
+  helped. Authored to regulation dimensions at 1 unit = 1 m (bat 0.85 m, ball
+  74 mm, wicket 0.2286 m wide, pitch 10 ft × 22 yd) so scenes look right without
+  the model guessing scale. The cricketer is Kenney character-b re-skinned into
+  whites — same mesh and rig, so it inherits the full blocky-character clip set.
+  Cricket words (cricket, wicket, stumps, batsman, bowler, innings, googly…)
+  added to the sports trigger; the CC0 baseball bats were deliberately NOT
+  reused, since a round bat reads as the wrong sport
 - **Retrieval-lite selection** (PRD §14, `src/lib/assets/model-select.ts`):
   the library is unbounded but each build-turn prompt teaches ≤ 30 models,
   picked by cheap regex — the iterated game's own USES_MODELS markers,

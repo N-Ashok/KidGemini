@@ -284,6 +284,72 @@ describe("the sports category (2026-07-26 batch) renders in the real catalog", (
   });
 });
 
+describe("the military category (2026-07-29 batch) renders in the real catalog", () => {
+  const section = modelsPromptSection(realManifest as AssetManifest);
+
+  it("has a military heading naming the tanks", () => {
+    // The heading is the genre LABEL ("army / battle vehicles"), not its id.
+    expect(section).toMatch(/army \/ battle vehicles: [^\n]*\btank\b/);
+    expect(section).toMatch(/\btank_desert\b/);
+    expect(section).toMatch(/\btank_toy\b/);
+  });
+
+  it("teaches the fortifications too, not just the vehicles", () => {
+    for (const name of ["turret", "sandbags", "bunker", "watchtower", "barricade"]) {
+      expect(section).toMatch(new RegExp(`\\b${name}\\b`));
+    }
+  });
+
+  it("teaches the soldiers' OWN clip names, and says they are not the people clips", () => {
+    expect(section).toMatch(/soldier models \([^)]*\bsoldier\b/);
+    expect(section).toMatch(/Run_Gun/);
+    expect(section).toMatch(/Idle_Shoot/);
+    expect(section).toMatch(/do NOT have the people clips/i);
+  });
+
+  it("never promises a walk clip — soldier has none, only hazmat does", () => {
+    // The union of two rig-mates is NOT the promise; the intersection is.
+    // `soldier` ships Idle/Run/Run_Gun/Idle_Shoot/Jump/Jump_Idle/Wave/Death
+    // and no Walk, so teaching "walk" would send the model looking for a clip
+    // that half the set lacks (verified against the staged GLBs, 2026-07-29).
+    const soldierClause = section.match(/The soldier models[\s\S]*?soldier\.add\(gun\)[^.]*\./)?.[0] ?? "";
+    expect(soldierClause).not.toBe("");
+    // The property is that Walk is never OFFERED as an available clip — the
+    // clause naming it in a negation ("there is no walk clip") is the point,
+    // so assert on the advertised clip list, not on the word appearing at all.
+    const advertised = soldierClause.match(/they carry ([^.]*)\./)?.[1] ?? "";
+    expect(advertised).toMatch(/Run_Gun/);
+    expect(advertised).not.toMatch(/\bwalk\b/i);
+    expect(soldierClause).toMatch(/no walk clip/i);
+    // \s+ between words: the prompt is a wrapped template literal and a
+    // re-wrap must not break this pin (same convention as the import test).
+    expect(soldierClause).toMatch(/Use\s+Run\s+for\s+ALL\s+movement/);
+  });
+
+  it("tells the model the clip names are armature-prefixed, so search don't string-match", () => {
+    expect(section).toMatch(/CharacterArmature\|Run/);
+    expect(section).toMatch(/never by exact string/i);
+  });
+
+  it("tells the model the weapons are separate objects to parent onto a soldier", () => {
+    expect(section).toMatch(/weapons are SEPARATE models/i);
+    expect(section).toMatch(/soldier\.add\(gun\)/);
+  });
+
+  it("the soldiers are NOT on the Kenney people clip line (different rig, different clips)", () => {
+    const peopleLine = section.match(/people models \(([^)]*)\)/)?.[1] ?? "";
+    expect(peopleLine).not.toMatch(/\bsoldier\b/);
+    expect(peopleLine).not.toMatch(/\bhazmat\b/);
+  });
+
+  it("none of the military vehicles is taught as a people-rig model (no walk clip to promise)", () => {
+    const peopleLine = section.match(/people models \(([^)]*)\)/)?.[1] ?? "";
+    for (const name of ["tank", "turret", "bunker", "armored_truck"]) {
+      expect(peopleLine).not.toMatch(new RegExp(`\\b${name}\\b`));
+    }
+  });
+});
+
 // The sports playbook (owner ask 2026-07-26): models alone produce the
 // "everyone chases the ball" game — the LLM needs the basic rules and the
 // team-AI pattern. Static (derived from the manifest, not the message), so

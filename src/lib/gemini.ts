@@ -7,6 +7,7 @@ import type { ChatMessage, ChatModel, ImageAttachment, StreamChunk, TokenUsage }
 import type { ChainSummary } from "@/types/model-ledger.types";
 import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
 import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection } from "./assets/prompt-catalog";
+import { PHYSICS_PROMPT_SECTION, physicsEnginePromptSection } from "./assets/physics-playbook";
 import { catalogGates, type CatalogGates } from "./assets/catalog-gate";
 import { multiplayerGate } from "./multiplayer-gate";
 import { MULTIPLAYER_PROMPT_SECTION } from "./multiplayer-prompt";
@@ -373,7 +374,7 @@ export function buildTurnSystemInstruction(
 ): string {
   const base = personaBasePrompt(persona);
   const sections = [
-    ...(gates.three ? [THREE_PROMPT_SECTION, modelsPromptSection()] : []),
+    ...(gates.three ? [THREE_PROMPT_SECTION, modelsPromptSection(), PHYSICS_PROMPT_SECTION, physicsEnginePromptSection()] : []),
     ...(gates.audio ? [audioPromptSection()] : []),
     ...(multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),
     ...(isEdit ? [GAME_EDIT_PROMPT_SECTION] : []),

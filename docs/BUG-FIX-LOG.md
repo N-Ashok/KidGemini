@@ -11,6 +11,43 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-07-29 — A vendor script silently DELETED a model from the manifest (`cannon` name collision)
+
+- **Symptom:** immediately after `scripts/vendor-cannon.mjs --upload` first ran,
+  three asset tests went red: *"the manifest carries every military model"*,
+  *"all of them sit in the military genre"*, and *"has no entry for a model that
+  does not exist"*. The `cannon` MODEL had vanished from `manifest.json`.
+- **Root cause:** the new physics-engine script wrote its entry as
+  `name: 'cannon'` and upserted with `findIndex(a => a.name === 'cannon')`. The
+  military asset batch (same day) ships a model *also* called `cannon` — the
+  wheeled artillery piece. The findIndex matched that model row and the engine
+  entry **replaced** it. Nothing was wrong with the asset itself: `cannon.51542e.glb`
+  was still on the host, correctly hashed and served; only its manifest row was gone.
+  Had it shipped, every game referencing `cannon` would have silently lost its model
+  (`loadModel` → null → placeholder), with no error anywhere.
+- **Fix:** three layers, because the name collision was the trigger but the
+  unguarded upsert was the real hazard.
+  1. The engine asset is named **`physics`**, not `cannon` — no collision possible.
+     Published as `physics.4eb81a.js`; lookups in `inject.ts`, `ensure-runtime.ts`
+     and `physics-playbook.ts` updated to match.
+  2. The upsert in `vendor-cannon.mjs` is **name+type qualified**.
+  3. **Regression test** (`manifest.test.ts`): asset names must be unique ACROSS
+     types — the durable guard, since it fails for ANY future `vendor-*.mjs` that
+     tries the same thing, not just this one.
+  The deleted row was restored by re-running `vendor-models.mjs --only=cannon --upload`
+  (deterministic: the object already existed on the append-only host, so it was
+  re-verified rather than re-uploaded).
+- **Verified:** manifest back to 201 models with `cannon` present as a `model`;
+  two engine rows (`three` 618 KB, `physics` 82 KB); full suite green.
+- **Impact / lesson:** the vendor scripts' stage-4 "run the contract tests" gate is
+  what caught this within seconds of the upload — it is not ceremony. Also note the
+  blast radius was bounded by the append-only host: the bad manifest never reached
+  a deploy, and no published game could have been corrupted, only future ones.
+  The orphaned `cannon.4eb81a.js` object stays on the host forever, unreferenced
+  and harmless — the documented cost of an append-only design.
+
+---
+
 ### 2026-07-29 — The chat page's hover-to-reveal nav is gone: it cost a mouse trip and reclaimed no space at all
 
 - **Symptom (owner report):** "in ari chat the nav menu hides and when i go it reappears on

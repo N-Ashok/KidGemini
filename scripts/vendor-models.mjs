@@ -36,7 +36,7 @@
 import { S3Client, PutObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { NodeIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
-import { dedup, prune, resample, simplify, meshopt } from '@gltf-transform/functions';
+import { dedup, prune, resample, simplify, meshopt, weld } from '@gltf-transform/functions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
@@ -51,7 +51,7 @@ const cacheDir = join(repo, '.assets-out/cache');
 const manifestPath = join(repo, 'src/lib/assets/manifest.json');
 
 const ASSET_HOST_ORIGIN = 'https://assets.ariantra.com';
-const MODEL_BUDGET_BYTES = 100_000; // keep in sync with BUDGET_BYTES.model (manifest.ts)
+const MODEL_BUDGET_BYTES = 150_000; // keep in sync with BUDGET_BYTES.model (manifest.ts) — raised 100 K → 150 K 2026-07-29, see the note there
 const CACHE_CONTROL = 'public, max-age=31536000, immutable'; // hash naming makes this safe (BUG_LOG #6: always explicit)
 
 // ── the curated set (Decision H: car, dino, tree, coin, rocket first) ────────
@@ -479,6 +479,172 @@ const MODELS = [
     keepAnimations: ['static', 'idle', 'walk', 'sprint', 'sit', 'drive', 'die', 'pick-up', 'emote-yes', 'emote-no', 'interact-right', 'interact-left', 'attack-kick-right', 'attack-kick-left'],
   })),
 
+  // ── Military batch (2026-07-29, docs/2026-07-29_PRD_MilitaryAssets.md).
+  // Owner ask: "more tanks and military 3D items". poly.pizza license-scanned
+  // 2026-07-29 across 40 military search terms (scripted: license section =
+  // publicdomain/zero); every entry below is CC0 and thumbnail-reviewed before
+  // pinning. SCOPE DECISION (owner, same session): VEHICLES + FORTIFICATIONS
+  // ONLY — no soldier characters and no hand-held weapons. The CC0 pool does
+  // contain rifle/bazooka/grenade-launcher/sniper props and Quaternius'
+  // "Character Soldier"/"SWAT" humanoids; they are deliberately NOT vendored.
+  // This keeps the batch inside the register safety.config.ts already blesses
+  // ("cartoon video-game action ... tank games with bloodless pop/vanish
+  // enemies is NOT violence") and beside the existing fantasy-siege set
+  // (catapult, trebuchet, ballista, battering_ram) rather than adding modern
+  // firearms to a 6-12yo catalog. Re-read that decision before extending.
+  //
+  // Rejected after the thumbnail pass, so nobody re-adds them: /m/j59k7ctnZM
+  // ("Tank" — actually propane cylinders), /m/Jzj8dz4Cj0 ("Short Cannon" —
+  // actually a shotgun), the six Quaternius "Barracks" (fantasy-town temples,
+  // not military), /m/44e04449 + /m/af9ebe34 watch towers (medieval stone —
+  // the library already has `tower`). No CC0 jeep, humvee, APC, fighter jet,
+  // hangar or army tent exists anywhere in the pool; ground cover comes from
+  // the armored vehicles, air from the existing helicopter/rocket/spaceship.
+  ...[
+    // Four tanks so a battle has visibly distinct SIDES (a kid saying "my tank
+    // vs the enemy tank" needs two meshes, not one recolored at runtime).
+    ['tank', 'cW3zvvkMOM', '58c387b2-636f-49dc-a900-13b0852717d6'],          // olive, classic
+    ['tank_desert', 'FA5daiyZQq', '4a40c214-87f9-4cdb-bc72-003c96f49f76'],   // sand
+    ['tank_toy', 'Dc4k4CooN3', '2568b2cb-58e0-49d8-9d3b-6f208ad281c7'],      // yellow cartoon
+    // Lands at 150,348 B welded — 348 B over the line. It is flat-shaded so
+    // simplify() barely bites (ratio 0.25 and 0.6 give the same output), but
+    // the ~1 KB it does shave is enough. Not a budget-line judgement call:
+    // 149.4 KB is under 150,000 B, full stop.
+    ['tank_rusty', 'uYHpj7lz1J', 'c0135fb4-3307-4c0f-a439-86ceafedc4c7', 0.6], // dark red, reads "enemy"
+    // The one model here simplify() actually bites on (it is smooth-shaded, so
+    // weld finds edges to collapse): 153.3 KB raw → 126.5 KB at ratio 0.5.
+    ['armored_truck', 'VvX8nmoCN5', '55c7dea2-0251-457b-b8e3-8e9eb07aa4cc', 0.5],
+    ['armored_pickup', 'RUwMItmU4B', 'cc992b7f-3e7f-474e-8e45-f80b72010669'],
+    ['turret', 'hThPXDCbwl', '730a54af-3785-4d23-8efc-1560ed61e0d3'],        // twin-gun dome
+    ['turret_cannon', 'mNJ6poH7Cp', '5669a490-372e-41a6-ac5f-b8ca5b69e4a5'], // single big barrel
+    ['cannon', 'qIAvoaawib', '8054a1bd-2117-41cf-be71-31b6cb2d2ef2'],
+    ['sandbags', 'LW3jwpPfiN', '96654c1e-dbc8-4bbc-a1c0-0dfacd8e9d93'],
+    ['sandbags_small', 'iHyRewQQcN', '00e71997-0e9f-4083-9507-3935639996c7'],
+    ['bunker', 'UyH95ZAeJ2', 'f8e09790-8770-4cad-91f0-edefd14eb34f'],
+    ['watchtower', 'sbaM8I229r', '5d56ff95-db7a-43d6-997f-e9eea3f13f53'],
+    ['radar', 'V7XQDxF8JC', 'ac218d89-a903-4cc1-aa32-bd70262cda76'],
+    ['chain_fence', 'qWKhREFj7H', '94d06743-b682-4a86-9bba-499c351282b7'],   // base perimeter
+  ].map(([name, slug, uuid, simplifyRatio]) => ({
+    name,
+    source: { kind: 'url', url: `https://static.poly.pizza/${uuid}.glb` },
+    sourceUrl: `https://poly.pizza/m/${slug}`,
+    ...(simplifyRatio ? { simplifyRatio } : {}),
+    // keepAnimations: [] drops EVERY clip. The Quaternius tanks ship a rigged
+    // TankArmature with Forward/Backwards/TurningLeft/TurningRight drive clips
+    // that cost ~40 KB and blow the 100 KB budget (tank probed at 138,912 B
+    // with them, 2026-07-29) — while a kid's game drives a tank by moving
+    // position/rotation, never by playing a clip. Dropping them also lets
+    // prune() remove the now-unused Skin, which is what puts these under
+    // budget AND re-enables simplify() (it no-ops on skinned meshes — the
+    // documented Shiba Inu/horse rejection class). Nothing in this batch is a
+    // character, so no clip promise is broken.
+    keepAnimations: [],
+  })),
+  // Kenney's barricade (its own kit page carries the CC0 License.txt); taken as
+  // a direct GLB rather than a kit zip because poly.pizza already hosts it.
+  { name: 'barricade', source: { kind: 'url', url: 'https://static.poly.pizza/23074192-32eb-4870-9cb3-c95648e4ea62.glb' }, sourceUrl: 'https://poly.pizza/m/3UZHUnkzTu' },
+
+  // ── Military batch 2: soldiers + weapons (2026-07-29, same PRD §3e).
+  // OWNER DECISION, same session, REVERSING the batch-1 scope: "let there be
+  // soldiers, hand held weapons and grenade launchers — it is all part of kids
+  // games these days." So the humanoids and the weapon props that batch 1
+  // deliberately skipped are now vendored. This needs NO safety-config change:
+  // safety.config.ts already reads "fictional weapons inside a game a child is
+  // making/playing are NOT dangerous acts" and "cartoon video-game action
+  // (space shooters, sword adventures, tank games with bloodless 'pop/vanish'
+  // enemies) is NOT violence" — the batch lands inside the existing policy
+  // rather than moving it. All CC0, all thumbnail- + render-reviewed.
+  ...[
+    ['rifle', 'neEjwx9bBJ', 'da83f4f9-7a4e-4739-9033-79d688aa3b5e'],
+    ['assault_rifle', 'Bgvuu4CUMV', '9a0e478c-de82-4773-9b70-a0219bb0057c'],
+    ['sniper_rifle', 'i65hEldsw6', '2def4aa0-1f3a-40dd-aa92-0661ce39ae50'],
+    ['shotgun', 'DcNE0HVdW8', '032e6589-3188-41bc-b92b-e25528344275'],
+    ['pistol', '1vBdqOfUNd', '01cd757e-2fbc-4a2d-a96f-505a6fbd6924'],
+    ['revolver', '9C26wSpMS0', '9e728565-67a3-44db-9567-982320abff09'],
+    ['submachine_gun', '7ehatxr7FY', 'fb8ae707-d5b9-4eb8-ab8c-1c78d3c1f710'],
+    ['rocket_launcher', 'GCqUvqleqN', '4b445cbf-38b6-43f3-afd6-32d88e8f074b'],
+    ['grenade_launcher', 'ZKvWhvu4tV', 'bcbc44eb-76f2-4282-8817-7c81fa0d5eb4'],
+    ['grenade', 'xnuUzBTsUg', 'd3a086a7-e545-4cc0-a279-7cd2da2020b8'],
+    ['landmine', 'PtqkseZo9O', '81a6a677-60f1-4e24-ae34-ac4e78dcb0e0'],
+    ['flare_gun', '44H9OBUqTC', '9ec52cda-c918-43f0-b7af-354e7fe96c37'],
+    ['laser_gun', 'Nl8qWErOw2', '8a1950c4-4bda-46ae-a9e3-baacddca5d59'],
+    ['space_rifle', 'j40c8VDdAQ', '78846e47-3be2-48f2-a7ce-6b50c09358bb'],
+    ['space_pistol', 'TuHM3CURcC', 'd65f40a0-25a1-4f74-b657-2dbe5e621b09'],
+    ['bullets', 'bTEYFxKHF9', 'd77c65f0-1e08-4085-a31d-2fed73d51315'],
+    ['shield', 'srN1KGAO7f', '60cc7b8e-0589-4f4b-a354-f6fef73a44bd'],
+  ].map(([name, slug, uuid]) => ({
+    name,
+    source: { kind: 'url', url: `https://static.poly.pizza/${uuid}.glb` },
+    sourceUrl: `https://poly.pizza/m/${slug}`,
+    keepAnimations: [], // static props — a game aims them by transform
+  })),
+  // The bazooka is CreativeTrio's (CC0 per its model page), the only one that
+  // reads as the classic shoulder tube rather than a sci-fi launcher.
+  { name: 'bazooka', source: { kind: 'url', url: 'https://static.poly.pizza/613e3b1b-d07c-496b-94a1-7c85b507bac4.glb' }, sourceUrl: 'https://poly.pizza/m/eJNzLpBsEt', keepAnimations: [] },
+
+  // Rejected on the render pass: riot_shield (CreativeTrio Police Shield) —
+  // it is a flat, near-black plane with no readable shield silhouette in 3D.
+  // Rejected over budget, recorded so nobody re-adds them: ammo_box
+  // (Pichuliru Ammo Can, 192.7 KB — `bullets` covers the pickup anyway);
+  // swat (388.2 KB even clip-trimmed — only 4 body meshes, but very dense,
+  // and skinned meshes are simplify()'s no-op); enemy_soldier (186.1 KB with
+  // the weapon rack dropped AND cut to 4 clips — mesh-dominated). The second
+  // "side" a battle needs is covered by hazmat, which reads as a visibly
+  // different character and fits.
+  //
+  // Soldier characters. Quaternius humanoids are a DIFFERENT rig from the
+  // Kenney blocky people (different clip names), so they get their own rig id
+  // in asset-taxonomy.ts — the shared-clips prompt line must never claim a
+  // soldier answers to the Kenney clip names. keepAnimations is set from the
+  // real clip list after the first dry run (it prints them).
+  ...[
+    ['soldier', 'PpLF4rt4ah', '1083c1d3-d1d4-4682-adf6-bc516d06ac84'],
+    ['hazmat', 'z3TSQYx1Kn', '484450a4-b76c-4e76-95d2-352337bb41e8'],
+  ].map(([name, slug, uuid]) => ({
+    name,
+    source: { kind: 'url', url: `https://static.poly.pizza/${uuid}.glb` },
+    sourceUrl: `https://poly.pizza/m/${slug}`,
+    // Untrimmed these are 337–454 KB (clip-dominated: 14–20 clips each incl.
+    // several near-duplicate idles). This is the set a kid's game actually
+    // calls, and it is IDENTICAL across all four so the shared-rig clip
+    // promise in the prompt holds. Names are segment-exact: 'Run_Gun' and
+    // 'Idle_Shoot' must be listed in full ('Run' alone does not match them).
+    keepAnimations: ['Idle', 'Walk', 'Run', 'Run_Gun', 'Idle_Shoot', 'Death', 'Jump', 'Wave'],
+    // Strip the bundled weapon rack — see dropMeshes in prepare(). Anchored on
+    // the exact mesh names Quaternius ships so a body part can never match.
+    dropMeshes: /^(Sniper(_2)?|SMG|AK|RocketLauncher|GrenadeLauncher|ShortCannon|Shotgun|Revolver(_Small)?|Pistol|Shovel|Knife_[12])$/,
+  })),
+
+  // ── Cricket batch (2026-07-29, docs/2026-07-29_PRD_CricketAssets.md).
+  // FIRST-PARTY, and not by preference: a poly.pizza license sweep (14 cricket
+  // terms, 2026-07-29) found ZERO CC0 cricket assets, and only two CC-BY bats
+  // at any license — no ball, no stumps, no player anywhere. So unlike the
+  // military batch there was simply nothing to download; relaxing the CC0
+  // policy would not have helped either. Built by
+  // scripts/author-first-party-models.mjs and dedicated CC0 (assets-src/LICENSE.md).
+  // The CC0 baseball bats were deliberately NOT reused: a round bat reads as
+  // the wrong sport instantly — the flat blade IS the cricket bat.
+  ...[
+    ['cricket_bat'], ['cricket_ball'], ['wicket'], ['cricket_pitch'], ['sight_screen'],
+  ].map(([name]) => ({
+    name,
+    source: { kind: 'local', dir: `assets-src/models/${name}` },
+    sourceUrl: 'https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md',
+  })),
+  // Kenney character-b re-skinned into cricket whites (mesh + rig untouched →
+  // identical clip set to the other blocky people, so the crowd/people prompt
+  // line stays true). Proof trail is the kenney.nl page, as for the footballers.
+  {
+    name: 'cricketer',
+    source: { kind: 'local', dir: 'assets-src/models/cricketer' },
+    sourceUrl: 'https://kenney.nl/assets/blocky-characters',
+    keepAnimations: ['static', 'idle', 'walk', 'sprint', 'sit', 'drive', 'die', 'pick-up', 'emote-yes', 'emote-no', 'interact-right', 'interact-left', 'attack-kick-right', 'attack-kick-left'],
+  },
+  // The one genuine CC0 find from the sweep that suits a cricket game. Rejected
+  // on the render pass: ad_board (/m/8G0qJ84VDS) — a standing A-frame easel,
+  // 4.2 x 5.5 m and taller than it is wide, nothing like a boundary hoarding.
+  { name: 'trophy', source: { kind: 'url', url: 'https://static.poly.pizza/b56b0827-c9f6-46e6-9a5d-160225686ee7.glb' }, sourceUrl: 'https://poly.pizza/m/fLy8KmmD1t', keepAnimations: [] },
+
   // Dragons (poly.pizza / Quaternius — CC0 confirmed on both model pages, 2026-07-14).
   {
     name: 'dragon',
@@ -585,9 +751,47 @@ async function prepare(model) {
       if (!model.keepAnimations.some((k) => matches(anim.getName(), k))) anim.dispose();
     }
   }
+  // dropMeshes: some source files are whole KITS, not one model — the
+  // Quaternius soldiers each carry a 12–14 mesh weapon rack (Sniper, SMG, AK,
+  // RocketLauncher, Knife…) parented to the hand bones, which is most of their
+  // 337–454 KB. We vendor those weapons as their own models, so the rack is
+  // pure waste here. Matching is on the mesh name; the now-empty bone nodes are
+  // harmless (and prune() clears them).
+  if (model.dropMeshes) {
+    const dropped = [];
+    for (const mesh of doc.getRoot().listMeshes()) {
+      if (model.dropMeshes.test(mesh.getName())) {
+        dropped.push(mesh.getName());
+        mesh.dispose();
+      }
+    }
+    console.log(`  dropped ${dropped.length} bundled meshes: ${dropped.join(', ')}`);
+  }
+  // A model with NO clips left has no use for its skin — and while a Skin
+  // survives, its JOINTS_0/WEIGHTS_0 attributes ride along in every vertex AND
+  // simplify() refuses the primitive outright (skinned meshes are its
+  // documented no-op — the Shiba Inu/horse rejection class). prune() alone
+  // won't drop it: the nodes still reference it. Stripping it here is what
+  // brought the military batch's tanks down ~12 KB each and is what lets
+  // simplifyRatio work on the armored vehicles at all (2026-07-29).
+  // Guarded on "zero clips remain" so no rigged character is ever touched.
+  if (doc.getRoot().listAnimations().length === 0) {
+    for (const node of doc.getRoot().listNodes()) node.setSkin(null);
+    for (const skin of doc.getRoot().listSkins()) skin.dispose();
+    for (const mesh of doc.getRoot().listMeshes()) {
+      for (const prim of mesh.listPrimitives()) {
+        for (const semantic of ['JOINTS_0', 'WEIGHTS_0']) prim.setAttribute(semantic, null);
+      }
+    }
+  }
   // resample drops redundant keyframes; simplifyRatio (optional) decimates
   // unskinned meshes; meshopt 'high' compresses everything.
-  const steps = [dedup(), prune(), resample()];
+  // weld merges vertices whose attributes ALREADY match (tolerance 1e-4), so
+  // it is visually lossless and leaves the node hierarchy alone — a game can
+  // still find and rotate a tank's turret child. It is also simplify()'s
+  // prerequisite. Added 2026-07-29: it is what brings tank_rusty from 150,348 B
+  // (348 over the raised line) to 146.8 KB.
+  const steps = [dedup(), prune(), resample(), weld({ tolerance: 1e-4 })];
   if (model.simplifyRatio) {
     steps.push(simplify({ simplifier: MeshoptSimplifier, ratio: model.simplifyRatio, error: 0.001 }));
   }

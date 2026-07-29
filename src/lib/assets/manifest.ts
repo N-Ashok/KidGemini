@@ -33,7 +33,17 @@ export interface AssetManifest {
 
 /** First-load download budgets per asset type, in bytes (PRD §8, Decision J). */
 export const BUDGET_BYTES: Record<AssetType, number> = {
-  model: 100_000,
+  // Raised 100 K → 150 K 2026-07-29 (owner decision, military batch) — keep in
+  // sync with MODEL_BUDGET_BYTES in scripts/vendor-models.mjs. The three
+  // realistic tanks land at 118–144 KB and are IRREDUCIBLE: they are
+  // flat-shaded, so simplify() cannot weld an edge and returns byte-identical
+  // output at every ratio down to 0.25 (probed 2026-07-29). Worst case first
+  // load stays inside the §8 2 MB cap: 650 K engine + 5 × 150 K = 1.4 MB.
+  // This deliberately re-opens size rejections made on the old line. All but
+  // one are still over (Penguin/Bunny ~154 K, Panda ~177 K, Shiba ~241 K,
+  // Deer/Fox ~260 K, Husky ~266 K, horses ~305 K); Turtle ~128 K is newly
+  // eligible and is logged in that PRD as a follow-up for the animals genre.
+  model: 150_000,
   sfx: 30_000,
   music: 400_000,
   // three.{hash}.js incl. GLTFLoader + MeshoptDecoder (models are gltfpack

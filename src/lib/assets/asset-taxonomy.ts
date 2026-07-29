@@ -19,7 +19,7 @@
  *  (prompt-catalog.ts) and pairs with a trigger regex in model-select.ts. */
 export const GENRE_IDS = [
   "people", "racing", "platformer", "space", "animals",
-  "castle", "city", "nature", "water", "food", "sports",
+  "castle", "city", "nature", "water", "food", "sports", "military",
 ] as const;
 export type GenreId = (typeof GENRE_IDS)[number];
 
@@ -29,7 +29,7 @@ export type GenreId = (typeof GENRE_IDS)[number];
  *  has a "walk" clip is exactly the kind of confident-but-wrong instruction
  *  that produces a broken game. Only a rig may drive the shared-clips prompt
  *  line. */
-export const RIG_IDS = ["kenney_blocky"] as const;
+export const RIG_IDS = ["kenney_blocky", "quaternius_soldier"] as const;
 export type RigId = (typeof RIG_IDS)[number];
 
 export interface TaxonomyEntry {
@@ -221,6 +221,64 @@ export const TAXONOMY: Record<string, TaxonomyEntry> = {
   footballer_blue: { genres: ["sports", "people"], tags: ["soccer", "football", "player", "goalkeeper", "opponent", "blue_team"], rig: "kenney_blocky" },
   battle_top: { genres: ["sports"], tags: ["beyblade", "spinner", "spinning", "top", "spin", "arena"] },
   blade_top: { genres: ["sports"], tags: ["beyblade", "spinner", "spinning", "top", "spin", "opponent"] },
+
+  // Cricket (2026-07-29, docs/2026-07-29_PRD_CricketAssets.md) — first-party,
+  // because the free 3D pool has no cricket at all. Lives in `sports` rather
+  // than a genre of its own: one heading keeps the catalog compact, and the
+  // trigger regex already separates cricket asks from football asks.
+  cricket_bat: { genres: ["sports"], tags: ["bat", "willow", "blade", "batting", "hit"] },
+  cricket_ball: { genres: ["sports"], tags: ["ball", "leather", "seam", "bowling", "red"] },
+  wicket: { genres: ["sports"], tags: ["stumps", "stump", "bails", "target", "bowled"] },
+  cricket_pitch: { genres: ["sports"], tags: ["pitch", "strip", "crease", "ground", "square"] },
+  sight_screen: { genres: ["sports"], tags: ["sightscreen", "screen", "panel", "boundary"] },
+  cricketer: { genres: ["sports", "people"], tags: ["batsman", "batter", "bowler", "fielder", "whites", "player"], rig: "kenney_blocky" },
+  trophy: { genres: ["sports"], tags: ["cup", "prize", "champion", "winner", "award"] },
+
+  // Military batch (2026-07-29, docs/2026-07-29_PRD_MilitaryAssets.md).
+  // Vehicles + fortifications only — see the scope guard in the test file
+  // before adding a soldier or a hand-held weapon here.
+  tank: { genres: ["military"], tags: ["army", "battle", "war", "tracks", "turret", "green"] },
+  tank_desert: { genres: ["military"], tags: ["army", "battle", "war", "sand", "desert", "enemy"] },
+  tank_toy: { genres: ["military", "platformer"], tags: ["army", "battle", "toy", "yellow", "cartoon"] },
+  tank_rusty: { genres: ["military"], tags: ["army", "battle", "war", "rusty", "enemy", "boss"] },
+  armored_truck: { genres: ["military", "racing"], tags: ["army", "armoured", "convoy", "lorry", "plated"] },
+  armored_pickup: { genres: ["military", "racing"], tags: ["army", "armoured", "jeep", "buggy", "plated"] },
+  turret: { genres: ["military", "castle"], tags: ["gun", "defence", "defense", "emplacement", "shoot"] },
+  turret_cannon: { genres: ["military", "castle"], tags: ["gun", "defence", "defense", "emplacement", "artillery"] },
+  cannon: { genres: ["military", "castle"], tags: ["artillery", "fire", "shoot", "siege", "wheels"] },
+  sandbags: { genres: ["military"], tags: ["sandbag", "cover", "trench", "barrier", "defence"] },
+  sandbags_small: { genres: ["military"], tags: ["sandbag", "cover", "trench", "barrier", "small"] },
+  barricade: { genres: ["military", "city"], tags: ["block", "roadblock", "barrier", "obstacle"] },
+  bunker: { genres: ["military", "space"], tags: ["base", "dome", "shelter", "hideout", "outpost"] },
+  watchtower: { genres: ["military", "castle"], tags: ["lookout", "guard", "tower", "sentry", "post"] },
+  radar: { genres: ["military", "space"], tags: ["dish", "satellite", "scanner", "antenna", "signal"] },
+  chain_fence: { genres: ["military", "city"], tags: ["fence", "wire", "perimeter", "chainlink", "compound"] },
+
+  // Military batch 2 — soldiers + hand-held weapons (2026-07-29, owner
+  // decision reversing batch 1's scope; PRD §3e). The two soldiers share the
+  // Quaternius CharacterArmature, which is a DIFFERENT clip set from the
+  // Kenney blocky people — hence their own rig id, so the prompt never
+  // promises a soldier answers to "sprint" or "emote-yes".
+  soldier: { genres: ["military", "people"], tags: ["army", "trooper", "infantry", "marine", "fighter"], rig: "quaternius_soldier" },
+  hazmat: { genres: ["military", "people"], tags: ["army", "enemy", "opponent", "suit", "scientist", "outbreak"], rig: "quaternius_soldier" },
+  rifle: { genres: ["military"], tags: ["gun", "weapon", "blaster"] },
+  assault_rifle: { genres: ["military"], tags: ["gun", "weapon", "ak", "automatic"] },
+  sniper_rifle: { genres: ["military"], tags: ["gun", "weapon", "sniper", "scope", "longshot"] },
+  shotgun: { genres: ["military"], tags: ["gun", "weapon", "blast"] },
+  pistol: { genres: ["military"], tags: ["gun", "weapon", "handgun", "sidearm"] },
+  revolver: { genres: ["military"], tags: ["gun", "weapon", "sixshooter", "cowboy"] },
+  submachine_gun: { genres: ["military"], tags: ["gun", "weapon", "smg", "rapid"] },
+  rocket_launcher: { genres: ["military"], tags: ["weapon", "launcher", "missile", "rocket"] },
+  grenade_launcher: { genres: ["military"], tags: ["weapon", "launcher", "grenade", "lob"] },
+  bazooka: { genres: ["military"], tags: ["weapon", "launcher", "rocket", "shoulder"] },
+  grenade: { genres: ["military"], tags: ["weapon", "throw", "explosive", "boom"] },
+  landmine: { genres: ["military"], tags: ["mine", "trap", "explosive", "hazard"] },
+  flare_gun: { genres: ["military", "water"], tags: ["flare", "signal", "rescue", "gun"] },
+  laser_gun: { genres: ["military", "space"], tags: ["laser", "zap", "blaster", "raygun", "lightning"] },
+  space_rifle: { genres: ["military", "space"], tags: ["scifi", "blaster", "laser", "gun", "future"] },
+  space_pistol: { genres: ["military", "space"], tags: ["scifi", "blaster", "laser", "gun", "future"] },
+  bullets: { genres: ["military"], tags: ["ammo", "ammunition", "pickup", "reload", "rounds"] },
+  shield: { genres: ["military", "castle"], tags: ["defend", "block", "guard", "armour"] },
 
   man: { genres: ["people", "city"], tags: ["guy", "dad", "father", "person", "human", "adult"], rig: "kenney_blocky" },
   woman: { genres: ["people", "city"], tags: ["lady", "mum", "mom", "mother", "person", "human", "adult"], rig: "kenney_blocky" },

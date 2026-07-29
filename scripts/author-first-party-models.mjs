@@ -276,6 +276,145 @@ async function buildFootballers() {
   }
 }
 
+
+// ── cricket (2026-07-29, docs/2026-07-29_PRD_CricketAssets.md) ──────────────
+// Authored rather than downloaded because the free 3D pool has essentially NO
+// cricket: a license sweep of poly.pizza (14 terms, 2026-07-29) found zero CC0
+// cricket assets, and only two CC-BY bats at ANY license — no ball, no stumps,
+// no player. Relaxing the CC0 policy would not have helped, so there was
+// nothing to vendor. Same conclusion, and same remedy, as the soccer set.
+
+const WILLOW = [0.86, 0.76, 0.55];
+const WILLOW_DARK = [0.72, 0.61, 0.42];
+const GRIP = [0.15, 0.15, 0.18];
+const BALL_RED = [0.62, 0.09, 0.12];
+const SEAM_WHITE = [0.94, 0.93, 0.90];
+const STUMP_WOOD = [0.90, 0.82, 0.62];
+const PITCH_TAN = [0.80, 0.73, 0.52];
+const CREASE = [0.96, 0.96, 0.94];
+
+/** Revolved solid from [r0,y0,r1,y1,color] bands — same lathe the battle tops
+ *  use, factored out here so the bat handle and the stumps share it. */
+function lathe(b, bands, seg = 10) {
+  const pt = (r, y, i) => {
+    const a = (i / seg) * Math.PI * 2;
+    return [r * Math.cos(a), y, r * Math.sin(a)];
+  };
+  for (const [r0, y0, r1, y1, color] of bands) {
+    for (let i = 0; i < seg; i++) {
+      const [a0, a1] = [pt(r0, y0, i), pt(r0, y0, i + 1)];
+      const [c0, c1] = [pt(r1, y1, i), pt(r1, y1, i + 1)];
+      if (r0 > 0) b.tri(a0, c0, c1, color);
+      if (r1 > 0) b.tri(a0, c1, a1, color);
+    }
+  }
+}
+
+/** Cricket bat: the FLAT-faced blade is what distinguishes it from a baseball
+ *  bat — a round bat reads as the wrong sport instantly, which is why the CC0
+ *  baseball bats were not reused. Blade down, handle up, origin at the middle. */
+function cricketBat() {
+  const b = meshBuilder();
+  b.box(0, -0.20, 0, 0.11, 0.56, 0.035, WILLOW);        // blade face
+  b.box(0, -0.20, -0.028, 0.075, 0.50, 0.025, WILLOW_DARK); // spine ridge (back)
+  b.box(0, 0.10, 0, 0.045, 0.06, 0.035, WILLOW_DARK);   // shoulder
+  lathe(b, [
+    [0.018, 0.13, 0.018, 0.34, GRIP],                    // handle grip
+    [0.018, 0.34, 0.021, 0.36, GRIP],                    // butt flare
+  ]);
+  b.box(0, 0.36, 0, 0.042, 0.012, 0.042, GRIP);          // butt cap
+  return b.build();
+}
+
+/** Cricket ball: red sphere with a raised white seam ring — the seam is the
+ *  read, so it is a real band of geometry, not a texture. */
+function cricketBall(radius = 0.036) {
+  const b = meshBuilder();
+  const RINGS = 16, SEG = 14;
+  const p = (lat, lon) => {
+    const th = (lat / RINGS) * Math.PI, ph = (lon / SEG) * Math.PI * 2;
+    // Seam ring sits slightly proud so it catches the light.
+    const r = radius * (lat === RINGS / 2 ? 1.025 : 1);
+    return [r * Math.sin(th) * Math.cos(ph), r * Math.cos(th), r * Math.sin(th) * Math.sin(ph)];
+  };
+  for (let lat = 0; lat < RINGS; lat++) {
+    // ONE band, not two: at RINGS=10 a two-band seam spanned 36 degrees and
+    // read as a beach-ball stripe in the render pass (2026-07-29). A single
+    // band at RINGS=16 is ~11 degrees — a stitch line, which is the point.
+    const seam = lat === RINGS / 2;
+    for (let lon = 0; lon < SEG; lon++) {
+      const [a, bb, c, d] = [p(lat, lon), p(lat, lon + 1), p(lat + 1, lon + 1), p(lat + 1, lon)];
+      const col = seam ? SEAM_WHITE : BALL_RED;
+      if (lat !== 0) b.tri(a, c, bb, col);
+      if (lat !== RINGS - 1) b.tri(a, d, c, col);
+    }
+  }
+  return b.build();
+}
+
+/** Wicket: three stumps + two bails as ONE model, so a game places a whole
+ *  wicket in a single loadModel call rather than positioning five pieces. */
+function wicket() {
+  const b = meshBuilder();
+  const H = 0.71, R = 0.017;
+  // A regulation wicket is 9in (0.2286 m) wide overall — the first pass used
+  // 0.055 spacing (0.14 m total), which the render pass showed as a wicket a
+  // ball could sail through. Outer stumps sit at +/-0.0955 so the outer faces
+  // land on 0.2286.
+  for (const x of [-0.0955, 0, 0.0955]) {
+    const bands = [[R, 0, R, H, STUMP_WOOD], [R, H, R * 0.6, H + 0.02, STUMP_WOOD]];
+    const sub = meshBuilder();
+    lathe(sub, bands);
+    const { positions, normals, colors } = sub.build();
+    for (let i = 0; i < positions.length; i += 9) {
+      const v = (k) => [positions[i + k] + x, positions[i + k + 1], positions[i + k + 2]];
+      b.tri(v(0), v(3), v(6), [colors[i], colors[i + 1], colors[i + 2]]);
+    }
+  }
+  for (const x of [-0.0478, 0.0478]) b.box(x, H + 0.030, 0, 0.105, 0.016, 0.016, WILLOW_DARK); // bails span stump-to-stump
+  return b.build();
+}
+
+/** The 22-yard strip with both popping creases — gives a cricket game a
+ *  correct playing surface instead of a guessed rectangle. */
+function cricketPitch() {
+  const b = meshBuilder();
+  b.box(0, 0, 0, 3.05, 0.02, 20.12, PITCH_TAN);         // 10ft x 22yd, scaled 1u = 1m
+  for (const z of [-8.84, 8.84]) {
+    b.box(0, 0.012, z, 2.64, 0.006, 0.05, CREASE);       // popping crease
+    b.box(0, 0.012, z + (z < 0 ? 1.22 : -1.22), 2.64, 0.006, 0.05, CREASE); // bowling crease
+  }
+  return b.build();
+}
+
+/** Sight screen — the white panel behind the bowler's arm. */
+function sightScreen() {
+  const b = meshBuilder();
+  b.box(0, 1.30, 0, 3.20, 2.20, 0.08, [0.95, 0.95, 0.93]);
+  for (const x of [-1.35, 1.35]) b.box(x, 0.35, 0, 0.10, 0.70, 0.10, [0.45, 0.45, 0.48]);
+  return b.build();
+}
+
+async function buildCricketer() {
+  const stage = join(cacheDir, 'blocky-characters');
+  const zipPath = join(cacheDir, 'kenney_blocky-characters_20.zip');
+  await mkdir(stage, { recursive: true });
+  if (!existsSync(zipPath)) {
+    const res = await fetch(BLOCKY_ZIP_URL);
+    if (!res.ok) throw new Error(`blocky zip → HTTP ${res.status}`);
+    await writeFile(zipPath, Buffer.from(await res.arrayBuffer()));
+  }
+  execFileSync('unzip', ['-o', '-j', zipPath, BLOCKY_GLB, BLOCKY_TEXTURE, '-d', stage], { stdio: 'pipe' });
+  const dir = join(outRoot, 'cricketer');
+  await mkdir(join(dir, 'Textures'), { recursive: true });
+  await copyFile(join(stage, 'character-b.glb'), join(dir, 'raw.glb'));
+  execFileSync('python3', [
+    join(repo, 'scripts/retexture-footballer.py'),
+    join(stage, 'texture-b.png'), join(dir, 'Textures/texture-b.png'), 'whites',
+  ], { stdio: 'inherit' });
+  console.log(`✓ cricketer: character-b + whites atlas → assets-src/models/cricketer/`);
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 await mkdir(outRoot, { recursive: true });
@@ -284,4 +423,10 @@ await writeGlb('soccer_goal', soccerGoal());
 await writeGlb('battle_top', battleTop(TOP_RED));
 await writeGlb('blade_top', battleTop(TOP_BLUE));
 await buildFootballers();
+await writeGlb('cricket_bat', cricketBat());
+await writeGlb('cricket_ball', cricketBall());
+await writeGlb('wicket', wicket());
+await writeGlb('cricket_pitch', cricketPitch());
+await writeGlb('sight_screen', sightScreen());
+await buildCricketer();
 console.log('✓ all first-party sources written — run scripts/vendor-models.mjs next');

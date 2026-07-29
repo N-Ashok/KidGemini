@@ -16,6 +16,10 @@
 /** Emitted as the very first thing in <body> when the model builds with Three.js. */
 export const THREE_MARKER = "<!--USES_THREE-->";
 
+/** Emitted when the game needs REAL rigid-body physics (2026-07-29). Maps the
+ *  "cannon-es" bare specifier in the import map, same contract as USES_THREE. */
+export const PHYSICS_MARKER = "<!--USES_PHYSICS-->";
+
 /** `<!--USES_MODELS: car, tree-->` — names resolve through the manifest. */
 export const MODELS_MARKER_RE = /<!--USES_MODELS:([a-z0-9_,\s]*)-->/gi;
 
@@ -29,7 +33,11 @@ export const AUDIO_MARKER_RE = /<!--USES_AUDIO:([a-z0-9_,\s]*)-->/gi;
  * A game with no markers passes through unchanged (=== identity).
  */
 export function stripAssetMarkers(text: string): string {
-  return text.split(THREE_MARKER).join("").replace(MODELS_MARKER_RE, "").replace(AUDIO_MARKER_RE, "");
+  return text
+    .split(THREE_MARKER).join("")
+    .split(PHYSICS_MARKER).join("")
+    .replace(MODELS_MARKER_RE, "")
+    .replace(AUDIO_MARKER_RE, "");
 }
 
 /** True when `text` contains any asset marker (the reconciliation only fires

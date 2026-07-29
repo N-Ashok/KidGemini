@@ -9,13 +9,13 @@
 import "server-only";
 import type { AssetEntry, AssetManifest } from "./manifest";
 import manifestJson from "./manifest.json";
-import { THREE_MARKER, MODELS_MARKER_RE, AUDIO_MARKER_RE } from "./markers";
+import { THREE_MARKER, PHYSICS_MARKER, MODELS_MARKER_RE, AUDIO_MARKER_RE, stripAssetMarkers } from "./markers";
 import { insertEarly, loadModelHelper, audioHelper } from "./runtime-helpers";
 
 // Markers are defined in ./markers (pure, non-server) so the edit-patch
 // reconciliation can share them without importing this server-only module.
 // Re-exported here for existing importers (prompt-catalog + inject tests).
-export { THREE_MARKER } from "./markers";
+export { THREE_MARKER, PHYSICS_MARKER } from "./markers";
 
 /** Per-game first-load transfer cap, cold cache (PRD §8, Decision J). */
 export const FIRST_LOAD_BUDGET_BYTES = 2_000_000;
@@ -60,22 +60,28 @@ function parseNames(html: string, re: RegExp): string[] {
  */
 export function injectAssets(html: string, manifest: AssetManifest = manifestJson as AssetManifest): InjectResult {
   const wantsThree = html.includes(THREE_MARKER);
+  const wantsPhysics = html.includes(PHYSICS_MARKER);
   const modelNames = parseNames(html, MODELS_MARKER_RE);
   const audioNames = parseNames(html, AUDIO_MARKER_RE);
-  if (!wantsThree && modelNames.length === 0 && audioNames.length === 0) {
+  if (!wantsThree && !wantsPhysics && modelNames.length === 0 && audioNames.length === 0) {
     return { html, referencedUrls: [], dropped: [] };
   }
 
   // Models imply the engine (the loader lives in it); audio alone does not.
   const needsEngine = wantsThree || modelNames.length > 0;
-  const engine = needsEngine ? manifest.assets.find((a) => a.type === "engine") : undefined;
-  if (needsEngine && !engine) throw new Error("manifest has no engine entry — run scripts/vendor-three.mjs --upload");
+  // By NAME, never by type: since 2026-07-29 the host serves TWO engine-type
+  // bundles (three + cannon), so find(type === "engine") would hand a game
+  // whichever row happens to come first in the manifest.
+  const engine = needsEngine ? manifest.assets.find((a) => a.type === "engine" && a.name === "three") : undefined;
+  if (needsEngine && !engine) throw new Error("manifest has no three engine entry — run scripts/vendor-three.mjs --upload");
+  const physics = wantsPhysics ? manifest.assets.find((a) => a.type === "engine" && a.name === "physics") : undefined;
+  if (wantsPhysics && !physics) throw new Error("manifest has no cannon engine entry — run scripts/vendor-cannon.mjs --upload");
 
   const modelsByName = new Map(manifest.assets.filter((a) => a.type === "model").map((a) => [a.name, a]));
   const audioByName = new Map(manifest.assets.filter((a) => a.type === "sfx" || a.type === "music").map((a) => [a.name, a]));
 
   const dropped: string[] = [];
-  let firstLoadBytes = engine?.bytes ?? 0;
+  let firstLoadBytes = (engine?.bytes ?? 0) + (physics?.bytes ?? 0);
 
   const models: AssetEntry[] = [];
   for (const name of modelNames) {
@@ -109,11 +115,14 @@ export function injectAssets(html: string, manifest: AssetManifest = manifestJso
     audio.push(entry);
   }
 
-  let out = html.split(THREE_MARKER).join("").replace(MODELS_MARKER_RE, "").replace(AUDIO_MARKER_RE, "");
+  let out = stripAssetMarkers(html);
 
   let markup = "";
-  if (engine) {
-    markup += `<script type="importmap">${JSON.stringify({ imports: { three: engine.url } })}</script>`;
+  if (engine || physics) {
+    const imports: Record<string, string> = {};
+    if (engine) imports.three = engine.url;
+    if (physics) imports["cannon-es"] = physics.url;
+    markup += `<script type="importmap">${JSON.stringify({ imports })}</script>`;
   }
   const table = Object.fromEntries([...models, ...audio].map((a) => [a.name, a.url]));
   if (modelNames.length > 0 || audioNames.length > 0) {
@@ -125,7 +134,12 @@ export function injectAssets(html: string, manifest: AssetManifest = manifestJso
 
   return {
     html: out,
-    referencedUrls: [...(engine ? [engine.url] : []), ...models.map((m) => m.url), ...audio.map((a) => a.url)],
+    referencedUrls: [
+      ...(engine ? [engine.url] : []),
+      ...(physics ? [physics.url] : []),
+      ...models.map((m) => m.url),
+      ...audio.map((a) => a.url),
+    ],
     dropped,
   };
 }

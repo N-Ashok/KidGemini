@@ -12,10 +12,13 @@
 
 import manifestJson from "./manifest.json";
 import type { AssetManifest } from "./manifest";
-import { THREE_MARKER } from "./markers";
+import { THREE_MARKER, PHYSICS_MARKER } from "./markers";
 import { insertEarly, loadModelHelper } from "./runtime-helpers";
 
 const IMPORTS_THREE_RE = /\bfrom\s*["']three["']/;
+// Physics games import the second engine by its own bare specifier; an
+// unmapped one dies on the import line exactly like an unmapped "three".
+const IMPORTS_CANNON_RE = /\bfrom\s*["']cannon-es["']/;
 const CALLS_LOADMODEL_RE = /\bloadModel\s*\(/;
 const LOADMODEL_ARG_RE = /\bloadModel\s*\(\s*["']([a-z0-9_]+)["']/gi;
 const ANY_IMPORTMAP_RE = /<script[^>]*type=["']importmap["'][^>]*>[\s\S]*?<\/script>/gi;
@@ -50,10 +53,16 @@ const CANVAS_FLOOR = `<style>/*${CANVAS_FLOOR_ID}*/canvas:not(:last-of-type){dis
 export function ensureAssetRuntime(html: string, manifest: AssetManifest = manifestJson as AssetManifest): string {
   const usesThree = IMPORTS_THREE_RE.test(html) || html.includes(THREE_MARKER);
   const usesLoadModel = CALLS_LOADMODEL_RE.test(html);
-  if (!usesThree && !usesLoadModel) return html; // plain 2D — identity
+  const usesPhysics = IMPORTS_CANNON_RE.test(html) || html.includes(PHYSICS_MARKER);
+  if (!usesThree && !usesLoadModel && !usesPhysics) return html; // plain 2D — identity
 
-  const engine = manifest.assets.find((a) => a.type === "engine");
-  if (!engine) return html; // can't help without an engine — fail-soft, unchanged
+  // By NAME, never by type — two engine-type rows exist since 2026-07-29.
+  const engine = manifest.assets.find((a) => a.type === "engine" && a.name === "three");
+  const physics = usesPhysics
+    ? manifest.assets.find((a) => a.type === "engine" && a.name === "physics")
+    : undefined;
+  // A physics-only 2D game needs no three bundle, so don't demand one.
+  if (!engine && !physics) return html; // can't help — fail-soft, unchanged
 
   let out = html;
   let markup = "";
@@ -63,11 +72,15 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
   // it's ours; a foreign/CDN map (a model-invented unpkg import map — the "still
   // broken" turns) or a second map alongside ours is stripped and replaced, because
   // a document may have only ONE import map (a second is discarded by the browser).
+  const imports: Record<string, string> = {};
+  if (engine && (usesThree || usesLoadModel)) imports.three = engine.url;
+  if (physics) imports["cannon-es"] = physics.url;
   const maps = [...out.matchAll(ANY_IMPORTMAP_RE)];
-  const singleOursAlready = maps.length === 1 && maps[0]![0].includes(engine.url);
+  const wanted = `<script type="importmap">${JSON.stringify({ imports })}</script>`;
+  const singleOursAlready = maps.length === 1 && maps[0]![0] === wanted;
   if (!singleOursAlready) {
     out = out.replace(ANY_IMPORTMAP_RE, "");
-    markup += `<script type="importmap">${JSON.stringify({ imports: { three: engine.url } })}</script>`;
+    markup += wanted;
   }
 
   // (2) redundant-canvas floor — CSS only, idempotent, never hides the sole canvas.

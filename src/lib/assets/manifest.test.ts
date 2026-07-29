@@ -14,6 +14,7 @@ import {
   validateManifest,
   sniffMagicBytes,
   type AssetEntry,
+  type AssetManifest,
 } from "./manifest";
 import manifest from "./manifest.json";
 
@@ -31,6 +32,31 @@ function entry(overrides: Partial<AssetEntry> = {}): AssetEntry {
     ...overrides,
   };
 }
+
+// Regression, 2026-07-29 (docs/BUG-FIX-LOG.md same date): scripts/vendor-cannon.mjs
+// keyed its manifest entry as `name: 'cannon'` and upserted with
+// `findIndex(a => a.name === 'cannon')`. The military batch ships a MODEL called
+// `cannon` (the wheeled artillery piece), so the engine row REPLACED the model —
+// the model vanished from the manifest while its GLB sat fine on the host. The
+// engine is now named `physics` and every vendor upsert is name+type qualified,
+// but the durable guard is this invariant: asset names are unique ACROSS types.
+// Without it, any future `vendor-*.mjs` can silently delete an asset again.
+describe("asset names are unique across the whole manifest (regression: 2026-07-29 cannon collision)", () => {
+  it("no two assets share a name, whatever their type", () => {
+    const byName = new Map<string, string[]>();
+    for (const a of (manifest as AssetManifest).assets) {
+      byName.set(a.name, [...(byName.get(a.name) ?? []), a.type]);
+    }
+    const collisions = [...byName.entries()].filter(([, types]) => types.length > 1);
+    expect(collisions).toEqual([]);
+  });
+
+  it("the physics engine does NOT reuse the cannon model's name", () => {
+    const assets = (manifest as AssetManifest).assets;
+    expect(assets.find((a) => a.name === "cannon")?.type).toBe("model");
+    expect(assets.find((a) => a.type === "engine" && a.name === "physics")).toBeDefined();
+  });
+});
 
 describe("hashedFileName / assetUrl — the name IS the immutability mechanism", () => {
   it("names a file {name}.{sha256 first 6}.{ext}", () => {

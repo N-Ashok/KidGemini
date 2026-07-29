@@ -175,6 +175,67 @@ describe("selectModelNames — sports genre (2026-07-26 batch)", () => {
   });
 });
 
+describe("selectModelNames — military genre (2026-07-29 batch)", () => {
+  const MILITARY = ["tank", "tank_desert", "tank_toy", "tank_rusty", "armored_truck", "turret", "sandbags", "bunker", "watchtower", "radar"];
+  const withMilitary: AssetManifest = { assets: [...BIG_NAMES, ...MILITARY].map(entry) };
+
+  it("a tank ask picks the tanks, not sea creatures", () => {
+    const picked = selectModelNames({ message: "make me a 3d tank battle game", history: [], manifest: withMilitary });
+    expect(picked).toContain("tank");
+    expect(picked).toContain("tank_desert");
+    expect(picked).not.toContain("shark");
+  });
+
+  it("'army' and 'soldier' words reach the set (kids say them for war games)", () => {
+    const picked = selectModelNames({ message: "a 3d army game with soldiers", history: [], manifest: withMilitary });
+    expect(picked).toContain("tank");
+    expect(picked).toContain("bunker");
+  });
+
+  it("a base-defence ask surfaces the fortifications", () => {
+    const picked = selectModelNames({ message: "3d game defending my base with turrets", history: [], manifest: withMilitary });
+    expect(picked).toContain("turret");
+    expect(picked).toContain("sandbags");
+  });
+
+  it("no military words → no military models (selection stays tight)", () => {
+    const picked = selectModelNames({ message: "3d game under the sea", history: [], manifest: withMilitary });
+    expect(picked).not.toContain("tank");
+    expect(picked).not.toContain("turret");
+  });
+});
+
+describe("selectModelNames — cricket (2026-07-29 batch)", () => {
+  const CRICKET = ["cricket_bat", "cricket_ball", "wicket", "cricketer", "cricket_pitch"];
+  const withCricket: AssetManifest = { assets: [...BIG_NAMES, ...CRICKET].map(entry) };
+
+  it("a cricket ask picks the cricket set, not sea creatures", () => {
+    const picked = selectModelNames({ message: "make me a 3d cricket game", history: [], manifest: withCricket });
+    expect(picked).toContain("cricket_bat");
+    expect(picked).toContain("cricket_ball");
+    expect(picked).toContain("wicket");
+    expect(picked).not.toContain("shark");
+  });
+
+  it("the words kids actually use reach it (batsman, bowler, stumps)", () => {
+    for (const msg of ["a game with a batsman", "3d bowler game", "knock the stumps over"]) {
+      expect(selectModelNames({ message: msg, history: [], manifest: withCricket })).toContain("cricket_bat");
+    }
+  });
+
+  it("a non-sports ask pulls no cricket gear at all", () => {
+    // NOTE the real granularity: cricket shares the `sports` GENRE with
+    // football, so any sports word (kick, goal, match) legitimately pulls the
+    // cricket set too — genres are the unit of selection, not individual
+    // sports. An earlier version of this test asserted "run and kick a ball"
+    // stays cricket-free; that was wrong about the design, not a bug. What DOES
+    // matter is that a game with no sports words gets none of it.
+    const picked = selectModelNames({ message: "3d game under the sea with a dragon", history: [], manifest: withCricket });
+    expect(picked).not.toContain("wicket");
+    expect(picked).not.toContain("cricket_bat");
+  });
+});
+
 describe("GENRES — data sanity", () => {
   const allModels = new Set(
     (manifest as AssetManifest).assets.filter((a) => a.type === "model").map((a) => a.name),

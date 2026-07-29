@@ -166,6 +166,56 @@ const EMOJI: Record<string, string> = {
   orc: "👹",
   businessman: "🕴️",
   ninja: "🥷",
+
+  // Military batch (2026-07-29). No weapon emoji on a kid-facing card — the
+  // cards lean on the vehicle/fortification, same as the models themselves.
+  tank: "🪖",
+  tank_desert: "🏜️",
+  tank_toy: "🛺",
+  tank_rusty: "⚙️",
+  armored_truck: "🛡️",
+  armored_pickup: "🚙",
+  turret: "🎯",
+  turret_cannon: "💥",
+  cannon: "🧨",
+  sandbags: "🧱",
+  sandbags_small: "🧳",
+  barricade: "🚧",
+  bunker: "🛖",
+  watchtower: "🗼",
+  radar: "📡",
+  chain_fence: "🔗",
+
+  // Military batch 2 (2026-07-29): soldiers + hand-held weapons.
+  soldier: "🪖",
+  hazmat: "🥽",
+  rifle: "🔫",
+  assault_rifle: "🔫",
+  sniper_rifle: "🎯",
+  shotgun: "🔫",
+  pistol: "🔫",
+  revolver: "🤠",
+  submachine_gun: "🔫",
+  rocket_launcher: "🚀",
+  grenade_launcher: "💣",
+  bazooka: "🚀",
+  grenade: "💣",
+  landmine: "⚠️",
+  flare_gun: "🎆",
+  laser_gun: "⚡",
+  space_rifle: "👾",
+  space_pistol: "🛸",
+  bullets: "📿",
+  shield: "🛡️",
+
+  // Cricket batch (2026-07-29).
+  cricket_bat: "🏏",
+  cricket_ball: "🔴",
+  wicket: "🪵",
+  cricket_pitch: "🟩",
+  sight_screen: "⬜",
+  cricketer: "🧢",
+  trophy: "🏆",
 };
 
 /** Every card gets a face — unknown names fall back to the toy box. */

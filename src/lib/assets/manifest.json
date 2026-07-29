@@ -1808,6 +1808,402 @@
       "license": "CC0",
       "sourceUrl": "https://kenney.nl/assets/blocky-characters",
       "sha256": "2a41d02fcae816ac4db69d40023dde0aa57da284e85d8a501d0d3bfe591c0ec4"
+    },
+    {
+      "name": "tank",
+      "type": "model",
+      "url": "https://assets.ariantra.com/tank.b0a38b.glb",
+      "bytes": 122472,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/cW3zvvkMOM",
+      "sha256": "b0a38b5bdea5187f629c8f5a043bb9223b074a4639146b5adcb5ee959bdae3a8"
+    },
+    {
+      "name": "tank_desert",
+      "type": "model",
+      "url": "https://assets.ariantra.com/tank_desert.81e27f.glb",
+      "bytes": 131688,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/FA5daiyZQq",
+      "sha256": "81e27fe320b494486c70271be486764f13a56b8beb3b51c7bbdac3f443d298c4"
+    },
+    {
+      "name": "tank_toy",
+      "type": "model",
+      "url": "https://assets.ariantra.com/tank_toy.1d6230.glb",
+      "bytes": 29256,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/Dc4k4CooN3",
+      "sha256": "1d6230c78edb71284224a9327de165d48e7009a51943f12d18e4fb40c1c7b157"
+    },
+    {
+      "name": "tank_rusty",
+      "type": "model",
+      "url": "https://assets.ariantra.com/tank_rusty.1a303d.glb",
+      "bytes": 149396,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/uYHpj7lz1J",
+      "sha256": "1a303d90682ccf17968eaf0fad5d36be2eac27e032917867987fb46f844638e8"
+    },
+    {
+      "name": "armored_truck",
+      "type": "model",
+      "url": "https://assets.ariantra.com/armored_truck.8f01d1.glb",
+      "bytes": 129580,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/VvX8nmoCN5",
+      "sha256": "8f01d16f48ec8bfde5fb27c049ae59081871e6353e138299c58fd758c5d667e0"
+    },
+    {
+      "name": "armored_pickup",
+      "type": "model",
+      "url": "https://assets.ariantra.com/armored_pickup.fb7c0c.glb",
+      "bytes": 127892,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/RUwMItmU4B",
+      "sha256": "fb7c0ce4115ebb552360801115d07a370d41430e93cef1ff9c94f365a2e9f546"
+    },
+    {
+      "name": "turret",
+      "type": "model",
+      "url": "https://assets.ariantra.com/turret.f5bedc.glb",
+      "bytes": 28356,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/hThPXDCbwl",
+      "sha256": "f5bedcd6f03a317509427f94f2af7dde6ca6c5c71d756611b1e1ae270ffed90d"
+    },
+    {
+      "name": "turret_cannon",
+      "type": "model",
+      "url": "https://assets.ariantra.com/turret_cannon.f1ee79.glb",
+      "bytes": 25908,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/mNJ6poH7Cp",
+      "sha256": "f1ee794ace6fb9b6d3aa743f418f7ce97c56ae6b196c3b58bf827ceb810d2c6e"
+    },
+    {
+      "name": "sandbags",
+      "type": "model",
+      "url": "https://assets.ariantra.com/sandbags.cb3665.glb",
+      "bytes": 34784,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/LW3jwpPfiN",
+      "sha256": "cb36654df380bd090972fb44fafaeea86667cc036fba4bf127a648eac2a8240b"
+    },
+    {
+      "name": "sandbags_small",
+      "type": "model",
+      "url": "https://assets.ariantra.com/sandbags_small.fcdc7a.glb",
+      "bytes": 19004,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/iHyRewQQcN",
+      "sha256": "fcdc7a7945399995f3bf6d2dac719eaf2c8bb640d923afc5b82e771a4a25c2d5"
+    },
+    {
+      "name": "bunker",
+      "type": "model",
+      "url": "https://assets.ariantra.com/bunker.35d29c.glb",
+      "bytes": 33848,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/UyH95ZAeJ2",
+      "sha256": "35d29c286dd58ac3b63493ac33bde2b897fb78d7504de62e312eec82d6b03dd6"
+    },
+    {
+      "name": "watchtower",
+      "type": "model",
+      "url": "https://assets.ariantra.com/watchtower.967996.glb",
+      "bytes": 8500,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/sbaM8I229r",
+      "sha256": "967996c668f59b24dc3874218fbd2b1a702bfc1c6b4812a2f5bed7e03f14b60c"
+    },
+    {
+      "name": "radar",
+      "type": "model",
+      "url": "https://assets.ariantra.com/radar.83379e.glb",
+      "bytes": 16104,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/V7XQDxF8JC",
+      "sha256": "83379ede12a87919854215309e73c2c5fa120d78ff6924ccc00dc4daf7280a69"
+    },
+    {
+      "name": "chain_fence",
+      "type": "model",
+      "url": "https://assets.ariantra.com/chain_fence.ef279c.glb",
+      "bytes": 82044,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/qWKhREFj7H",
+      "sha256": "ef279cb733cc379f833f1b380c0b067e3fd80d685dc37da769a8c3508e756ca5"
+    },
+    {
+      "name": "barricade",
+      "type": "model",
+      "url": "https://assets.ariantra.com/barricade.9ec173.glb",
+      "bytes": 14008,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/3UZHUnkzTu",
+      "sha256": "9ec1736d209be8f9b935eed06e2f8e5c3e87088fa3b452ee2f42cc9b1efe752f"
+    },
+    {
+      "name": "rifle",
+      "type": "model",
+      "url": "https://assets.ariantra.com/rifle.000fc5.glb",
+      "bytes": 21504,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/neEjwx9bBJ",
+      "sha256": "000fc594b93f8ff91957e040af08d30ace8445cdc9d7c96e94ca9cce50b2b8f1"
+    },
+    {
+      "name": "assault_rifle",
+      "type": "model",
+      "url": "https://assets.ariantra.com/assault_rifle.e4ab5f.glb",
+      "bytes": 26528,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/Bgvuu4CUMV",
+      "sha256": "e4ab5f9dbc4cf7c0c6067c1988e9405430e4988a44218e8b1a52c3e43eabc857"
+    },
+    {
+      "name": "sniper_rifle",
+      "type": "model",
+      "url": "https://assets.ariantra.com/sniper_rifle.3cf2c0.glb",
+      "bytes": 27844,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/i65hEldsw6",
+      "sha256": "3cf2c09b74ba7f4354cccc6b22cc9bc0cf9d74a2eee97fb4d8d5eaf27d13fd5c"
+    },
+    {
+      "name": "shotgun",
+      "type": "model",
+      "url": "https://assets.ariantra.com/shotgun.a46f05.glb",
+      "bytes": 15364,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/DcNE0HVdW8",
+      "sha256": "a46f05b265c6a041cacd2184c507e2c902af161f42a9eacbf7d72df29f68decd"
+    },
+    {
+      "name": "pistol",
+      "type": "model",
+      "url": "https://assets.ariantra.com/pistol.4a15f6.glb",
+      "bytes": 23384,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/1vBdqOfUNd",
+      "sha256": "4a15f631b0d0361305bc8559e22be678a71bcbe6d9739d030ef04071851e39ec"
+    },
+    {
+      "name": "revolver",
+      "type": "model",
+      "url": "https://assets.ariantra.com/revolver.48d691.glb",
+      "bytes": 23052,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/9C26wSpMS0",
+      "sha256": "48d691f45b68972f4453d257956656763ae9c98b1e8525e2ac4866b3137ffd95"
+    },
+    {
+      "name": "submachine_gun",
+      "type": "model",
+      "url": "https://assets.ariantra.com/submachine_gun.597fe0.glb",
+      "bytes": 19900,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/7ehatxr7FY",
+      "sha256": "597fe080db1a0bba31a0fe9363ad99b12394e1318985cb9dfc19051d2cc98b6d"
+    },
+    {
+      "name": "rocket_launcher",
+      "type": "model",
+      "url": "https://assets.ariantra.com/rocket_launcher.5504bb.glb",
+      "bytes": 16412,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/GCqUvqleqN",
+      "sha256": "5504bb4aacf4aba015330f5399c66dc2a199369427e9f9834db442d593acd118"
+    },
+    {
+      "name": "grenade_launcher",
+      "type": "model",
+      "url": "https://assets.ariantra.com/grenade_launcher.d9fcfa.glb",
+      "bytes": 17256,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/ZKvWhvu4tV",
+      "sha256": "d9fcfa5d6f549a28f118bb0b79c97a84df6359a8374624ec1b3d73b7358648f4"
+    },
+    {
+      "name": "grenade",
+      "type": "model",
+      "url": "https://assets.ariantra.com/grenade.980a1b.glb",
+      "bytes": 10528,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/xnuUzBTsUg",
+      "sha256": "980a1b2b00066b01551df34e94f59c546966779456cb9a18789469e0cce1ef42"
+    },
+    {
+      "name": "landmine",
+      "type": "model",
+      "url": "https://assets.ariantra.com/landmine.aa03ac.glb",
+      "bytes": 6920,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/PtqkseZo9O",
+      "sha256": "aa03ace2843bad1ad1e356d4b487688e6ee2d7fbc197b046eb1cb17ede6c565b"
+    },
+    {
+      "name": "flare_gun",
+      "type": "model",
+      "url": "https://assets.ariantra.com/flare_gun.3b0768.glb",
+      "bytes": 10516,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/44H9OBUqTC",
+      "sha256": "3b076803c418fbb11e0ee642ce30d044315eae201dbc4ece8feb09678ff00291"
+    },
+    {
+      "name": "laser_gun",
+      "type": "model",
+      "url": "https://assets.ariantra.com/laser_gun.42cb7d.glb",
+      "bytes": 37392,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/Nl8qWErOw2",
+      "sha256": "42cb7d8c8150fa8742439b725d425b252a51650b3191f6cd447df233e6fb9006"
+    },
+    {
+      "name": "space_rifle",
+      "type": "model",
+      "url": "https://assets.ariantra.com/space_rifle.00a2ee.glb",
+      "bytes": 46188,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/j40c8VDdAQ",
+      "sha256": "00a2ee07d2c2d704646f6c4596d0028768fe61f0008071098e77fd5e8985c15e"
+    },
+    {
+      "name": "space_pistol",
+      "type": "model",
+      "url": "https://assets.ariantra.com/space_pistol.102678.glb",
+      "bytes": 20608,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/TuHM3CURcC",
+      "sha256": "1026780f4831214c079ae700f4cffc2f99c21ec4350ddb9e0a998a54c7e44705"
+    },
+    {
+      "name": "bullets",
+      "type": "model",
+      "url": "https://assets.ariantra.com/bullets.237a99.glb",
+      "bytes": 14632,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/bTEYFxKHF9",
+      "sha256": "237a9998e7ed899add393842dfc72ca620f2b953dd7b2afe6b600567b85ef86b"
+    },
+    {
+      "name": "shield",
+      "type": "model",
+      "url": "https://assets.ariantra.com/shield.8e73fe.glb",
+      "bytes": 20032,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/srN1KGAO7f",
+      "sha256": "8e73fe74d63e0e2b3d539bb757ddec2b063f4bf7f984570dc1d341a29c94ff2b"
+    },
+    {
+      "name": "bazooka",
+      "type": "model",
+      "url": "https://assets.ariantra.com/bazooka.df1e9c.glb",
+      "bytes": 65420,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/eJNzLpBsEt",
+      "sha256": "df1e9ced4c858f4d24e56137b6018b18dc6bab7c6c3cc1037becacc1e2ec9aa1"
+    },
+    {
+      "name": "soldier",
+      "type": "model",
+      "url": "https://assets.ariantra.com/soldier.aabcac.glb",
+      "bytes": 139036,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/PpLF4rt4ah",
+      "sha256": "aabcacab487196ca338391ee6d034b206c5eebd57a97c7da31d3cfccc12835c6"
+    },
+    {
+      "name": "hazmat",
+      "type": "model",
+      "url": "https://assets.ariantra.com/hazmat.8ef415.glb",
+      "bytes": 143336,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/z3TSQYx1Kn",
+      "sha256": "8ef415df0317027ea6c3788d51b2232b78b983109847aa9f61a0dac351cf6c88"
+    },
+    {
+      "name": "cannon",
+      "type": "model",
+      "url": "https://assets.ariantra.com/cannon.51542e.glb",
+      "bytes": 20896,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/qIAvoaawib",
+      "sha256": "51542efe5a0835b9eb5db3c3d936439bd10ac3e9fa8a4a2f4975d266a130cd06"
+    },
+    {
+      "name": "physics",
+      "type": "engine",
+      "url": "https://assets.ariantra.com/physics.4eb81a.js",
+      "bytes": 84093,
+      "license": "MIT",
+      "sourceUrl": "https://github.com/pmndrs/cannon-es",
+      "sha256": "4eb81a910df9f4671e026c3e13fbf6a463b200452f6e47edf431ac4ea79aded2"
+    },
+    {
+      "name": "cricket_bat",
+      "type": "model",
+      "url": "https://assets.ariantra.com/cricket_bat.b7d52b.glb",
+      "bytes": 3436,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "b7d52b97320a69051a3738e905f5cbf1d799573d3843f6c17974aab820efe0b1"
+    },
+    {
+      "name": "cricket_ball",
+      "type": "model",
+      "url": "https://assets.ariantra.com/cricket_ball.52cb35.glb",
+      "bytes": 9000,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "52cb35d1dcccab6b784e2edebbf0112eba0d5561380305ab387f81e2085210fd"
+    },
+    {
+      "name": "wicket",
+      "type": "model",
+      "url": "https://assets.ariantra.com/wicket.3100cd.glb",
+      "bytes": 4072,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "3100cda14189fb30d3bf4fe430fb1d9bb31e1b5dc9cfd7ce8ba394197f79b411"
+    },
+    {
+      "name": "cricket_pitch",
+      "type": "model",
+      "url": "https://assets.ariantra.com/cricket_pitch.806e94.glb",
+      "bytes": 2884,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "806e9403e3001ccc4b8c68df4bef4a7a3a33b7541fadfadb150c1d574c712940"
+    },
+    {
+      "name": "sight_screen",
+      "type": "model",
+      "url": "https://assets.ariantra.com/sight_screen.07a002.glb",
+      "bytes": 2624,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "07a002b4149670cf02112d91951b590ef90f0efcdc2aaa02fb26ad9ab767e74a"
+    },
+    {
+      "name": "cricketer",
+      "type": "model",
+      "url": "https://assets.ariantra.com/cricketer.e16900.glb",
+      "bytes": 72744,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/blocky-characters",
+      "sha256": "e16900dca4c8fcfeeda40153778132720d35d1f830c5520b5cac314a6941b573"
+    },
+    {
+      "name": "trophy",
+      "type": "model",
+      "url": "https://assets.ariantra.com/trophy.325734.glb",
+      "bytes": 19888,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/fLy8KmmD1t",
+      "sha256": "325734025c45aaf0b180c644679c8a7ada2233df6f7cdb9c58f10bfa6571b2ef"
     }
   ]
 }

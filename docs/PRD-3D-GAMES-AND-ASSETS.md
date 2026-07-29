@@ -90,7 +90,11 @@ rectangles with no sound. Three gaps:
 ## 3. Non-goals
 
 - Kid-uploaded models/sounds (moderation surface; later).
-- Textures/skyboxes/HDRIs from image files, physics engines, multiplayer.
+- Textures/skyboxes/HDRIs from image files, multiplayer.
+  (**Physics engines: superseded 2026-07-29** — cannon-es is now vendored as a
+  second immutable engine, opt-in per game via `<!--USES_PHYSICS-->`. See
+  `docs/2026-07-29_PRD_Physics.md`; the non-goal stood for a year and the
+  reversal was an explicit owner decision, not drift.)
 - Third-party CDN references of any kind (the contract forbids them).
 - Voice/TTS, licensed/branded music. Photorealism — the bar is "delightful
   low-poly", not AAA.
@@ -361,7 +365,8 @@ becomes a transfer cap:
 | Thing | Budget | Enforced by |
 |---|---|---|
 | Engine (`three.{hash}.js`, incl. GLTFLoader) | ~550 KB, one-time per device, then cached across ALL games | bundle test |
-| Per model (GLB) | ≤ 100 KB | manifest test |
+| Physics engine (`physics.{hash}.js`, cannon-es — 2026-07-29, `docs/2026-07-29_PRD_Physics.md`) | 82 KB, only on games with `<!--USES_PHYSICS-->`; same immutable/cached-across-games contract | bundle test |
+| Per model (GLB) | ≤ 150 KB (raised from 100 KB, owner decision 2026-07-29 — `docs/2026-07-29_PRD_MilitaryAssets.md` §3c; worst case 650 K engine + 5 × 150 K = 1.4 MB, still inside the 2 MB row below) | manifest test |
 | Per SFX | ≤ 30 KB | manifest test |
 | Per music loop | ≤ 400 KB (aim ~200) | manifest test |
 | Per-game audio total | ≤ 500 KB | inject-time check |

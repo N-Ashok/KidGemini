@@ -106,6 +106,8 @@ const GENRE_MEMBERSHIP_BEFORE_MIGRATION: Record<GenreId, string[]> = {
   ],
   // Born after the migration (2026-07-26 sports batch) — nothing to preserve.
   sports: [],
+  // Likewise the 2026-07-29 military batch.
+  military: [],
 };
 
 describe("migrating genre membership onto the assets never DROPS a model", () => {
@@ -128,12 +130,14 @@ describe("migrating genre membership onto the assets never DROPS a model", () =>
 // a stadium — so deriving that line from the genre would tell the model a
 // grandstand can walk. Rig, not genre, is the only valid source.
 describe("shared-rig set is exactly the Kenney Blocky characters", () => {
-  it("is the 18 kit characters plus the 2 footballer re-skins (2026-07-26 sports batch) — every one shares the clip list", () => {
-    // The footballers are re-textured character-b meshes (same skeleton, same
-    // clips), so listing them here keeps the people-clips prompt line true.
+  it("is the 18 kit characters plus the 3 sports re-skins — every one shares the clip list", () => {
+    // The footballers (2026-07-26) and the cricketer (2026-07-29) are
+    // re-textured character-b meshes — same skeleton, same clips, only the
+    // atlas is re-painted — so listing them here keeps the people-clips prompt
+    // line true. 20 → 21 updated deliberately with the cricket batch.
     expect([...modelsWithRig("kenney_blocky", new Set(modelNames))].sort()).toEqual([
-      "businessman", "explorer", "footballer", "footballer_blue", "gamer", "girl", "grandpa",
-      "kimono_woman", "man", "mascot", "mech", "ninja", "orc", "pirate", "plumber",
+      "businessman", "cricketer", "explorer", "footballer", "footballer_blue", "gamer", "girl",
+      "grandpa", "kimono_woman", "man", "mascot", "mech", "ninja", "orc", "pirate", "plumber",
       "police_officer", "purple_mech", "scientist", "woman", "zombie",
     ]);
   });
@@ -178,6 +182,113 @@ describe("sports genre (2026-07-26 batch)", () => {
   it("kid vocabulary reaches the models via tags (beyblade → battle_top, keeper → footballer)", () => {
     expect(tagsOf("battle_top")).toContain("beyblade");
     expect(tagsOf("soccer_ball")).toContain("football");
+  });
+});
+
+// Military batch (2026-07-29, docs/2026-07-29_PRD_MilitaryAssets.md). Pinned by
+// name for the same reason as the sports set, PLUS a scope guard: the batch is
+// deliberately vehicles + fortifications ONLY (owner decision), so the tests
+// below also assert that no soldier character or hand-held weapon crept in on a
+// later pass.
+describe("military genre (2026-07-29 batch)", () => {
+  const MILITARY_MODELS = [
+    "tank", "tank_desert", "tank_toy", "tank_rusty",
+    "armored_truck", "armored_pickup",
+    "turret", "turret_cannon", "cannon",
+    "sandbags", "sandbags_small", "barricade",
+    "bunker", "watchtower", "radar", "chain_fence",
+  ];
+
+  it("the manifest carries every military model", () => {
+    for (const name of MILITARY_MODELS) expect(modelNames).toContain(name);
+  });
+
+  it("all of them sit in the military genre", () => {
+    const members = modelsInGenre("military", new Set(modelNames));
+    for (const name of MILITARY_MODELS) expect(members).toContain(name);
+  });
+
+  it("ships four visibly distinct tanks so a battle has two SIDES", () => {
+    const tanks = modelNames.filter((n) => n.startsWith("tank"));
+    expect(tanks.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("none of them claims the character rig (a tank has no walk clip)", () => {
+    const rigged = modelsWithRig("kenney_blocky", new Set(modelNames));
+    for (const name of MILITARY_MODELS) expect(rigged).not.toContain(name);
+  });
+
+  // Batch 2 (2026-07-29, same day): the owner reversed batch 1's
+  // vehicles-and-fortifications-only scope — "let there be soldiers, hand held
+  // weapons and grenade launchers … it is all part of kids games these days".
+  // The batch-1 scope-guard test that BANNED these names was deleted with that
+  // decision; this describe replaces it and pins the set that shipped instead.
+  it("carries the soldiers and the hand-held weapons (owner decision, 2026-07-29)", () => {
+    for (const name of ["soldier", "hazmat", "rifle", "assault_rifle", "sniper_rifle", "shotgun",
+      "pistol", "revolver", "submachine_gun", "rocket_launcher", "grenade_launcher", "bazooka",
+      "grenade", "landmine", "flare_gun", "laser_gun", "space_rifle", "space_pistol",
+      "bullets", "shield"]) {
+      expect(modelNames).toContain(name);
+    }
+  });
+
+  it("the soldiers carry their OWN rig, never the Kenney people rig", () => {
+    // Different skeleton, different clip names (Run_Gun/Idle_Shoot vs
+    // sprint/emote-yes). Cross-listing them would make the prompt promise
+    // clips that do not exist — the exact failure the rig split prevents.
+    const soldiers = modelsWithRig("quaternius_soldier", new Set(modelNames));
+    expect(soldiers).toEqual(expect.arrayContaining(["soldier", "hazmat"]));
+    const kenney = modelsWithRig("kenney_blocky", new Set(modelNames));
+    expect(kenney).not.toContain("soldier");
+    expect(kenney).not.toContain("hazmat");
+  });
+
+  it("the weapons are inert props — no rig, so no clip is ever promised", () => {
+    for (const weapon of ["rifle", "bazooka", "grenade", "shield"]) {
+      expect(TAXONOMY[weapon]?.rig).toBeUndefined();
+    }
+  });
+
+  it("kid vocabulary reaches the models via tags (army → tank, sandbag → sandbags)", () => {
+    expect(tagsOf("tank")).toContain("army");
+    expect(tagsOf("sandbags")).toContain("sandbag");
+    expect(tagsOf("watchtower")).toContain("lookout");
+  });
+});
+
+// Cricket batch (2026-07-29, docs/2026-07-29_PRD_CricketAssets.md). FIRST-PARTY:
+// the free 3D pool has no cricket at all (zero CC0, two CC-BY bats and nothing
+// else), so these are authored in-repo. Pinned by name so a pipeline or curation
+// edit cannot silently drop the set the cricket trigger promises.
+describe("cricket set (2026-07-29 batch)", () => {
+  const CRICKET = ["cricket_bat", "cricket_ball", "wicket", "cricket_pitch", "sight_screen", "cricketer", "trophy"];
+
+  it("the manifest carries the whole cricket set", () => {
+    for (const name of CRICKET) expect(modelNames).toContain(name);
+  });
+
+  it("all of it sits in the sports genre", () => {
+    const members = modelsInGenre("sports", new Set(modelNames));
+    for (const name of CRICKET) expect(members).toContain(name);
+  });
+
+  it("the cricketer carries the Kenney rig (a re-skin, so the clip promise is real)", () => {
+    // Same argument as the footballers: mesh and rig untouched, only the atlas
+    // is re-painted, so every blocky-character clip genuinely exists on it.
+    expect(modelsWithRig("kenney_blocky", new Set(modelNames))).toContain("cricketer");
+  });
+
+  it("the equipment does NOT claim the rig (a bat has no walk clip)", () => {
+    const rigged = modelsWithRig("kenney_blocky", new Set(modelNames));
+    for (const gear of ["cricket_bat", "cricket_ball", "wicket", "cricket_pitch", "sight_screen"]) {
+      expect(rigged).not.toContain(gear);
+    }
+  });
+
+  it("kid vocabulary reaches the set via tags (stumps → wicket, batsman → cricketer)", () => {
+    expect(tagsOf("wicket")).toContain("stumps");
+    expect(tagsOf("cricketer")).toContain("batsman");
+    expect(tagsOf("cricket_bat")).toContain("bat");
   });
 });
 

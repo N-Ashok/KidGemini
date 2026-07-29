@@ -8,7 +8,7 @@
 import type { AssetManifest } from "./manifest";
 import manifestJson from "./manifest.json";
 import { modelsInGenre } from "./asset-taxonomy";
-import { GENRES, peopleModels } from "./model-select";
+import { GENRES, peopleModels, soldierModels } from "./model-select";
 
 /**
  * The sports playbook (owner ask 2026-07-26): without it the model writes the
@@ -146,6 +146,7 @@ export function modelsPromptSection(
   if (models.length === 0) return "";
   const available = new Set(models.map((m) => m.name));
   const people = peopleModels(available);
+  const soldiers = soldierModels(available);
   const categories = categoryLines(available);
   const hasSports = modelsInGenre("sports", available).length > 0;
   return `**Ready-made 3D models**: for a 3D game you may ALSO use these
@@ -184,7 +185,13 @@ ${categories}
    excitement); "sprint" is the running clip, "walk" the walking one. For a
    crowd, call loadModel again for each person (the download is cached, so
    extras are free) — do NOT .clone() a person: cloned characters share one
-   skeleton and animate wrong. Each person needs their own AnimationMixer.` : ""}${hasSports ? SPORTS_PLAYBOOK : ""}`;
+   skeleton and animate wrong. Each person needs their own AnimationMixer.` : ""}${soldiers.length ? `
+   The soldier models (${soldiers.join(", ")}) do NOT have the people clips
+   above — they carry Idle, Run, Run_Gun, Idle_Shoot, Jump, Wave, Death. Use
+   Run for ALL movement (there is no walk clip). Names are armature-prefixed
+   (\`CharacterArmature|Run\`), so match by search, never by exact string. Same
+   mixer/clone rules as the people. Weapons are SEPARATE models: parent one on
+   with \`soldier.add(gun)\` to have them hold it.` : ""}${hasSports ? SPORTS_PLAYBOOK : ""}`;
 }
 
 /**
