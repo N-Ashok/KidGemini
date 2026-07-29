@@ -78,6 +78,49 @@ describe("PHYSICS_PROMPT_SECTION — rotation and bouncing", () => {
   });
 });
 
+// Owner report 2026-07-29: "my system got heated up" after ~1h in a preview.
+// The game was well-behaved by the existing rules (pixel ratio capped, no
+// shadows) — it simply never stopped rendering, at full display refresh. These
+// two rules are the fix, and they matter most on exactly the devices the PRD
+// design floor targets.
+describe("PHYSICS_PROMPT_SECTION — stop burning CPU when nobody is watching", () => {
+  it("pauses the loop when the page is hidden or unfocused", () => {
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/visibilitychange/);
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/blur/);
+  });
+
+  it("restarts the clock on resume — the whole reason a naive pause is a bug", () => {
+    // Without this the first frame back carries the entire paused duration as
+    // delta and everything teleports. THIS is why we teach the pause rather
+    // than just injecting one: the resume half has to be written by the game.
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/getDelta\(\)|reset/);
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/teleport|huge delta|jump/i);
+  });
+
+  it("caps the frame rate so a 120Hz screen does not do double the work", () => {
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/60\s?fps|120\s?Hz/i);
+  });
+});
+
+// From a real deadlock in the owner's tank game (2026-07-29): crushed enemies
+// stayed in the `enemies` array until a level-up that needed 1000 points, while
+// spawning was gated on `enemies.length < 3`. Squash three tanks and the game
+// silently stops producing enemies forever — max reachable score 700. The child
+// experiences it as "constantly stuck", and nothing errors.
+describe("PHYSICS_PROMPT_SECTION — dead objects must not block spawning", () => {
+  it("says to remove destroyed things from their array when the animation ends", () => {
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/dead|destroyed/i);
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/array/i);
+  });
+
+  it("names the specific trap: a spawn cap counting dead entries", () => {
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/enemies\.length/);
+    // \s+ between words — the prompt is a wrapped template literal, and this
+    // phrase straddles a line break.
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/nothing\s+new\s+ever\s+spawns/i);
+  });
+});
+
 describe("PHYSICS_PROMPT_SECTION — cache + wiring contract", () => {
   it("is a static constant: it can never vary with the child's message", () => {
     // Same rule as SPORTS_PLAYBOOK. A per-message system prompt breaks the
@@ -108,6 +151,20 @@ describe("PHYSICS_PROMPT_SECTION — cache + wiring contract", () => {
     // and should be justified — do not raise this to make room for prose.
     // This section rides every 3D build turn, on top of the ~1,712-token
     // model catalog, so it is real recurring spend.
-    expect(Math.ceil(PHYSICS_PROMPT_SECTION.length / 4)).toBeLessThanOrEqual(470);
+    // Raised 470 -> 670 (2026-07-29) for the pause/frame-cap rules, after the
+    // owner reported a device heating up during a long play session. Honest
+    // note: 580 was guessed before the code block was written and the section
+    // landed at 663 — the guard is now set from the MEASURED value, not a
+    // hope. The pause snippet cannot shrink much further without dropping the
+    // clock-reset line, and that line is the whole point (a naive pause
+    // teleports everything on resume). Every sentence is pinned by a test
+    // above, so a future breach means content was ADDED and needs its own
+    // justification. Recurring cost: this rides every 3D build turn.
+    // 470 -> 670 -> 770 across one day, each raise answering a fault the owner
+    // actually hit (heat, then a silent spawn deadlock). Set from the MEASURED
+    // value each time, not a guess. This now rides EVERY 3D build turn at ~763
+    // tokens, so the next addition should displace something rather than extend
+    // it — the section has stopped being cheap.
+    expect(Math.ceil(PHYSICS_PROMPT_SECTION.length / 4)).toBeLessThanOrEqual(770);
   });
 });

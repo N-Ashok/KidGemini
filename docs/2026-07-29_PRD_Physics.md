@@ -84,8 +84,9 @@ engine clause derives from the manifest only — never from the child's message 
 so the system prompt stays byte-identical per turn and Gemini prefix caching
 keeps hitting (`COST_TOKEN_BUDGET.md` waste-ledger #4).
 
-**Token cost:** playbook 456 (pinned ≤470) + engine clause 253, on top of the
-~1,712-token model catalog. Both have their own budget tests.
+**Token cost:** playbook **763** (pinned ≤770 — it grew twice the same day, see
+§6b) + engine clause 253, on top of the ~1,712-token model catalog. Both have
+their own budget tests.
 
 ## 4. Use Cases
 
@@ -129,6 +130,53 @@ qualified; and `manifest.test.ts` now pins **asset names as unique across
 types**, so any future `vendor-*.mjs` cannot silently delete an asset this way.
 The orphaned `cannon.4eb81a.js` object stays on the append-only host forever,
 unreferenced and harmless.
+
+## 6b. Follow-ups shipped the same day (from live play)
+
+The owner played a 3D tank game in the preview for about an hour, which
+surfaced three things no test had:
+
+1. **"My system got heated up."** The game obeyed every existing render-budget
+   rule (pixel ratio capped at 2, no shadows) — it simply never stopped. Two new
+   playbook rules: pause on `visibilitychange`/blur **with a clock reset on
+   resume** (a naive pause teleports everything on the first frame back), and
+   cap to 60fps. **Owner decision: 60 is the cap** — most of the Apple fleet
+   (base iPad, iPad Air, MacBook Air) is 60Hz already, ProMotion devices are
+   fanless and throttle under sustained 120 anyway, and the cap also fixes
+   per-frame-movement games running literally twice as fast on 120Hz.
+
+2. **"Once it is made, edits don't need to touch it?"** Correct, and it
+   invalidated the prompt-only approach for the ~200 games that already exist:
+   an edit is a minimal SEARCH/REPLACE patch and never retrofits a loop the
+   child didn't ask about. So the pause + cap ALSO ship as an injected **frame
+   governor** (`frameGovernor()` in runtime-helpers, wired into
+   `ensureAssetRuntime`), which runs on every preview render — including stored
+   HTML that long predates it. Measured on the owner's real tank game:
+
+   | | visible | hidden |
+   |---|---|---|
+   | before | 54.0 fps | **53.3 fps** |
+   | after | 46.5 fps | **0.0 fps** |
+
+   Its design is dominated by failing safe across games we can no longer test
+   individually: every skip re-requests (a governor that forgets to is a dead
+   game), throttling is keyed per callback via a WeakMap so a two-loop game
+   keeps both, an unkeyable callback is simply never throttled, and it pauses
+   only on `document.hidden` — what browsers already do — so it introduces no
+   new resume-delta behaviour for old games with no delta clamp.
+   **Not reachable:** published arcade games are static S3 HTML under the
+   immutability contract; there is no injection point for them.
+
+3. **A silent spawn deadlock.** The tank game held crushed enemies in the
+   `enemies` array until a level-up needing 1000 points, while spawning was
+   gated on `enemies.length < 3`. Squash three tanks and no enemy ever spawns
+   again — maximum reachable score 700, no error anywhere, and the child reports
+   it as "constantly stuck". Now a playbook rule.
+
+**Token cost after all three:** the playbook went 456 → 763. The budget test was
+raised from the measured value each time (470 → 670 → 770) with the reason
+recorded; the comment now says the section has stopped being cheap and the next
+addition should displace something rather than extend it.
 
 ## 7. Out of scope
 

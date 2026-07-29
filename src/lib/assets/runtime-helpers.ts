@@ -122,3 +122,48 @@ export function audioHelper(): string {
 })();
 </script>`;
 }
+
+/**
+ * The frame governor (2026-07-29). Injected by ensureAssetRuntime into every
+ * 3D/asset game, which is the ONLY thing that reaches games that already
+ * exist: the playbook's pause/frame-cap rules are written into fresh builds,
+ * but an edit is a minimal SEARCH/REPLACE patch, so it never retrofits a loop
+ * the child didn't ask about. Owner report that prompted this: a device
+ * heating up after an hour in the preview.
+ *
+ * Two jobs: skip work while the page is hidden, and cap to ~60fps (a 120Hz
+ * ProMotion Mac/iPad otherwise does double the work for no visible gain — and
+ * any game that moves per-frame rather than per-second literally runs twice as
+ * fast there). Owner decision 2026-07-29: 60 is the cap.
+ *
+ * Every design choice here is about failing SAFE on ~200 games we can no
+ * longer test individually:
+ *  - a skipped frame ALWAYS re-requests, so the chain can never die;
+ *  - throttling is keyed per callback via a WeakMap, so a game running two
+ *    independent loops keeps both (a single shared timestamp would let the
+ *    first starve the second);
+ *  - a callback we cannot key (a fresh arrow each frame) is simply never
+ *    throttled — the fallback is "no saving", never "no frames";
+ *  - it does NOT pause on blur/occlusion, only on document.hidden, which is
+ *    what browsers already do — so it introduces no new resume-delta
+ *    behaviour for old games that lack a delta clamp.
+ */
+export function frameGovernor(): string {
+  return `<script>(function(){
+if (window.__arFrameGovernor) return;
+window.__arFrameGovernor = 1;
+var raf = window.requestAnimationFrame.bind(window);
+var seen = new WeakMap();
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    // Skipped frames ALWAYS re-request through the wrapper, so the loop can
+    // never die — that is the one failure mode that would break a live game.
+    if (document.hidden) { window.requestAnimationFrame(cb); return; }
+    var prev = (typeof cb === 'function' ? seen.get(cb) : 0) || 0;
+    if (prev && t - prev < 15) { window.requestAnimationFrame(cb); return; }
+    if (typeof cb === 'function') seen.set(cb, t);
+    return cb(t);
+  });
+};
+})();</script>`;
+}

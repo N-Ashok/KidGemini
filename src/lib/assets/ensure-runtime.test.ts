@@ -50,13 +50,31 @@ describe("ensureAssetRuntime — the three-importmap floor", () => {
     expect(ensureAssetRuntime(raw)).toBe(raw);
   });
 
-  it("F.3 idempotent: a fully-floored 3D game (our map + canvas floor) is unchanged", () => {
+  it("F.3 idempotent: a fully-floored 3D game is unchanged", () => {
+    // The floor grew a third element on 2026-07-29 (the frame governor), so
+    // "fully floored" now includes it. The property under test is unchanged:
+    // running the floor over already-floored HTML must be a no-op.
     const injected = page(
+      `<script type="importmap">${JSON.stringify({ imports: { three: ENGINE } })}</script>` +
+        `<style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style>` +
+        `<script>window.__arFrameGovernor = 1;</script>` +
+        `<script type="module">import { Scene } from "three";</script>`,
+    );
+    expect(ensureAssetRuntime(injected)).toBe(injected);
+  });
+
+  it("F.3b a game floored BEFORE the governor existed gains one (this is what reaches old games)", () => {
+    // Every previously-stored game looks like this. ArtifactFrame re-floors on
+    // each preview render, which is the only route by which a game that already
+    // exists ever gets the pause + 60fps cap.
+    const preGovernor = page(
       `<script type="importmap">${JSON.stringify({ imports: { three: ENGINE } })}</script>` +
         `<style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style>` +
         `<script type="module">import { Scene } from "three";</script>`,
     );
-    expect(ensureAssetRuntime(injected)).toBe(injected);
+    const out = ensureAssetRuntime(preGovernor);
+    expect(out).toMatch(/__arFrameGovernor = 1/);
+    expect(ensureAssetRuntime(out)).toBe(out); // and settles immediately
   });
 
   it("F.4 a model-invented CDN importmap (the 'still broken' turns) is REPLACED with our engine", () => {

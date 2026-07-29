@@ -59,6 +59,13 @@ const THREE_EXPORTS = [
   'MeshStandardMaterial', 'MeshBasicMaterial', 'Mesh',
   'AmbientLight', 'DirectionalLight', 'PointLight', 'HemisphereLight',
   'AnimationMixer', // animated library models (dino walks) — Phase C
+  // 2026-07-29: prod logs showed the model reaching for these and dying on the
+  // import line — Quaternion x4, plus Euler, Matrix4, MathUtils, Raycaster —
+  // each costing a corrective retry. They are already inside the bundle as
+  // internal dependencies, so exporting all six costs +1.29 KB total
+  // (617.7 -> 619.0 KB, budget 650). Rotation and aiming maths is exactly what
+  // the physics playbook pushes games toward, so this closes the gap it opened.
+  'Quaternion', 'Euler', 'Matrix4', 'Vector2', 'MathUtils', 'Raycaster',
 ];
 
 // ── stage 1: build ───────────────────────────────────────────────────────────

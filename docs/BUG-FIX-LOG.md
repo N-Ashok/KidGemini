@@ -11,6 +11,33 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-07-29 — The physics playbook pushed games toward `three` exports we never shipped
+
+- **Symptom:** within 20 minutes of the physics deploy, prod logs started
+  showing `⛔ patch introduces unknown three imports: Quaternion` — 4 times for
+  Quaternion, plus Euler, Matrix4, MathUtils and Raycaster. Each one forced a
+  corrective strict-edit retry costing 5–40s of extra generation. The message
+  had never appeared in that form before the deploy.
+- **Root cause:** the new playbook teaches rotation, aiming and orientation
+  maths, and the engine clause literally names `Quaternion` (cannon-es's). The
+  model reasonably reached for `THREE.Quaternion` — which the curated engine
+  bundle did not export. `three-import-lint.ts` caught it every time (working
+  as designed), but catching it costs a retry.
+- **Fix:** export the six names the model actually reaches for — `Quaternion`,
+  `Euler`, `Matrix4`, `Vector2`, `MathUtils`, `Raycaster`. Measured cost:
+  **+1.29 KB** (617.7 → 619.0 KB, budget 650), because five of the six were
+  already inside the bundle as internal dependencies; only `Raycaster` adds real
+  code. New engine published as `three.b82585.js`; existing games keep their old
+  engine forever under the immutability contract.
+- **Verified:** bundle builds and uploads clean, `CURATED_IMPORT_NAMES` stays in
+  lockstep with `THREE_EXPORTS` (pinned by test), full suite 1760 green.
+- **Lesson:** teaching the model a new *technique* implicitly widens the API
+  surface it will reach for. The prompt and the vendored bundle are one
+  contract — changing either side alone produces retries at best and dead games
+  at worst.
+
+---
+
 ## 2026-07-29 — A vendor script silently DELETED a model from the manifest (`cannon` name collision)
 
 - **Symptom:** immediately after `scripts/vendor-cannon.mjs --upload` first ran,

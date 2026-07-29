@@ -669,6 +669,16 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   Cricket words (cricket, wicket, stumps, batsman, bowler, innings, googly…)
   added to the sports trigger; the CC0 baseball bats were deliberately NOT
   reused, since a round bat reads as the wrong sport
+- **Frame governor + stop-when-hidden** (2026-07-29, PRD §6b; from an hour of
+  real play that heated the owner's machine): every 3D game now pauses when the
+  page is hidden and is capped to 60fps. Shipped TWICE on purpose — as playbook
+  rules for new games, and as an injected governor (`frameGovernor()` →
+  `ensureAssetRuntime`) because edits are minimal patches and would never
+  retrofit an existing game's loop. The governor reaches every game on every
+  preview render, including HTML stored long before it existed; measured on a
+  real game, hidden-tab rendering went 53.3 fps → 0. Published arcade games are
+  static S3 HTML and cannot be reached. Also new: a rule against letting dead
+  objects fill a spawn cap, after a tank game deadlocked into an empty arena
 - **Retrieval-lite selection** (PRD §14, `src/lib/assets/model-select.ts`):
   the library is unbounded but each build-turn prompt teaches ≤ 30 models,
   picked by cheap regex — the iterated game's own USES_MODELS markers,

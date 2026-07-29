@@ -48,7 +48,28 @@ and one step teleports the player through the floor.
 
    BOUNCING. Flip and lose energy on impact: \`velocityY = -velocityY * 0.6\`.
    Add a rest threshold — below a small speed set it to 0 and stop — or the
-   ball jitters against the floor forever.`;
+   ball jitters against the floor forever.
+
+   STOP WHEN NOBODY IS WATCHING. Rendering on while the tab is hidden or the
+   window sits behind another burns battery and heats phones and laptops. Pause
+   it — and on resume reset the clock FIRST, or the first frame back carries the
+   whole paused time as delta and everything teleports:
+   \`let on = true;
+   const setOn = (v) => { if (v === on) return; on = v;
+     if (v) { clock.getDelta(); requestAnimationFrame(animate); } };
+   document.addEventListener('visibilitychange', () => setOn(!document.hidden));
+   addEventListener('blur', () => setOn(false));
+   addEventListener('focus', () => setOn(true));\`
+   with \`if (!on) return;\` first in the loop. Cap to 60fps as well: a 120Hz
+   screen otherwise does double the work for no visible gain. Keep a \`last\`
+   timestamp and skip the frame while \`now - last < 15\`.
+
+   NEVER LET DEAD THINGS BLOCK NEW ONES. When something is destroyed, take it
+   out of its array as soon as its death animation ends — do not leave it there
+   "until the next level". If spawning is capped by that array's length
+   (\`if (enemies.length < 3)\`), dead entries fill the cap, nothing new ever
+   spawns, and the child is left in an empty world with nothing to do and no
+   error to see.`;
 
 /**
  * The rigid-body clause — rendered ONLY when the manifest actually carries the

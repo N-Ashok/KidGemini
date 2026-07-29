@@ -55,6 +55,9 @@ export const CURATED_IMPORT_NAMES = [
   "MeshStandardMaterial", "MeshBasicMaterial", "Mesh",
   "AmbientLight", "DirectionalLight", "PointLight", "HemisphereLight",
   "AnimationMixer",
+  // 2026-07-29 — see the note in scripts/vendor-three.mjs: the model kept
+  // reaching for these and crashing on the import line.
+  "Quaternion", "Euler", "Matrix4", "Vector2", "MathUtils", "Raycaster",
 ];
 const CURATED_IMPORTS = CURATED_IMPORT_NAMES.join(", ");
 

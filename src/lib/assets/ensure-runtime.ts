@@ -13,7 +13,7 @@
 import manifestJson from "./manifest.json";
 import type { AssetManifest } from "./manifest";
 import { THREE_MARKER, PHYSICS_MARKER } from "./markers";
-import { insertEarly, loadModelHelper } from "./runtime-helpers";
+import { insertEarly, loadModelHelper, frameGovernor } from "./runtime-helpers";
 
 const IMPORTS_THREE_RE = /\bfrom\s*["']three["']/;
 // Physics games import the second engine by its own bare specifier; an
@@ -86,6 +86,15 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
   // (2) redundant-canvas floor — CSS only, idempotent, never hides the sole canvas.
   if (!out.includes(CANVAS_FLOOR_ID)) {
     markup += CANVAS_FLOOR;
+  }
+
+  // (2b) frame governor (2026-07-29) — pause while hidden + cap to 60fps. This
+  // is the ONLY path that reaches games that already exist: the playbook's
+  // pause/cap rules land in fresh builds, but an edit is a minimal patch and
+  // never retrofits a loop the child didn't ask about. Runs on every preview
+  // render (ArtifactFrame), so old stored HTML gets it too.
+  if (!out.includes("__arFrameGovernor")) {
+    markup += frameGovernor();
   }
 
   // (3) loadModel scaffolding — only when the game calls it but the helper is gone.
