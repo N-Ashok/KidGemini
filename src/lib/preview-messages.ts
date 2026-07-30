@@ -12,6 +12,9 @@
 export const GAME_CONSOLE_SOURCE = "ari-game-console" as const;
 export const PREVIEW_VERIFY_SOURCE = "ari-preview-verify" as const;
 export const PARENT_READY_SOURCE = "ari-parent" as const;
+/** docs/2026-07-30_PRD_PreviewPerfPanel.md — the debug-only per-model load
+ *  probe injected alongside the frame governor (ensure-runtime.ts). */
+export const PERF_PROBE_SOURCE = "ari-perf-probe" as const;
 
 /** Marker so injectConsoleCapture is idempotent (never double-inject); also
  *  the anchor preview-verify.ts's injectPreviewInstrumentation() rides

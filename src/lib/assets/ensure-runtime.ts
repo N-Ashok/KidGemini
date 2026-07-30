@@ -14,6 +14,7 @@ import manifestJson from "./manifest.json";
 import type { AssetManifest } from "./manifest";
 import { THREE_MARKER, PHYSICS_MARKER } from "./markers";
 import { insertEarly, loadModelHelper, frameGovernor } from "./runtime-helpers";
+import { injectPerfProbe, PERF_PROBE_MARKER } from "./perf-probe";
 
 const IMPORTS_THREE_RE = /\bfrom\s*["']three["']/;
 // Physics games import the second engine by its own bare specifier; an
@@ -114,6 +115,14 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
     markup += loadModelHelper();
   }
 
-  if (!markup) return html; // already fully floored — identity
-  return insertEarly(out, markup);
+  const floored = markup ? insertEarly(out, markup) : out;
+
+  // (4) perf probe (2026-07-30, PRD-PREVIEW-PERF-PANEL) — debug-only
+  // per-model load telemetry (window.__arPerf → postMessage). Checked
+  // UNCONDITIONALLY, same as the frame governor: this is the only path that
+  // reaches a 3D game that already exists (ArtifactFrame re-floors every
+  // preview render), so an old stored game gains the probe automatically the
+  // next time it's previewed — no per-game migration. Never kid-facing on its
+  // own; the debug tab that reads it is gated in ArtifactFrame.
+  return floored.includes(PERF_PROBE_MARKER) ? floored : injectPerfProbe(floored);
 }

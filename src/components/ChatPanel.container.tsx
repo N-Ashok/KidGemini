@@ -1900,6 +1900,12 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
               ) : undefined
             }
             onDiagnostics={setHelpDiagnostics}
+            // 🐢 "Make it faster" (docs/2026-07-30_PRD_PreviewPerfPanel.md
+            // addendum): the hint string already carries the real technical
+            // context (heaviest model, instance count, animated) built in
+            // ArtifactFrame from the latest perf snapshot — sent through the
+            // ordinary chat pipeline exactly like a next-ask hint chip.
+            onFixSlowdown={(hint) => void handleSend(hint)}
           />
         </div>
       )}

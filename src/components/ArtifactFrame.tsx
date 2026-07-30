@@ -11,7 +11,7 @@
 // trace); the console is a debug tool now, hidden unless localStorage
 // "kidgemini:debug" = "1" (grown-ups only — see docs).
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { PublishToArcade } from "./PublishToArcade";
 import { InviteToTest } from "./InviteToTest";
 import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
@@ -23,6 +23,13 @@ import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
 import { keyToPanelAction, UPDATING_LINE } from "@/lib/preview-pane";
 import { buildErrorReport, hasExtremeError } from "@/lib/error-report";
 import { usePreviewVerify } from "./usePreviewVerify";
+import { usePerfProbe } from "./usePerfProbe";
+import {
+  buildSlowdownHint,
+  initialSlowdownBannerState,
+  nextSlowdownBannerState,
+} from "@/lib/slowdown-nudge";
+import type { LoadBucket } from "@/types/preview-perf.types";
 import { IdeaMicTab } from "./IdeaMicTab";
 import { IdeaQueue } from "./IdeaQueue";
 import type { QueueHold, QueuedIdea } from "@/types/idea-queue.types";
@@ -103,9 +110,24 @@ interface ArtifactFrameProps {
   /** The active conversation's id — rides on publish so the platform stamps
    *  the chat ↔ game link behind Studio's Edit deep link. */
   chatId?: string;
+  /** Kid-facing "🐢 running slow" banner (docs/2026-07-30_PRD_PreviewPerfPanel.md
+   *  addendum): tapping "Make it faster" hands a REAL technical hint string
+   *  (built from the latest perf snapshot's heaviest model — never shown to
+   *  the kid) up to the container, which sends it through the ordinary
+   *  handleSend chat pipeline like any other turn. Absent prop = feature
+   *  hidden, same convention as onCaptureIdea/helpTab. */
+  onFixSlowdown?: (hint: string) => void;
 }
 
-type Tab = "preview" | "code" | "console";
+type Tab = "preview" | "code" | "console" | "perf";
+
+/** Perf tab colour chips (docs/2026-07-30_PRD_PreviewPerfPanel.md) — owner
+ *  decision: colour is by LOAD, never "cost" (that word implies money). */
+const BUCKET_STYLES: Record<LoadBucket, string> = {
+  green: "bg-emerald-500",
+  yellow: "bg-amber-500",
+  red: "bg-red-500",
+};
 
 /** Suggested arcade name from the game's own <title>, if it has one. */
 function titleOf(html: string): string {
@@ -151,6 +173,7 @@ export function ArtifactFrame({
   bibleTeacher = false,
   editTarget,
   chatId,
+  onFixSlowdown,
 }: ArtifactFrameProps) {
   const [tab, setTab] = useState<Tab>("preview");
   const [publishing, setPublishing] = useState(false);
@@ -214,6 +237,28 @@ export function ArtifactFrame({
   }, [expanded, onToggleExpand]);
 
   const { state, iframeRef, onIframeLoad, docKey } = usePreviewVerify(html ?? "", originalRequest ?? "");
+  // Perf Panel (docs/2026-07-30_PRD_PreviewPerfPanel.md) — debug-only, same
+  // gate as the console tab. Harmless to mount unconditionally: it's just a
+  // message listener until a snapshot arrives, and the injected probe script
+  // (ensure-runtime.ts) already runs on every 3D game regardless of who's
+  // looking, so this never changes what a kid sees.
+  const { snapshot: perfSnapshot } = usePerfProbe(docKey);
+  // Kid-facing "running slow" banner — the symptom-only sibling of the debug
+  // Perf tab above. Pure state machine (lib/slowdown-nudge.ts) driven by each
+  // incoming snapshot's fps; the reducer owns the sustained-low debounce and
+  // the post-tap cooldown so this component just wires events in.
+  const [slowdownState, dispatchSlowdown] = useReducer(nextSlowdownBannerState, initialSlowdownBannerState);
+  useEffect(() => {
+    dispatchSlowdown({ type: "reset" });
+  }, [docKey]);
+  useEffect(() => {
+    if (!perfSnapshot) return;
+    dispatchSlowdown({ type: "sample", fps: perfSnapshot.fps, now: Date.now() });
+  }, [perfSnapshot]);
+  function handleFixSlowdown() {
+    dispatchSlowdown({ type: "fixTapped", now: Date.now() });
+    onFixSlowdown?.(buildSlowdownHint(perfSnapshot?.models ?? []));
+  }
   // Pinned per docKey (generation + round): probesEnabled flips false on every
   // finish, and letting srcDoc change without a docKey bump would reload
   // (flash) a game we decided NOT to reload. A new docKey = new document;
@@ -373,6 +418,14 @@ export function ArtifactFrame({
               {errorCount}
             </span>
           )}
+        </button>
+      )}
+      {/* Perf tab (docs/2026-07-30_PRD_PreviewPerfPanel.md) — SAME debug gate
+          as Console, listed alongside it (never replacing it), never visible
+          to a kid. */}
+      {debug && (
+        <button onClick={() => setTab("perf")} className={tabBtn("perf")} disabled={covered}>
+          ⚡ <span className="hidden sm:inline">Perf</span>
         </button>
       )}
     </>
@@ -709,6 +762,34 @@ export function ArtifactFrame({
             }}
           >
             <div className="relative h-full w-full [&>*]:pointer-events-auto">
+              {/* 🐢 Running-slow banner (docs/2026-07-30_PRD_PreviewPerfPanel.md
+                  addendum) — always-visible (no debug flag), unlike the Perf
+                  tab. Symptom-only copy, no model names or numbers; the real
+                  technical context rides silently into chat via
+                  onFixSlowdown. Same "float over the preview" convention as
+                  the mic/help tabs, docked top-center so it doesn't collide
+                  with either (both dock at the right edge). Hidden during the
+                  verify cover, same as every other overlay here. */}
+              {!covered && onFixSlowdown && slowdownState.visible && (
+                <div
+                  role="status"
+                  className="absolute left-1/2 top-3 z-20 flex w-[min(320px,88%)] -translate-x-1/2 items-center gap-2 rounded-kid border-2 border-amber-200 bg-amber-50 px-3 py-2 shadow-md"
+                >
+                  <span className="text-lg leading-none" aria-hidden>
+                    🐢
+                  </span>
+                  <p className="flex-1 text-sm font-extrabold leading-snug text-amber-900">
+                    This game is running slow
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleFixSlowdown}
+                    className="shrink-0 rounded-full bg-amber-500 px-3 py-1.5 text-xs font-extrabold text-white hover:bg-amber-600"
+                  >
+                    Make it faster
+                  </button>
+                </div>
+              )}
               {!covered && onCaptureIdea && (
                 <IdeaMicTab
                   onIdea={onCaptureIdea}
@@ -800,6 +881,59 @@ export function ArtifactFrame({
                 {m.stack && <div className="pl-4 opacity-70">{m.stack}</div>}
               </div>
             ))
+          )}
+        </div>
+      )}
+      {/* Perf tab (docs/2026-07-30_PRD_PreviewPerfPanel.md) — debug-only,
+          same gate as Console. Overall FPS/draw-calls line, then a
+          highest-load-first per-model list. A model with zero live instances
+          is never in the snapshot (the probe drops it — no stale rows). */}
+      {tab === "perf" && debug && (
+        <div className="min-h-0 flex-1 overflow-auto bg-neutral-950 p-3 font-mono text-[12px] leading-5 text-neutral-300">
+          {!perfSnapshot ? (
+            <p className="text-neutral-500">No perf reading yet — play the game for a second to see one.</p>
+          ) : (
+            <>
+              <div className="mb-3 border-b border-neutral-800 pb-2 text-neutral-100">
+                {perfSnapshot.fps} fps
+                {perfSnapshot.drawCalls !== null && <> · {perfSnapshot.drawCalls} draw calls</>}
+                {perfSnapshot.rendererTriangles !== null && (
+                  <> · {perfSnapshot.rendererTriangles.toLocaleString()} triangles</>
+                )}
+              </div>
+              {perfSnapshot.models.length === 0 ? (
+                <p className="text-neutral-500">No models currently loaded.</p>
+              ) : (
+                <table className="w-full border-collapse text-left">
+                  <thead>
+                    <tr className="text-neutral-500">
+                      <th className="pb-1 pr-3 font-normal">Model</th>
+                      <th className="pb-1 pr-3 font-normal">Instances</th>
+                      <th className="pb-1 pr-3 font-normal">Triangles</th>
+                      <th className="pb-1 pr-3 font-normal">Animated</th>
+                      <th className="pb-1 font-normal">Load</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perfSnapshot.models.map((m) => (
+                      <tr key={m.name} className="border-t border-neutral-800">
+                        <td className="py-1 pr-3">{m.name}</td>
+                        <td className="py-1 pr-3">{m.instances}</td>
+                        <td className="py-1 pr-3">{m.triangles.toLocaleString()}</td>
+                        <td className="py-1 pr-3">{m.animated ? "yes" : "no"}</td>
+                        <td className="py-1">
+                          <span
+                            aria-label={`${m.bucket} load`}
+                            title={`${m.bucket} load`}
+                            className={`inline-block h-2.5 w-2.5 rounded-full ${BUCKET_STYLES[m.bucket]}`}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>
           )}
         </div>
       )}

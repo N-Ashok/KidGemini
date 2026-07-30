@@ -124,3 +124,38 @@ Statuses: `ACCEPTED` (known limit, deliberately deferred) · `OPEN` (needs actio
   Add rotation/archival for `webhook_events`. Until then, treat Razorpay's dashboard as the
   reconciliation source of truth. **Effort:** folds into the #1 migration; ~2–3 hours for the
   idempotency/rotation specifics.
+
+## 7. Preview Perf Panel's per-model instance array is unbounded per game session — **ACCEPTED (capped, with plan)**
+
+- **Decided:** 2026-07-30, `docs/2026-07-30_PRD_PreviewPerfPanel.md` — built to diagnose a real
+  incident: a generated cricket game loaded 24 separately-animated 3D characters (3 principals +
+  9 fielders + 12 crowd) and heated up the owner's laptop, with no way to see which part was
+  responsible short of reading the generated source by hand. **This is the named precedent for
+  the "crowd/character-count" load class** — any future heavy game (multiplayer crowds, particle
+  effects, big worlds) hits the same shape of problem, and the perf panel is the general answer,
+  not a one-off fix for cricket.
+- **What:** `loadModel()` (`src/lib/assets/runtime-helpers.ts`) pushes every successfully-loaded
+  root `Object3D` into `window.__arPerf.models[name].instances`, a plain in-memory array, so the
+  debug perf-probe can report live instance counts without the generated game's code ever knowing
+  it's being watched. A pathological game that spawns and despawns the same named model in a tight
+  loop (a bullet-hell shooter, a particle-like crowd system) would otherwise grow that array
+  forever for the life of the tab — a real memory leak, holding strong references that block GC
+  even after the mesh is removed from the scene.
+- **Why accepted (capped, not fixed):** this is debug/dev telemetry — it runs on every preview
+  render (so it reaches games that already exist, same as the frame governor), but nothing reads
+  it unless `kidgemini:debug === "1"` is set, and a preview tab is a short-lived session, not a
+  long-running server process. `MAX_TRACKED_INSTANCES = 1_000` (`runtime-helpers.ts`) bounds the
+  array by dropping the oldest entry once it's exceeded — a cheap, adequate cap for the sessions
+  this panel is actually used in.
+- **Limit:** a single game session that calls `loadModel("samename")` far more than ~1,000 times
+  still holds up to 1,000 stale strong references per model name until the tab closes; the perf
+  probe itself already ignores unparented ("dead") instances when it *counts* live ones (never a
+  stale row in the UI), but the array entries themselves aren't pruned until the cap forces a drop.
+- **Trigger to act:** a real game generation pattern that spawns/despawns one named model far more
+  than 1,000 times per session (not observed yet) · this panel graduating from debug-only to an
+  always-on telemetry path (it is explicitly NOT that today — PRD §6, out of scope).
+- **Ready plan:** switch `instances` to hold `WeakRef<Object3D>` (or prune entries whose `.parent`
+  is falsy on each perf-probe sample, not just at read time) so dead instances stop pinning memory
+  the moment they're removed from the scene, rather than waiting for the 1,000-entry cap.
+  **Effort:** ~1 hour — the perf-probe sample loop already walks every instance to check `.parent`;
+  pruning there instead of just skipping is a small, contained change.

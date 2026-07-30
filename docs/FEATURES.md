@@ -702,6 +702,43 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   real game, hidden-tab rendering went 53.3 fps → 0. Published arcade games are
   static S3 HTML and cannot be reached. Also new: a rule against letting dead
   objects fill a spawn cap, after a tank game deadlocked into an empty arena
+- **Preview Perf Panel** (2026-07-30,
+  `docs/2026-07-30_PRD_PreviewPerfPanel.md`; owner ask: a 3D cricket game with
+  24 separately-animated characters heated up a laptop, with no way to tell
+  which part was responsible short of reading the generated source by hand):
+  a debug-only “⚡ Perf” tab, gated by the SAME `kidgemini:debug` flag as the
+  Console tab, next to it. Shows overall FPS + draw calls, then every
+  currently-loaded model ranked highest-load-first — instance count, triangle
+  count, animated yes/no, and a green/yellow/red chip. **Load, not "cost"**
+  (owner correction — "cost" implies money): `triangles × live instances ×
+  an animated multiplier`. Same instrument-the-shared-runtime pattern as the
+  frame governor: `loadModel()` (`runtime-helpers.ts`) records each named
+  model's triangle count + live instances into `window.__arPerf`; the
+  vendored three.js bundle (`scripts/vendor-three.mjs`) additively wraps
+  `WebGLRenderer` (registers the instance so `.info.render` is readable) and
+  `AnimationMixer` (marks which roots are animated) — both wraps call
+  straight through to the real class, zero behavior change. A new injected
+  probe (`perf-probe.ts`, same shape as the self-heal verify probe) samples
+  once a second and `postMessage`s a snapshot; `usePerfProbe.ts` holds the
+  latest one. Reaches games that already exist the same way the governor
+  does — `ensureAssetRuntime` re-floors every preview render. Never
+  kid-facing; a model with zero live (in-scene) instances is never shown.
+- **🐢 "Running slow" banner** (2026-07-30 same-day addendum,
+  `docs/2026-07-30_PRD_PreviewPerfPanel.md` §7; owner correction — kids are
+  the actual developers of these games too, and need something, just not the
+  admin panel above): a SECOND, always-visible surface (no debug flag),
+  floating top-center over the live preview (mic/help tabs dock at the right
+  edge, so it never collides). Shows only the symptom a kid already
+  recognizes — "This game is running slow" — never triangles/instances/model
+  names. Appears only after `SUSTAINED_LOW_SAMPLES` (5) CONSECUTIVE low-fps
+  perf-probe samples (`src/lib/slowdown-nudge.ts`, pure + unit-tested state
+  machine), never on one dipped frame. Its "Make it faster" button sends the
+  REAL technical hint (highest-`load` model from the same `PerfSnapshot`, its
+  instance count and animated state) into the ordinary chat pipeline
+  (`ChatPanel.container.tsx`'s `handleSend`, same as a next-ask hint chip)
+  via `ArtifactFrame`'s new `onFixSlowdown` prop — the kid never sees that
+  string. Tapping it starts a 45s cooldown so a fix already in flight isn't
+  re-nagged every second.
 - **Retrieval-lite selection** (PRD §14, `src/lib/assets/model-select.ts`):
   the library is unbounded but each build-turn prompt teaches ≤ 30 models,
   picked by cheap regex — the iterated game's own USES_MODELS markers,

@@ -11,6 +11,7 @@
 // loadModel scaffolding), and it is idempotent on already-injected HTML.
 import { describe, it, expect } from "vitest";
 import { ensureAssetRuntime } from "./ensure-runtime";
+import { PERF_PROBE_MARKER, buildPerfProbeScript } from "./perf-probe";
 import manifestJson from "./manifest.json";
 import type { AssetManifest } from "./manifest";
 
@@ -51,13 +52,15 @@ describe("ensureAssetRuntime — the three-importmap floor", () => {
   });
 
   it("F.3 idempotent: a fully-floored 3D game is unchanged", () => {
-    // The floor grew a third element on 2026-07-29 (the frame governor), so
-    // "fully floored" now includes it. The property under test is unchanged:
-    // running the floor over already-floored HTML must be a no-op.
+    // The floor grew a fourth element on 2026-07-30 (the perf probe), so
+    // "fully floored" now includes it too (2026-07-29 added the governor).
+    // The property under test is unchanged: running the floor over
+    // already-floored HTML must be a no-op.
     const injected = page(
       `<script type="importmap">${JSON.stringify({ imports: { three: ENGINE } })}</script>` +
         `<style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style>` +
         `<script>window.__arFrameGovernor = 1;</script>` +
+        `${PERF_PROBE_MARKER}<script>${buildPerfProbeScript()}</script>` +
         `<script type="module">import { Scene } from "three";</script>`,
     );
     expect(ensureAssetRuntime(injected)).toBe(injected);
@@ -74,6 +77,18 @@ describe("ensureAssetRuntime — the three-importmap floor", () => {
     );
     const out = ensureAssetRuntime(preGovernor);
     expect(out).toMatch(/__arFrameGovernor = 1/);
+    expect(ensureAssetRuntime(out)).toBe(out); // and settles immediately
+  });
+
+  it("F.3c a game floored BEFORE the perf probe existed gains one too (2026-07-30, same precedent)", () => {
+    const prePerfProbe = page(
+      `<script type="importmap">${JSON.stringify({ imports: { three: ENGINE } })}</script>` +
+        `<style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style>` +
+        `<script>window.__arFrameGovernor = 1;</script>` +
+        `<script type="module">import { Scene } from "three";</script>`,
+    );
+    const out = ensureAssetRuntime(prePerfProbe);
+    expect(out).toContain(PERF_PROBE_MARKER);
     expect(ensureAssetRuntime(out)).toBe(out); // and settles immediately
   });
 
@@ -149,5 +164,13 @@ describe("ensureAssetRuntime — the three-importmap floor", () => {
     );
     expect(ensureAssetRuntime(once)).toBe(once);
     expect((once.match(/ari-3d-canvas-floor/g) ?? []).length).toBe(1);
+    expect((once.match(new RegExp(PERF_PROBE_MARKER)) ?? []).length).toBe(1);
+  });
+
+  it("F.12 the perf probe is present on any 3D game, and absent on a plain 2D game", () => {
+    const threeD = ensureAssetRuntime(page(`<script type="module">import { Scene } from "three";</script>`));
+    expect(threeD).toContain(PERF_PROBE_MARKER);
+    const flat = page(`<canvas></canvas><script>document.querySelector("canvas").getContext("2d");</script>`);
+    expect(ensureAssetRuntime(flat)).not.toContain(PERF_PROBE_MARKER);
   });
 });

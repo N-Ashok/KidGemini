@@ -20,16 +20,61 @@ export function insertEarly(html: string, markup: string): string {
   return markup + html;
 }
 
+/** Perf Panel (docs/2026-07-30_PRD_PreviewPerfPanel.md §2): bounds each
+ *  named model's tracked-instance array so a game that spawns/despawns the
+ *  same model in a loop can't grow window.__arPerf without limit forever —
+ *  this is a debug-only telemetry structure that still runs on EVERY preview
+ *  render (like the frame governor), so it needs its own small ceiling
+ *  (see docs/SCALABILITY_ISSUES.md). Oldest entries are dropped first. */
+export const MAX_TRACKED_INSTANCES = 1_000;
+
+/** Pure triangle-sum used by loadModelHelper()'s injected script (duplicated
+ *  there as inline JS, same technique perf-probe.ts uses for its bucket
+ *  thresholds — the injected copy runs against a REAL three.js Object3D in
+ *  the iframe, which this TS function can't be handed directly). Extracted
+ *  so the counting algorithm itself gets a real, executable unit test.
+ *  Non-indexed geometry (no .index) falls back to attributes.position. */
+export function countTriangles(obj: { traverse: (cb: (child: any) => void) => void }): number {
+  let triangles = 0;
+  obj.traverse((child: any) => {
+    if (!child?.isMesh || !child.geometry) return;
+    const geo = child.geometry;
+    if (geo.index) triangles += geo.index.count / 3;
+    else if (geo.attributes?.position) triangles += geo.attributes.position.count / 3;
+  });
+  return Math.round(triangles);
+}
+
 /** The runtime helper 3D games call: resolves a catalog name via AR_ASSETS,
  *  loads the GLB with GLTFLoader + meshopt (models are meshopt-compressed),
  *  and NEVER throws — a failed model leaves the game running without that
  *  entity (§5 fail-soft floor). Returns the scene Object3D with .animations
- *  riding on it, or null. */
+ *  riding on it, or null.
+ *
+ *  Perf Panel addition (2026-07-30): after a SUCCESSFUL load, records
+ *  {name, triangles, instances} into window.__arPerf.models and stamps the
+ *  loaded root into window.__arPerf.rootNames (a WeakMap<Object3D, name> —
+ *  the key the vendored three bundle's AnimationMixer wrap reads to mark a
+ *  root "animated", scripts/vendor-three.mjs). This is wrapped in its OWN
+ *  try/catch, separate from the outer load try/catch: a telemetry bug must
+ *  never turn into a broken model load (the existing `return null` contract
+ *  on a genuine load failure is unchanged — nothing is recorded on that path). */
 export function loadModelHelper(): string {
   return `<script type="module">
   import { GLTFLoader, MeshoptDecoder } from "three";
   const __arLoader = new GLTFLoader();
 __arLoader.setMeshoptDecoder(MeshoptDecoder);
+window.__arPerf = window.__arPerf || { models: {}, rootNames: new WeakMap(), animatedRoots: new WeakSet(), renderer: null };
+function __arCountTriangles(obj) {
+  var triangles = 0;
+  obj.traverse(function (child) {
+    if (!child.isMesh || !child.geometry) return;
+    var geo = child.geometry;
+    if (geo.index) triangles += geo.index.count / 3;
+    else if (geo.attributes && geo.attributes.position) triangles += geo.attributes.position.count / 3;
+  });
+  return Math.round(triangles);
+}
 window.loadModel = async function (name) {
   try {
     const url = (window.AR_ASSETS || {})[name];
@@ -37,6 +82,14 @@ window.loadModel = async function (name) {
     const gltf = await __arLoader.loadAsync(url);
     const obj = gltf.scene;
     obj.animations = gltf.animations || [];
+    try {
+      var __arEntry = window.__arPerf.models[name] || { name: name, triangles: 0, instances: [] };
+      __arEntry.triangles = __arCountTriangles(obj);
+      __arEntry.instances.push(obj);
+      if (__arEntry.instances.length > ${MAX_TRACKED_INSTANCES}) __arEntry.instances.shift();
+      window.__arPerf.models[name] = __arEntry;
+      window.__arPerf.rootNames.set(obj, name);
+    } catch (e) { /* telemetry only — never blocks the load */ }
     return obj;
   } catch (e) {
     console.warn("[ariantra] loadModel failed:", name, e);

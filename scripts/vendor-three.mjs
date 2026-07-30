@@ -69,8 +69,23 @@ const THREE_EXPORTS = [
 ];
 
 // ── stage 1: build ───────────────────────────────────────────────────────────
+// Perf Panel (2026-07-30, docs/2026-07-30_PRD_PreviewPerfPanel.md §2): two
+// ADDITIVE wraps so the debug perf-probe can see inside the private
+// renderer/AnimationMixer instances every generated game constructs. Both
+// call straight through to the real constructor — zero behavior change for
+// any existing game; they only register bookkeeping on window.__arPerf,
+// the same registry runtime-helpers.ts's loadModel() populates (models +
+// rootNames). WebGLRenderer/AnimationMixer are pulled out of the passthrough
+// export list and re-exported as thin subclasses instead.
+const WRAPPED_EXPORTS = ['WebGLRenderer', 'AnimationMixer'];
+const PASSTHROUGH_EXPORTS = THREE_EXPORTS.filter((n) => !WRAPPED_EXPORTS.includes(n));
+
 const entry = [
-  `export { ${THREE_EXPORTS.join(', ')} } from 'three';`,
+  `import {`,
+  `  ${PASSTHROUGH_EXPORTS.join(',\n  ')},`,
+  `  WebGLRenderer as __ArRealWebGLRenderer,`,
+  `  AnimationMixer as __ArRealAnimationMixer,`,
+  `} from 'three';`,
   // GLTFLoader so games can load library models (PRD Part I). Lives outside
   // three's main entry, hence the second export line.
   `export { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';`,
@@ -78,6 +93,27 @@ const entry = [
   // (EXT_meshopt_compression — PRD §4.3); the loadModel helper wires it into
   // GLTFLoader. Not taught to Gemini — internal to the helper.
   `export { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';`,
+  `export { ${PASSTHROUGH_EXPORTS.join(', ')} };`,
+  ``,
+  `export class WebGLRenderer extends __ArRealWebGLRenderer {`,
+  `  constructor(...args) {`,
+  `    super(...args);`,
+  `    try {`,
+  `      window.__arPerf = window.__arPerf || { models: {} };`,
+  `      window.__arPerf.renderer = this;`,
+  `    } catch (e) { /* telemetry only — never break rendering */ }`,
+  `  }`,
+  `}`,
+  `export class AnimationMixer extends __ArRealAnimationMixer {`,
+  `  constructor(root, ...args) {`,
+  `    super(root, ...args);`,
+  `    try {`,
+  `      window.__arPerf = window.__arPerf || { models: {} };`,
+  `      window.__arPerf.animatedRoots = window.__arPerf.animatedRoots || new WeakSet();`,
+  `      if (root) window.__arPerf.animatedRoots.add(root);`,
+  `    } catch (e) { /* telemetry only — never break animation */ }`,
+  `  }`,
+  `}`,
 ].join('\n');
 
 const result = await build({
