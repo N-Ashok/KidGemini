@@ -179,7 +179,11 @@ deterministic GLBs (and Kenney-derivative re-textures, which CC0 permits) into
 `assets-src/models/`, dedicated CC0 via `assets-src/LICENSE.md`. The vendor
 pipeline's `local` source kind feeds them through the exact same compress →
 budget → upload → verify → manifest stages; `sourceUrl` points at the in-repo
-dedication (originals) or the upstream Kenney page (derivatives).
+dedication (originals) or the upstream Kenney page (derivatives). Confirmed
+the same pattern for cricket (2026-07-29) and the indian games batch
+(2026-07-30, kabaddi/carrom/kho-kho/badminton/ludo/marbles — a fourth region
+with zero CC0 coverage) — no change to this section needed, both follow it
+exactly.
 
 ### 4.2 Curation criteria
 - Kid-friendly subject; nothing scary/violent/branded.

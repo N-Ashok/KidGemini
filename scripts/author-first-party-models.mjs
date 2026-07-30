@@ -415,6 +415,312 @@ async function buildCricketer() {
   console.log(`✓ cricketer: character-b + whites atlas → assets-src/models/cricketer/`);
 }
 
+// ── indian games (2026-07-30, docs/2026-07-30_PRD_IndianGamesAssets.md) ─────
+// Kabaddi, carrom, kho-kho, badminton, ludo, marbles — a poly.pizza/Kenney/
+// Quaternius sweep (2026-07-30) found NO usable CC0 model for any of the six
+// (PRD §1). Same remedy as soccer/cricket: author here, dedicate CC0.
+
+const MAT_SAND = [0.85, 0.75, 0.45];
+const LINE_WHITE = [0.95, 0.95, 0.92];
+const CARROM_WOOD = [0.62, 0.45, 0.28];
+const CARROM_CREAM = [0.90, 0.82, 0.62];
+const CARROM_LINE = [0.15, 0.15, 0.15];
+const STRIKER_WHITE = [0.92, 0.90, 0.85];
+const COIN_WHITE = [0.93, 0.91, 0.86];
+const COIN_BLACK = [0.12, 0.11, 0.13];
+const QUEEN_RED = [0.72, 0.10, 0.13];
+const POLE_WOOD = [0.75, 0.55, 0.32];
+const FIELD_GREEN = [0.36, 0.55, 0.28];
+const RACKET_FRAME = [0.80, 0.14, 0.14];
+const RACKET_STRING = [0.88, 0.88, 0.84];
+const GRIP_BLACK = [0.15, 0.15, 0.15];
+const SHUTTLE_WHITE = [0.95, 0.95, 0.92];
+const SHUTTLE_CORK = [0.85, 0.75, 0.55];
+const NET_WHITE = [0.96, 0.96, 0.96];
+const NET_POST = [0.30, 0.30, 0.32];
+const LUDO_CREAM = [0.94, 0.92, 0.85];
+const LUDO_HOME = [0.98, 0.96, 0.90];
+const PAWN_RED = [0.80, 0.15, 0.15];
+const PAWN_GREEN = [0.15, 0.60, 0.25];
+const PAWN_YELLOW = [0.90, 0.75, 0.15];
+const PAWN_BLUE = [0.15, 0.35, 0.80];
+const DICE_WHITE = [0.95, 0.95, 0.92];
+const DICE_DOT = [0.10, 0.10, 0.10];
+const MARBLE_CLEAR = [0.75, 0.85, 0.92];
+const MARBLE_BLUE = [0.20, 0.40, 0.85];
+const MARBLE_GREEN = [0.20, 0.70, 0.35];
+
+/** Winds a convex polygon so its normal points toward `outward` — the same
+ *  correctness trick soccerBall() uses inline, factored here so every new
+ *  flat-cap shape (discs, rings, pips) gets it for free without re-deriving
+ *  cross-product sign logic per shape. */
+function orient(points, outward) {
+  const u = [points[1][0] - points[0][0], points[1][1] - points[0][1], points[1][2] - points[0][2]];
+  const v = [points[2][0] - points[0][0], points[2][1] - points[0][1], points[2][2] - points[0][2]];
+  const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  return n[0] * outward[0] + n[1] * outward[1] + n[2] * outward[2] > 0 ? points : [...points].reverse();
+}
+
+/** Filled circle in the XZ plane (a table lying flat) at height y. */
+function circleXZ(cx, y, cz, r, seg, color, outward) {
+  const pts = [];
+  for (let i = 0; i < seg; i++) {
+    const a = (i / seg) * Math.PI * 2;
+    pts.push([cx + r * Math.cos(a), y, cz + r * Math.sin(a)]);
+  }
+  return orient(pts, outward).map((p) => p); // caller adds via b.poly
+}
+
+/** A flat disc standing at the origin — top+bottom caps plus a rim wall.
+ *  Used for every coin/striker/queen-piece shape (all colour variants of one
+ *  geometry, per the PRD's carrom-coin / ludo-pawn / marble pattern). */
+function flatDisc(radius, height, color, seg = 16) {
+  const b = meshBuilder();
+  lathe(b, [[radius, 0, radius, height, color]], seg);
+  b.poly(circleXZ(0, height, 0, radius, seg, color, [0, 1, 0]), color);
+  b.poly(circleXZ(0, 0, 0, radius, seg, color, [0, -1, 0]), color);
+  return b.build();
+}
+
+/** UV sphere at the origin, single flat color — the marble geometry (and the
+ *  same technique cricketBall() uses, minus the seam band). */
+function uvSphere(radius, color, rings = 10, seg = 12) {
+  const b = meshBuilder();
+  const p = (lat, lon) => {
+    const th = (lat / rings) * Math.PI, ph = (lon / seg) * Math.PI * 2;
+    return [radius * Math.sin(th) * Math.cos(ph), radius * Math.cos(th), radius * Math.sin(th) * Math.sin(ph)];
+  };
+  for (let lat = 0; lat < rings; lat++) {
+    for (let lon = 0; lon < seg; lon++) {
+      const [a, bb, c, d] = [p(lat, lon), p(lat, lon + 1), p(lat + 1, lon + 1), p(lat + 1, lon)];
+      if (lat !== 0) b.tri(a, c, bb, color);
+      if (lat !== rings - 1) b.tri(a, d, c, color);
+    }
+  }
+  return b.build();
+}
+
+/** Kabaddi court: regulation 13m x 10m mat, centre line + baulk lines at
+ *  ±3.75 m (men's dimensions), boundary lines painted via vertex colour. */
+function kabaddiMat() {
+  const b = meshBuilder();
+  const W = 10, L = 13;
+  b.box(0, 0, 0, W, 0.02, L, MAT_SAND);
+  b.box(0, 0.011, 0, W, 0.006, 0.08, LINE_WHITE); // centre line
+  for (const z of [-3.75, 3.75]) b.box(0, 0.011, z, W, 0.006, 0.05, LINE_WHITE); // baulk lines
+  for (const z of [-L / 2 + 0.03, L / 2 - 0.03]) b.box(0, 0.011, z, W, 0.006, 0.05, LINE_WHITE);
+  for (const x of [-W / 2 + 0.03, W / 2 - 0.03]) b.box(x, 0.011, 0, 0.05, 0.006, L, LINE_WHITE);
+  return b.build();
+}
+
+/** Carrom board: 74cm playing surface inside an 82cm wooden frame, four
+ *  corner pockets, a centre circle, and diagonal guide lines (all vertex
+ *  colour — no real pocket holes, matching the "flat, vertex-colour" budget
+ *  every model in this file uses). */
+function carromBoard() {
+  const b = meshBuilder();
+  const S = 0.82, P = 0.74;
+  b.box(0, 0, 0, S, 0.02, S, CARROM_WOOD);
+  b.box(0, 0.011, 0, P, 0.004, P, CARROM_CREAM);
+  // Diagonal guide lines, corner to corner — built as thin rotated quads
+  // (poly(), not box(): box() is axis-aligned only).
+  const half = P / 2 - 0.06, w = 0.008, y = 0.014;
+  for (const [dx, dz] of [[1, 1], [1, -1]]) {
+    const nx = -dz * w / Math.SQRT2, nz = dx * w / Math.SQRT2;
+    const p1 = [-dx * half + nx, y, -dz * half + nz];
+    const p2 = [dx * half + nx, y, dz * half + nz];
+    const p3 = [dx * half - nx, y, dz * half - nz];
+    const p4 = [-dx * half - nx, y, -dz * half - nz];
+    b.poly(orient([p1, p2, p3, p4], [0, 1, 0]), CARROM_LINE);
+  }
+  b.poly(circleXZ(0, 0.014, 0, 0.09, 20, CARROM_LINE, [0, 1, 0]), CARROM_LINE);
+  b.poly(circleXZ(0, 0.015, 0, 0.06, 20, CARROM_CREAM, [0, 1, 0]), CARROM_CREAM);
+  for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    b.poly(circleXZ(x * (P / 2 - 0.05), 0.014, z * (P / 2 - 0.05), 0.032, 14, CARROM_LINE, [0, 1, 0]), CARROM_LINE);
+  }
+  return b.build();
+}
+
+/** Regulation carrom striker: ~4.2cm diameter flat cylinder. */
+function carromStriker() { return flatDisc(0.021, 0.009, STRIKER_WHITE); }
+/** Regulation coins: ~3.2cm diameter, thin. White/black are colour variants
+ *  of the SAME geometry (PRD's colour-variant pattern). */
+function carromCoinWhite() { return flatDisc(0.016, 0.006, COIN_WHITE); }
+function carromCoinBlack() { return flatDisc(0.016, 0.006, COIN_BLACK); }
+/** The queen: same coin geometry, red. */
+function carromQueen() { return flatDisc(0.016, 0.006, QUEEN_RED); }
+
+/** Kho-kho pole: the post planted at each end of the lane — ONE model,
+ *  placed twice per field (PRD §2.3). ~1.2m tall, tapered cap. */
+function khoKhoPole() {
+  // Regulation pole height is 120-125cm overall INCLUDING the rounded cap —
+  // the render pass (2026-07-30) caught a first pass that added the cap ON
+  // TOP of a full 1.20m pole (1.32m total, over regulation), same class of
+  // defect the cricket batch's wicket-width bug was. Fixed: the cap eats into
+  // the 1.23m total instead of extending past it.
+  const b = meshBuilder();
+  lathe(b, [[0.045, 0, 0.045, 1.20, POLE_WOOD], [0.045, 1.20, 0.018, 1.23, POLE_WOOD]], 10);
+  b.poly(circleXZ(0, 0, 0, 0.045, 10, POLE_WOOD, [0, -1, 0]), POLE_WOOD);
+  b.poly(circleXZ(0, 1.23, 0, 0.018, 10, POLE_WOOD, [0, 1, 0]), POLE_WOOD);
+  return b.build();
+}
+
+/** Kho-kho field: the central lane with 8 cross-lanes (regulation-shaped
+ *  rectangle, simplified to a flat green field with painted lines). */
+function khoKhoLaneField() {
+  const b = meshBuilder();
+  const W = 16, L = 29;
+  b.box(0, 0, 0, W, 0.02, L, FIELD_GREEN);
+  b.box(0, 0.011, 0, 0.08, 0.006, L, LINE_WHITE); // central lane
+  for (let i = -3.5; i <= 3.5; i++) b.box(0, 0.011, i * 3.5, W, 0.006, 0.05, LINE_WHITE); // 8 cross lanes
+  return b.build();
+}
+
+/** Badminton racket: lathe-revolved grip + shaft, an oval "hoop" ring in the
+ *  XY plane (racket held handle-down, hoop facing the camera), with a flat
+ *  low-poly "strung" cross-hatch via vertex colour (not real string
+ *  geometry, per the PRD). ~0.67m overall, regulation racket length. */
+function badmintonRacket() {
+  // Regulation caps: overall length <= 680mm, overall width <= 230mm. The
+  // render pass (2026-07-30) caught a first pass at 495mm total (grip 150 +
+  // shaft 210 + hoop radius 135) — well under length, and 270mm hoop diameter
+  // — over the width cap. Refit: hoop centre pushed further up the shaft and
+  // the hoop shrunk so length and width both land inside regulation.
+  const b = meshBuilder();
+  lathe(b, [[0.010, 0, 0.010, 0.15, GRIP_BLACK]], 10); // grip
+  const gripBottom = [];
+  for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; gripBottom.push([0.010 * Math.cos(a), 0, 0.010 * Math.sin(a)]); }
+  b.poly(orient(gripBottom, [0, -1, 0]), GRIP_BLACK);
+  lathe(b, [[0.010, 0.15, 0.005, 0.15, RACKET_FRAME], [0.005, 0.15, 0.005, 0.56, RACKET_FRAME]], 10); // shaft
+
+  // Hoop ring + string bed live in the XY plane (normal along Z).
+  const hoopY = 0.56, R = 0.11, Rin = 0.095;
+  const ringPt = (r, i, seg) => { const a = (i / seg) * Math.PI * 2; return [r * Math.cos(a), hoopY + r * Math.sin(a), 0]; };
+  const SEG = 16;
+  for (let i = 0; i < SEG; i++) {
+    const o0 = ringPt(R, i, SEG), o1 = ringPt(R, i + 1, SEG), i0 = ringPt(Rin, i, SEG), i1 = ringPt(Rin, i + 1, SEG);
+    b.poly(orient([o0, o1, i1, i0], [0, 0, 1]), RACKET_FRAME);
+    b.poly(orient([o0, o1, i1, i0], [0, 0, -1]), RACKET_FRAME);
+  }
+  // String bed: a thin disc plus a light cross-hatch (vertex colour only).
+  const bedPts = (r) => { const pts = []; for (let i = 0; i < SEG; i++) pts.push(ringPt(r, i, SEG)); return pts; };
+  b.poly(orient(bedPts(Rin), [0, 0, 1]), RACKET_STRING);
+  b.poly(orient([...bedPts(Rin)].reverse(), [0, 0, -1]), RACKET_STRING);
+  for (let i = -2; i <= 2; i++) {
+    const t = (i / 3) * Rin;
+    b.poly(orient([[-Rin * 0.9, hoopY + t - 0.0015, 0.0005], [Rin * 0.9, hoopY + t - 0.0015, 0.0005], [Rin * 0.9, hoopY + t + 0.0015, 0.0005], [-Rin * 0.9, hoopY + t + 0.0015, 0.0005]], [0, 0, 1]), GRIP_BLACK);
+    b.poly(orient([[t - 0.0015, hoopY - Rin * 0.9, 0.0006], [t + 0.0015, hoopY - Rin * 0.9, 0.0006], [t + 0.0015, hoopY + Rin * 0.9, 0.0006], [t - 0.0015, hoopY + Rin * 0.9, 0.0006]], [0, 0, 1]), GRIP_BLACK);
+  }
+  return b.build();
+}
+
+/** Shuttlecock: a small cork base with a fan of thin triangular "feathers" —
+ *  the classic birdie silhouette at very low poly count (PRD §2.4). */
+function shuttlecock() {
+  const b = meshBuilder();
+  lathe(b, [[0, 0, 0.008, 0, SHUTTLE_CORK], [0.008, 0, 0.006, 0.012, SHUTTLE_CORK]], 10);
+  const bottom = [];
+  for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; bottom.push([0.008 * Math.cos(a), 0, 0.008 * Math.sin(a)]); }
+  b.poly(orient(bottom, [0, -1, 0]), SHUTTLE_CORK);
+  const FEATHERS = 12, topR = 0.032, height = 0.07;
+  for (let i = 0; i < FEATHERS; i++) {
+    const a = (i / FEATHERS) * Math.PI * 2;
+    const base = [0.006 * 0.5 * Math.cos(a), 0.010, 0.006 * 0.5 * Math.sin(a)];
+    const flare = [topR * Math.cos(a), height * 0.45, topR * Math.sin(a)];
+    const tip = [topR * 1.05 * Math.cos(a + 0.04), height, topR * 1.05 * Math.sin(a + 0.04)];
+    b.tri(base, flare, tip, SHUTTLE_WHITE);
+  }
+  return b.build();
+}
+
+/** Badminton net: regulation 6.1m wide, cloth top at 1.55m dropping 0.76m,
+ *  with two posts. */
+function badmintonNet() {
+  const b = meshBuilder();
+  const W = 6.1, cloth = 0.76, top = 1.55;
+  b.box(0, top - cloth / 2, 0, W, cloth, 0.01, NET_WHITE);
+  b.box(0, top + 0.02, 0, W, 0.04, 0.02, NET_WHITE);
+  for (const x of [-W / 2, W / 2]) b.box(x, top / 2, 0, 0.05, top, 0.05, NET_POST);
+  return b.build();
+}
+
+/** Ludo board: flat square, four coloured quadrant "yards", a cream centre
+ *  home area (PRD §2.5). */
+function ludoBoard() {
+  const b = meshBuilder();
+  const S = 0.45, q = S / 2 / 2, cell = S / 2 - 0.02;
+  b.box(0, 0, 0, S, 0.015, S, LUDO_CREAM);
+  b.box(-q, 0.008, -q, cell, 0.006, cell, PAWN_RED);
+  b.box(q, 0.008, -q, cell, 0.006, cell, PAWN_GREEN);
+  b.box(-q, 0.008, q, cell, 0.006, cell, PAWN_BLUE);
+  b.box(q, 0.008, q, cell, 0.006, cell, PAWN_YELLOW);
+  b.box(0, 0.009, 0, S * 0.28, 0.006, S * 0.28, LUDO_HOME);
+  return b.build();
+}
+
+/** Ludo die: a cube with pip dots on three visible faces (top/front/right) —
+ *  enough to read as a die at this poly count without modelling all six. */
+function ludoDice() {
+  const b = meshBuilder();
+  const S = 0.016, pip = 0.003, d = S / 2 + 0.0006;
+  b.box(0, 0, 0, S, S, S, DICE_WHITE);
+  b.box(0, d, 0, pip, 0.0012, pip, DICE_DOT); // top: 1
+  b.box(-0.004, 0.004, d, pip, pip, 0.0012, DICE_DOT); // front: 2
+  b.box(0.004, -0.004, d, pip, pip, 0.0012, DICE_DOT);
+  b.box(d, 0.005, -0.005, 0.0012, pip, pip, DICE_DOT); // right: 3
+  b.box(d, 0, 0, 0.0012, pip, pip, DICE_DOT);
+  b.box(d, -0.005, 0.005, 0.0012, pip, pip, DICE_DOT);
+  return b.build();
+}
+
+/** Ludo pawn: a cone-on-disc peg, colour-variant per player (PRD §2.5's
+ *  coin-pattern re-use — one geometry, four colours). */
+function ludoPawn(color) {
+  const b = meshBuilder();
+  lathe(b, [
+    [0.012, 0, 0.012, 0.006, color],
+    [0.012, 0.006, 0.003, 0.030, color],
+    [0.003, 0.030, 0.003, 0.034, color],
+    [0.003, 0.034, 0.006, 0.038, color],
+  ], 12);
+  b.poly(circleXZ(0, 0, 0, 0.012, 12, color, [0, -1, 0]), color);
+  b.poly(circleXZ(0, 0.038, 0, 0.006, 12, color, [0, 1, 0]), color);
+  return b.build();
+}
+
+/** Marble: a UV sphere; blue/green are colour variants of the same geometry
+ *  (matching the coin/pawn pattern, PRD §2.6). Regulation glass marble ~16mm. */
+function marble() { return uvSphere(0.008, MARBLE_CLEAR); }
+function marbleBlue() { return uvSphere(0.008, MARBLE_BLUE); }
+function marbleGreen() { return uvSphere(0.008, MARBLE_GREEN); }
+
+/** Kenney character-b re-skinned into the new "kabaddi" kit — shared verbatim
+ *  by kho_kho_player too (PRD: both sports read as the same sleeveless-vest
+ *  silhouette, so no separate kit is needed). Factored out of
+ *  buildFootballers()/buildCricketer()'s identical download-unzip-retexture
+ *  steps so a third and fourth re-skin don't re-download the same zip. */
+async function buildReskin(name, kit) {
+  await mkdir(cacheDir, { recursive: true });
+  const zipPath = join(cacheDir, BLOCKY_ZIP_URL.split('/').pop());
+  if (!existsSync(zipPath)) {
+    console.log(`  ↓ ${BLOCKY_ZIP_URL}`);
+    await download(BLOCKY_ZIP_URL, zipPath);
+  }
+  const stage = join(cacheDir, 'footballer-src');
+  await mkdir(stage, { recursive: true });
+  execFileSync('unzip', ['-o', '-j', zipPath, BLOCKY_GLB, BLOCKY_TEXTURE, '-d', stage], { stdio: 'pipe' });
+  const dir = join(outRoot, name);
+  await mkdir(join(dir, 'Textures'), { recursive: true });
+  await copyFile(join(stage, 'character-b.glb'), join(dir, 'raw.glb'));
+  execFileSync('python3', [
+    join(repo, 'scripts/retexture-footballer.py'),
+    join(stage, 'texture-b.png'),
+    join(dir, 'Textures/texture-b.png'),
+    kit,
+  ], { stdio: 'inherit' });
+  console.log(`✓ ${name}: character-b + ${kit} kit atlas → assets-src/models/${name}/`);
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 await mkdir(outRoot, { recursive: true });
@@ -429,4 +735,28 @@ await writeGlb('wicket', wicket());
 await writeGlb('cricket_pitch', cricketPitch());
 await writeGlb('sight_screen', sightScreen());
 await buildCricketer();
+
+await writeGlb('kabaddi_mat', kabaddiMat());
+await writeGlb('carrom_board', carromBoard());
+await writeGlb('carrom_striker', carromStriker());
+await writeGlb('carrom_coin_white', carromCoinWhite());
+await writeGlb('carrom_coin_black', carromCoinBlack());
+await writeGlb('carrom_queen', carromQueen());
+await writeGlb('kho_kho_pole', khoKhoPole());
+await writeGlb('kho_kho_lane_field', khoKhoLaneField());
+await writeGlb('badminton_racket', badmintonRacket());
+await writeGlb('shuttlecock', shuttlecock());
+await writeGlb('badminton_net', badmintonNet());
+await writeGlb('ludo_board', ludoBoard());
+await writeGlb('ludo_dice', ludoDice());
+await writeGlb('ludo_pawn_red', ludoPawn(PAWN_RED));
+await writeGlb('ludo_pawn_green', ludoPawn(PAWN_GREEN));
+await writeGlb('ludo_pawn_yellow', ludoPawn(PAWN_YELLOW));
+await writeGlb('ludo_pawn_blue', ludoPawn(PAWN_BLUE));
+await writeGlb('marble', marble());
+await writeGlb('marble_blue', marbleBlue());
+await writeGlb('marble_green', marbleGreen());
+await buildReskin('kabaddi_player', 'kabaddi');
+await buildReskin('kho_kho_player', 'kabaddi');
+
 console.log('✓ all first-party sources written — run scripts/vendor-models.mjs next');

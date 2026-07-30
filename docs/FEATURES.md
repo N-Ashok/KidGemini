@@ -669,6 +669,29 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   Cricket words (cricket, wicket, stumps, batsman, bowler, innings, googly…)
   added to the sports trigger; the CC0 baseball bats were deliberately NOT
   reused, since a round bat reads as the wrong sport
+- **Indian games set** (2026-07-30, `docs/2026-07-30_PRD_IndianGamesAssets.md`;
+  owner ask: games popular with Indian kids 7-14): kabaddi (kabaddi_mat,
+  kabaddi_player), carrom (carrom_board, carrom_striker, carrom_coin_white/
+  black, carrom_queen), kho-kho (kho_kho_pole ×2 per field, kho_kho_lane_field,
+  kho_kho_player), badminton (badminton_racket, shuttlecock, badminton_net),
+  ludo (ludo_board, ludo_dice, ludo_pawn_red/green/yellow/blue), and marbles
+  (marble, marble_blue, marble_green) — 22 models total. **First-party CC0 —
+  same wall as soccer/cricket:** a poly.pizza (CC0-filter)/Kenney/Quaternius
+  sweep found zero usable models for any of the six. Lives in its OWN new
+  genre `indian_games` (not folded into `sports` — carrom/ludo/marbles are
+  tabletop games, not sports in the cricket/football sense). Authored to
+  regulation dimensions at 1 unit = 1 m (kabaddi mat 10×13 m, carrom board
+  0.82 m incl. frame, badminton racket 0.67 m / hoop ≤0.22 m wide, kho-kho pole
+  1.23 m, marble 16 mm) — a render-pass bounding-box check caught the racket
+  under length + over width and the pole over height on the first pass, same
+  class of defect the cricket batch's wicket-gap bug was. kabaddi_player and
+  kho_kho_player are Kenney character-b re-skinned into a NEW "kabaddi" kit
+  (`retexture-footballer.py`) — same mesh and rig, so they inherit the full
+  blocky-character clip set; both sports deliberately share the one kit
+  (PRD: same sleeveless-vest silhouette, no separate kit needed). Coin/pawn/
+  marble colour variants are one geometry re-colored, matching the existing
+  footballer/blade_top pattern. Catalog token ceiling raised 1750 → 1900 as
+  the documented revisit (measured, not assumed) — see prompt-catalog.test.ts
 - **Frame governor + stop-when-hidden** (2026-07-29, PRD §6b; from an hour of
   real play that heated the owner's machine): every 3D game now pauses when the
   page is hidden and is capped to 60fps. Shipped TWICE on purpose — as playbook

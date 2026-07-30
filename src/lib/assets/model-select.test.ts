@@ -236,6 +236,90 @@ describe("selectModelNames — cricket (2026-07-29 batch)", () => {
   });
 });
 
+describe("selectModelNames — indian games genre (2026-07-30 batch)", () => {
+  const INDIAN_GAMES = [
+    "kabaddi_mat", "kabaddi_player",
+    "carrom_board", "carrom_striker", "carrom_coin_white", "carrom_coin_black", "carrom_queen",
+    "kho_kho_pole", "kho_kho_lane_field", "kho_kho_player",
+    "badminton_racket", "shuttlecock", "badminton_net",
+    "ludo_board", "ludo_dice", "ludo_pawn_red", "ludo_pawn_green", "ludo_pawn_yellow", "ludo_pawn_blue",
+    "marble", "marble_blue", "marble_green",
+  ];
+  const withIndianGames: AssetManifest = { assets: [...BIG_NAMES, ...INDIAN_GAMES].map(entry) };
+
+  it("a kabaddi ask picks the kabaddi set, not sea creatures", () => {
+    const picked = selectModelNames({ message: "make me a 3d kabaddi game", history: [], manifest: withIndianGames });
+    expect(picked).toContain("kabaddi_mat");
+    expect(picked).toContain("kabaddi_player");
+    expect(picked).not.toContain("shark");
+  });
+
+  it("a carrom ask picks the whole carrom set (board, striker, coins, queen)", () => {
+    // NOTE the real granularity (same as the cricket/sports precedent):
+    // carrom shares the `indian_games` GENRE with kabaddi/kho-kho/badminton/
+    // ludo/marbles, so any word in that genre's trigger legitimately pulls
+    // the whole genre in — genres, not individual games, are the unit of
+    // selection. What matters is that a carrom ask does NOT reach a
+    // different genre entirely (sea creatures, sports).
+    const picked = selectModelNames({ message: "a 3d carrom game — flick the striker", history: [], manifest: withIndianGames });
+    expect(picked).toContain("carrom_board");
+    expect(picked).toContain("carrom_striker");
+    expect(picked).toContain("carrom_coin_white");
+    expect(picked).toContain("carrom_queen");
+    expect(picked).not.toContain("shark");
+  });
+
+  it("'kho-kho' and 'kho kho' both reach the kho-kho set", () => {
+    for (const msg of ["a 3d kho-kho chase game", "3d kho kho tag"]) {
+      const picked = selectModelNames({ message: msg, history: [], manifest: withIndianGames });
+      expect(picked).toContain("kho_kho_pole");
+      expect(picked).toContain("kho_kho_player");
+    }
+  });
+
+  it("a badminton ask picks racket, shuttlecock/birdie, and net", () => {
+    const picked = selectModelNames({ message: "make me a 3d badminton rally", history: [], manifest: withIndianGames });
+    expect(picked).toContain("badminton_racket");
+    expect(picked).toContain("shuttlecock");
+    expect(picked).toContain("badminton_net");
+  });
+
+  it("'birdie' alone (no 'badminton' word) still reaches the set", () => {
+    const picked = selectModelNames({ message: "3d game hitting a birdie over a net", history: [], manifest: withIndianGames });
+    expect(picked).toContain("shuttlecock");
+  });
+
+  it("a ludo ask picks the board, dice, and all four pawn colours", () => {
+    const picked = selectModelNames({ message: "a 3d ludo board game", history: [], manifest: withIndianGames });
+    expect(picked).toContain("ludo_board");
+    expect(picked).toContain("ludo_dice");
+    expect(picked).toContain("ludo_pawn_red");
+    expect(picked).toContain("ludo_pawn_blue");
+  });
+
+  it("'marbles' and 'goli' both reach the marbles set", () => {
+    for (const msg of ["a 3d marbles game", "3d goli game in the yard"]) {
+      const picked = selectModelNames({ message: msg, history: [], manifest: withIndianGames });
+      expect(picked).toContain("marble");
+      expect(picked).toContain("marble_blue");
+    }
+  });
+
+  it("no indian-games words → none of the set (selection stays tight)", () => {
+    const picked = selectModelNames({ message: "3d game under the sea", history: [], manifest: withIndianGames });
+    expect(picked).not.toContain("kabaddi_mat");
+    expect(picked).not.toContain("carrom_board");
+    expect(picked).not.toContain("ludo_board");
+    expect(picked).not.toContain("marble");
+  });
+
+  it("a sports word (football/cricket) does NOT pull in the indian games genre — different genre", () => {
+    const picked = selectModelNames({ message: "make me a 3d cricket game", history: [], manifest: withIndianGames });
+    expect(picked).not.toContain("ludo_board");
+    expect(picked).not.toContain("carrom_board");
+  });
+});
+
 describe("GENRES — data sanity", () => {
   const allModels = new Set(
     (manifest as AssetManifest).assets.filter((a) => a.type === "model").map((a) => a.name),

@@ -120,6 +120,22 @@ export const GENRES: readonly GenreDef[] = [
     label: "army / battle vehicles",
     trigger: /\b(army|armies|militar(y|ies)|tanks?|soldiers?|wars?|battles?|combat|troops?|bases?|bunkers?|turrets?|cannons?|artillery|forts?|fortress(es)?|sandbags?|barricades?|defen[cs]e|camo(uflage)?|guns?)\b/i,
   },
+  {
+    // Indian games batch (2026-07-30, docs/2026-07-30_PRD_IndianGamesAssets.md).
+    // Kept as its OWN genre (not folded into `sports`): carrom/ludo/marbles are
+    // tabletop games, not sports in the football/cricket sense, and the owner
+    // asked for a batch scoped to games popular with Indian kids specifically.
+    // Deliberately NOT the bare words "striker" (already a sports/football
+    // trigger — a football-striker ask should not drag in a carrom board),
+    // "coin" (collides with the platformer pickup), "queen"/"pawn"/"token"
+    // (chess/generic-pickup collisions), or "net" (soccer goal net, fishing
+    // net) — same over-triggering lesson the cricket trigger's own comment
+    // documents. "carrom"/"ludo"/"kabaddi" alone are enough to pull each
+    // whole set in (genres are the unit of selection).
+    id: "indian_games",
+    label: "Indian games",
+    trigger: /\b(kabaddi|carrom(?:s)?|kho[\s-]?kho|badminton|shuttlecocks?|birdies?|rackets?|racquets?|ludo|dice|marbles?|goli(?:es)?)\b/i,
+  },
 ];
 
 /** Always-available basics: broadly useful in any game idea. */

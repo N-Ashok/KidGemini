@@ -664,6 +664,36 @@ const MODELS = [
     source: { kind: 'url', url: 'https://static.poly.pizza/ae5b8510-1fa5-4d53-b943-a4f3b88fb629.glb' },
     sourceUrl: 'https://poly.pizza/m/3rUm1cN3yp',
   },
+
+  // ── Indian games batch (2026-07-30, docs/2026-07-30_PRD_IndianGamesAssets.md).
+  // Owner ask: games popular with Indian kids 7-14 — kabaddi, carrom, kho-kho,
+  // badminton, ludo, marbles (cricket excluded — already shipped 2026-07-29).
+  // A poly.pizza (CC0-filter)/Kenney/Quaternius sweep (2026-07-30) found ZERO
+  // usable third-party models for any of the six — see the PRD §1 for the
+  // per-sport rejection notes. FIRST-PARTY, same remedy as soccer/cricket:
+  // authored by scripts/author-first-party-models.mjs, dedicated CC0
+  // (assets-src/LICENSE.md). kabaddi_player/kho_kho_player are Kenney
+  // character-b re-skins (new "kabaddi" kit, retexture-footballer.py) — mesh
+  // and rig untouched, so they inherit the full blocky-character clip set.
+  ...[
+    'kabaddi_mat',
+    'carrom_board', 'carrom_striker', 'carrom_coin_white', 'carrom_coin_black', 'carrom_queen',
+    'kho_kho_pole', 'kho_kho_lane_field',
+    'badminton_racket', 'shuttlecock', 'badminton_net',
+    'ludo_board', 'ludo_dice', 'ludo_pawn_red', 'ludo_pawn_green', 'ludo_pawn_yellow', 'ludo_pawn_blue',
+    'marble', 'marble_blue', 'marble_green',
+  ].map((name) => ({
+    name,
+    source: { kind: 'local', dir: `assets-src/models/${name}` },
+    sourceUrl: 'https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md',
+  })),
+  // The two re-skinned characters — same proof trail as the footballers/cricketer.
+  ...['kabaddi_player', 'kho_kho_player'].map((name) => ({
+    name,
+    source: { kind: 'local', dir: `assets-src/models/${name}` },
+    sourceUrl: 'https://kenney.nl/assets/blocky-characters',
+    keepAnimations: ['static', 'idle', 'walk', 'sprint', 'sit', 'drive', 'die', 'pick-up', 'emote-yes', 'emote-no', 'interact-right', 'interact-left'],
+  })),
 ];
 
 // --only a,b,c: process just the named models (2026-07-26). A full re-run

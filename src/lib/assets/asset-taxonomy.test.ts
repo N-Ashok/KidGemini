@@ -108,6 +108,8 @@ const GENRE_MEMBERSHIP_BEFORE_MIGRATION: Record<GenreId, string[]> = {
   sports: [],
   // Likewise the 2026-07-29 military batch.
   military: [],
+  // Born after the migration (2026-07-30 indian games batch) — nothing to preserve.
+  indian_games: [],
 };
 
 describe("migrating genre membership onto the assets never DROPS a model", () => {
@@ -130,15 +132,18 @@ describe("migrating genre membership onto the assets never DROPS a model", () =>
 // a stadium — so deriving that line from the genre would tell the model a
 // grandstand can walk. Rig, not genre, is the only valid source.
 describe("shared-rig set is exactly the Kenney Blocky characters", () => {
-  it("is the 18 kit characters plus the 3 sports re-skins — every one shares the clip list", () => {
+  it("is the 18 kit characters plus the 5 sports/indian-games re-skins — every one shares the clip list", () => {
     // The footballers (2026-07-26) and the cricketer (2026-07-29) are
     // re-textured character-b meshes — same skeleton, same clips, only the
     // atlas is re-painted — so listing them here keeps the people-clips prompt
-    // line true. 20 → 21 updated deliberately with the cricket batch.
+    // line true. 20 → 21 with the cricket batch; 21 → 23 with the indian
+    // games batch (2026-07-30): kabaddi_player + kho_kho_player are the same
+    // re-skin technique, sharing one new "kabaddi" kit (PRD §2.1/§2.3).
     expect([...modelsWithRig("kenney_blocky", new Set(modelNames))].sort()).toEqual([
       "businessman", "cricketer", "explorer", "footballer", "footballer_blue", "gamer", "girl",
-      "grandpa", "kimono_woman", "man", "mascot", "mech", "ninja", "orc", "pirate", "plumber",
-      "police_officer", "purple_mech", "scientist", "woman", "zombie",
+      "grandpa", "kabaddi_player", "kho_kho_player", "kimono_woman", "man", "mascot", "mech",
+      "ninja", "orc", "pirate", "plumber", "police_officer", "purple_mech", "scientist", "woman",
+      "zombie",
     ]);
   });
 
@@ -289,6 +294,63 @@ describe("cricket set (2026-07-29 batch)", () => {
     expect(tagsOf("wicket")).toContain("stumps");
     expect(tagsOf("cricketer")).toContain("batsman");
     expect(tagsOf("cricket_bat")).toContain("bat");
+  });
+});
+
+// Indian games batch (2026-07-30, docs/2026-07-30_PRD_IndianGamesAssets.md) —
+// kabaddi, carrom, kho-kho, badminton, ludo, marbles. FIRST-PARTY: a
+// poly.pizza/Kenney/Quaternius sweep (2026-07-30) found zero usable CC0 models
+// for any of the six. New genre "indian_games" (kept separate from `sports` —
+// carrom/ludo/marbles are tabletop games, not sports in the cricket/football
+// sense). Pinned by name for the same reason as every prior batch.
+describe("indian games set (2026-07-30 batch)", () => {
+  const INDIAN_GAMES = [
+    "kabaddi_mat", "kabaddi_player",
+    "carrom_board", "carrom_striker", "carrom_coin_white", "carrom_coin_black", "carrom_queen",
+    "kho_kho_pole", "kho_kho_lane_field", "kho_kho_player",
+    "badminton_racket", "shuttlecock", "badminton_net",
+    "ludo_board", "ludo_dice", "ludo_pawn_red", "ludo_pawn_green", "ludo_pawn_yellow", "ludo_pawn_blue",
+    "marble", "marble_blue", "marble_green",
+  ];
+
+  it("the manifest carries every indian-games model", () => {
+    for (const name of INDIAN_GAMES) expect(modelNames).toContain(name);
+  });
+
+  it("all of them sit in the new indian_games genre", () => {
+    const members = modelsInGenre("indian_games", new Set(modelNames));
+    for (const name of INDIAN_GAMES) expect(members).toContain(name);
+  });
+
+  it("kabaddi_player and kho_kho_player carry the Kenney rig (re-skins, so the clip promise is real)", () => {
+    const rigged = modelsWithRig("kenney_blocky", new Set(modelNames));
+    expect(rigged).toContain("kabaddi_player");
+    expect(rigged).toContain("kho_kho_player");
+  });
+
+  it("the equipment/board/piece models do NOT claim the rig (a board has no walk clip)", () => {
+    const rigged = modelsWithRig("kenney_blocky", new Set(modelNames));
+    for (const gear of [
+      "kabaddi_mat", "carrom_board", "carrom_striker", "carrom_coin_white", "carrom_coin_black",
+      "carrom_queen", "kho_kho_pole", "kho_kho_lane_field", "badminton_racket", "shuttlecock",
+      "badminton_net", "ludo_board", "ludo_dice", "ludo_pawn_red", "ludo_pawn_green",
+      "ludo_pawn_yellow", "ludo_pawn_blue", "marble", "marble_blue", "marble_green",
+    ]) {
+      expect(rigged).not.toContain(gear);
+    }
+  });
+
+  it("the coin/pawn/marble colour variants each resolve to a distinct manifest name", () => {
+    const names = new Set(INDIAN_GAMES);
+    expect(names.has("carrom_coin_white")).toBe(true);
+    expect(names.has("carrom_coin_black")).toBe(true);
+    expect(names.size).toBe(INDIAN_GAMES.length); // no accidental duplicate name
+  });
+
+  it("kid vocabulary reaches the set via tags (goli → marble, khokho → kho_kho_player)", () => {
+    expect(tagsOf("marble")).toContain("goli");
+    expect(tagsOf("kho_kho_player")).toContain("khokho");
+    expect(tagsOf("kabaddi_player")).toContain("kabaddi");
   });
 });
 

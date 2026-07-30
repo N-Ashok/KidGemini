@@ -1,13 +1,23 @@
 #!/usr/bin/env python3
 """Re-paint the Kenney Blocky Characters atlas into sports kits (2026-07-26,
 docs/2026-07-26_PRD_SportsAssets.md §2.2; cricket whites added 2026-07-29,
-docs/2026-07-29_PRD_CricketAssets.md).
+docs/2026-07-29_PRD_CricketAssets.md; kabaddi kit added 2026-07-30,
+docs/2026-07-30_PRD_IndianGamesAssets.md §2.1/§2.3).
 
 Input: the kit's texture-b.png (character-b, "man": red top + blue jeans).
 Outputs (deterministic — the append-only asset host depends on stable bytes):
   footballer       — red jersey kept, jeans re-painted white (shorts/socks)
   footballer_blue  — jersey re-hued blue, jeans re-painted white
   cricketer        — BOTH jersey and jeans drained to white (cricket whites)
+  kabaddi          — jersey re-hued kabaddi orange, jeans re-painted black
+                      shorts. NOTE: this pipeline is a texture-only re-skin —
+                      the mesh (sleeves, trouser length) is NOT reshaped, so
+                      "sleeveless vest" is approximated by the same
+                      recolor-only technique the whites/blue kits already use,
+                      not by actually removing sleeve geometry. Shared by
+                      kabaddi_player AND kho_kho_player (PRD: "both sports
+                      share the sleeveless-vest silhouette in real life; no
+                      separate kit needed").
 
 Color rules were measured off the actual atlas (probe session 2026-07-26):
   jersey red  hue ~355-360, sat ~0.67   → cleanly separable from
@@ -16,7 +26,7 @@ Color rules were measured off the actual atlas (probe session 2026-07-26):
   hair        hue ~240,     sat ~0.13 (low sat ⇒ untouched)
 Shading survives because only hue/sat move; value is preserved.
 
-Usage: retexture-footballer.py <in.png> <out.png> red|blue|whites
+Usage: retexture-footballer.py <in.png> <out.png> red|blue|whites|kabaddi
 """
 import colorsys
 import sys
@@ -28,6 +38,7 @@ JERSEY_SAT_MIN = 0.40
 JEANS_HUE_MIN, JEANS_HUE_MAX = 200 / 360, 250 / 360
 JEANS_SAT_MIN = 0.30
 BLUE_KIT_HUE = 222 / 360
+KABADDI_KIT_HUE = 30 / 360  # bright orange, common kabaddi jersey color
 
 
 def is_jersey(h: float, s: float) -> bool:
@@ -40,8 +51,8 @@ def is_jeans(h: float, s: float) -> bool:
 
 def main() -> None:
     src, dest, kit = sys.argv[1], sys.argv[2], sys.argv[3]
-    if kit not in ("red", "blue", "whites"):
-        raise SystemExit(f"kit must be red|blue|whites, got {kit!r}")
+    if kit not in ("red", "blue", "whites", "kabaddi"):
+        raise SystemExit(f"kit must be red|blue|whites|kabaddi, got {kit!r}")
     im = Image.open(src).convert("RGBA")
     px = im.load()
     w, h = im.size
@@ -49,7 +60,14 @@ def main() -> None:
         for x in range(w):
             r, g, b, a = px[x, y]
             hue, sat, val = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-            if is_jeans(hue, sat):
+            if kit == "kabaddi" and is_jeans(hue, sat):
+                # Kabaddi shorts: drain toward BLACK (darken), the opposite
+                # direction from the whites/football drain (which lightens
+                # toward white) — same branch pattern, different target.
+                nr, ng, nb = colorsys.hsv_to_rgb(hue, sat * 0.3, val * 0.32)
+            elif kit == "kabaddi" and is_jersey(hue, sat):
+                nr, ng, nb = colorsys.hsv_to_rgb(KABADDI_KIT_HUE, sat, val)
+            elif is_jeans(hue, sat):
                 # Jeans → white shorts and socks: drain the color, lift the
                 # value a touch, keep the shading gradient.
                 nr, ng, nb = colorsys.hsv_to_rgb(hue, sat * 0.06, min(val * 1.25, 0.96))

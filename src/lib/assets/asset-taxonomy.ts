@@ -19,7 +19,7 @@
  *  (prompt-catalog.ts) and pairs with a trigger regex in model-select.ts. */
 export const GENRE_IDS = [
   "people", "racing", "platformer", "space", "animals",
-  "castle", "city", "nature", "water", "food", "sports", "military",
+  "castle", "city", "nature", "water", "food", "sports", "military", "indian_games",
 ] as const;
 export type GenreId = (typeof GENRE_IDS)[number];
 
@@ -279,6 +279,36 @@ export const TAXONOMY: Record<string, TaxonomyEntry> = {
   space_pistol: { genres: ["military", "space"], tags: ["scifi", "blaster", "laser", "gun", "future"] },
   bullets: { genres: ["military"], tags: ["ammo", "ammunition", "pickup", "reload", "rounds"] },
   shield: { genres: ["military", "castle"], tags: ["defend", "block", "guard", "armour"] },
+
+  // Indian games batch (2026-07-30, docs/2026-07-30_PRD_IndianGamesAssets.md) —
+  // kabaddi, carrom, kho-kho, badminton, ludo, marbles. FIRST-PARTY: a
+  // poly.pizza/Kenney/Quaternius sweep found no usable CC0 model for any of the
+  // six. New genre `indian_games`, kept separate from `sports` — carrom/ludo/
+  // marbles are tabletop games, not sports in the cricket/football sense.
+  // kabaddi_player/kho_kho_player are Kenney character-b re-skins sharing a
+  // NEW "kabaddi" kit (retexture-footballer.py) — same rig, same clip set.
+  kabaddi_mat: { genres: ["indian_games"], tags: ["kabaddi", "mat", "court", "raid", "tag"] },
+  kabaddi_player: { genres: ["indian_games", "people"], tags: ["kabaddi", "raider", "defender", "player"], rig: "kenney_blocky" },
+  carrom_board: { genres: ["indian_games"], tags: ["carrom", "board", "tabletop"] },
+  carrom_striker: { genres: ["indian_games"], tags: ["carrom", "striker", "flick"] },
+  carrom_coin_white: { genres: ["indian_games"], tags: ["carrom", "coin", "piece", "white"] },
+  carrom_coin_black: { genres: ["indian_games"], tags: ["carrom", "coin", "piece", "black"] },
+  carrom_queen: { genres: ["indian_games"], tags: ["carrom", "queen", "red", "piece"] },
+  kho_kho_pole: { genres: ["indian_games"], tags: ["khokho", "pole", "post"] },
+  kho_kho_lane_field: { genres: ["indian_games"], tags: ["khokho", "field", "lane", "court"] },
+  kho_kho_player: { genres: ["indian_games", "people"], tags: ["khokho", "chaser", "runner", "player"], rig: "kenney_blocky" },
+  badminton_racket: { genres: ["indian_games"], tags: ["badminton", "racket", "racquet"] },
+  shuttlecock: { genres: ["indian_games"], tags: ["badminton", "birdie", "shuttle"] },
+  badminton_net: { genres: ["indian_games"], tags: ["badminton", "net", "post"] },
+  ludo_board: { genres: ["indian_games"], tags: ["ludo", "board", "boardgame"] },
+  ludo_dice: { genres: ["indian_games"], tags: ["ludo", "dice", "die", "roll"] },
+  ludo_pawn_red: { genres: ["indian_games"], tags: ["ludo", "pawn", "token", "red"] },
+  ludo_pawn_green: { genres: ["indian_games"], tags: ["ludo", "pawn", "token", "green"] },
+  ludo_pawn_yellow: { genres: ["indian_games"], tags: ["ludo", "pawn", "token", "yellow"] },
+  ludo_pawn_blue: { genres: ["indian_games"], tags: ["ludo", "pawn", "token", "blue"] },
+  marble: { genres: ["indian_games"], tags: ["goli", "marbles", "glass", "clear"] },
+  marble_blue: { genres: ["indian_games"], tags: ["goli", "marbles", "glass", "blue"] },
+  marble_green: { genres: ["indian_games"], tags: ["goli", "marbles", "glass", "green"] },
 
   man: { genres: ["people", "city"], tags: ["guy", "dad", "father", "person", "human", "adult"], rig: "kenney_blocky" },
   woman: { genres: ["people", "city"], tags: ["lady", "mum", "mom", "mother", "person", "human", "adult"], rig: "kenney_blocky" },

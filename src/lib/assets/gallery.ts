@@ -216,6 +216,30 @@ const EMOJI: Record<string, string> = {
   sight_screen: "⬜",
   cricketer: "🧢",
   trophy: "🏆",
+
+  // Indian games batch (2026-07-30, docs/2026-07-30_PRD_IndianGamesAssets.md).
+  kabaddi_mat: "🟧",
+  kabaddi_player: "🤼",
+  carrom_board: "🟫",
+  carrom_striker: "🎯",
+  carrom_coin_white: "⚪",
+  carrom_coin_black: "⚫",
+  carrom_queen: "🔴",
+  kho_kho_pole: "📍",
+  kho_kho_lane_field: "🟩",
+  kho_kho_player: "🏃",
+  badminton_racket: "🏸",
+  shuttlecock: "🪶",
+  badminton_net: "🥅",
+  ludo_board: "🟦",
+  ludo_dice: "🎲",
+  ludo_pawn_red: "🔴",
+  ludo_pawn_green: "🟢",
+  ludo_pawn_yellow: "🟡",
+  ludo_pawn_blue: "🔵",
+  marble: "🔮",
+  marble_blue: "🔵",
+  marble_green: "🟢",
 };
 
 /** Every card gets a face — unknown names fall back to the toy box. */

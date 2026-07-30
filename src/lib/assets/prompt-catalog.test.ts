@@ -219,15 +219,21 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     expect(modelsPromptSection(real)).toBe(section);
   });
 
-  it("stays inside its token ceiling (§9 scale ceiling — revisit past ~1750 tokens)", () => {
+  it("stays inside its token ceiling (§9 scale ceiling — revisit past ~1900 tokens)", () => {
     // ~4 chars/token. The ceiling is what makes "teach everything" affordable;
     // if a bulk import breaks this, the category-map hybrid is the fallback.
     // Raised 1500 → 1750 (2026-07-26): the sports batch landed at 1501 — the
     // ~250 of that from the SPORTS_PLAYBOOK is deliberate teaching content
-    // (rules + team AI, owner ask), not catalog creep, so this is the
-    // documented revisit the old comment demanded. Model NAMES still dominate
-    // the section; an accidental bulk import still trips this.
-    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(1_750);
+    // (rules + team AI, owner ask), not catalog creep.
+    // Raised 1750 → 1900 (2026-07-30, docs/2026-07-30_PRD_IndianGamesAssets.md
+    // §3 scale-ceilings note): the library was already at ~1736 tokens before
+    // this batch (208 models); the indian_games batch (+22 names, +1 genre
+    // heading) measured at ~1831 — a genuinely bigger addition than prior
+    // batches, as the PRD predicted, not an accidental bulk import. This is
+    // the documented revisit the PRD demanded (measured by this test during
+    // implementation, not assumed). Model NAMES still dominate the section;
+    // an accidental bulk import still trips this.
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(1_900);
   });
 });
 
@@ -347,6 +353,25 @@ describe("the military category (2026-07-29 batch) renders in the real catalog",
     for (const name of ["tank", "turret", "bunker", "armored_truck"]) {
       expect(peopleLine).not.toMatch(new RegExp(`\\b${name}\\b`));
     }
+  });
+});
+
+describe("the indian games category (2026-07-30 batch) renders in the real catalog", () => {
+  const section = modelsPromptSection(realManifest as AssetManifest);
+
+  it("has an indian-games heading naming the kabaddi/carrom/kho-kho/badminton/ludo/marbles sets", () => {
+    for (const name of [
+      "kabaddi_mat", "carrom_board", "carrom_striker", "carrom_coin_white", "carrom_queen",
+      "kho_kho_pole", "kho_kho_lane_field", "badminton_racket", "shuttlecock", "badminton_net",
+      "ludo_board", "ludo_dice", "ludo_pawn_red", "ludo_pawn_blue", "marble", "marble_blue",
+    ]) {
+      expect(section).toMatch(new RegExp(`\\b${name}\\b`));
+    }
+  });
+
+  it("kabaddi_player and kho_kho_player are taught as people-rig models (their clips promise must hold)", () => {
+    expect(section).toMatch(/people models \([^)]*kabaddi_player\b/);
+    expect(section).toMatch(/people models \([^)]*kho_kho_player\b/);
   });
 });
 

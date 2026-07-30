@@ -2204,6 +2204,204 @@
       "license": "CC0",
       "sourceUrl": "https://poly.pizza/m/fLy8KmmD1t",
       "sha256": "325734025c45aaf0b180c644679c8a7ada2233df6f7cdb9c58f10bfa6571b2ef"
+    },
+    {
+      "name": "kabaddi_mat",
+      "type": "model",
+      "url": "https://assets.ariantra.com/kabaddi_mat.99b36e.glb",
+      "bytes": 3144,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "99b36e4f128d72654d8fdaf4544042e1e51c39543e656543a5d570e4df53ae10"
+    },
+    {
+      "name": "carrom_board",
+      "type": "model",
+      "url": "https://assets.ariantra.com/carrom_board.af8f77.glb",
+      "bytes": 3140,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "af8f7745728f40d3529e31797155dcf3d6d6dfad0a6ff4547181d275bc3e16f7"
+    },
+    {
+      "name": "carrom_striker",
+      "type": "model",
+      "url": "https://assets.ariantra.com/carrom_striker.8b3ef0.glb",
+      "bytes": 2864,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "8b3ef00c7bd912e45aa7f6d1f82d267d8359d4aae3913e58a5bd9af9b113a7a8"
+    },
+    {
+      "name": "carrom_coin_white",
+      "type": "model",
+      "url": "https://assets.ariantra.com/carrom_coin_white.ce11df.glb",
+      "bytes": 2800,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "ce11df786652f94e29cb86230fac8ce4a3b46fb1821d230b7182386bad56c7f6"
+    },
+    {
+      "name": "carrom_coin_black",
+      "type": "model",
+      "url": "https://assets.ariantra.com/carrom_coin_black.aeb272.glb",
+      "bytes": 2800,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "aeb27280a59a17244a2a1818e2b2d13fbe65a84d5906f7c46116f85408f38c6a"
+    },
+    {
+      "name": "carrom_queen",
+      "type": "model",
+      "url": "https://assets.ariantra.com/carrom_queen.b5c514.glb",
+      "bytes": 2784,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "b5c5141172a0bce7f96e711a18b42f13d74b6b8dd7f65f54cb5ec68e52621031"
+    },
+    {
+      "name": "kho_kho_pole",
+      "type": "model",
+      "url": "https://assets.ariantra.com/kho_kho_pole.805a5f.glb",
+      "bytes": 2856,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "805a5f9e3c31083c7c7fbaebe29a55f3d25c519f4a5085d4ffdc3d4db17d547e"
+    },
+    {
+      "name": "kho_kho_lane_field",
+      "type": "model",
+      "url": "https://assets.ariantra.com/kho_kho_lane_field.474df0.glb",
+      "bytes": 3476,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "474df05b8530b9e666a75231c4ca2a7250b21df2fe0f5f6f32d2da0c3384a9d8"
+    },
+    {
+      "name": "badminton_racket",
+      "type": "model",
+      "url": "https://assets.ariantra.com/badminton_racket.28b4a4.glb",
+      "bytes": 3872,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "28b4a4f461477dc465635e8e29ff96c1cff699ef0c5e9f4a4641f46ec4b35e80"
+    },
+    {
+      "name": "shuttlecock",
+      "type": "model",
+      "url": "https://assets.ariantra.com/shuttlecock.4682d4.glb",
+      "bytes": 2992,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "4682d408e29ef11d4c472cfb3e8fd6b907d0faa5e7d6f418aee6f5a4e9df2b8e"
+    },
+    {
+      "name": "badminton_net",
+      "type": "model",
+      "url": "https://assets.ariantra.com/badminton_net.0652d3.glb",
+      "bytes": 2804,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "0652d3f619eb502cc4d41a8d72abee2f1578bd0e896828b787a6fd610f3d58a3"
+    },
+    {
+      "name": "ludo_board",
+      "type": "model",
+      "url": "https://assets.ariantra.com/ludo_board.a04389.glb",
+      "bytes": 3212,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "a0438902a55126d9841212651db3375c36b2821e219cb335262b3b52718a440b"
+    },
+    {
+      "name": "ludo_dice",
+      "type": "model",
+      "url": "https://assets.ariantra.com/ludo_dice.e143e3.glb",
+      "bytes": 3436,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "e143e389e3b2b7895c30f089d09c666bde6e163be14b70445d72dc0ff0559b33"
+    },
+    {
+      "name": "ludo_pawn_red",
+      "type": "model",
+      "url": "https://assets.ariantra.com/ludo_pawn_red.91c2b3.glb",
+      "bytes": 3680,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "91c2b32956f4b1345e9a15a0c74f098e0a034f613073c964753a09dbe96ea229"
+    },
+    {
+      "name": "ludo_pawn_green",
+      "type": "model",
+      "url": "https://assets.ariantra.com/ludo_pawn_green.e48521.glb",
+      "bytes": 3688,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "e48521595f4f4fee86b4b4f840ae81a8b70562e3bba9c584027739465890c3e9"
+    },
+    {
+      "name": "ludo_pawn_yellow",
+      "type": "model",
+      "url": "https://assets.ariantra.com/ludo_pawn_yellow.71d2d9.glb",
+      "bytes": 3692,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "71d2d9fb1319c0218f9a384f28b94c4be4ed97ed776d9cb37a265b493dcb1efd"
+    },
+    {
+      "name": "ludo_pawn_blue",
+      "type": "model",
+      "url": "https://assets.ariantra.com/ludo_pawn_blue.c71db6.glb",
+      "bytes": 3684,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "c71db6a5adc549274e8e8c4bc8b54fcda5f3cfe556f1f50fd608fe2c9cee7e29"
+    },
+    {
+      "name": "marble",
+      "type": "model",
+      "url": "https://assets.ariantra.com/marble.98162e.glb",
+      "bytes": 5676,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "98162e1962fa93a4e68d4d4694b775eb89203e04cefb45464b9a64b51654a029"
+    },
+    {
+      "name": "marble_blue",
+      "type": "model",
+      "url": "https://assets.ariantra.com/marble_blue.b9f88e.glb",
+      "bytes": 5692,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "b9f88e6c39e679cca2e1472f668fbe4345f841e7f1babea39bac83abe60babb2"
+    },
+    {
+      "name": "marble_green",
+      "type": "model",
+      "url": "https://assets.ariantra.com/marble_green.ff81ab.glb",
+      "bytes": 5696,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "ff81ab0cb450b76b094bec166d9f159253011bb9ef246531c4aedbb01369d9d0"
+    },
+    {
+      "name": "kabaddi_player",
+      "type": "model",
+      "url": "https://assets.ariantra.com/kabaddi_player.adde16.glb",
+      "bytes": 75680,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/blocky-characters",
+      "sha256": "adde16872701f056e262ab31447ac45945c7ae5c3a823f75fa76c72a4f6e177b"
+    },
+    {
+      "name": "kho_kho_player",
+      "type": "model",
+      "url": "https://assets.ariantra.com/kho_kho_player.adde16.glb",
+      "bytes": 75680,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/blocky-characters",
+      "sha256": "adde16872701f056e262ab31447ac45945c7ae5c3a823f75fa76c72a4f6e177b"
     }
   ]
 }
