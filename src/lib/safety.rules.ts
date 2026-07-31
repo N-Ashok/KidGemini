@@ -68,6 +68,36 @@ const PROFANITY = [
   "sex", "porn", "nude", "naked", "rape",
 ];
 
+// The Scunthorpe problem (BUG-FIX-LOG 2026-07-31): several PROFANITY terms
+// are short enough to occur as a genuine substring of ordinary English
+// words, not just at a cross-token boundary (the 2026-07-18 "medic kit" bug
+// above) — a single real word can contain one outright. "3D skyscrapers"
+// hard-blocked and parent-alerted a completely benign build request.
+// Audited every term against the full macOS dictionary
+// (/usr/share/dict/words, 236K entries) for real collisions, then kept the
+// ones a kid could plausibly type on this product — including
+// `shittim`/`shittah` (real biblical wood terms, Exodus — this app has a
+// Bible-teacher persona, so that's a live risk, not theoretical). Listed per
+// profane term so a real hit on the bare word, or an actual derived form
+// (e.g. "raped"/"rapist"), still blocks — only these specific known-safe
+// whole words are exempted, not the substring generally.
+const PROFANITY_SAFE_WORDS: Record<string, string[]> = {
+  rape: [
+    "grape", "grapes", "grapefruit",
+    "drape", "drapes", "draped", "draping", "draper", "drapery",
+    "skyscraper", "skyscrapers",
+    "scrape", "scraped", "scraper", "scrapers", "scraping",
+    "therapy", "therapist", "therapists", "therapeutic", "therapeutics",
+  ],
+  shit: ["shittim", "shittah"],
+  sex: [
+    "sextant", "sextants", "sextet", "sextets", "sexton", "sextons",
+    "unisex", "essex", "sussex", "wessex", "middlesex",
+  ],
+  dick: ["dickens", "dickey", "dickeys"],
+  pussy: ["pussycat", "pussycats"],
+};
+
 // Self-harm terms — deliberately matched against the FULLY space-stripped
 // message, since a genuine expression is naturally written across real word
 // boundaries ("kill myself", "cut myself") and needs the merge to be caught.
@@ -110,7 +140,7 @@ export class RulesClassifier implements SafetyClassifier {
     }
     for (const word of collapseSpelledOutLetters(input.text)) {
       for (const w of PROFANITY) {
-        if (word.includes(w)) {
+        if (word.includes(w) && !PROFANITY_SAFE_WORDS[w]?.includes(word)) {
           return { action: "hard_block", category: HARD, severity: "high", reason: `Matched blocked term (rule).` };
         }
       }

@@ -29,6 +29,8 @@ import {
   updateQueuedIdea,
 } from "@/lib/idea-queue";
 import { foldTweaksIntoQueue, takeBagForMigration } from "@/lib/idea-migrate";
+import { ideaMicEnabled } from "@/lib/idea-mic";
+import { buildStepLabel, buildUpdatingLine } from "@/lib/build-narration";
 import { IdeaQueue } from "./IdeaQueue";
 import {
   defaultCoachStore,
@@ -644,7 +646,24 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   // A reply can take up to 16 hours, so this state is rebuilt from the SERVER
   // on every boot (lib/help-client.ts) — never held only in memory, which is
   // how the leave-and-come-back reply got lost (BUG-FIX-LOG 2026-07-28).
-  const helpOn = helpButtonEnabled();
+  //
+  // BUG-FIX-LOG 2026-07-31: this MUST pass the literal `process.env.NEXT_PUBLIC_X`
+  // expression, not rely on the bare default parameter (calling this helper
+  // with no argument at all).
+  // Next.js only inlines a NEXT_PUBLIC_ var into the CLIENT bundle when that
+  // exact expression appears verbatim in the source — a default parameter
+  // that reads `process.env` and looks up the key inside the function body
+  // never gets inlined, so the browser fell back to a generic `process/browser`
+  // polyfill with an empty .env, permanently reading OFF regardless of the
+  // real setting. The server (real process.env) rendered it correctly, so it
+  // flashed on the initial HTML and vanished the instant the client hydrated.
+  const helpOn = helpButtonEnabled({ NEXT_PUBLIC_ENABLE_HELP_BUTTON: process.env.NEXT_PUBLIC_ENABLE_HELP_BUTTON });
+  // Idea mic tab kill switch (owner decision 2026-07-31, docs/PRD-IDEA-BUTTON.md):
+  // off by default — the one-tap voice shortcut made building a game feel too
+  // easy to register as an accomplishment. Kids reach the chat and say what
+  // they want instead; the feature stays in code, togglable from feedback.
+  // Same literal-expression requirement as helpOn above (BUG-FIX-LOG 2026-07-31).
+  const ideaMicOn = ideaMicEnabled({ NEXT_PUBLIC_ENABLE_IDEA_MIC: process.env.NEXT_PUBLIC_ENABLE_IDEA_MIC });
   const [helpTickets, setHelpTickets] = useState<HelpTicketView[]>([]);
   const [helpSeen, setHelpSeen] = useState<string[]>([]);
   const [helpBusy, setHelpBusy] = useState(false);
@@ -1719,7 +1738,15 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             {busy && active.messages[active.messages.length - 1]?.text === "" && (
               <p className="animate-pulse text-neutral-400">
                 {(() => {
-                  const line = thinkingLine ?? waitLine(Date.now() - busyStartRef.current);
+                  // A real thought line gets a keyword-derived emoji instead of a
+                  // generic 💭 — narrates what's actually being built right now
+                  // (docs/2026-07-31_PRD_BuildProgressNarration.md), not a caption.
+                  // The staged waitLine() fallback (no thought text yet) is untouched.
+                  if (thinkingLine) {
+                    const { emoji, text } = buildStepLabel(thinkingLine);
+                    return <>{emoji} <span className="italic">{text}</span></>;
+                  }
+                  const line = waitLine(Date.now() - busyStartRef.current);
                   return line ? <>💭 <span className="italic">{line}</span></> : "Thinking… 💭";
                 })()}
               </p>
@@ -1848,7 +1875,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             // tab captures INTO the line; the ⏳/⏸ chip + sheet make the line —
             // and its held state — visible and answerable without leaving the
             // game. Same handlers as the chat card; one queue, two surfaces.
-            onCaptureIdea={handleCaptureTweak}
+            onCaptureIdea={ideaMicOn ? handleCaptureTweak : undefined}
             queuedIdeas={queuedIdeas}
             queueHold={queueHold}
             queueSettling={queueSettling}
@@ -1857,16 +1884,23 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             onResumeQueue={() => setQueueHold(null)}
             onDropAllQueued={() => patchQueue(() => [])}
             onQueueSendNow={handleQueueSendNow}
-            updatingLine={
-              nowBuilding
-                ? `Making "${nowBuilding.length > 48 ? `${nowBuilding.slice(0, 48)}…` : nowBuilding}" — you can keep playing this one! ✨`
-                : undefined
-            }
+            // While the kid keeps playing the current game, narrate what's
+            // actually happening right now (docs/2026-07-31_PRD_BuildProgressNarration.md)
+            // — the same thought-line signal as the chat's thinking line, so
+            // both surfaces tell the same story in lockstep. Falls back to the
+            // kid's OWN ask, still emoji-tagged, when there's no thought line
+            // (BUG-FIX-LOG 2026-07-31: small edits often produce nothing that
+            // passes kidThoughtLine()'s filter, so the strip showed nothing
+            // derived at all for e.g. "add buildings and grass").
+            updatingLine={buildUpdatingLine({
+              thinkingLine,
+              askText: nowBuilding ?? [...active.messages].reverse().find((m) => m.role === "child")?.text ?? null,
+            })}
             // micSupported is enforced structurally: IdeaMicTab renders
             // nothing (tab OR coach) when Web Speech is unavailable.
-            coach={shouldShowCoach({ seen: coachStore.seen, busy, micSupported: true })}
+            coach={ideaMicOn && shouldShowCoach({ seen: coachStore.seen, busy, micSupported: true })}
             onCoachDone={() => setCoachStore((s) => ({ ...s, seen: true }))}
-            nudgeMic={shouldRenudge(coachStore)}
+            nudgeMic={ideaMicOn && shouldRenudge(coachStore)}
             onNudgeShown={() => setCoachStore((s) => ({ ...s, renudged: true }))}
             pendingIdeaDraft={pendingIdeaDraft}
             onIdeaInterrupted={handleIdeaInterrupted}
@@ -1883,7 +1917,13 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
                   // prompt back through help-ask.ts on the way in.
                   onBrowseHelp={() => window.location.assign("/help")}
                   nudge={
-                    helpNudgeEnabled() &&
+                    // BUG-FIX-LOG 2026-07-31: same literal-expression requirement
+                    // as helpOn above — a bare call never gets build-time inlined
+                    // in the client bundle.
+                    helpNudgeEnabled({
+                      NEXT_PUBLIC_ENABLE_HELP_BUTTON: process.env.NEXT_PUBLIC_ENABLE_HELP_BUTTON,
+                      NEXT_PUBLIC_ENABLE_HELP_NUDGE: process.env.NEXT_PUBLIC_ENABLE_HELP_NUDGE,
+                    }) &&
                     !helpWaitingHere &&
                     !helpAnsweredHere &&
                     shouldOfferHelp({

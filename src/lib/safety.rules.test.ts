@@ -46,6 +46,77 @@ describe("RulesClassifier — word-boundary false positives (BUG-FIX-LOG 2026-07
   });
 });
 
+/** Production bug (2026-07-31, docs/BUG-FIX-LOG.md): "rape" is 4 letters
+ *  short enough to appear INSIDE several ordinary English words as a real
+ *  substring — not two words colliding at a boundary (the 2026-07-18 bug
+ *  above), but one single genuine word containing the banned substring
+ *  (the classic "Scunthorpe problem"). A kid asking for 3D skyscrapers got
+ *  hard-blocked and parent-alerted for a completely benign build request. */
+describe("RulesClassifier — single-word false positives on 'rape' (BUG-FIX-LOG 2026-07-31)", () => {
+  it("does not hard-block 'skyscrapers' — a real word that happens to contain 'rape'", () => {
+    expect(child("can you add 3D skyscrapers and 3D houses and 3D flats").action).toBe("allow");
+  });
+
+  it("does not hard-block other ordinary words containing 'rape'", () => {
+    expect(child("can you add a grape to the fruit basket").action).toBe("allow");
+    expect(child("put drapes on the window").action).toBe("allow");
+    expect(child("i want grapefruit juice in the game").action).toBe("allow");
+  });
+
+  it("still hard-blocks the actual word 'rape' on its own", () => {
+    expect(child("rape").action).toBe("hard_block");
+  });
+
+  it("still hard-blocks 'rape' as a standalone word next to other words", () => {
+    expect(child("i want to make a game about rape").action).toBe("hard_block");
+  });
+});
+
+/** Full audit (2026-07-31, docs/BUG-FIX-LOG.md): the "skyscrapers" bug above
+ *  was one instance of a general class, not a one-off. Scanned the full
+ *  macOS dictionary (/usr/share/dict/words, 236K entries) against every term
+ *  in PROFANITY for real-word substring collisions, then allowlisted the
+ *  ones a kid could plausibly type on this product — including a
+ *  product-specific one: `shittim`/`shittah` are real biblical wood terms
+ *  (Exodus, the Ark of the Covenant), and this app has a Bible-teacher
+ *  persona (PRD-BIBLE-TEACHER.md), so that collision is a live risk, not
+ *  theoretical. */
+describe("RulesClassifier — full PROFANITY-list collision audit (BUG-FIX-LOG 2026-07-31)", () => {
+  it("does not hard-block more 'rape' collisions common in a game/education context", () => {
+    expect(child("can you make a game about a scraper robot").action).toBe("allow");
+    expect(child("the scrape happened when he fell down").action).toBe("allow");
+    expect(child("she went to see a therapist").action).toBe("allow");
+    expect(child("physical therapy helped him walk again").action).toBe("allow");
+    expect(child("this is a therapeutic game for kids").action).toBe("allow");
+  });
+
+  it("does not hard-block biblical wood terms ('shittim'/'shittah') — Bible-teacher persona", () => {
+    expect(child("what is shittim wood used for in the bible").action).toBe("allow");
+    expect(child("tell me about the shittah tree").action).toBe("allow");
+  });
+
+  it("does not hard-block common 'sex' collisions (place names, a pirate's tool)", () => {
+    expect(child("a pirate uses a sextant to navigate").action).toBe("allow");
+    expect(child("essex is a county in england").action).toBe("allow");
+    expect(child("play a sextet of instruments").action).toBe("allow");
+  });
+
+  it("does not hard-block 'dickens' (Charles Dickens, common in story content)", () => {
+    expect(child("can we make a game based on charles dickens").action).toBe("allow");
+  });
+
+  it("does not hard-block 'pussycat' (nursery-rhyme term)", () => {
+    expect(child("add a pussycat character to my game").action).toBe("allow");
+  });
+
+  it("still hard-blocks the bare profane words themselves, unaffected by the audit", () => {
+    expect(child("sex").action).toBe("hard_block");
+    expect(child("dick").action).toBe("hard_block");
+    expect(child("shit").action).toBe("hard_block");
+    expect(child("pussy").action).toBe("hard_block");
+  });
+});
+
 /** Production bug (KNOWN_BUGS #7 / #12, 2026-07-27): an oversized message
  *  (~100K chars of game source accidentally folded into a chat turn, see
  *  BUG-FIX-LOG same date) raised the odds of an accidental SELF_HARM

@@ -43,3 +43,16 @@ export const TAB_AUTO_TUCK_MS = 6000;
 export function initialMicTabState(pendingDraft: string | null | undefined): MicTabState {
   return pendingDraft?.trim() ? "listening" : "tucked";
 }
+
+/** Feature kill switch (owner decision 2026-07-31): the one-tap mic tab makes
+ *  game-building feel too effortless to register as an accomplishment — the
+ *  owner wants kids to reach the chat and say what they want in their own
+ *  words rather than have a floating shortcut do it for them. Code stays in
+ *  place, just gated off by default, so it can be re-enabled from feedback
+ *  without rebuilding it. BUILD-TIME GOTCHA (BUG-FIX-LOG 2026-07-31): Next.js
+ *  only inlines a NEXT_PUBLIC_* var into the client bundle when the literal
+ *  expression `process.env.NEXT_PUBLIC_X` appears at the call site — callers
+ *  MUST pass that literal, not a bare `ideaMicEnabled()`. */
+export function ideaMicEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return env.NEXT_PUBLIC_ENABLE_IDEA_MIC === "1";
+}

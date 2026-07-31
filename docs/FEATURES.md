@@ -146,6 +146,19 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   and streams `{type:"thinking"}` events; the chat shows the latest line in
   place of the static "Thinking… 💭" so planning feels alive. Thoughts are
   never part of the answer text
+- **Build progress narration** (2026-07-31,
+  docs/2026-07-31_PRD_BuildProgressNarration.md): the same filtered thought
+  line gets a keyword-derived emoji (`buildStepLabel`, `src/lib/build-narration.ts`
+  — 🦖 dinosaur, 🏟️ stadium/field, 🏏 bat/swing, 🔊 sound, 🏆 score, generic 🛠️
+  fallback) instead of a plain 💭 caption, so the chat's thinking line AND the
+  preview's "Making ..." strip over the game the kid is STILL PLAYING both
+  narrate what's actually happening right now, in lockstep. Falls back to the
+  existing `waitLine()`/static strip whenever there's no thought text — never
+  worse than before. **2026-07-31 fix:** small edits often produce a thought
+  too short/code-like for `kidThoughtLine()` to pass, so the preview strip
+  fell back to a generic caption with no emoji at all; `buildUpdatingLine()`
+  now falls back to the kid's OWN request text (always available, already
+  past the input gate) instead, still emoji-tagged
 - **Gemini model-fallback chain** (2026-07-11; cost-aware reorder 2026-07-13,
   BUG-FIX-LOG + PRD-MODEL-FALLBACK): capacity errors (503 "high demand"/429),
   transient 5xx/network drops, and retired model ids walk

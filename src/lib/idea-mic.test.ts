@@ -5,7 +5,7 @@
 // with several ideas shouldn't have to re-tap between each one); 🗑 Never mind
 // still ends the session.
 import { describe, expect, it } from "vitest";
-import { initialMicTabState, nextMicTabState, type MicTabEvent, type MicTabState } from "./idea-mic";
+import { ideaMicEnabled, initialMicTabState, nextMicTabState, type MicTabEvent, type MicTabState } from "./idea-mic";
 
 describe("nextMicTabState — full transition table", () => {
   const table: Array<[MicTabState, MicTabEvent, MicTabState]> = [
@@ -58,5 +58,26 @@ describe("initialMicTabState — resuming an interrupted draft", () => {
   it("stays tucked with no pending draft", () => {
     expect(initialMicTabState(null)).toBe("tucked");
     expect(initialMicTabState(undefined)).toBe("tucked");
+  });
+});
+
+// Feature kill switch (owner decision 2026-07-31): default OFF so the mic
+// tab doesn't ship a one-tap shortcut around the chat by default.
+describe("ideaMicEnabled — off by default, on only when the flag is exactly \"1\"", () => {
+  it("is off with no env at all", () => {
+    expect(ideaMicEnabled({})).toBe(false);
+  });
+
+  it("is off when unset", () => {
+    expect(ideaMicEnabled({ NEXT_PUBLIC_ENABLE_IDEA_MIC: undefined })).toBe(false);
+  });
+
+  it("is off for any value other than the literal \"1\"", () => {
+    expect(ideaMicEnabled({ NEXT_PUBLIC_ENABLE_IDEA_MIC: "true" })).toBe(false);
+    expect(ideaMicEnabled({ NEXT_PUBLIC_ENABLE_IDEA_MIC: "0" })).toBe(false);
+  });
+
+  it("is on only when set to \"1\"", () => {
+    expect(ideaMicEnabled({ NEXT_PUBLIC_ENABLE_IDEA_MIC: "1" })).toBe(true);
   });
 });

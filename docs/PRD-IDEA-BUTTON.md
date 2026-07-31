@@ -7,8 +7,19 @@
 > migrated once into their chat's queue. §2.2–2.3, §3's IdeaRecord store, and
 > the ✨ parts of the UAT script below are historical.
 
-Status: **implemented 2026-07-12** (this doc reviewed against code).
+Status: **implemented 2026-07-12, OFF by default since 2026-07-31**
+(`NEXT_PUBLIC_ENABLE_IDEA_MIC`, `src/lib/idea-mic.ts`'s `ideaMicEnabled()`).
 Mock + kid-experience narrative reviewed with owner before build.
+
+**2026-07-31 — disabled by default (owner decision):** the one-tap mic tab
+made building a game feel too effortless to register as an accomplishment.
+Owner wants the experience to be *easy but slightly hard* — enough friction
+that a kid feels they did something, not that Ari did it for them. With the
+flag off, a kid with an idea mid-play has to go to the chat and type or speak
+it there like any other ask; no floating shortcut bypasses that. The code is
+untouched and fully tested — this is a kill switch, not a removal — so it can
+flip back on if feedback says the friction outweighs the value. Coach nudges
+(§3b) are gated by the same flag (no point advertising a hidden tab).
 
 ## 1. Problem
 

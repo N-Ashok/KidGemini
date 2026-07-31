@@ -11,6 +11,142 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-07-31 — Build progress strip showed nothing derived for small edits
+
+- **Symptom:** owner shipped an edit ("add city buildings and grass on both
+  sides of the road") and reported the new emoji-tagged build-progress strip
+  (`docs/2026-07-31_PRD_BuildProgressNarration.md`, shipped same day) "was not
+  visible" — the preview kept showing a generic caption instead of anything
+  reflecting the actual edit.
+- **Root cause:** the strip's derived label depended entirely on
+  `thinkingLine`, which is only ever set from Gemini's live thought-summary
+  text after it passes `kidThoughtLine()`'s safety filter (rejects anything
+  under 8 chars or code-like). Small, simple edits routinely produce a thought
+  too short or too terse to pass that filter, so `thinkingLine` stayed `null`
+  for the whole turn and both surfaces silently fell back to a hardcoded
+  generic line with no derived emoji — the feature only ever worked on bigger
+  builds that happened to produce enough planning prose.
+- **Fix:** `buildUpdatingLine()` (`src/lib/build-narration.ts`) now falls back
+  to the kid's OWN request text — already past the input safety gate, so
+  nothing can filter it away, and always available — running IT through
+  `buildStepLabel()` instead of showing a bare generic caption. A live thought
+  line still wins when one exists; only the no-signal case changed.
+- **Verified:** `src/lib/build-narration.test.ts` — 6 new `buildUpdatingLine`
+  tests (thought-line-present precedence, ask-text fallback emoji-tagged,
+  truncation, empty/null handling). Full suite green (176 files / 1868 tests)
+  after the change.
+- **Lesson:** a narration feature that depends on a safety-filtered model
+  signal needs a fallback source that can't be filtered away, or it silently
+  degrades to invisible on exactly the small, everyday case a kid is most
+  likely to notice.
+
+---
+
+## 2026-07-31 — "3D skyscrapers" got hard-blocked and parent-alerted as profanity
+
+- **Symptom:** a kid asked "can you add 3D skyscrapers and 3D houses and 3D
+  flats" — a completely benign build request — and got the generic
+  input-block redirect ("Let's talk about something else! How about a fun
+  fact, a story, or a game? 🌟") instead of a build.
+- **Root cause:** `RulesClassifier` (`src/lib/safety.rules.ts`) matches the
+  `PROFANITY` list per token via `word.includes(w)`. The 4-letter entry
+  `"rape"` is short enough to occur as a genuine substring of ordinary English
+  words — not two words colliding at a boundary (the 2026-07-18 "medic kit"
+  bug above), but ONE real word containing it outright: `"skyscrapers"`
+  contains `"rape"` at index 5 (`sky` + `s` + `crapers`, i.e. `...s-c-r-a-p-e-r-s`).
+  The classic "Scunthorpe problem." Same risk exists for `"grape"`,
+  `"grapefruit"`, and `"drape(s)"`.
+- **Fix:** added `PROFANITY_SAFE_WORDS`, a small allowlist keyed per profane
+  term, checked before blocking: `word.includes(w) &&
+  !PROFANITY_SAFE_WORDS[w]?.includes(word)`. Only exempts specific known-safe
+  whole words — the bare word `"rape"` and any other word containing it
+  (e.g. `"raped"`, `"rapist"`) still hard-blocks exactly as before.
+- **Follow-up audit (same day, owner request):** this collision wasn't a
+  one-off, so every `PROFANITY` term was scanned against the full macOS
+  dictionary (`/usr/share/dict/words`, 236K entries) for every real-word
+  collision, then the ones a kid could plausibly type on this product were
+  allowlisted: `rape` → also `scrape(r/d/ing)`, `draper`, `drapery`,
+  `therapy`/`therapist`/`therapeutic(s)`; `sex` → `sextant(s)`, `sextet(s)`,
+  `sexton(s)`, `unisex`, `essex`/`sussex`/`wessex`/`middlesex`; `dick` →
+  `dickens` (Charles Dickens), `dickey(s)`; `pussy` → `pussycat(s)`. One is
+  product-specific rather than generic vocabulary: `shit` → `shittim`/
+  `shittah`, real biblical wood terms (Exodus, the Ark of the Covenant) —
+  this app has a Bible-teacher persona (`PRD-BIBLE-TEACHER.md`), so a kid
+  asking about shittim wood would otherwise have been hard-blocked and
+  parent-alerted. `fuck`/`bitch`/`asshole` had zero dictionary collisions;
+  `porn` collisions were all porn-adjacent (no safe words to add);
+  `naked`/`bastard`/`nude` collisions were just grammatical derivatives of
+  the same word (e.g. `bastardize`), not different-meaning false positives,
+  so left as-is.
+- **Verified:** `src/lib/safety.rules.test.ts` — all new tests (the original
+  skyscrapers case plus the full audit) fail red pre-fix and pass green
+  after; confirmed every bare profane word still hard-blocks (no weakening of
+  the actual safety floor). Full suite green (176 files / 1874 tests) after
+  the fix.
+- **Lesson:** short profanity substrings need an explicit safe-word allowlist,
+  not just per-token matching — per-token matching only solved the
+  cross-token boundary problem (2026-07-18), it doesn't protect against a
+  short banned substring occurring naturally inside a longer, unrelated real
+  word. Any new short (≤5 char) entry added to `PROFANITY` should be audited
+  against a dictionary for this exact failure mode before shipping — a
+  systematic scan found real, product-relevant collisions a spot-check of a
+  few obvious cases would have missed (`shittim` in particular).
+- **Not fixed here, flagged for owner review:** `SELF_HARM` uses the same
+  substring style but against the WHOLE message (not per-token), and has its
+  own real collisions — `"cut myself a slice of cake"` and `"I want to skill
+  myself up in coding"` both currently hard-block (contain `"cutmyself"` /
+  `"killmyself"` once spaces are stripped). Left untouched deliberately: a
+  false NEGATIVE on self-harm content is far worse than a false positive here,
+  and disambiguating "cut myself [an object]" from genuine self-harm phrasing
+  needs more than a safe-word list — it needs the text after the match
+  inspected, which is a different, higher-stakes kind of change than the
+  PROFANITY fix above. Needs an explicit decision before touching it.
+
+---
+
+## 2026-07-31 — The SOS button flashed and vanished: `NEXT_PUBLIC_*` flags never actually reached the browser
+
+- **Symptom:** owner set `NEXT_PUBLIC_ENABLE_HELP_BUTTON=1` and redeployed, but
+  the 🆘 button never appeared — except once, briefly: "a robot came in for a
+  few milliseconds and gone," seen at the bottom of the preview pane.
+- **Root cause:** `helpButtonEnabled()`/`helpNudgeEnabled()` (`lib/help-client.ts`)
+  default an `env` parameter to `process.env` and read the specific key off
+  it *inside the function body*. Next.js only inlines a `NEXT_PUBLIC_*` value
+  into the **client** bundle when the exact expression `process.env.NEXT_PUBLIC_X`
+  appears literally in the source text — splitting it across a default
+  parameter and a later property lookup never produces that literal pattern,
+  so nothing gets inlined. `ChatPanel.container.tsx` called both functions
+  with **no argument at all** (`helpButtonEnabled()`), so in the browser the
+  default fell through to a generic `process/browser` polyfill package with an
+  **empty `.env`** — the flag read as permanently OFF client-side, regardless
+  of what was actually configured, for every build since the feature shipped
+  (2026-07-28). The **server**, which has a real `process.env`, rendered the
+  first HTML correctly — so the button appeared in the initial paint and was
+  then removed the instant client-side hydration re-ran the same check against
+  the empty polyfill. That mismatch was the "robot" flash.
+- **Fix:** both call sites in `ChatPanel.container.tsx` now pass the literal
+  expression explicitly — `helpButtonEnabled({ NEXT_PUBLIC_ENABLE_HELP_BUTTON:
+  process.env.NEXT_PUBLIC_ENABLE_HELP_BUTTON })` and the nudge equivalent with
+  both keys — so Next's build-time substitution has the exact text pattern it
+  needs.
+- **Verified:** `src/components/help-flags-inlining.test.ts` pins that the
+  literal expression appears at both call sites and that neither is ever
+  called bare again (fails red against the pre-fix code, green after). Beyond
+  the unit test — which can't see this bug on its own, since Node's real
+  `process.env` masks it — a real `npm run build` was run with the flags set,
+  and the compiled client chunk was inspected directly: the call site now
+  reads `ty({NEXT_PUBLIC_ENABLE_HELP_BUTTON:"1"})`, the literal value baked in
+  at build time, not a runtime lookup. Full suite 174 files / 1826 green.
+- **Lesson:** a `NEXT_PUBLIC_*` env check is only real in the browser if the
+  literal `process.env.NEXT_PUBLIC_X` expression appears verbatim at the
+  point Next.js's bundler can see it — indirection through a parameter default
+  silently defeats it, and a logic-level unit test running in Node cannot
+  detect the difference (Node's `process.env` is real either way). Any future
+  `NEXT_PUBLIC_*` gate needs either the literal expression at the call site or
+  a build-artifact check like the one added here, not just a passing unit test.
+
+---
+
 ## 2026-07-29 — The physics playbook pushed games toward `three` exports we never shipped
 
 - **Symptom:** within 20 minutes of the physics deploy, prod logs started
