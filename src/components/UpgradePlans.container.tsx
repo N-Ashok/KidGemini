@@ -186,7 +186,7 @@ export function UpgradePlans() {
           <PlanCard
             key={pack.key}
             plan={pack}
-            highlight={pack.key === "pack500"}
+            highlight={pack.key === "pack1000"}
             busy={pending === pack.key}
             onSelect={() => handleSelect(pack.key)}
           />

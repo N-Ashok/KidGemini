@@ -1,15 +1,19 @@
 // Billing tunables only (Open/Closed: change packs/prices here, not at call sites).
 // One-time charge model (Razorpay Orders) — chosen because the recurring Subscriptions API
-// requires pre-created Plans we don't have yet. Amounts are in paise (₹120 = 12_000).
+// requires pre-created Plans we don't have yet. Amounts are in paise (₹500 = 50_000).
 //
-// 2026-07-27 Phase 5 payments: SPARK_PACKS mirror ariantra.com/pricing.html's
-// Sparks-pack table exactly (PRD-SPARKS.md closure plan). "Buy Sparks" links
-// to /upgrade — keys are a public contract (pinned by billing.config.test.ts)
-// in case a future deep link adds ?pack=<key>. Supersedes the 2026-07-11
-// yearly-access plans (explorer/assisted4/assisted8): nothing on the live
-// site links to those anymore, and the product model moved to Sparks
-// metering (SparksService.debitUsage) rather than a periodDays gate that was
-// never actually enforced ("rails only", docs/PRD.md §8).
+// 2026-08-01 owner decision: down to 2 tiers (₹500/₹1000) from the earlier
+// 3-tier ₹120/₹200/₹500 ladder — Sparks are allotted at the SAME flat rate
+// (1 Spark = 1 paisa) for both, no bonus tier. SPARK_PACKS mirrors the
+// "Ariantra AI" marketing repo's pricing.html Sparks-pack table exactly
+// (../Ariantra AI/pricing.html + sparks.html — a separate static-site repo,
+// update BOTH in the same change). "Buy Sparks" links to /upgrade — keys are
+// a public contract (pinned by billing.config.test.ts) in case a future deep
+// link adds ?pack=<key>. Supersedes the 2026-07-11 yearly-access plans
+// (explorer/assisted4/assisted8): nothing on the live site links to those
+// anymore, and the product model moved to Sparks metering
+// (SparksService.debitUsage) rather than a periodDays gate that was never
+// actually enforced ("rails only", docs/PRD.md §8).
 
 import type { SparkPack } from "@/types/billing.types";
 
@@ -17,25 +21,18 @@ export const CURRENCY = "INR";
 
 export const SPARK_PACKS: SparkPack[] = [
   {
-    key: "pack120",
-    label: "Starter pack",
-    amountPaise: 12_000, // ₹120
-    sparks: 12_000,
-    description: "₹120 — 12,000 ⚡ (≈ 3–4 finished games)",
-  },
-  {
-    key: "pack200",
-    label: "Builder pack",
-    amountPaise: 20_000, // ₹200
-    sparks: 20_000,
-    description: "₹200 — 20,000 ⚡ (≈ 5–6 finished games)",
-  },
-  {
     key: "pack500",
-    label: "Best value",
+    label: "Starter pack",
     amountPaise: 50_000, // ₹500
     sparks: 50_000,
     description: "₹500 — 50,000 ⚡ (≈ 12–15 finished games)",
+  },
+  {
+    key: "pack1000",
+    label: "Best value",
+    amountPaise: 100_000, // ₹1000
+    sparks: 100_000,
+    description: "₹1000 — 1,00,000 ⚡ (≈ 25–30 finished games)",
   },
 ];
 

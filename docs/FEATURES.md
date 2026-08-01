@@ -336,15 +336,17 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   nine-year-old); grown-ups/devs re-enable it with
   `localStorage["kidgemini:debug"]="1"`
 - **🚀 Put it in the Arcade** (2026-07-07): CTA under the preview publishes the
-  game to games.ariantra.com — kid names it (live URL check + 🎲 ideas), a
-  grown-up approves with the FAMILY's 4-digit parent PIN (verified via
-  `/api/parent/verify-pin` → 30-min parent-session cookie; the publish route
+  game to games.ariantra.com — kid names it (live URL check + 🎲 ideas,
+  optional checkbox to pick a different web address/slug than the display
+  name), a grown-up approves with the FAMILY's 4-digit parent PIN (verified
+  via `/api/parent/verify-pin` → parent-session cookie; the publish route
   checks the cookie's account MATCHES the SSO session, so a parent from
   another family can never approve — PRD-PARENT-AUTH-ALERT-SCOPING), then it
   goes live under the family's SSO account with auto-score/leaderboard/
   thumbnail included (`PublishToArcade.tsx` + `/api/arcade/publish` →
-  platform partner bridge). A parent verified in the last 30 min skips the
-  PIN prompt entirely.
+  platform partner bridge). **Every publish asks for the PIN, every time**
+  (owner decision 2026-08-01) — the client always routes through the PIN step
+  before publishing, regardless of any live Parent-area session.
   **One question per decision** (2026-07-24, BUG-FIX-LOG): the sheet opens on a
   skeleton ("Getting the launchpad ready… 🚀") while it checks whether the kid
   already has games, then commits ONCE — games → "What are we doing?", none →
@@ -804,8 +806,12 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   4-digit PIN (hashed scrypt in SQLite `parent_auth`; set/reset requires a
   FRESH SSO login ≤5 min — a kid on a parent's old session can't set it).
   Verify is POST-body only, throttled (5 tries → 15-min lock, repeat within
-  24h → 1h) and issues a 30-min HttpOnly parent-session cookie that gates
-  `/api/alerts`. Guests see sign-up copy, never a PIN form (D3). The old
+  24h → 1h) and issues an HttpOnly parent-session cookie that gates
+  `/api/alerts`. **Scoped to the visit, not a rolling TTL** (owner decision
+  2026-08-01): the cookie is cleared the moment the Parent area is left
+  (`/api/parent/session/clear`, called on page unmount and on `pagehide` via
+  `sendBeacon`), so leaving and coming back always re-prompts for the PIN.
+  Guests see sign-up copy, never a PIN form (D3). The old
   shared `PARENT_PIN` env var (with its `"1234"` fallback!) is DELETED.
   **Forgot-PIN recovery** (2026-07-27, BUG-FIX-LOG): "Forgot your PIN?" on
   the verify screen, and a dedicated recovery callout the moment a lockout
@@ -947,13 +953,15 @@ server-to-server contract as `arcade-partner.ts`).
   premium" tab was removed — Sparks are sold on ariantra.com's pricing page,
   which links to `/upgrade`. `/upgrade` stays reachable by direct link only.
   Guarded by `src/components/sidebar-no-premium.test.ts`
-- Packs (2026-07-27, superseding the 2026-07-11 yearly plans): `pack120` /
-  `pack200` / `pack500` (₹120/₹200/₹500 → 12,000/20,000/50,000 ⚡) in
-  `src/lib/billing.config.ts`, pinned by `billing.config.test.ts` — the keys
-  are a public contract with ariantra.com's pricing cards, which deep-link to
-  `/upgrade?plan=<key>`; after sign-in (param survives the Auth.js round-trip)
-  Checkout auto-opens for that pack — repeatable, no "already paid" gate,
-  since packs are top-ups, not a single active plan (`upgrade-deeplink.test.ts`)
+- Packs (2026-08-01, down to 2 tiers from the 2026-07-27 three-tier ladder):
+  `pack500` / `pack1000` (₹500/₹1000 → 50,000/1,00,000 ⚡, same flat rate — 1
+  Spark = 1 paisa for both, no bonus tier) in `src/lib/billing.config.ts`,
+  pinned by `billing.config.test.ts` — the keys are a public contract with the
+  "Ariantra AI" marketing repo's pricing cards (a separate static-site repo,
+  update BOTH in the same change), which deep-link to `/upgrade?plan=<key>`;
+  after sign-in (param survives the Auth.js round-trip) Checkout auto-opens
+  for that pack — repeatable, no "already paid" gate, since packs are
+  top-ups, not a single active plan (`upgrade-deeplink.test.ts`)
 
 ## Ariantra integration
 - Shared Ariantra header on every page (`ArNav`): Home · Games · Games-Lab ·

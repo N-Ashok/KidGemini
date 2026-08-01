@@ -7,7 +7,10 @@
 import { SignJWT, jwtVerify } from "jose";
 
 export const PARENT_SESSION_COOKIE = "ari_parent";
-/** §13 Q5 — 30 min default; tune after UAT. */
+/** §13 Q5 — 30 min default; tune after UAT. This is now a fail-safe ceiling
+ *  only: the intended lifetime is "for the current visit to the Parent area",
+ *  enforced by clearing the cookie on leave (src/app/parent/page.tsx +
+ *  /api/parent/session/clear) — owner decision 2026-08-01. */
 export const PARENT_SESSION_TTL_S = 30 * 60;
 
 const ISSUER = "ariantra";

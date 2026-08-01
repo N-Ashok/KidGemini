@@ -80,19 +80,19 @@ describe("POST /api/billing/verify", () => {
 
   it("a verified PACK payment is marked paid with NO period and credits Sparks via the bridge", async () => {
     verifySigMock.mockReturnValue(true);
-    getByOrderIdMock.mockReturnValue({ userId: USER, playerId: PLAYER, planKey: "pack120" });
+    getByOrderIdMock.mockReturnValue({ userId: USER, playerId: PLAYER, planKey: "pack500" });
     const res = await POST(makeReq(GOOD));
     expect(res.status).toBe(200);
     expect(markPaidMock).toHaveBeenCalledWith("order_1", "pay_1", null);
     expect(creditPurchaseMock).toHaveBeenCalledWith({
       playerId: PLAYER,
-      packKey: "pack120",
-      sparks: 12_000,
-      amountInr: 120,
+      packKey: "pack500",
+      sparks: 50_000,
+      amountInr: 500,
       razorpayPaymentId: "pay_1",
     });
     const json = await res.json();
-    expect(json).toMatchObject({ status: "paid", sparksCredited: 12_000, pending: false });
+    expect(json).toMatchObject({ status: "paid", sparksCredited: 50_000, pending: false });
   });
 
   it("a verified CUSTOM payment is marked paid but credits no Sparks (no bridge call)", async () => {
@@ -106,7 +106,7 @@ describe("POST /api/billing/verify", () => {
 
   it("reports paid with pending=true if the Sparks credit fails — payment succeeded, never told otherwise", async () => {
     verifySigMock.mockReturnValue(true);
-    getByOrderIdMock.mockReturnValue({ userId: USER, playerId: PLAYER, planKey: "pack200" });
+    getByOrderIdMock.mockReturnValue({ userId: USER, playerId: PLAYER, planKey: "pack1000" });
     creditPurchaseMock.mockResolvedValue({ status: 502, data: { error: "sparks unavailable" } });
     const res = await POST(makeReq(GOOD));
     expect(res.status).toBe(200);
@@ -116,7 +116,7 @@ describe("POST /api/billing/verify", () => {
 
   it("won't let one user confirm another user's order (404)", async () => {
     verifySigMock.mockReturnValue(true);
-    getByOrderIdMock.mockReturnValue({ userId: "user:someone-else", playerId: "player-other", planKey: "pack120" });
+    getByOrderIdMock.mockReturnValue({ userId: "user:someone-else", playerId: "player-other", planKey: "pack500" });
     const res = await POST(makeReq(GOOD));
     expect(res.status).toBe(404);
     expect(markPaidMock).not.toHaveBeenCalled();

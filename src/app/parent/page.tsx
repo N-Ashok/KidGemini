@@ -208,7 +208,10 @@ export default function ParentPage() {
   }, []);
 
   // Guests never see a PIN form (D3) — sign-up copy instead. A signed-in
-  // parent with a live parent session (last 30 min) skips the PIN entirely.
+  // parent with a LIVE parent session (this same visit to the Parent area)
+  // skips the PIN entirely; leaving the area always clears that session, so
+  // coming back always re-prompts (owner decision 2026-08-01 — the parent
+  // session is scoped to "while you're in the Parent area", not a rolling TTL).
   const session = useSession();
   useEffect(() => {
     if (session.status === "loading") return;
@@ -222,6 +225,21 @@ export default function ParentPage() {
       void loadScreenTime();
     })();
   }, [session.status, loadAlerts, loadGames, loadScreenTime]);
+
+  // Clear the parent session the moment the Parent area is left, so a return
+  // visit — whether via in-app navigation or a fresh tab — always needs the
+  // PIN again. pagehide covers tab close/hard navigation (sendBeacon survives
+  // page teardown); the unmount cleanup covers in-app client-side navigation.
+  useEffect(() => {
+    const clearParentSession = () => {
+      navigator.sendBeacon?.("/api/parent/session/clear");
+    };
+    window.addEventListener("pagehide", clearParentSession);
+    return () => {
+      window.removeEventListener("pagehide", clearParentSession);
+      clearParentSession();
+    };
+  }, []);
 
   async function saveScreenTimeCap(e: React.FormEvent) {
     e.preventDefault();

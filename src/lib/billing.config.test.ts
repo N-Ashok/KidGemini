@@ -1,8 +1,9 @@
-// Pins the 2026-07-27 Sparks-packs pricing (Phase 5 payments; sold on
-// ariantra.com/pricing.html, paid here):
-//   pack120 ₹120 → 12,000 ⚡ (≈ 3–4 finished games)
-//   pack200 ₹200 → 20,000 ⚡ (≈ 5–6 finished games)
-//   pack500 ₹500 → 50,000 ⚡ (≈ 12–15 finished games, "Best value")
+// Pins the 2026-08-01 Sparks-packs pricing (2 tiers, down from the earlier
+// 2026-07-27 Phase 5 three-tier ladder; sold on the "Ariantra AI" marketing
+// repo's pricing.html, paid here):
+//   pack500  ₹500  → 50,000 ⚡  (≈ 12–15 finished games)
+//   pack1000 ₹1000 → 1,00,000 ⚡ ("Best value") — SAME flat rate as pack500,
+//     no bonus tier: 1 Spark = 1 paisa for both.
 // Amounts are in paise. pricing.html's "Buy Sparks" deep-links to /upgrade —
 // renaming a key breaks any future ?pack=<key> deep link, so keys are pinned
 // here. Supersedes the 2026-07-11 yearly-plan tiers (explorer/assisted4/
@@ -18,27 +19,21 @@ import {
   CUSTOM_PLAN_KEY,
 } from "./billing.config";
 
-describe("Sparks packs (2026-07-27 Phase 5 pricing)", () => {
-  it("sells exactly the three pricing.html packs", () => {
-    expect(SPARK_PACKS.map((p) => p.key)).toEqual(["pack120", "pack200", "pack500"]);
-  });
-
-  it("pack120 is ₹120 for 12,000 Sparks", () => {
-    const p = findPack("pack120");
-    expect(p?.amountPaise).toBe(12_000);
-    expect(p?.sparks).toBe(12_000);
-  });
-
-  it("pack200 is ₹200 for 20,000 Sparks", () => {
-    const p = findPack("pack200");
-    expect(p?.amountPaise).toBe(20_000);
-    expect(p?.sparks).toBe(20_000);
+describe("Sparks packs (2026-08-01 pricing)", () => {
+  it("sells exactly the two pricing.html packs", () => {
+    expect(SPARK_PACKS.map((p) => p.key)).toEqual(["pack500", "pack1000"]);
   });
 
   it("pack500 is ₹500 for 50,000 Sparks", () => {
     const p = findPack("pack500");
     expect(p?.amountPaise).toBe(50_000);
     expect(p?.sparks).toBe(50_000);
+  });
+
+  it("pack1000 is ₹1000 for 1,00,000 Sparks — same flat rate as pack500, no bonus", () => {
+    const p = findPack("pack1000");
+    expect(p?.amountPaise).toBe(100_000);
+    expect(p?.sparks).toBe(100_000);
   });
 
   it("old yearly-plan keys are gone", () => {

@@ -77,7 +77,7 @@ describe("POST /api/billing/webhook", () => {
   it("marks the order paid with NO period and credits Sparks via the bridge", async () => {
     verifyWebhookSignatureMock.mockReturnValue(true);
     isNewEventMock.mockReturnValue(true);
-    getByOrderIdMock.mockReturnValue({ planKey: "pack120", userId: "user:kid@example.com", playerId: "player-1" });
+    getByOrderIdMock.mockReturnValue({ planKey: "pack500", userId: "user:kid@example.com", playerId: "player-1" });
 
     const res = await POST(
       makeReq(capturedBody, { "x-razorpay-signature": "good", "x-razorpay-event-id": "evt_1" }),
@@ -87,9 +87,9 @@ describe("POST /api/billing/webhook", () => {
     expect(markPaidMock).toHaveBeenCalledWith("order_1", "pay_1", null);
     expect(creditPurchaseMock).toHaveBeenCalledWith({
       playerId: "player-1",
-      packKey: "pack120",
-      sparks: 12_000,
-      amountInr: 120,
+      packKey: "pack500",
+      sparks: 50_000,
+      amountInr: 500,
       razorpayPaymentId: "pay_1",
     });
   });
@@ -124,7 +124,7 @@ describe("POST /api/billing/webhook", () => {
   it("THROWS when the Sparks credit fails, so Razorpay retries the webhook", async () => {
     verifyWebhookSignatureMock.mockReturnValue(true);
     isNewEventMock.mockReturnValue(true);
-    getByOrderIdMock.mockReturnValue({ planKey: "pack200", userId: "user:kid@example.com", playerId: "player-1" });
+    getByOrderIdMock.mockReturnValue({ planKey: "pack1000", userId: "user:kid@example.com", playerId: "player-1" });
     creditPurchaseMock.mockResolvedValue({ status: 502, data: { error: "sparks unavailable" } });
 
     await expect(

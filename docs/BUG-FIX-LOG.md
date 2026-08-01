@@ -11,6 +11,41 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-01 — Build-progress narration on EDIT turns always fell back to "the whole ask", never showed per-step lines
+
+- **Symptom:** owner reported that while editing an existing game, the build-progress strip
+  (`docs/2026-07-31_PRD_BuildProgressNarration.md`) always showed one static line — their own
+  full request text — and never the granular, per-component narration ("adding the jump
+  animation", "drawing the background") the feature is meant to show.
+- **Root cause:** `kidThoughtLine()` (`src/lib/kid-thought.ts`) rejected the ENTIRE live model
+  thought line if `CODE_LIKE` matched anywhere in it. Edit-turn thinking routinely mixes an
+  exact code/function reference (a landmark comment, a function name — `GAME_EDIT_PROMPT_SECTION`
+  in `src/lib/game-edit.ts` explicitly asks the model to anchor its patch on one) right next to a
+  genuinely kid-safe planning sentence, e.g. `"I'll tweak update() for gravity. Time to make it
+  feel bouncy!"` — the whole thing was thrown away for the `update()` fragment, even though the
+  second sentence was perfectly safe to show. `thinkingLine` stayed `null` on nearly every edit
+  turn, so `buildUpdatingLine()`'s already-shipped ask-text fallback (the 2026-07-31 fix) fired
+  every single time instead of being the rare fallback it was designed to be. Same-day
+  investigation confirmed the SSE plumbing (`gemini.ts` → `model-runner.ts` → `route.ts` →
+  `ChatPanel.container.tsx`) is intact and identical for build vs. edit turns — this was purely a
+  filter/content mismatch, not a wiring bug.
+- **Fix:** `kidThoughtLine()` now splits the thought into sentences and judges each one on its
+  own — the first clean, non-code sentence wins, instead of one code-like clause sinking the
+  whole line. Only a thought where EVERY sentence is code-like/degenerate still returns `null`
+  (fail-closed preserved). No change to the safety bar itself — same `CODE_LIKE`/`MIN_CHARS`
+  checks, just applied per-sentence instead of to the whole blob.
+- **Verified:** `src/lib/kid-thought.test.ts` — 2 new tests (salvages a clean sentence next to a
+  code-like one; still rejects when every sentence is code-like), all 7 tests in the file green,
+  plus `src/lib/build-narration.test.ts` (32 tests) unaffected. Full suite green (177 files / 1877
+  tests) after the change.
+- **Lesson:** a whole-string reject-on-any-bad-token filter degrades badly the moment real model
+  output starts mixing safe and unsafe content in the same chunk — the SAME class of bug as the
+  2026-07-31 "3D skyscrapers" profanity false-positive (`RulesClassifier` matching a substring
+  and rejecting an entire benign word/phrase). Prefer judging the smallest safe unit (a sentence,
+  a token) over the whole blob whenever a filter's false-positive cost is "the user gets nothing."
+
+---
+
 ## 2026-07-31 — Build progress strip showed nothing derived for small edits
 
 - **Symptom:** owner shipped an edit ("add city buildings and grass on both

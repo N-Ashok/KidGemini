@@ -166,7 +166,13 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
   const [landedBible, setLandedBible] = useState(false);
   const checkTimer = useRef<ReturnType<typeof setTimeout>>();
 
-  const slug = updateTarget ? updateTarget.slug : nameToSlug(name);
+  // Custom web address (owner ask 2026-08-01): most kids just want the
+  // auto-generated address, so it's a checkbox opt-in, not a second required
+  // field — checking it reveals a separate slug input decoupled from the
+  // display name (e.g. name "Dragon Flyer", address "my-cool-game").
+  const [useCustomSlug, setUseCustomSlug] = useState(false);
+  const [customSlug, setCustomSlug] = useState("");
+  const slug = updateTarget ? updateTarget.slug : nameToSlug(useCustomSlug ? customSlug : name);
   const displayName = updateTarget ? updateTarget.name : name;
   const isUpdate = updateTarget !== null || check.state === "mine"; // republishing the kid's own game
 
@@ -181,7 +187,7 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
         const res = await fetch("/api/arcade/publish", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ check: true, name }),
+          body: JSON.stringify({ check: true, name: useCustomSlug ? customSlug : name }),
         });
         const data = (await res.json()) as { free?: boolean; mine?: boolean; matched?: string; suggestions?: string[] };
         // "taken"/"copyright" ONLY on a confirmed answer — a failed check
@@ -205,10 +211,8 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
     setName(pick);
   };
 
-  // targetOverride: the update picker calls publish in the same tick as
-  // setUpdateTarget — state would be stale, so the picked game rides along.
-  const publish = useCallback(async (targetOverride?: MyGame) => {
-    const target = targetOverride ?? updateTarget;
+  const publish = useCallback(async () => {
+    const target = updateTarget;
     setStep("publishing");
     setError("");
     setStage(1);
@@ -223,7 +227,7 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
         body: JSON.stringify({
           name: target ? target.name : displayName,
           html,
-          ...(target ? { slug: target.slug } : {}),
+          ...(target ? { slug: target.slug } : useCustomSlug && customSlug ? { slug: nameToSlug(customSlug) } : {}),
           ...(category ? { category } : {}),
           multiplayer: playMode === "friends",
           ...(bibleGame ? { bibleGame: true } : {}),
@@ -238,8 +242,11 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
       };
       clearTimeout(t1);
       clearTimeout(t2);
-      // parent_required: no live parent session yet — ask for the PIN. (If a
-      // grown-up verified within the last 30 min, this never shows.)
+      // parent_required: no live parent session yet — ask for the PIN. The
+      // client always routes through the PIN step before calling publish() in
+      // the first place (owner decision 2026-08-01: publish always asks,
+      // regardless of any parent-area session), so this is a defense-in-depth
+      // fallback, not the normal path.
       if (res.status === 403) { setStep("pin"); setPin(""); return; }
       if (res.status === 401) { setStep("signin"); return; } // session expired mid-flow
       if (res.status === 409) { setStep("name"); setCheck({ state: "taken", suggestions: data.suggestions ?? [] }); return; }
@@ -275,7 +282,7 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
       setStep("pin");
       setError("That didn't work — nothing is broken. Check the internet and try again.");
     }
-  }, [displayName, html, updateTarget, category, playMode, bibleGame, chatId]);
+  }, [displayName, html, updateTarget, category, playMode, bibleGame, chatId, useCustomSlug, customSlug]);
 
   // PIN step: verify against /api/parent/verify-pin (which sets the HttpOnly
   // parent-session cookie), THEN publish. The PIN itself never rides on the
@@ -396,7 +403,7 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
               {(myGames ?? []).map((g) => (
                 <button
                   key={g.slug}
-                  onClick={() => { setUpdateTarget(g); void publish(g); }}
+                  onClick={() => { setUpdateTarget(g); setStep("pin"); }}
                   className="flex w-full items-center justify-between rounded-2xl border-2 border-neutral-200 px-4 py-3 text-left hover:border-orange-400"
                 >
                   <span className="min-w-0">
@@ -518,14 +525,37 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
                 </div>
               </>
             )}
+            {!isUpdate && (
+              <label className="mb-3 flex items-center gap-2 text-xs font-bold text-neutral-500">
+                <input
+                  type="checkbox"
+                  checked={useCustomSlug}
+                  onChange={(e) => { setUseCustomSlug(e.target.checked); if (!e.target.checked) setCustomSlug(""); }}
+                  className="h-4 w-4 rounded border-neutral-300 text-orange-500 focus:ring-orange-400"
+                />
+                Use a different web address
+              </label>
+            )}
+            {!isUpdate && useCustomSlug && (
+              <div className="mb-3">
+                <input
+                  value={customSlug}
+                  onChange={(e) => setCustomSlug(e.target.value)}
+                  placeholder="my-cool-game"
+                  className="w-full rounded-xl border-2 border-orange-500 px-4 py-3 text-base font-bold outline-none"
+                />
+                <p className="mt-1 text-xs text-neutral-400">
+                  {customSlug ? `Your game will live at ${nameToSlug(customSlug)}.ariantra.com` : "Type an address for your game"}
+                </p>
+              </div>
+            )}
             <button
               // Category is required only in the general flow; the Bible surface
               // fixes it, so a bible publish never needs a category pick.
               disabled={!slug || (!bibleGame && !category) || check.state === "taken" || check.state === "copyright"}
-              // Straight to publish: if a grown-up verified the PIN within
-              // the last 30 min the game just goes; otherwise the server's
-              // parent_required 403 routes to the PIN step.
-              onClick={() => void publish()}
+              // Every publish asks for the PIN (owner decision 2026-08-01) — no
+              // fast path, even if a grown-up is currently verified elsewhere.
+              onClick={() => setStep("pin")}
               className="w-full rounded-2xl bg-orange-500 py-3.5 text-base font-extrabold text-white shadow-lg shadow-orange-500/30 disabled:opacity-40"
             >
               {isUpdate ? "Next → update my game" : "Next → ask a grown-up"}
