@@ -8,6 +8,7 @@ import type { ChainSummary } from "@/types/model-ledger.types";
 import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
 import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection } from "./assets/prompt-catalog";
 import { PHYSICS_PROMPT_SECTION, physicsEnginePromptSection } from "./assets/physics-playbook";
+import { SAVE_STATE_PROMPT_SECTION } from "./assets/save-state-playbook";
 import { catalogGates, type CatalogGates } from "./assets/catalog-gate";
 import { multiplayerGate } from "./multiplayer-gate";
 import { MULTIPLAYER_PROMPT_SECTION } from "./multiplayer-prompt";
@@ -361,7 +362,7 @@ function personaBasePrompt(persona: PersonaId): string {
  *  configFor passes the real per-turn gates. Exported for the prompt-contract
  *  tests. */
 export function buildTurnSystemInstruction(
-  gates: CatalogGates = { three: true, audio: true },
+  gates: CatalogGates = { three: true, audio: true, save: true },
   multiplayer = true,
   isEdit = false,
   repeated = false,
@@ -376,6 +377,7 @@ export function buildTurnSystemInstruction(
   const sections = [
     ...(gates.three ? [THREE_PROMPT_SECTION, modelsPromptSection(), PHYSICS_PROMPT_SECTION, physicsEnginePromptSection()] : []),
     ...(gates.audio ? [audioPromptSection()] : []),
+    ...(gates.save ? [SAVE_STATE_PROMPT_SECTION] : []),
     ...(multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),
     ...(isEdit ? [GAME_EDIT_PROMPT_SECTION] : []),
     ...(repeated ? [REPEATED_REQUEST_SECTION] : []),
@@ -683,7 +685,7 @@ export class GeminiChatModel implements ChatModel {
     // (next-ask-sentinel.ts) for why this must stay an explicit per-call
     // opt-in rather than being re-derived from the flag here.
     const nextAsk = resolveNextAsk(input.nextAsk);
-    console.log(`[gemini] builder mode — thinking on, extended output, persona=${persona.id}, catalogs: 3d=${gates.three} audio=${gates.audio} multiplayer=${wantsMultiplayer} edit=${isEdit} repeated=${repeated} nextAsk=${nextAsk}`);
+    console.log(`[gemini] builder mode — thinking on, extended output, persona=${persona.id}, catalogs: 3d=${gates.three} audio=${gates.audio} save=${gates.save} multiplayer=${wantsMultiplayer} edit=${isEdit} repeated=${repeated} nextAsk=${nextAsk}`);
     return {
       ...GEN_CONFIG,
       systemInstruction: buildTurnSystemInstruction(gates, wantsMultiplayer, isEdit, repeated, persona.id, nextAsk),

@@ -41,6 +41,8 @@ import {
 } from "./help.config";
 import { MAX_REPORT_CHARS } from "./error-report";
 import { evaluate } from "./rate-limit";
+import type { GameSaveRecord, GameSaveState, GameSaveStore } from "@/types/game-save.types";
+import { WRITE_DEBOUNCE_MS } from "./game-save.config";
 
 let db: Database.Database | null = null;
 
@@ -265,6 +267,25 @@ export function getDb(): Database.Database {
       createdAt INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_help_audit_ticket ON help_audit(ticketId, createdAt);
+    -- Save & continue building, Phase 1 backend only, not yet wired into
+    -- ArtifactFrame/the prompt (docs/2026-08-01_PRD_SaveContinueBuilding.md
+    -- §3d). One save slot per artifact message — autosave overwrites in
+    -- place, no versioned history. UNIQUE(conversationId, messageId) is what
+    -- makes "regenerating the game starts a fresh slot" true: a new message
+    -- id can never collide with an older one's save.
+    CREATE TABLE IF NOT EXISTS game_saves (
+      id             TEXT PRIMARY KEY,
+      conversationId TEXT NOT NULL,
+      messageId      TEXT NOT NULL,
+      userId         TEXT NOT NULL,
+      stateJson      TEXT NOT NULL,
+      createdAt      INTEGER NOT NULL,
+      updatedAt      INTEGER NOT NULL,
+      UNIQUE(conversationId, messageId)
+    );
+    -- Ownership-scoped lookup path (get(userId, messageId)) — see
+    -- docs/SCALABILITY_ISSUES.md for the not-yet-cleaned-up-on-delete note.
+    CREATE INDEX IF NOT EXISTS idx_game_saves_user_message ON game_saves(userId, messageId);
   `);
   // Migration (2026-07-14): real billed token counts. Pre-existing DBs lack
   // the columns — add them, then backfill billed=estimate so history keeps
@@ -910,6 +931,11 @@ export class SqliteRateLimitStore implements RateLimitStore {
  *  SQL layer: reads filter by userId, and an upsert only updates a row whose
  *  userId matches — a colliding id from another identity is silently ignored. */
 export class SqliteChatHistoryStore implements ChatHistoryStore {
+  // DI'd (docs/SCALABILITY_ISSUES.md #8, cascade landed with the save feature
+  // going live rather than deferred again): softDelete cascades into
+  // game_saves so a deleted conversation's save rows don't outlive it forever.
+  constructor(private gameSaves: GameSaveStore = new SqliteGameSaveStore()) {}
+
   upsert(userId: string, convo: Conversation, now: number): void {
     getDb()
       .prepare(
@@ -974,13 +1000,21 @@ export class SqliteChatHistoryStore implements ChatHistoryStore {
    *  still holds the chat locally can re-sync its content without
    *  resurrecting it in the sidebar (H.14). */
   softDelete(userId: string, id: string, now: number): boolean {
-    const result = getDb()
-      .prepare(
-        `UPDATE conversations SET deletedAt = @now
-         WHERE id = @id AND userId = @userId AND deletedAt IS NULL`,
-      )
-      .run({ id, userId, now });
-    return result.changes > 0;
+    const db = getDb();
+    // Transactional (docs/2026-08-01_PRD_SaveContinueBuilding.md §6): the
+    // conversation's deletion and its save rows' cascade land atomically —
+    // a crash between the two statements can never leave an orphaned save
+    // pointing at a conversation that looks deleted, or vice versa.
+    return db.transaction(() => {
+      const result = db
+        .prepare(
+          `UPDATE conversations SET deletedAt = @now
+           WHERE id = @id AND userId = @userId AND deletedAt IS NULL`,
+        )
+        .run({ id, userId, now });
+      if (result.changes > 0) this.gameSaves.deleteByConversation(id);
+      return result.changes > 0;
+    })();
   }
 
   claim(fromUserId: string, toUserId: string): number {
@@ -1195,6 +1229,70 @@ export class SqliteHelpStore implements HelpStore {
     if (tickets.length === 0) return [];
     const stmt = getDb().prepare(`SELECT * FROM help_replies WHERE ticketId = ? ORDER BY createdAt ASC`);
     return tickets.map((t) => ({ ...t, replies: stmt.all(t.id) as HelpReply[] }));
+  }
+}
+
+/** Save & continue building, Phase 1 backend only
+ *  (docs/2026-08-01_PRD_SaveContinueBuilding.md §3d) — not yet wired into
+ *  ArtifactFrame or the prompt. Fail-closed on ownership: an upsert against a
+ *  slot owned by a different userId is a no-op (same idiom as
+ *  SqliteChatHistoryStore.upsert), and get() only ever returns a caller's own
+ *  save. Debounced (§3c): a write landing inside WRITE_DEBOUNCE_MS of the
+ *  slot's last update is a silent no-op, guarding against a misbehaving
+ *  client hammering the write path. */
+export class SqliteGameSaveStore implements GameSaveStore {
+  upsert(
+    userId: string,
+    input: { conversationId: string; messageId: string; state: GameSaveState },
+    now: number,
+  ): boolean {
+    const db = getDb();
+    const existing = db
+      .prepare(`SELECT updatedAt FROM game_saves WHERE conversationId = ? AND messageId = ?`)
+      .get(input.conversationId, input.messageId) as { updatedAt: number } | undefined;
+    if (existing && now - existing.updatedAt < WRITE_DEBOUNCE_MS) return false;
+
+    const info = db
+      .prepare(
+        `INSERT INTO game_saves (id, conversationId, messageId, userId, stateJson, createdAt, updatedAt)
+         VALUES (@id, @conversationId, @messageId, @userId, @stateJson, @now, @now)
+         ON CONFLICT(conversationId, messageId) DO UPDATE SET
+           stateJson = excluded.stateJson, updatedAt = excluded.updatedAt
+         WHERE game_saves.userId = excluded.userId`,
+      )
+      .run({
+        id: newId(),
+        conversationId: input.conversationId,
+        messageId: input.messageId,
+        userId,
+        stateJson: JSON.stringify(input.state),
+        now,
+      });
+    return info.changes > 0;
+  }
+
+  get(userId: string, messageId: string): GameSaveRecord | null {
+    const row = getDb()
+      .prepare(`SELECT * FROM game_saves WHERE messageId = ? AND userId = ?`)
+      .get(messageId, userId) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    try {
+      return {
+        id: row.id as string,
+        conversationId: row.conversationId as string,
+        messageId: row.messageId as string,
+        userId: row.userId as string,
+        state: JSON.parse(row.stateJson as string),
+        createdAt: row.createdAt as number,
+        updatedAt: row.updatedAt as number,
+      };
+    } catch {
+      return null; // corrupt row — treat as missing, same idiom as ChatHistoryStore.get
+    }
+  }
+
+  deleteByConversation(conversationId: string): number {
+    return getDb().prepare(`DELETE FROM game_saves WHERE conversationId = ?`).run(conversationId).changes;
   }
 }
 

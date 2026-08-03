@@ -159,3 +159,30 @@ Statuses: `ACCEPTED` (known limit, deliberately deferred) · `OPEN` (needs actio
   the moment they're removed from the scene, rather than waiting for the 1,000-entry cap.
   **Effort:** ~1 hour — the perf-probe sample loop already walks every instance to check `.parent`;
   pruning there instead of just skipping is a small, contained change.
+
+## 8. `game_saves` rows for a deleted conversation — **RESOLVED for the cascade; GC sweep for pre-existing orphans still open**
+
+- **2026-08-03, Phase 1:** flagged as accepted-with-plan while the feature was backend-only and
+  unwired (no game could emit `<!--SUPPORTS_SAVE-->` yet, so no row could exist in production).
+- **2026-08-03, Phase 2 (same day, feature went live):** the cascade landed as promised —
+  `SqliteChatHistoryStore.softDelete` (`src/lib/db.ts`) now runs inside `getDb().transaction(...)`
+  and calls `GameSaveStore.deleteByConversation(id)` (DI'd via the constructor, defaulting to
+  `SqliteGameSaveStore`) whenever the soft-delete actually matches a row — atomic, so a crash
+  between the two statements can never leave an orphaned save. Covered by
+  `db.chat-history.test.ts` H.16–H.18 (cascade fires, fail-closed no-op doesn't cascade, DI is
+  exercised with a fake store) and `db.game-saves.test.ts` (`deleteByConversation` itself).
+- **Still open — pre-existing orphans:** the cascade only covers deletes going forward. Rows
+  created before this fix (there should be none, since the feature was unwired until the same
+  change that added the cascade — but a DB restored from a backup taken mid-window could in
+  principle carry one) and any future orphan from an out-of-band path (a raw SQL delete, a manual
+  admin fix) still need a sweep. `stateJson` stays capped at 1.5MB per row (`MAX_STATE_JSON_BYTES`,
+  `src/lib/game-save.config.ts`) regardless — a single-area game needs a few KB, but a multi-area
+  "build your universe" world accumulates one entry per object across every area a kid has ever
+  built, so undercapping would mean a kid's second or third city silently stops saving while the
+  first keeps working, which is worse than one clear limit.
+- **Trigger to act on the GC sweep:** a `game_saves` row is ever observed with no matching
+  `conversations` row (should be structurally impossible now, but worth a periodic check) — or the
+  table's row count meaningfully exceeds `conversations`' row count.
+- **Ready plan:** a nightly GC sweep for `game_saves` rows whose parent conversation no longer
+  exists (same idiom as `SqliteHelpStore.pruneClosedText`'s sweep-on-write) — additive, no
+  migration risk. **Effort:** ~30 min; low priority since the cascade already prevents new orphans.

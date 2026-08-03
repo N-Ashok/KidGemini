@@ -24,6 +24,8 @@ import { keyToPanelAction, UPDATING_LINE } from "@/lib/preview-pane";
 import { buildErrorReport, hasExtremeError } from "@/lib/error-report";
 import { usePreviewVerify } from "./usePreviewVerify";
 import { usePerfProbe } from "./usePerfProbe";
+import { useGameSaveChannel } from "./useGameSaveChannel";
+import { injectInitialGameState } from "@/lib/game-save-inject";
 import {
   buildSlowdownHint,
   initialSlowdownBannerState,
@@ -110,6 +112,12 @@ interface ArtifactFrameProps {
   /** The active conversation's id — rides on publish so the platform stamps
    *  the chat ↔ game link behind Studio's Edit deep link. */
   chatId?: string;
+  /** Save & continue building (docs/2026-08-01_PRD_SaveContinueBuilding.md):
+   *  the conversation + the SPECIFIC message this game belongs to (never
+   *  assumed to be the newest — "Continue from here" can pin an older one).
+   *  Either absent = feature inert, same convention as onCaptureIdea/helpTab. */
+  conversationId?: string;
+  messageId?: string;
   /** Kid-facing "🐢 running slow" banner (docs/2026-07-30_PRD_PreviewPerfPanel.md
    *  addendum): tapping "Make it faster" hands a REAL technical hint string
    *  (built from the latest perf snapshot's heaviest model — never shown to
@@ -173,6 +181,8 @@ export function ArtifactFrame({
   bibleTeacher = false,
   editTarget,
   chatId,
+  conversationId,
+  messageId,
   onFixSlowdown,
 }: ArtifactFrameProps) {
   const [tab, setTab] = useState<Tab>("preview");
@@ -275,14 +285,28 @@ export function ArtifactFrame({
   // chat whose stored HTML predates the fix — a 3D game that imports "three" is
   // guaranteed a resolvable import map here, so the preview iframe can never throw
   // "Failed to resolve module specifier three". Idempotent + 2D-safe.
+  const covered = state.phase !== "done";
+  // Save & continue building (docs/2026-08-01_PRD_SaveContinueBuilding.md):
+  // active only once the game is up and playable (never mid-verify-cover),
+  // so the existing-save lookup and autosave never race the verify loop.
+  const gameSave = useGameSaveChannel({
+    iframeRef,
+    html: state.currentHtml,
+    conversationId,
+    messageId,
+    active: !covered,
+  });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const srcDoc = useMemo(() => {
     const floored = ensureAssetRuntime(state.currentHtml);
-    return state.probesEnabled
+    const withRuntime = state.probesEnabled
       ? injectPreviewInstrumentation(injectPreviewRuntime(floored, { theme: previewTheme }))
       : injectConsoleCapture(injectPreviewRuntime(floored, { theme: previewTheme }));
-  }, [docKey]);
-  const covered = state.phase !== "done";
+    // Only when the kid picked "Continue" (useGameSaveChannel.continueBuild) —
+    // reloads THIS SAME iframe (srcDoc changes, docKey/key does not) with the
+    // restored world injected before the game's own script runs (§3f).
+    return gameSave.injectedState ? injectInitialGameState(withRuntime, gameSave.injectedState) : withRuntime;
+  }, [docKey, gameSave.injectedState]);
 
   // Device frame's actual ON-SCREEN box (2026-07-16 fix): shared by the
   // iframe wrapper AND the Idea Button/Bag overlays below. The overlays
@@ -679,6 +703,32 @@ export function ArtifactFrame({
           {/* A QUEUED idea building gets named (PRD-IDEA-QUEUE-V2 §4.2) — the
               game swap that follows must be narrated, never a silent switch. */}
           {updatingLine ?? UPDATING_LINE}
+        </div>
+      )}
+
+      {/* Save & continue building (docs/2026-08-01_PRD_SaveContinueBuilding.md
+          §3f): a save was found for this exact game message — ask before
+          resuming (a kid reopening to unexpectedly-full build state is a
+          surprise, never silently resumed). Never covers a busy/streaming
+          update or the verify cover (gameSave.isActive already excludes
+          those via the `active: !covered` gate above). */}
+      {gameSave.decisionPhase === "pending" && tab === "preview" && !covered && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-brand-100 bg-brand-50 px-4 py-2 text-sm text-brand-600">
+          <span>🧱 Continue your build from where you left off?</span>
+          <div className="flex shrink-0 gap-2">
+            <button
+              onClick={gameSave.startFresh}
+              className="rounded-full border border-brand-300 px-3 py-1 text-xs font-semibold text-brand-600 hover:bg-brand-100"
+            >
+              Start fresh
+            </button>
+            <button
+              onClick={gameSave.continueBuild}
+              className="rounded-full bg-brand-500 px-3 py-1 text-xs font-extrabold text-white hover:bg-brand-600"
+            >
+              Continue
+            </button>
+          </div>
         </div>
       )}
 

@@ -559,6 +559,20 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   iterating conversation). The newest game rides along even if it's older
   than the window, so "update my game" always has code to work from. The
   stored conversation/UI is untouched (`src/lib/history-trim.ts`)
+- **Save & continue building** (2026-08-03,
+  `docs/2026-08-01_PRD_SaveContinueBuilding.md`): a build/world game (a
+  physics stacking tower, a "build your universe" world) can implement a
+  small postMessage save contract (`<!--SUPPORTS_SAVE-->`) — the prompt
+  clause is gated on build/world/inventory keywords or artifact evidence
+  (`gates.save`, `catalog-gate.ts`), same shape as the 3D/audio gates.
+  Reopening a chat whose game has a saved state shows a "Continue your
+  build?" bar (Continue / Start fresh) above the preview; Continue injects
+  `window.__ARIANTRA_INITIAL_STATE__` before the game's own script runs.
+  While playing, the parent app asks the game for its state every 30s
+  (`useGameSaveChannel`) and writes it to a dedicated `game_saves` table
+  (one slot per message, capped at 1.5MB, server-debounced to one write per
+  15s). In-chat draft only — publish/Arcade save state is a separate,
+  not-yet-built concern (PRD §8)
 
 ## 3D games (2026-07-12 — Phase B of PRD-3D-GAMES-AND-ASSETS)
 - The model MAY build genuinely 3D games (racing, flying, rolling-ball) with
