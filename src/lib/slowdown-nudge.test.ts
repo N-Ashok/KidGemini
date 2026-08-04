@@ -17,6 +17,7 @@ import {
   initialSlowdownBannerState,
   nextSlowdownBannerState,
   buildSlowdownHint,
+  heaviestModel,
   type SlowdownBannerState,
 } from "./slowdown-nudge";
 import type { PerfModelEntry } from "@/types/preview-perf.types";
@@ -126,6 +127,17 @@ describe("nextSlowdownBannerState — debounced sustained-low-FPS banner", () =>
     let s: SlowdownBannerState = { visible: true, consecutiveLow: 9, cooldownUntil: 99_999 };
     s = nextSlowdownBannerState(s, { type: "reset" });
     expect(s).toEqual(initialSlowdownBannerState);
+  });
+});
+
+describe("heaviestModel — shared by buildSlowdownHint and the server-log report, so they never disagree", () => {
+  it("returns null for an empty scene", () => {
+    expect(heaviestModel([])).toBeNull();
+  });
+
+  it("picks the highest-load entry regardless of input order", () => {
+    const m = heaviestModel([model({ name: "light", load: 1 }), model({ name: "heavy", load: 999_999 })]);
+    expect(m?.name).toBe("heavy");
   });
 });
 

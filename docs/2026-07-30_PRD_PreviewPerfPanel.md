@@ -218,3 +218,39 @@ a fresh trigger, `reset` clears everything for a new generation) and the
 hint builder (names the heaviest model, ignores lighter ones, singular vs.
 plural instance phrasing, never leaks a triangle count, generic fallback
 when no model is loaded, always keeps the fix in scope).
+
+## 8. Addendum (2026-08-04) — server-visible reporting
+
+**Gap:** an owner asking "is game X actually slow" had no way to check
+without opening it themselves with `kidgemini:debug=1` set — neither the
+debug Perf tab nor the kid-facing banner told anyone outside that one
+browser tab that a slowdown happened.
+
+**Fix:** the moment the kid-facing banner (§7) flips visible,
+`ArtifactFrame.tsx` fires a fire-and-forget `POST /api/perf/slow-game`
+(`lib/perf-report.ts`'s `buildSlowGameReport`/`reportSlowGame`) carrying
+`{docKey, fps, heaviestModel: {name, instances, animated}, conversationId?,
+chatId?, messageId?}` — the SAME `heaviestModel()` selection §7's
+`buildSlowdownHint()` uses (extracted into a shared pure function so the log
+and the kid's fix request can never disagree about which model is the
+culprit). The route (`src/app/api/perf/slow-game/route.ts`) is unauthenticated
+and fail-open (same shape as `/api/screen-time/heartbeat`): it only ever
+`console.warn` a `[perf]`-tagged line and returns `{ok:true}`, never a
+non-200 — this is best-effort diagnostic logging, not a path a kid's
+session can ever be broken by. `logger.ts`'s existing console patch mirrors
+it into `logs/app.log` and pm2 stdout, so `pm2 logs kidgemini | grep
+"[perf]"` on the box surfaces every real slowdown as it happens.
+
+**No new rate limit needed:** naturally throttled by §7's own existing
+5-consecutive-sample debounce and 45s post-fix cooldown — a report can fire
+at most once per debounce/cooldown cycle per session, same bound the banner
+itself already has. See `docs/SCALABILITY_ISSUES.md` #7 for the updated
+note on this making a filtered summary of perf data owner-visible in
+production for every session, not just debug ones (the underlying
+`window.__arPerf` registry itself is unchanged — still debug-tab-only).
+
+**Tests:** `src/lib/perf-report.test.ts` (payload shape, fps rounding,
+optional-id passthrough, truncation of an implausibly long id) and
+`src/app/api/perf/slow-game/route.test.ts` (valid report logs and returns
+ok, no-heaviest-model case, malformed/non-JSON body still fails open,
+non-finite fps never crashes the route).

@@ -31,6 +31,7 @@ import {
   initialSlowdownBannerState,
   nextSlowdownBannerState,
 } from "@/lib/slowdown-nudge";
+import { buildSlowGameReport, reportSlowGame } from "@/lib/perf-report";
 import type { LoadBucket } from "@/types/preview-perf.types";
 import { IdeaMicTab } from "./IdeaMicTab";
 import { IdeaQueue } from "./IdeaQueue";
@@ -265,6 +266,30 @@ export function ArtifactFrame({
     if (!perfSnapshot) return;
     dispatchSlowdown({ type: "sample", fps: perfSnapshot.fps, now: Date.now() });
   }, [perfSnapshot]);
+  // Server-visible logging (2026-08-04): the instant the banner FLIPS to
+  // visible (edge-triggered — reportedRef guards against re-firing on every
+  // render while it stays visible), tell the server so a sustained slowdown
+  // shows up in pm2 logs, not just this one browser tab. Fire-and-forget;
+  // never affects the kid's session either way (lib/perf-report.ts).
+  const slowdownReportedRef = useRef(false);
+  useEffect(() => {
+    if (!slowdownState.visible) {
+      slowdownReportedRef.current = false;
+      return;
+    }
+    if (slowdownReportedRef.current) return;
+    slowdownReportedRef.current = true;
+    reportSlowGame(
+      buildSlowGameReport({
+        docKey,
+        fps: perfSnapshot?.fps ?? 0,
+        models: perfSnapshot?.models ?? [],
+        conversationId,
+        chatId,
+        messageId,
+      }),
+    );
+  }, [slowdownState.visible, docKey, perfSnapshot, conversationId, chatId, messageId]);
   function handleFixSlowdown() {
     dispatchSlowdown({ type: "fixTapped", now: Date.now() });
     onFixSlowdown?.(buildSlowdownHint(perfSnapshot?.models ?? []));

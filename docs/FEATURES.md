@@ -776,7 +776,12 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   (`ChatPanel.container.tsx`'s `handleSend`, same as a next-ask hint chip)
   via `ArtifactFrame`'s new `onFixSlowdown` prop — the kid never sees that
   string. Tapping it starts a 45s cooldown so a fix already in flight isn't
-  re-nagged every second.
+  re-nagged every second. **Now also server-visible** (2026-08-04, PRD §8):
+  the instant the banner shows, a fire-and-forget `POST /api/perf/slow-game`
+  logs `[perf] slow game detected: ...` (docKey, fps, heaviest model)
+  server-side (`lib/perf-report.ts`) — `pm2 logs kidgemini | grep '\[perf\]'`
+  on the box now surfaces a real slowdown as it happens, not just inside the
+  one kid's browser tab that hit it.
 - **Retrieval-lite selection** (PRD §14, `src/lib/assets/model-select.ts`):
   the library is unbounded but each build-turn prompt teaches ≤ 30 models,
   picked by cheap regex — the iterated game's own USES_MODELS markers,
