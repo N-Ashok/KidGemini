@@ -153,7 +153,17 @@ Statuses: `ACCEPTED` (known limit, deliberately deferred) · `OPEN` (needs actio
   stale row in the UI), but the array entries themselves aren't pruned until the cap forces a drop.
 - **Trigger to act:** a real game generation pattern that spawns/despawns one named model far more
   than 1,000 times per session (not observed yet) · this panel graduating from debug-only to an
-  always-on telemetry path (it is explicitly NOT that today — PRD §6, out of scope).
+  always-on telemetry path.
+  **Partial update (2026-08-04):** a SUMMARY now does — `lib/perf-report.ts`'s `buildSlowGameReport`
+  logs `{docKey, fps, heaviestModel: {name, instances, animated}}` server-side (`[perf]` tag,
+  `POST /api/perf/slow-game`) whenever `slowdown-nudge.ts`'s kid-facing banner fires, i.e. for EVERY
+  real kid session (not just `kidgemini:debug` ones) that hits a sustained slowdown — `usePerfProbe`
+  itself already ran unconditionally regardless of the debug flag (only the Perf TAB's UI was
+  gated), this just adds a reporting consumer. Still bounded/low-risk: the sample it reads is a
+  single already-computed snapshot (not the raw `window.__arPerf` instance array this section is
+  about), and it's naturally throttled by the SAME 45s cooldown + 5-consecutive-sample debounce
+  that already gates the banner — so this doesn't change the underlying cap/limit analysis above,
+  only who can now see a slowdown happened.
 - **Ready plan:** switch `instances` to hold `WeakRef<Object3D>` (or prune entries whose `.parent`
   is falsy on each perf-probe sample, not just at read time) so dead instances stop pinning memory
   the moment they're removed from the scene, rather than waiting for the 1,000-entry cap.

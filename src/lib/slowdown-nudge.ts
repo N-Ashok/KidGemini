@@ -97,8 +97,19 @@ export function nextSlowdownBannerState(
  * triangle counts) — instances and animated state are enough for the model
  * to act on.
  */
+/** The single worst-load model in the current scene, or null for a scene
+ *  with nothing tracked (e.g. a pure 2D game). Defensive re-sort — never
+ *  trusts the caller already sorted (PerfSnapshot.models normally is, but
+ *  this is the one place a stale/hand-built list would silently pick the
+ *  wrong offender). Shared by buildSlowdownHint (the kid-facing fix request)
+ *  and perf-report.ts (the server-log payload) so the two can never disagree
+ *  about which model is "the heaviest one" for the same snapshot. */
+export function heaviestModel(models: PerfModelEntry[]): PerfModelEntry | null {
+  return [...models].sort((a, b) => b.load - a.load)[0] ?? null;
+}
+
 export function buildSlowdownHint(models: PerfModelEntry[]): string {
-  const heaviest = [...models].sort((a, b) => b.load - a.load)[0];
+  const heaviest = heaviestModel(models);
   if (!heaviest) {
     return (
       "The game is running slow. Find ways to reduce how much work happens " +
