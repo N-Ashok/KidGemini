@@ -32,6 +32,7 @@ investigate (see Monitoring).
 | Model catalog (**the whole library**, 106 models) | ~889 | input | `prompt-catalog.ts` — static since 2026-07-24 (was a varying 150–290; see waste ledger #4). Grows with the library; ceiling 1,500 pinned by test |
 | Audio catalog (keyword-gated) | ~150 | input | |
 | Save/continue building clause (keyword/artifact-gated) | ~500 | input, build/world turns | `save-state-playbook.ts`, `gates.save` in `catalog-gate.ts` — docs/2026-08-01_PRD_SaveContinueBuilding.md |
+| Published-game save/continue clause (same gate) | ~380 | input, build/world turns | `published-save-playbook.ts`, same `gates.save` — TECH_DEBT #27/#70 |
 | Newest game's code in history | ~10–15k | input, every iteration turn | older versions stripped to placeholders (`history-trim.ts`, 12-msg window) |
 | Kid's message (+ folded text attachment) | 10–100+ | input | |
 | Image attachment | ~258 flat | input | |

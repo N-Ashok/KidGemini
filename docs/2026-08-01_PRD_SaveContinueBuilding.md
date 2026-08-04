@@ -1,6 +1,7 @@
 # PRD — Save & continue building (physics/building games)
 
-**Status (2026-08-03): Phases 1 and 2 shipped — feature is live end-to-end.**
+**Status (2026-08-04): Phases 1 and 2 shipped — feature is live end-to-end.
+§8 (published/Arcade save state) also now built — see that section.**
 
 **Phase 1 (backend foundation):** types (`src/types/game-save.types.ts`), the
 `game_saves` table + `SqliteGameSaveStore` (`src/lib/db.ts`), validation
@@ -254,14 +255,26 @@ move writes off the synchronous hot path (e.g. an in-memory debounce/queue
 that flushes on its own timer instead of per-request, or a dedicated
 write-behind connection) rather than doing it speculatively now.
 
-## 8. Out of scope — published/Arcade game save state
+## 8. Published/Arcade game save state — UPDATE 2026-08-04, now built
 
-A **published** game is a frozen, permanent static snapshot served by the
-sibling `Ariantra-Platform` repo (`games.ariantra.com`) — this repo only
-holds a pointer (`Conversation.editSlug`). That platform may not even be
-constrained by the sandboxed-iframe restriction documented here (it's a
-separate service, possibly full-page, not `srcdoc sandbox`), so its save
-mechanism could look completely different (e.g. real `localStorage`, or its
-own DB-backed save). Implementing that is a change to `../Ariantra-Platform`,
-not this repo — flagged in that repo's `docs/TECH_DEBT.md` as a follow-up,
-not built here.
+Originally out of scope (see history below) — closed via TECH_DEBT #27/#70.
+`../Ariantra-Platform/src/sdk/ariantra-sdk.ts` gained `Ariantra.confirmResume()`/
+`Ariantra.autosave()` on top of its pre-existing `/api/v1/save/{slot}` cloud
+save (published games run on their own real subdomain, not a sandboxed
+`srcdoc` iframe, so real network calls work fine there — no iframe constraint
+after all). `published-save-playbook.ts` teaches generated games to call
+these ADDITIONALLY to (never instead of) this PRD's own postMessage contract
+— confirmed live 2026-08-04 that a game implementing only the postMessage
+side never saves once published (nothing left to send it the request-save
+message once there's no parent chat frame around it). Both clauses ride the
+same `gates.save`.
+
+**Original scoping note (kept for history):** a published game is a frozen,
+permanent static snapshot served by the sibling `Ariantra-Platform` repo
+(`games.ariantra.com`) — this repo only holds a pointer
+(`Conversation.editSlug`). That platform may not even be constrained by the
+sandboxed-iframe restriction documented here (it's a separate service,
+possibly full-page, not `srcdoc sandbox`), so its save mechanism could look
+completely different (e.g. real `localStorage`, or its own DB-backed save).
+Implementing that is a change to `../Ariantra-Platform`, not this repo —
+flagged in that repo's `docs/TECH_DEBT.md` as a follow-up, not built here.

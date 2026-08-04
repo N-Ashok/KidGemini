@@ -571,8 +571,17 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   While playing, the parent app asks the game for its state every 30s
   (`useGameSaveChannel`) and writes it to a dedicated `game_saves` table
   (one slot per message, capped at 1.5MB, server-debounced to one write per
-  15s). In-chat draft only — publish/Arcade save state is a separate,
-  not-yet-built concern (PRD §8)
+  15s). **Now also carries over to published/Arcade games** (2026-08-04,
+  same `gates.save`, `published-save-playbook.ts`, TECH_DEBT #27/#70):
+  generated games ADDITIONALLY call `Ariantra.confirmResume()`/
+  `Ariantra.autosave()` (`../Ariantra-Platform/src/sdk/ariantra-sdk.ts`) —
+  the postMessage contract above only works inside this app's own sandboxed
+  chat-preview iframe (nothing sends the request-save message once
+  published), so the direct SDK calls are what make a published game's
+  build/world state survive after publishing. Both mechanisms are taught
+  together, never as a replacement for each other — the in-chat draft still
+  needs the durable, server-side `game_saves` path the direct calls can't
+  provide there (Ariantra-Platform's preview mock is memory-only)
 
 ## 3D games (2026-07-12 — Phase B of PRD-3D-GAMES-AND-ASSETS)
 - The model MAY build genuinely 3D games (racing, flying, rolling-ball) with

@@ -85,6 +85,7 @@ CHILD_SYSTEM_PROMPT
   [+ modelsPromptSection(context)]  if gates.three  (and manifest has models)
   [+ audioPromptSection()]          if gates.audio   (and manifest has audio)
   [+ SAVE_STATE_PROMPT_SECTION]     if gates.save
+  [+ PUBLISHED_SAVE_PROMPT_SECTION] if gates.save  (same gate — additive, see §2.5a)
   [+ MULTIPLAYER_PROMPT_SECTION]    if multiplayerGate fires
   [+ GAME_EDIT_PROMPT_SECTION]      if isEdit
   [+ REPEATED_REQUEST_SECTION]      if repeated
@@ -294,6 +295,24 @@ the player has ever visited (keyed by id + world origin), not just the one
 currently on screen; restore every area from `window.__ARIANTRA_INITIAL_STATE__`
 on boot if present; emit `<!--SUPPORTS_SAVE-->` at the top of `<body>` only when
 both handlers are actually implemented.
+
+### 2.5a `PUBLISHED_SAVE_PROMPT_SECTION` — if `gates.save`, same gate as §2.5 (`published-save-playbook.ts:36`)
+
+(2026-08-04, TECH_DEBT #27/#70.) A SECOND, additive clause riding the exact
+same `gates.save` as §2.5 — never a replacement for it. §2.5's postMessage
+contract only works inside the sandboxed chat-preview iframe (a parent frame
+has to actively send the request-save message); a PUBLISHED game has no
+parent frame, so a game that implements ONLY §2.5 silently never saves once
+published (confirmed live on a real published game, 2026-08-04). This clause
+teaches the direct `../Ariantra-Platform` SDK contract instead: right after
+the game loop starts (non-blocking — never awaited before the loop runs),
+`Ariantra.ready().then(() => Ariantra.confirmResume()).then(save => { if
+(save) restore from save.areas })`; `Ariantra.autosave(() =>
+currentWorldState)` called once at startup, not inside the loop.
+`Ariantra.confirmResume()` already shows its own "Continue where you left
+off?" prompt when a save exists — never build a duplicate confirmation UI.
+`currentWorldState` must be the SAME object §2.5's postMessage handler sends,
+tracked as one shared variable so the two mechanisms never drift apart.
 
 ### 2.6 `MULTIPLAYER_PROMPT_SECTION` — if the ask is a 2–5 player game (`multiplayer-prompt.ts:16`)
 

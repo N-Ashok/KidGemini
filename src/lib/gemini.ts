@@ -9,6 +9,7 @@ import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
 import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection } from "./assets/prompt-catalog";
 import { PHYSICS_PROMPT_SECTION, physicsEnginePromptSection } from "./assets/physics-playbook";
 import { SAVE_STATE_PROMPT_SECTION } from "./assets/save-state-playbook";
+import { PUBLISHED_SAVE_PROMPT_SECTION } from "./assets/published-save-playbook";
 import { catalogGates, type CatalogGates } from "./assets/catalog-gate";
 import { multiplayerGate } from "./multiplayer-gate";
 import { MULTIPLAYER_PROMPT_SECTION } from "./multiplayer-prompt";
@@ -377,7 +378,7 @@ export function buildTurnSystemInstruction(
   const sections = [
     ...(gates.three ? [THREE_PROMPT_SECTION, modelsPromptSection(), PHYSICS_PROMPT_SECTION, physicsEnginePromptSection()] : []),
     ...(gates.audio ? [audioPromptSection()] : []),
-    ...(gates.save ? [SAVE_STATE_PROMPT_SECTION] : []),
+    ...(gates.save ? [SAVE_STATE_PROMPT_SECTION, PUBLISHED_SAVE_PROMPT_SECTION] : []),
     ...(multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),
     ...(isEdit ? [GAME_EDIT_PROMPT_SECTION] : []),
     ...(repeated ? [REPEATED_REQUEST_SECTION] : []),
