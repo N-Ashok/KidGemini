@@ -20,6 +20,13 @@ export const THREE_MARKER = "<!--USES_THREE-->";
  *  "cannon-es" bare specifier in the import map, same contract as USES_THREE. */
 export const PHYSICS_MARKER = "<!--USES_PHYSICS-->";
 
+/** Emitted when a build/world game implements the save & continue building
+ *  contract (docs/2026-08-01_PRD_SaveContinueBuilding.md §3a) — ONLY when
+ *  both the save-reply postMessage handler and the boot-time restore are
+ *  actually implemented. Never stripped by injectAssets (it isn't an asset
+ *  marker), so it's a plain string, not part of stripAssetMarkers/hasAssetMarker. */
+export const SUPPORTS_SAVE_MARKER = "<!--SUPPORTS_SAVE-->";
+
 /** `<!--USES_MODELS: car, tree-->` — names resolve through the manifest. */
 export const MODELS_MARKER_RE = /<!--USES_MODELS:([a-z0-9_,\s]*)-->/gi;
 

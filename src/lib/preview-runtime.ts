@@ -12,20 +12,12 @@
 // the RAW state.currentHtml, where the platform loads the real backend SDK.
 
 import { PREVIEW_SDK_BUNDLE } from "@/generated/preview-sdk-bundle";
+import { escapeForInlineScript } from "./assets/runtime-helpers";
 
 export type PreviewTheme = "default" | "bible";
 
 /** Idempotency marker (same pattern as the console-capture / verify markers). */
 export const PREVIEW_RUNTIME_MARKER = "<!--ari-preview-runtime-->";
-
-/** The bundle carries the publish overlays as HTML strings that contain literal
- *  `</script>`; when we inline the bundle inside a `<script>…</script>`, an
- *  un-escaped `</script>` would terminate our script early. Neutralize it —
- *  `<\/script>` is identical to `</script>` inside a JS string, so the overlay
- *  markup still renders correctly, but the srcDoc `<script>` stays open. */
-function escapeForInlineScript(js: string): string {
-  return js.replace(/<\/(script)/gi, "<\\/$1");
-}
 
 /**
  * Prepend the preview runtime to `html`. Sets the theme global FIRST (the bundle

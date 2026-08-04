@@ -8,7 +8,7 @@
 // algorithm (countTriangles) is extracted so it gets a REAL executable unit
 // test against fake Object3D-shaped fixtures.
 import { describe, it, expect } from "vitest";
-import { countTriangles, loadModelHelper, MAX_TRACKED_INSTANCES } from "./runtime-helpers";
+import { countTriangles, escapeForInlineScript, insertEarly, loadModelHelper, MAX_TRACKED_INSTANCES } from "./runtime-helpers";
 
 // ── countTriangles — pure, executable against fake mesh fixtures ───────────
 
@@ -90,5 +90,45 @@ describe("loadModelHelper — perf-registry recording (generated script shape)",
 
   it("still declares window.loadModel exactly once (helper shape unchanged)", () => {
     expect(script.match(/window\.loadModel\s*=/g)?.length).toBe(1);
+  });
+});
+
+// escapeForInlineScript — extracted 2026-08-03 from preview-runtime.ts so
+// every module that inlines arbitrary content into a <script> block (the
+// preview SDK bundle, a kid's save-state JSON) shares one escape.
+describe("escapeForInlineScript", () => {
+  it("neutralizes a literal </script> so it can't terminate the surrounding tag", () => {
+    expect(escapeForInlineScript("var x = '</script>';")).toBe("var x = '<\\/script>';");
+  });
+
+  it("is case-insensitive (</SCRIPT>, </Script>)", () => {
+    expect(escapeForInlineScript("</SCRIPT>")).toBe("<\\/SCRIPT>");
+    expect(escapeForInlineScript("</Script>")).toBe("<\\/Script>");
+  });
+
+  it("leaves content with no closing script tag untouched", () => {
+    expect(escapeForInlineScript('{"areas":[{"id":"a"}]}')).toBe('{"areas":[{"id":"a"}]}');
+  });
+
+  it("escapes every occurrence, not just the first", () => {
+    const input = "</script>a</script>b</script>";
+    expect(escapeForInlineScript(input).match(/<\\\/script>/gi)?.length).toBe(3);
+  });
+});
+
+// insertEarly — the shared anchor-cascade (head, else html, else prepend).
+describe("insertEarly", () => {
+  it("inserts right after <head> when present", () => {
+    const out = insertEarly("<html><head><title>t</title></head><body>x</body></html>", "MARK");
+    expect(out).toBe("<html><head>MARK<title>t</title></head><body>x</body></html>");
+  });
+
+  it("falls back to right after <html> when there is no <head>", () => {
+    const out = insertEarly("<html><body>x</body></html>", "MARK");
+    expect(out).toBe("<html>MARK<body>x</body></html>");
+  });
+
+  it("prepends when there is neither <head> nor <html>", () => {
+    expect(insertEarly("<div>bare</div>", "MARK")).toBe("MARK<div>bare</div>");
   });
 });

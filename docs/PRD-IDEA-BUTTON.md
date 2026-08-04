@@ -7,7 +7,7 @@
 > migrated once into their chat's queue. §2.2–2.3, §3's IdeaRecord store, and
 > the ✨ parts of the UAT script below are historical.
 
-Status: **implemented 2026-07-12, OFF by default since 2026-07-31**
+Status: **implemented 2026-07-12, OFF 2026-07-31 → back ON 2026-08-01**
 (`NEXT_PUBLIC_ENABLE_IDEA_MIC`, `src/lib/idea-mic.ts`'s `ideaMicEnabled()`).
 Mock + kid-experience narrative reviewed with owner before build.
 
@@ -20,6 +20,11 @@ it there like any other ask; no floating shortcut bypasses that. The code is
 untouched and fully tested — this is a kill switch, not a removal — so it can
 flip back on if feedback says the friction outweighs the value. Coach nudges
 (§3b) are gated by the same flag (no point advertising a hidden tab).
+
+**2026-08-01 — reinstated (owner decision reversed):** same functionality as
+before the 2026-07-31 disable, no code changes — the kill switch flips back
+to on. Kept the flag (rather than deleting it) in case this needs to be
+revisited again.
 
 ## 1. Problem
 

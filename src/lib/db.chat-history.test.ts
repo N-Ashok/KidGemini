@@ -7,8 +7,9 @@ import { vi } from "vitest";
 vi.mock("server-only", () => ({}));
 process.env.DATABASE_PATH = ":memory:";
 
-import { SqliteChatHistoryStore } from "./db";
+import { SqliteChatHistoryStore, SqliteGameSaveStore } from "./db";
 import type { Conversation } from "@/types/chat.types";
+import type { GameSaveState } from "@/types/game-save.types";
 
 const convo = (id: string, title = `Chat ${id}`): Conversation => ({
   id,
@@ -157,5 +158,47 @@ describe("SqliteChatHistoryStore", () => {
     store.upsert(uid, convo("d5"), 1000);
     expect(store.softDelete(uid, "d5", 2000)).toBe(true);
     expect(store.softDelete(uid, "d5", 3000)).toBe(false);
+  });
+
+  // ── Cascade into game_saves on soft delete (docs/SCALABILITY_ISSUES.md #8,
+  //    docs/2026-08-01_PRD_SaveContinueBuilding.md §6) — landed with the save
+  //    feature going live, not deferred to a later phase. ──────────────────
+  it("H.16 softDelete cascades into game_saves — a deleted conversation's save rows are gone", () => {
+    const uid = "user:cascade@x.com";
+    const gameSaves = new SqliteGameSaveStore();
+    const state: GameSaveState = { areas: [{ id: "a", originX: 0, originZ: 0, objects: [] }] };
+    store.upsert(uid, convo("d6"), 1000);
+    gameSaves.upsert(uid, { conversationId: "d6", messageId: "d6-m2", state }, 1000);
+    expect(gameSaves.get(uid, "d6-m2")).not.toBeNull();
+
+    expect(store.softDelete(uid, "d6", 2000)).toBe(true);
+    expect(gameSaves.get(uid, "d6-m2")).toBeNull();
+  });
+
+  it("H.17 a foreign/unknown id's softDelete no-op leaves game_saves untouched (no cascade fires)", () => {
+    const uid = "user:cascade2@x.com";
+    const gameSaves = new SqliteGameSaveStore();
+    const state: GameSaveState = { areas: [{ id: "a", originX: 0, originZ: 0, objects: [] }] };
+    store.upsert(uid, convo("d7"), 1000);
+    gameSaves.upsert(uid, { conversationId: "d7", messageId: "d7-m2", state }, 1000);
+
+    expect(store.softDelete("user:thief@x.com", "d7", 2000)).toBe(false);
+    expect(gameSaves.get(uid, "d7-m2")).not.toBeNull(); // untouched
+  });
+
+  it("H.18 the cascade is DI'd through the constructor — a fake GameSaveStore is called with the right conversation id", () => {
+    const calls: string[] = [];
+    const fakeGameSaves = {
+      upsert: () => true,
+      get: () => null,
+      deleteByConversation: (conversationId: string) => {
+        calls.push(conversationId);
+        return 0;
+      },
+    };
+    const storeWithFake = new SqliteChatHistoryStore(fakeGameSaves);
+    storeWithFake.upsert("user:di@x.com", convo("d8"), 1000);
+    storeWithFake.softDelete("user:di@x.com", "d8", 2000);
+    expect(calls).toEqual(["d8"]);
   });
 });

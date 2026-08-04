@@ -85,6 +85,7 @@ import {
   type HelpTicketView,
 } from "@/lib/help-client";
 import { shouldOfferHelp } from "@/lib/stuck-signal";
+import { currentGameMessage } from "@/lib/current-game-message";
 import {
   HELP_HELPED_THANKS,
   HELP_REPLY_AWAY,
@@ -732,7 +733,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     const convoId = activeIdRef.current;
     const convo = convosRef.current.find((c) => c.id === convoId);
     // The game the kid is looking at — an artifact REFERENCE, never its source.
-    const gameMsg = [...(convo?.messages ?? [])].reverse().find((m) => m.artifactHtml);
+    const gameMsg = currentGameMessage(convo?.messages ?? []);
 
     setHelpBusy(true);
     try {
@@ -1862,6 +1863,12 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             // platform stamps the chat ↔ game link for Studio's Edit button.
             editTarget={active.editSlug ? { slug: active.editSlug, name: active.title } : undefined}
             chatId={active.id}
+            // Save & continue building (docs/2026-08-01_PRD_SaveContinueBuilding.md):
+            // keyed on the SAME "game the kid is looking at" reference the Help
+            // ticket path already uses — never assumed to be the newest message,
+            // since Continue-from-here can pin an older one.
+            conversationId={active.id}
+            messageId={currentGameMessage(active.messages)?.id}
             // The kid's latest ask — self-healing repair prompts carry it so a
             // fix never drifts from intent (PRD §7 / R.5).
             originalRequest={[...active.messages].reverse().find((m) => m.role === "child")?.text ?? ""}

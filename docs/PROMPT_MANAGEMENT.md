@@ -84,6 +84,8 @@ CHILD_SYSTEM_PROMPT
   [+ THREE_PROMPT_SECTION]          if gates.three
   [+ modelsPromptSection(context)]  if gates.three  (and manifest has models)
   [+ audioPromptSection()]          if gates.audio   (and manifest has audio)
+  [+ SAVE_STATE_PROMPT_SECTION]     if gates.save
+  [+ PUBLISHED_SAVE_PROMPT_SECTION] if gates.save  (same gate — additive, see §2.5a)
   [+ MULTIPLAYER_PROMPT_SECTION]    if multiplayerGate fires
   [+ GAME_EDIT_PROMPT_SECTION]      if isEdit
   [+ REPEATED_REQUEST_SECTION]      if repeated
@@ -95,6 +97,7 @@ The gates are decided in `configFor()` (`gemini.ts:565`):
 |---|---|---|
 | build vs chat | `isGameBuildTurn` (`builder-mode.ts`) | the message looks like a game ask |
 | `gates.three` / `gates.audio` | `catalogGates` | paid tier (always) or the message keyword-invokes 3D/audio (free tier). `paid:false` today — TECH_DEBT #11 |
+| `gates.save` | `catalogGates` | the message keyword-invokes build/world/inventory mechanics (build/stack/place/inventory/world), or a prior artifact already carries the `SUPPORTS_SAVE` marker or the save-channel postMessage types (docs/2026-08-01_PRD_SaveContinueBuilding.md, Phase 2) |
 | `multiplayer` | `multiplayerGate` | the ask is for a 2–5 player game |
 | `isEdit` | `isGameEditTurn` (`game-edit.ts:62`) | a game already exists in history **and** `forceFullRegen` is not set |
 | `repeated` | `isRepeatedRequest` (`game-edit.ts:71`) | the child re-sent the exact same message |
@@ -283,7 +286,35 @@ Music: MUSIC_A, ....
    silent — the game must play fine without it (never block on audio).
 ````
 
-### 2.5 `MULTIPLAYER_PROMPT_SECTION` — if the ask is a 2–5 player game (`multiplayer-prompt.ts:16`)
+### 2.5 `SAVE_STATE_PROMPT_SECTION` — if `gates.save` (`save-state-playbook.ts:24`)
+
+Static (docs/2026-08-01_PRD_SaveContinueBuilding.md §3a). Summary of what it
+mandates: reply to a `{type:"ariantra:request-save"}` postMessage with
+`{type:"ariantra:save-state", payload}`; `payload` must list EVERY build area
+the player has ever visited (keyed by id + world origin), not just the one
+currently on screen; restore every area from `window.__ARIANTRA_INITIAL_STATE__`
+on boot if present; emit `<!--SUPPORTS_SAVE-->` at the top of `<body>` only when
+both handlers are actually implemented.
+
+### 2.5a `PUBLISHED_SAVE_PROMPT_SECTION` — if `gates.save`, same gate as §2.5 (`published-save-playbook.ts:36`)
+
+(2026-08-04, TECH_DEBT #27/#70.) A SECOND, additive clause riding the exact
+same `gates.save` as §2.5 — never a replacement for it. §2.5's postMessage
+contract only works inside the sandboxed chat-preview iframe (a parent frame
+has to actively send the request-save message); a PUBLISHED game has no
+parent frame, so a game that implements ONLY §2.5 silently never saves once
+published (confirmed live on a real published game, 2026-08-04). This clause
+teaches the direct `../Ariantra-Platform` SDK contract instead: right after
+the game loop starts (non-blocking — never awaited before the loop runs),
+`Ariantra.ready().then(() => Ariantra.confirmResume()).then(save => { if
+(save) restore from save.areas })`; `Ariantra.autosave(() =>
+currentWorldState)` called once at startup, not inside the loop.
+`Ariantra.confirmResume()` already shows its own "Continue where you left
+off?" prompt when a save exists — never build a duplicate confirmation UI.
+`currentWorldState` must be the SAME object §2.5's postMessage handler sends,
+tracked as one shared variable so the two mechanisms never drift apart.
+
+### 2.6 `MULTIPLAYER_PROMPT_SECTION` — if the ask is a 2–5 player game (`multiplayer-prompt.ts:16`)
 
 Long block (~90 lines) teaching the platform-owned lobby and the six SDK calls.
 Full text lives in `src/lib/multiplayer-prompt.ts`; its contract is pinned by
@@ -305,7 +336,7 @@ Full text lives in `src/lib/multiplayer-prompt.ts`; its contract is pinned by
   (platform shows "Reconnecting…"); the game keeps its loop running — only
   `onRoomEnded()`/`onConnectionLost()` are terminal.
 
-### 2.6 `GAME_EDIT_PROMPT_SECTION` — if `isEdit` (`game-edit.ts:228`)
+### 2.7 `GAME_EDIT_PROMPT_SECTION` — if `isEdit` (`game-edit.ts:228`)
 
 ````text
 The child already has a working game from this conversation. If this message is actually asking you to change or add something to it, this is NOT a fresh build — do not rewrite the whole file. If the message isn't about the game at all (a question, plain chat), ignore everything below and just answer normally instead.
@@ -324,13 +355,13 @@ Rules:
 - No prose after the patch blocks, no markdown fences, no full HTML document.
 ````
 
-### 2.7 `REPEATED_REQUEST_SECTION` — if `repeated` (`game-edit.ts:296`)
+### 2.8 `REPEATED_REQUEST_SECTION` — if `repeated` (`game-edit.ts:296`)
 
 ````text
 IMPORTANT: The child has just sent the SAME message again, word for word. That means your previous reply did NOT work — whatever you said you changed never showed up in their game, even though you claimed it did. Do not repeat the same approach and do not claim success the same way again. Re-read the request, rebuild that specific part in a DIFFERENT way, and double-check the change is actually visible and playable in the game you return.
 ````
 
-### 2.8 `GAME_EDIT_STRICT_RETRY_SECTION` — strict-retry only (`game-edit.ts:277`)
+### 2.9 `GAME_EDIT_STRICT_RETRY_SECTION` — strict-retry only (`game-edit.ts:277`)
 
 ````text
 You just answered a request to change the child's existing game by rewriting the ENTIRE file. That loses their work: parts they never asked about get changed or broken. Do it again, correctly this time.
@@ -349,7 +380,7 @@ Rules:
 - ONLY if the request truly cannot be done without rebuilding most of the file, reply with exactly NEEDS_FULL_REBUILD on a single line and nothing else.
 ````
 
-### 2.9 `REPAIR_SYSTEM_PROMPT` — self-healing repair route only (`repair-prompt.ts:98`)
+### 2.10 `REPAIR_SYSTEM_PROMPT` — self-healing repair route only (`repair-prompt.ts:98`)
 
 ````text
 You wrote an HTML game for a child and an automated check found a problem.

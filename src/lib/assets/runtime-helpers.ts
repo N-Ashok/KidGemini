@@ -20,6 +20,17 @@ export function insertEarly(html: string, markup: string): string {
   return markup + html;
 }
 
+/** Neutralizes a literal `</script>` inside a string about to be inlined
+ *  into an HTML `<script>` block — `<\/script>` is identical to `</script>`
+ *  inside a JS string (or JSON, which has no special meaning for a lone
+ *  backslash-escaped `/`), but doesn't terminate the surrounding tag early.
+ *  Extracted (2026-08-03) from preview-runtime.ts so every module that
+ *  inlines arbitrary content into a `<script>` — the preview SDK bundle, a
+ *  kid's save-state JSON — shares one escape, rather than drifting copies. */
+export function escapeForInlineScript(js: string): string {
+  return js.replace(/<\/(script)/gi, "<\\/$1");
+}
+
 /** Perf Panel (docs/2026-07-30_PRD_PreviewPerfPanel.md §2): bounds each
  *  named model's tracked-instance array so a game that spawns/despawns the
  *  same model in a loop can't grow window.__arPerf without limit forever —
