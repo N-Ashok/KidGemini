@@ -8,7 +8,15 @@
 // algorithm (countTriangles) is extracted so it gets a REAL executable unit
 // test against fake Object3D-shaped fixtures.
 import { describe, it, expect } from "vitest";
-import { countTriangles, escapeForInlineScript, insertEarly, loadModelHelper, MAX_TRACKED_INSTANCES } from "./runtime-helpers";
+import {
+  countTriangles,
+  escapeForInlineScript,
+  insertEarly,
+  loadModelHelper,
+  loadModelBatchHelper,
+  LOAD_MODEL_HELPER_VERSION,
+  MAX_TRACKED_INSTANCES,
+} from "./runtime-helpers";
 
 // ── countTriangles — pure, executable against fake mesh fixtures ───────────
 
@@ -90,6 +98,92 @@ describe("loadModelHelper — perf-registry recording (generated script shape)",
 
   it("still declares window.loadModel exactly once (helper shape unchanged)", () => {
     expect(script.match(/window\.loadModel\s*=/g)?.length).toBe(1);
+  });
+});
+
+// ── loadModelHelper() — template cache, STATIC MODELS ONLY (2026-08-05, ──
+// narrowed same day after a live regression: caching + SkeletonUtils.clone()
+// for animated models silently broke skinning on real hosted rigs (legs/arms/
+// rotors froze at rest pose) — see the loadModelHelper() doc comment. Animated
+// models must get a screenshot-identical script to the ORIGINAL (pre-cache)
+// helper: no cache, no clone, no SkeletonUtils, a fresh loadAsync every call.
+
+describe("loadModelHelper — static-model template cache; animated models untouched", () => {
+  const script = loadModelHelper();
+
+  it("stamps the injected version so ensure-runtime.ts can detect a stale helper", () => {
+    expect(script).toContain(`window.__arLoadModelVersion = ${LOAD_MODEL_HELPER_VERSION};`);
+  });
+
+  it("does NOT import or reference SkeletonUtils — the unverified clone path was removed entirely", () => {
+    expect(script).not.toMatch(/SkeletonUtils/);
+  });
+
+  it("declares a template cache and checks it BEFORE fetching fresh, inside window.loadModel's body", () => {
+    expect(script).toMatch(/var __arStaticTemplates\s*=\s*\{\}/);
+    const loadModelBody = script.slice(script.indexOf("window.loadModel = async function"));
+    const cacheCheckIdx = loadModelBody.indexOf("if (__arStaticTemplates[name]) {");
+    const freshCallIdx = loadModelBody.indexOf("__arLoadFresh(name)");
+    expect(cacheCheckIdx).toBeGreaterThan(-1);
+    expect(freshCallIdx).toBeGreaterThan(-1);
+    expect(cacheCheckIdx).toBeLessThan(freshCallIdx);
+  });
+
+  it("caches and clones ONLY when the fresh load has no animations", () => {
+    expect(script).toMatch(/if \(fresh\.animations\.length\)\s*\{\s*obj = fresh\.scene;/);
+    expect(script).toMatch(/\}\s*else\s*\{\s*__arStaticTemplates\[name\] = fresh;\s*obj = fresh\.scene\.clone\(\);/);
+  });
+
+  it("an animated model is handed back the pristine freshly-parsed scene — never cloned, never cached", () => {
+    expect(script).not.toMatch(/SkeletonUtils\.clone/);
+    // The animated branch assigns obj = fresh.scene directly (no .clone()).
+    const animatedBranch = script.slice(script.indexOf("if (fresh.animations.length)"), script.indexOf("} else {"));
+    expect(animatedBranch).not.toContain(".clone()");
+  });
+
+  it("a repeat call for the SAME animated name re-fetches fresh (no caching skip) — same cost as before this whole change", () => {
+    // __arStaticTemplates is written to exactly once in the whole script,
+    // inside the non-animated branch — an animated name can never populate
+    // it, so it can never short-circuit through the cache check on a repeat.
+    expect(script.match(/__arStaticTemplates\[name\] = fresh;/g)?.length).toBe(1);
+    const writeIdx = script.indexOf("__arStaticTemplates[name] = fresh;");
+    const precedingElse = script.slice(Math.max(0, writeIdx - 80), writeIdx);
+    expect(precedingElse).toMatch(/\}\s*else\s*\{\s*$/);
+  });
+});
+
+// ── loadModelBatchHelper() — InstancedMesh pooling for static bulk props ────
+
+describe("loadModelBatchHelper — generated script shape", () => {
+  const script = loadModelBatchHelper();
+
+  it("declares window.loadModelBatch exactly once", () => {
+    expect(script.match(/window\.loadModelBatch\s*=/g)?.length).toBe(1);
+  });
+
+  it("refuses animated models rather than silently mis-batching them", () => {
+    expect(script).toMatch(/template\.animations\.length[\s\S]*?does not support animated models/);
+  });
+
+  it("creates one InstancedMesh per distinct geometry\\/material part and adds it to a container added once", () => {
+    expect(script).toMatch(/new InstancedMesh\(part\.geometry, part\.material, count\)/);
+    expect(script).toMatch(/container\.add\(im\)/);
+  });
+
+  it("setInstance writes a composed TRS matrix into every part's InstancedMesh and flags it dirty", () => {
+    expect(script).toMatch(/matrix\.compose\(__arPos, __arQuat, __arScale\)/);
+    expect(script).toMatch(/meshes\[m\]\.setMatrixAt\(i, matrix\)/);
+    expect(script).toMatch(/meshes\[m\]\.instanceMatrix\.needsUpdate = true/);
+  });
+
+  it("boundsAt derives a Box3 from the geometry's boundingBox transformed by the instance matrix (the Box3.setFromObject replacement)", () => {
+    expect(script).toMatch(/boundsAt:\s*function\s*\(i\)/);
+    expect(script).toMatch(/box\.copy\(parts\[0\]\.geometry\.boundingBox\)\.applyMatrix4\(matrix\)/);
+  });
+
+  it("fails soft (returns null, warns) rather than throwing on a bad name or a load failure", () => {
+    const failBlock = script.slice(script.lastIndexOf("} catch (e) {"));
+    expect(failBlock).toMatch(/loadModelBatch failed/);
   });
 });
 

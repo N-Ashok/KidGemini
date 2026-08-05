@@ -180,21 +180,36 @@ ${categories}
      || m.animations.find(a => /gallop|swim|fly|jump|attack/i.test(a.name))
      || m.animations[0];
    const mixer = new AnimationMixer(m); mixer.clipAction(clip).play();\`
-   and call \`mixer.update(delta)\` in your loop (use a Clock for delta).${people.length ? `
+   and call \`mixer.update(delta)\` in your loop (use a Clock for delta).
+6. For MANY static copies of one prop (a forest, a city block), use
+   \`loadModelBatch(name, count)\` — can return null like \`loadModel\`, check
+   first. Add \`.mesh\` once, call \`.setInstance(i, { position, scale,
+   rotation })\` per placement — PLAIN \`{x, y, z}\` numbers, never a
+   \`THREE.Euler\`. Use \`.boundsAt(i)\`, not \`Box3().setFromObject\`, for
+   collision. Animated models use \`loadModel\`.
+7. If a model needs to move (walk, fly, spin) but has no matching clip in
+   \`m.animations\` — NEVER invent a clip name. If it HAS bones
+   (\`m.getObjectByName\` finds \`*Leg*\`/\`*Wing*\` parts), drive them
+   yourself: oscillate rotation with a sine wave keyed to time/speed, ease to
+   rest when still. If it's a single RIGID mesh (vehicles, the helicopter),
+   add your OWN thin primitive (a wheel/rotor) parented onto it and spin
+   that instead.${people.length ? `
    The people models (${people.join(", ")}) all share the same clips: idle,
    walk, sprint (= run), sit, drive, pick-up, interact-right/left, die, and
    emote-yes / emote-no. For a cheering stadium crowd, sit or stand them on
    the grandstand and play "emote-yes" (add a tiny position.y bounce for
    excitement); "sprint" is the running clip, "walk" the walking one. For a
-   crowd, call loadModel again for each person (the download is cached, so
-   extras are free) — do NOT .clone() a person: cloned characters share one
-   skeleton and animate wrong. Each person needs their own AnimationMixer.` : ""}${soldiers.length ? `
+   crowd, call loadModel per person — cheap after the first load, animates
+   independently. Give each its own AnimationMixer. To hold a prop, these
+   models have NO hand bone — parent to the arm, not the root:
+   \`(m.getObjectByName("arm-right") || m).add(prop)\`.` : ""}${soldiers.length ? `
    The soldier models (${soldiers.join(", ")}) do NOT have the people clips
    above — they carry Idle, Run, Run_Gun, Idle_Shoot, Jump, Wave, Death. Use
    Run for ALL movement (there is no walk clip). Names are armature-prefixed
    (\`CharacterArmature|Run\`), so match by search, never by exact string. Same
-   mixer/clone rules as the people. Weapons are SEPARATE models: parent one on
-   with \`soldier.add(gun)\` to have them hold it.` : ""}${hasSports ? SPORTS_PLAYBOOK : ""}`;
+   mixer/clone rules as the people. Weapons are SEPARATE models — parent to
+   the lower arm, not the root: \`(soldier.getObjectByName("LowerArm.R") ||
+   soldier).add(gun)\`.` : ""}${hasSports ? SPORTS_PLAYBOOK : ""}`;
 }
 
 /**

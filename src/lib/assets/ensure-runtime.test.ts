@@ -173,4 +173,52 @@ describe("ensureAssetRuntime — the three-importmap floor", () => {
     const flat = page(`<canvas></canvas><script>document.querySelector("canvas").getContext("2d");</script>`);
     expect(ensureAssetRuntime(flat)).not.toContain(PERF_PROBE_MARKER);
   });
+
+  // F.13/F.14 — 2026-08-05 global 3D slowdown fix (TECH_DEBT): loadModelHelper()
+  // gained a template cache, which only helps a game whose CURRENT helper is at
+  // least that version. A game published before this change already has an OLD
+  // window.loadModel = ... baked in from inject.ts's publish-time run, and
+  // ensure-runtime.ts is the ONLY path that ever reaches it again (re-floors on
+  // every preview render) — so the version-marker retrofit here is what makes
+  // the fix actually reach already-published games, not just new ones.
+  it("F.13 a game with an OLD (pre-cache, unversioned) loadModel helper gets it replaced with the current one", () => {
+    const staleHelper = `<script type="module">
+  import { GLTFLoader, MeshoptDecoder } from "three";
+  const __arLoader = new GLTFLoader();
+__arLoader.setMeshoptDecoder(MeshoptDecoder);
+window.__arPerf = window.__arPerf || { models: {}, rootNames: new WeakMap(), animatedRoots: new WeakSet(), renderer: null };
+window.loadModel = async function (name) {
+  return null;
+};
+</script>`;
+    const stale = page(
+      `<script type="importmap">${JSON.stringify({ imports: { three: ENGINE } })}</script>` +
+        `<script>window.AR_ASSETS=${JSON.stringify({ car: CAR })};</script>` +
+        staleHelper +
+        `<script type="module">import { Scene } from "three"; loadModel("car");</script>`,
+    );
+    const out = ensureAssetRuntime(stale);
+    expect(out).toMatch(/window\.__arLoadModelVersion\s*=/); // gained the version stamp
+    expect(out).toContain("__arStaticTemplates"); // gained the template cache
+    // Exactly one window.loadModel assignment survives — the stale one was
+    // stripped, not left alongside the fresh one (would silently re-clobber it
+    // back to the old behavior, since the old script would then run LAST).
+    expect(out.match(/window\.loadModel\s*=/g)?.length).toBe(1);
+    expect(ensureAssetRuntime(out)).toBe(out); // and settles immediately
+  });
+
+  it("F.14 a game calling loadModelBatch gets the batch helper floored in alongside loadModel", () => {
+    const raw = page(
+      `<script type="module">import { Scene } from "three"; loadModel("tree"); loadModelBatch("tree", 40).then(b => { if (b) scene.add(b.mesh); });</script>`,
+    );
+    const out = ensureAssetRuntime(raw);
+    expect(out).toContain("window.loadModelBatch");
+    expect(ensureAssetRuntime(out)).toBe(out); // idempotent
+  });
+
+  it("F.15 a game that only calls loadModel (no batch) does NOT get the batch helper floored in", () => {
+    const raw = page(`<script type="module">import { Scene } from "three"; loadModel("car");</script>`);
+    const out = ensureAssetRuntime(raw);
+    expect(out).not.toContain("window.loadModelBatch");
+  });
 });

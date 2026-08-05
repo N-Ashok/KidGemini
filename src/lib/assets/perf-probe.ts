@@ -32,8 +32,26 @@ export const LOAD_YELLOW_MAX = 150_000;
 /** How often the injected probe samples + posts (ms). */
 export const PERF_SAMPLE_MS = 1_000;
 
+/** Version stamp for the injected probe script body, same retrofit pattern as
+ *  runtime-helpers.ts's LOAD_MODEL_HELPER_VERSION. injectPerfProbe() used to
+ *  guard on marker PRESENCE only — fine while the script never changed
+ *  behavior, but the 2026-08-05 hidden-tab fix (below) needs to actually
+ *  REACH games that were already previewed once (and so already carry an old
+ *  probe), not just new ones. Bump this whenever buildPerfProbeScript()'s
+ *  BEHAVIOR changes. */
+export const PERF_PROBE_VERSION = 2;
+
 export function computeLoad(triangles: number, instances: number, animated: boolean): number {
   return triangles * instances * (animated ? ANIMATED_LOAD_MULTIPLIER : 1);
+}
+
+/** For a model placed via loadModelBatch() (runtime-helpers.ts): every
+ *  placement shares one InstancedMesh per geometry/material part, so DRAW
+ *  CALLS — not raw instance count — is what predicts render cost; using
+ *  computeLoad()'s formula unmodified would keep a 200-instance forest in
+ *  the red bucket even after batching removed 199 of its 200 draw calls. */
+export function computeBatchedLoad(triangles: number, drawCalls: number): number {
+  return triangles * drawCalls;
 }
 
 export function bucketFor(load: number): LoadBucket {
@@ -60,6 +78,7 @@ export const PERF_PROBE_MARKER = "<!--ari-perf-probe-->";
 export function buildPerfProbeScript(): string {
   return `
 (function () {
+  window.__arPerfProbeVersion = ${PERF_PROBE_VERSION};
   var buffer = [];
   var ready = false;
   function send(ev) {
@@ -88,6 +107,17 @@ export function buildPerfProbeScript(): string {
   }
 
   function snapshot() {
+    // A hidden tab/panel genuinely renders zero frames — that's true, but it
+    // is NOT the same claim as "the game is running slow," which is what
+    // this snapshot exists to detect. Without this guard, every setInterval
+    // tick during a background gap (leaving Ari and coming back) posts a
+    // near-zero fps reading, which is enough on its own to satisfy the
+    // slowdown banner's "5 consecutive low samples" rule — so the banner
+    // flashes on return even though nothing was ever actually slow. Skip
+    // sampling entirely while hidden, and keep resetting the frame counter
+    // so no partial/corrupted count leaks into the first reading after the
+    // tab becomes visible again.
+    if (document.hidden) { frames = 0; return; }
     var perf = window.__arPerf || {};
     var reg = perf.models || {};
     var animatedRoots = perf.animatedRoots;
@@ -114,6 +144,20 @@ export function buildPerfProbeScript(): string {
       var bucket = load <= ${LOAD_GREEN_MAX} ? "green" : (load <= ${LOAD_YELLOW_MAX} ? "yellow" : "red");
       models.push({ name: name, triangles: triangles, instances: live.length, animated: animated, load: load, bucket: bucket });
     }
+    var batches = perf.batches || {};
+    for (var bname in batches) {
+      if (!Object.prototype.hasOwnProperty.call(batches, bname)) continue;
+      var bentry = batches[bname];
+      var broots = bentry.roots || [];
+      var blive = false;
+      for (var bi = 0; bi < broots.length; bi++) { if (broots[bi] && broots[bi].parent) { blive = true; break; } }
+      if (!blive) continue;
+      var btriangles = bentry.triangles || 0;
+      var bdrawCalls = bentry.drawCalls || 1;
+      var bload = btriangles * bdrawCalls;
+      var bbucket = bload <= ${LOAD_GREEN_MAX} ? "green" : (bload <= ${LOAD_YELLOW_MAX} ? "yellow" : "red");
+      models.push({ name: bentry.name, triangles: btriangles, instances: bentry.count || 0, animated: false, load: bload, bucket: bbucket, batched: true, drawCalls: bdrawCalls });
+    }
     models.sort(function (a, b) { return b.load - a.load; });
     var drawCalls = null, rendererTriangles = null;
     if (perf.renderer && perf.renderer.info && perf.renderer.info.render) {
@@ -128,13 +172,26 @@ export function buildPerfProbeScript(): string {
 `.trim();
 }
 
+const PERF_PROBE_VERSION_RE = /window\.__arPerfProbeVersion\s*=\s*(\d+)/;
+// Matches the marker comment + the WHOLE script tag that follows it, so a
+// stale probe can be removed cleanly rather than left to run alongside (and
+// after, in document order) the fresh one — same reasoning as
+// ensure-runtime.ts's stripStaleLoadModelHelper.
+const PERF_PROBE_BLOCK_RE = new RegExp(
+  `${PERF_PROBE_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}<script>[\\s\\S]*?<\\/script>`,
+);
+
 /** Idempotent injection, mirroring preview-verify.ts's
  *  injectPreviewInstrumentation() shape. Called from ensureAssetRuntime
  *  alongside the frame governor — the ONLY path that reaches 3D games that
  *  already exist (2026-07-29 precedent: ArtifactFrame re-floors every
  *  preview render, so an old stored game gets the new engine bundle + probe
- *  automatically, no per-game migration). */
+ *  automatically, no per-game migration). Version-aware since 2026-08-05: a
+ *  game already carrying an OLDER probe (missing the hidden-tab fix) gets it
+ *  replaced, not skipped — presence alone used to be treated as "done." */
 export function injectPerfProbe(html: string): string {
-  if (html.includes(PERF_PROBE_MARKER)) return html;
-  return insertEarly(html, `${PERF_PROBE_MARKER}<script>${buildPerfProbeScript()}</script>`);
+  const m = html.match(PERF_PROBE_VERSION_RE);
+  if (m && Number(m[1]) >= PERF_PROBE_VERSION) return html;
+  const stripped = html.includes(PERF_PROBE_MARKER) ? html.replace(PERF_PROBE_BLOCK_RE, "") : html;
+  return insertEarly(stripped, `${PERF_PROBE_MARKER}<script>${buildPerfProbeScript()}</script>`);
 }

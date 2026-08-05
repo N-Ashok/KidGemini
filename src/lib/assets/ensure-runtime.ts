@@ -13,7 +13,7 @@
 import manifestJson from "./manifest.json";
 import type { AssetManifest } from "./manifest";
 import { THREE_MARKER, PHYSICS_MARKER } from "./markers";
-import { insertEarly, loadModelHelper, frameGovernor } from "./runtime-helpers";
+import { insertEarly, loadModelHelper, loadModelBatchHelper, frameGovernor, LOAD_MODEL_HELPER_VERSION } from "./runtime-helpers";
 import { injectPerfProbe, PERF_PROBE_MARKER } from "./perf-probe";
 
 const IMPORTS_THREE_RE = /\bfrom\s*["']three["']/;
@@ -21,10 +21,34 @@ const IMPORTS_THREE_RE = /\bfrom\s*["']three["']/;
 // unmapped one dies on the import line exactly like an unmapped "three".
 const IMPORTS_CANNON_RE = /\bfrom\s*["']cannon-es["']/;
 const CALLS_LOADMODEL_RE = /\bloadModel\s*\(/;
+const CALLS_LOADMODELBATCH_RE = /\bloadModelBatch\s*\(/;
 const LOADMODEL_ARG_RE = /\bloadModel\s*\(\s*["']([a-z0-9_]+)["']/gi;
 const ANY_IMPORTMAP_RE = /<script[^>]*type=["']importmap["'][^>]*>[\s\S]*?<\/script>/gi;
 const HAS_HELPER_RE = /window\.loadModel\s*=/;
 const HAS_AR_ASSETS_RE = /window\.AR_ASSETS\s*=/;
+const HAS_LOADMODELBATCH_HELPER_RE = /window\.loadModelBatch\s*=/;
+// A stale helper (published before the 2026-08-05 template-cache change, or
+// any earlier version) still matches HAS_HELPER_RE but carries no version
+// stamp, or an OLDER one — this is what lets an already-published game pick
+// up a behavior change to loadModelHelper() the next time it's previewed,
+// rather than being stuck forever on whatever shipped at publish time.
+const HELPER_VERSION_RE = /window\.__arLoadModelVersion\s*=\s*(\d+)/;
+function hasCurrentHelper(html: string): boolean {
+  const m = html.match(HELPER_VERSION_RE);
+  return !!m && Number(m[1]) >= LOAD_MODEL_HELPER_VERSION;
+}
+// Every individual <script>...</script> block, non-greedy so each match stays
+// within ONE tag — used to find-and-drop only the block that assigns
+// window.loadModel, without swallowing neighboring script tags (the
+// importmap, the AR_ASSETS table) that happen to sit between two matches of
+// a cruder single spanning regex. Needed because insertEarly always splices
+// fresh markup at the very top of <head>; leaving an old helper script tag in
+// place would let it execute AFTER the fresh one (document order) and
+// silently overwrite window.loadModel back to the old, uncached behavior.
+const SCRIPT_BLOCK_RE = /<script[^>]*>[\s\S]*?<\/script>/g;
+function stripStaleLoadModelHelper(html: string): string {
+  return html.replace(SCRIPT_BLOCK_RE, (block) => (block.includes("window.loadModel =") ? "" : block));
+}
 
 // The SECOND black-screen cause (BUG-FIX-LOG 2026-07-23 follow-up, verified in a
 // real browser): a 3D game where the model put a <canvas> in the HTML AND let the
@@ -98,8 +122,15 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
     markup += frameGovernor();
   }
 
-  // (3) loadModel scaffolding — only when the game calls it but the helper is gone.
-  if (usesLoadModel && !HAS_HELPER_RE.test(out)) {
+  // (3) loadModel scaffolding — inject when the game calls it and either the
+  // helper is entirely absent, or present but STALE (an older
+  // LOAD_MODEL_HELPER_VERSION than this build teaches — e.g. a game published
+  // before the 2026-08-05 template-cache change). A stale helper is stripped
+  // first, never left alongside the fresh one.
+  if (usesLoadModel && !hasCurrentHelper(out)) {
+    if (HAS_HELPER_RE.test(out)) {
+      out = stripStaleLoadModelHelper(out);
+    }
     if (!HAS_AR_ASSETS_RE.test(out)) {
       const modelsByName = new Map(
         manifest.assets.filter((a) => a.type === "model").map((a) => [a.name, a.url] as const),
@@ -113,6 +144,12 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
       markup += `<script>window.AR_ASSETS=${JSON.stringify(table)};</script>`;
     }
     markup += loadModelHelper();
+  }
+
+  // (3b) loadModelBatch scaffolding — the bulk-instancing counterpart, only
+  // injected when the game actually calls it (most games won't).
+  if (usesLoadModel && CALLS_LOADMODELBATCH_RE.test(out) && !HAS_LOADMODELBATCH_HELPER_RE.test(out)) {
+    markup += loadModelBatchHelper();
   }
 
   const floored = markup ? insertEarly(out, markup) : out;

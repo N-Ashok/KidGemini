@@ -56,11 +56,47 @@ export function countTriangles(obj: { traverse: (cb: (child: any) => void) => vo
   return Math.round(triangles);
 }
 
+/** Version stamp for the loadModel() helper body (a plain global, not just a
+ *  comment, so it survives minification/whitespace-normalization anywhere
+ *  between generation and the browser). Bump this whenever loadModelHelper()'s
+ *  BEHAVIOR changes — ensureAssetRuntime()'s re-floor guard (ensure-runtime.ts)
+ *  compares this against the currently-injected version to decide whether an
+ *  already-published game's stale helper needs replacing, not just whether
+ *  `window.loadModel` merely exists. See the 2026-08-05 template-cache change:
+ *  v1 had no cache; v2 caches the parsed GLTF per model name. */
+export const LOAD_MODEL_HELPER_VERSION = 3;
+
 /** The runtime helper 3D games call: resolves a catalog name via AR_ASSETS,
  *  loads the GLB with GLTFLoader + meshopt (models are meshopt-compressed),
  *  and NEVER throws — a failed model leaves the game running without that
  *  entity (§5 fail-soft floor). Returns the scene Object3D with .animations
  *  riding on it, or null.
+ *
+ *  Template cache (2026-08-05, TECH_DEBT — global 3D slowdown fix; NARROWED
+ *  2026-08-05 same day after a live regression report — see v3 note below):
+ *  ONLY a STATIC (no-animation) model is cached — its parsed scene is stored
+ *  as a pristine, never-scene-graph-attached template, and every call after
+ *  the first clones from it with plain .clone() (cheap: shares geometry/
+ *  material by reference, which is also what makes loadModelBatch's
+ *  InstancedMesh pooling possible on the same cached data).
+ *
+ *  ANIMATED models are deliberately NEVER cached or cloned — every call does
+ *  a fresh GLTFLoader.loadAsync() and hands back that pristine, freshly-
+ *  parsed scene untouched (byte-for-byte the pre-2026-08-05 behavior). v2
+ *  (same day) tried caching + SkeletonUtils.clone() for animated models too,
+ *  on the assumption that SkeletonUtils correctly re-binds any rig — that
+ *  assumption was never verified against the real hosted models and turned
+ *  out wrong: a live report showed skinned meshes rendering at rest pose
+ *  (legs/arms/rotors not moving) on EVERY load, including the very first —
+ *  i.e. SkeletonUtils.clone() itself was silently failing to retarget bones
+ *  for at least some of these rigs, not just a multi-instance edge case.
+ *  Given that risk was never worth the modest win (repeat crowd loads being
+ *  slightly cheaper), animated models get zero behavior change from this
+ *  whole effort — the .glb bytes are still HTTP-cached by the browser after
+ *  the first load, so a repeat load is a re-parse, not a real network round
+ *  trip; that was always "good enough" and is the one guaranteed-correct
+ *  path. Do not reintroduce SkeletonUtils cloning without first verifying it
+ *  against the actual manifest models in a real browser, not just review.
  *
  *  Perf Panel addition (2026-07-30): after a SUCCESSFUL load, records
  *  {name, triangles, instances} into window.__arPerf.models and stamps the
@@ -73,9 +109,11 @@ export function countTriangles(obj: { traverse: (cb: (child: any) => void) => vo
 export function loadModelHelper(): string {
   return `<script type="module">
   import { GLTFLoader, MeshoptDecoder } from "three";
+  window.__arLoadModelVersion = ${LOAD_MODEL_HELPER_VERSION};
   const __arLoader = new GLTFLoader();
 __arLoader.setMeshoptDecoder(MeshoptDecoder);
 window.__arPerf = window.__arPerf || { models: {}, rootNames: new WeakMap(), animatedRoots: new WeakSet(), renderer: null };
+var __arStaticTemplates = {};
 function __arCountTriangles(obj) {
   var triangles = 0;
   obj.traverse(function (child) {
@@ -86,13 +124,32 @@ function __arCountTriangles(obj) {
   });
   return Math.round(triangles);
 }
+async function __arLoadFresh(name) {
+  const url = (window.AR_ASSETS || {})[name];
+  if (!url) { console.warn("[ariantra] unknown model:", name); return null; }
+  const gltf = await __arLoader.loadAsync(url);
+  return { scene: gltf.scene, animations: gltf.animations || [] };
+}
 window.loadModel = async function (name) {
   try {
-    const url = (window.AR_ASSETS || {})[name];
-    if (!url) { console.warn("[ariantra] unknown model:", name); return null; }
-    const gltf = await __arLoader.loadAsync(url);
-    const obj = gltf.scene;
-    obj.animations = gltf.animations || [];
+    var obj;
+    if (__arStaticTemplates[name]) {
+      // Cache only ever holds a STATIC (no-animation) template — see the
+      // loadModelHelper() doc comment for why animated models are excluded.
+      obj = __arStaticTemplates[name].scene.clone();
+      obj.animations = [];
+    } else {
+      const fresh = await __arLoadFresh(name);
+      if (!fresh) return null;
+      if (fresh.animations.length) {
+        obj = fresh.scene;
+        obj.animations = fresh.animations;
+      } else {
+        __arStaticTemplates[name] = fresh;
+        obj = fresh.scene.clone();
+        obj.animations = [];
+      }
+    }
     try {
       var __arEntry = window.__arPerf.models[name] || { name: name, triangles: 0, instances: [] };
       __arEntry.triangles = __arCountTriangles(obj);
@@ -104,6 +161,104 @@ window.loadModel = async function (name) {
     return obj;
   } catch (e) {
     console.warn("[ariantra] loadModel failed:", name, e);
+    return null;
+  }
+};
+</script>`;
+}
+
+/** Bulk-placement counterpart to loadModel(), for static (non-animated)
+ *  props placed in large numbers — a forest, a city block, a crowd of
+ *  identical rocks. loadModel() called N times still creates N full
+ *  Object3D/Mesh subtrees (cheap after the template cache above, but each
+ *  is still its own draw call); loadModelBatch(name, count) instead creates
+ *  ONE InstancedMesh per distinct geometry/material found in the model and
+ *  reuses it for all `count` placements, collapsing N draw calls into ~1
+ *  per mesh part.
+ *
+ *  Deliberately NOT a silent replacement for loadModel()'s return shape:
+ *  generated games routinely wrap a loaded model in their own Group and
+ *  compute `new Box3().setFromObject(wrap)` for collision (every prop in a
+ *  typical city/forest game). An InstancedMesh has no per-instance scene
+ *  subtree for Box3 to walk, so this is a SEPARATE, explicitly-named API the
+ *  prompt teaches only for bulk static placement — boundsAt(i) is the
+ *  supported replacement for Box3.setFromObject in that case. Animated
+ *  models are out of scope here (true per-instance skinned-mesh batching
+ *  needs a bone-texture approach, not attempted) — always use loadModel()
+ *  for anything with animations.
+ *
+ *  Capacity is fixed at call time (`count`) — no silent unbounded growth of
+ *  the underlying InstancedMesh buffers. */
+export function loadModelBatchHelper(): string {
+  return `<script type="module">
+  import { InstancedMesh, Matrix4, Box3, Group, Vector3, Quaternion, Euler } from "three";
+window.loadModelBatch = async function (name, count) {
+  try {
+    if (typeof window.loadModel !== "function") { console.warn("[ariantra] loadModelBatch needs loadModel loaded first"); return null; }
+    const template = await (async function () {
+      // Piggyback on loadModel's own template cache — reach it via a single
+      // real load if nothing has cached this name yet, then discard that
+      // instance (its geometry/material are shared with the cache either way).
+      const probe = await window.loadModel(name);
+      return probe ? { scene: probe, animations: probe.animations || [] } : null;
+    })();
+    if (!template) return null;
+    if (template.animations.length) { console.warn("[ariantra] loadModelBatch does not support animated models:", name); return null; }
+    const container = new Group();
+    const parts = [];
+    template.scene.traverse(function (child) {
+      if (!child.isMesh || !child.geometry || !child.material) return;
+      parts.push(child);
+    });
+    const meshes = parts.map(function (part) {
+      const im = new InstancedMesh(part.geometry, part.material, count);
+      im.count = count;
+      container.add(im);
+      if (!part.geometry.boundingBox) part.geometry.computeBoundingBox();
+      return im;
+    });
+    try {
+      var __arTriangles = 0;
+      for (var __p = 0; __p < parts.length; __p++) {
+        var __geo = parts[__p].geometry;
+        if (__geo.index) __arTriangles += __geo.index.count / 3;
+        else if (__geo.attributes && __geo.attributes.position) __arTriangles += __geo.attributes.position.count / 3;
+      }
+      window.__arPerf = window.__arPerf || { models: {} };
+      window.__arPerf.batches = window.__arPerf.batches || {};
+      window.__arPerf.batches[name] = { name: name, triangles: Math.round(__arTriangles), drawCalls: meshes.length, count: count, roots: [container] };
+    } catch (e) { /* telemetry only — never blocks the batch */ }
+    var matrix = new Matrix4();
+    var box = new Box3();
+    var __arPos = new Vector3();
+    var __arQuat = new Quaternion();
+    var __arEuler = new Euler();
+    var __arScale = new Vector3();
+    return {
+      mesh: container,
+      setInstance: function (i, transform) {
+        var pos = (transform && transform.position) || {};
+        var scl = (transform && transform.scale) || {};
+        var rot = (transform && transform.rotation) || {};
+        __arPos.set(pos.x || 0, pos.y || 0, pos.z || 0);
+        __arEuler.set(rot.x || 0, rot.y || 0, rot.z || 0);
+        __arQuat.setFromEuler(__arEuler);
+        __arScale.set(scl.x != null ? scl.x : 1, scl.y != null ? scl.y : 1, scl.z != null ? scl.z : 1);
+        matrix.compose(__arPos, __arQuat, __arScale);
+        for (var m = 0; m < meshes.length; m++) {
+          meshes[m].setMatrixAt(i, matrix);
+          meshes[m].instanceMatrix.needsUpdate = true;
+        }
+      },
+      boundsAt: function (i) {
+        if (!parts.length) return new Box3();
+        meshes[0].getMatrixAt(i, matrix);
+        box.copy(parts[0].geometry.boundingBox).applyMatrix4(matrix);
+        return box;
+      },
+    };
+  } catch (e) {
+    console.warn("[ariantra] loadModelBatch failed:", name, e);
     return null;
   }
 };

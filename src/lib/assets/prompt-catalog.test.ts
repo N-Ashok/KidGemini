@@ -233,7 +233,16 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // the documented revisit the PRD demanded (measured by this test during
     // implementation, not assumed). Model NAMES still dominate the section;
     // an accidental bulk import still trips this.
-    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(1_900);
+    // Raised 1900 → 2100 (2026-08-05, TECH_DEBT #87 follow-up — model-rig
+    // audit, verified against the actual staged GLBs): the "people"/"soldier"
+    // clauses gained held-prop guidance (parent to the arm/lower-arm bone,
+    // not the root — these packs have no hand bone; `soldier.add(gun)` at
+    // the ROOT never tracked arm movement at all), and a new item 6 teaches a
+    // procedural-motion fallback (bone-driven gait, or a fake spun primitive
+    // on a rigid mesh) for any model missing the locomotion clip or rig a
+    // game needs — a real, common gap (confirmed on `dog`/`bird`/vehicles),
+    // not catalog creep.
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_100);
   });
 });
 
@@ -318,7 +327,7 @@ describe("the military category (2026-07-29 batch) renders in the real catalog",
     // `soldier` ships Idle/Run/Run_Gun/Idle_Shoot/Jump/Jump_Idle/Wave/Death
     // and no Walk, so teaching "walk" would send the model looking for a clip
     // that half the set lacks (verified against the staged GLBs, 2026-07-29).
-    const soldierClause = section.match(/The soldier models[\s\S]*?soldier\.add\(gun\)[^.]*\./)?.[0] ?? "";
+    const soldierClause = section.match(/The soldier models[\s\S]*?soldier\)\.add\(gun\)[^.]*\./)?.[0] ?? "";
     expect(soldierClause).not.toBe("");
     // The property is that Walk is never OFFERED as an available clip — the
     // clause naming it in a negation ("there is no walk clip") is the point,
@@ -337,9 +346,10 @@ describe("the military category (2026-07-29 batch) renders in the real catalog",
     expect(section).toMatch(/never by exact string/i);
   });
 
-  it("tells the model the weapons are separate objects to parent onto a soldier", () => {
+  it("tells the model the weapons are separate objects, parented to the lower arm not the root", () => {
     expect(section).toMatch(/weapons are SEPARATE models/i);
-    expect(section).toMatch(/soldier\.add\(gun\)/);
+    expect(section).toMatch(/parent\s+to\s+the\s+lower\s+arm,\s+not\s+the\s+root/i);
+    expect(section).toMatch(/soldier\)\.add\(gun\)/);
   });
 
   it("the soldiers are NOT on the Kenney people clip line (different rig, different clips)", () => {

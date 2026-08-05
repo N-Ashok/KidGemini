@@ -10,7 +10,9 @@ import "server-only";
 import type { AssetEntry, AssetManifest } from "./manifest";
 import manifestJson from "./manifest.json";
 import { THREE_MARKER, PHYSICS_MARKER, MODELS_MARKER_RE, AUDIO_MARKER_RE, stripAssetMarkers } from "./markers";
-import { insertEarly, loadModelHelper, audioHelper } from "./runtime-helpers";
+import { insertEarly, loadModelHelper, loadModelBatchHelper, audioHelper } from "./runtime-helpers";
+
+const CALLS_LOADMODELBATCH_RE = /\bloadModelBatch\s*\(/;
 
 // Markers are defined in ./markers (pure, non-server) so the edit-patch
 // reconciliation can share them without importing this server-only module.
@@ -129,6 +131,7 @@ export function injectAssets(html: string, manifest: AssetManifest = manifestJso
     markup += `<script>window.AR_ASSETS=${JSON.stringify(table)};</script>`;
   }
   if (modelNames.length > 0) markup += loadModelHelper();
+  if (modelNames.length > 0 && CALLS_LOADMODELBATCH_RE.test(html)) markup += loadModelBatchHelper();
   if (audioNames.length > 0) markup += audioHelper();
   out = insertEarly(out, markup);
 

@@ -83,6 +83,11 @@ const PASSTHROUGH_EXPORTS = THREE_EXPORTS.filter((n) => !WRAPPED_EXPORTS.include
 const entry = [
   `import {`,
   `  ${PASSTHROUGH_EXPORTS.join(',\n  ')},`,
+  // InstancedMesh backs loadModelBatch() (runtime-helpers.ts) — internal to
+  // that helper, not taught to Gemini as an importable name, same precedent
+  // as MeshoptDecoder below. Aliased so it isn't accidentally swept into the
+  // PASSTHROUGH_EXPORTS join below (which IS the taught/lockstep-tested list).
+  `  InstancedMesh as __ArInstancedMesh,`,
   `  WebGLRenderer as __ArRealWebGLRenderer,`,
   `  AnimationMixer as __ArRealAnimationMixer,`,
   `} from 'three';`,
@@ -93,6 +98,17 @@ const entry = [
   // (EXT_meshopt_compression — PRD §4.3); the loadModel helper wires it into
   // GLTFLoader. Not taught to Gemini — internal to the helper.
   `export { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';`,
+  // SkeletonUtils.clone properly re-binds a skinned mesh's bones/skeleton on
+  // clone (plain Object3D.clone() shares one skeleton across "clones", which
+  // is exactly why loadModel() used to be called once per instance instead
+  // of cloning — see the 2026-08-05 loadModel template-cache change). Same
+  // "not taught to Gemini — internal to the helper" precedent as MeshoptDecoder.
+  // The module has no default/namespace export, only named functions — wrap
+  // them into the object shape runtime-helpers.ts's generated script expects
+  // (SkeletonUtils.clone(...)).
+  `import { clone as __ArSkeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';`,
+  `export const SkeletonUtils = { clone: __ArSkeletonClone };`,
+  `export { __ArInstancedMesh as InstancedMesh };`,
   `export { ${PASSTHROUGH_EXPORTS.join(', ')} };`,
   ``,
   `export class WebGLRenderer extends __ArRealWebGLRenderer {`,
@@ -135,7 +151,7 @@ const sha256 = createHash('sha256').update(bytes).digest('hex');
 const fileName = `three.${sha256.slice(0, 6)}.js`;
 const url = `${ASSET_HOST_ORIGIN}/${fileName}`;
 
-for (const mustContain of ['WebGLRenderer', 'GLTFLoader', 'PerspectiveCamera', 'MeshoptDecoder']) {
+for (const mustContain of ['WebGLRenderer', 'GLTFLoader', 'PerspectiveCamera', 'MeshoptDecoder', 'SkeletonUtils', 'InstancedMesh']) {
   if (!source.includes(mustContain)) {
     console.error(`✗ bundle is missing ${mustContain} — refusing`);
     process.exit(1);

@@ -15,6 +15,7 @@ import {
   PERF_PROBE_MARKER,
   bucketFor,
   computeLoad,
+  computeBatchedLoad,
   buildPerfProbeScript,
   injectPerfProbe,
 } from "./perf-probe";
@@ -68,6 +69,26 @@ describe("computeLoad / bucketFor — the ranking logic", () => {
   });
 });
 
+describe("computeBatchedLoad — draw-call-based cost for loadModelBatch() placements", () => {
+  it("a forest of 200 static instances collapsed into 1 draw call stays green, unlike the un-batched equivalent", () => {
+    const unbatched = computeLoad(2_000, 200, false); // 400,000 — red
+    const batched = computeBatchedLoad(2_000, 1); // 2,000 — green
+    expect(bucketFor(unbatched)).toBe("red");
+    expect(bucketFor(batched)).toBe("green");
+  });
+
+  it("scales with draw calls (distinct geometry/material parts), not with instance count", () => {
+    const twoParts = computeBatchedLoad(5_000, 2);
+    const fiveParts = computeBatchedLoad(5_000, 5);
+    expect(fiveParts).toBeGreaterThan(twoParts);
+    expect(twoParts).toBe(10_000);
+  });
+
+  it("zero draw calls is zero load (never NaN)", () => {
+    expect(computeBatchedLoad(10_000, 0)).toBe(0);
+  });
+});
+
 describe("buildPerfProbeScript — injection shape", () => {
   it("injectPerfProbe is idempotent — a second pass adds no duplicate", () => {
     const html = "<!doctype html><html><head><title>Fox Run</title></head><body></body></html>";
@@ -88,6 +109,32 @@ describe("buildPerfProbeScript — injection shape", () => {
     expect(scriptIdx).toBeGreaterThan(headIdx);
     expect(scriptIdx).toBeLessThan(titleIdx);
   });
+
+  // 2026-08-05 — a game already previewed once carries an OLD probe baked
+  // into its HTML; injectPerfProbe used to guard on marker PRESENCE only, so
+  // the hidden-tab fix below would never have reached it. Version-aware now.
+  it("a game with an OLDER (unversioned) probe gets it replaced with the current one", () => {
+    const stalePage =
+      `<!doctype html><html><head><title>Fox Run</title>${PERF_PROBE_MARKER}<script>(function(){` +
+      `var frames=0;setInterval(function(){},1000);})();</script></head><body></body></html>`;
+    const out = injectPerfProbe(stalePage);
+    expect(out).toMatch(/window\.__arPerfProbeVersion\s*=\s*\d+/);
+    expect(out).toContain("document.hidden"); // the actual fix content
+    // Exactly one probe survives — the stale one was stripped, not left
+    // alongside (would run first in document order and get overwritten
+    // second, but is pure waste, and a future guard change could get this
+    // wrong the way ensure-runtime.ts's stale-helper bug did).
+    expect((out.match(new RegExp(PERF_PROBE_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length).toBe(
+      1,
+    );
+    expect(injectPerfProbe(out)).toBe(out); // settles immediately
+  });
+
+  it("a game already on the CURRENT probe version is left untouched (byte-identical)", () => {
+    const html = "<!doctype html><html><head><title>Fox Run</title></head><body></body></html>";
+    const once = injectPerfProbe(html);
+    expect(injectPerfProbe(once)).toBe(once);
+  });
 });
 
 /** Runtime behavior of the injected script — evaluated in a real sandboxed
@@ -104,6 +151,7 @@ describe("buildPerfProbeScript — runtime behavior (sandboxed via node:vm)", ()
     let intervalCb: (() => void) | null = null;
     const sandbox: Record<string, unknown> = {
       __arPerf: undefined,
+      document: { hidden: false },
       parent: { postMessage: (msg: unknown) => posted.push(msg) },
       addEventListener: (name: string, fn: (e: unknown) => void) => {
         (handlers[name] ??= []).push(fn);
@@ -207,6 +255,33 @@ describe("buildPerfProbeScript — runtime behavior (sandboxed via node:vm)", ()
     expect(models.find((m: any) => m.name === "tree")).toMatchObject({ animated: false });
   });
 
+  it("a live batched entry (window.__arPerf.batches) is reported with drawCall-based load, not instance-count load", () => {
+    const { sandbox, posted, ready, sample } = bootProbe();
+    const container = { parent: {} };
+    (sandbox as any).__arPerf = {
+      models: {},
+      batches: {
+        forest: { name: "forest", triangles: 2_000, drawCalls: 1, count: 200, roots: [container] },
+      },
+    };
+    ready();
+    sample();
+    const models = posted[0].event.snapshot.models;
+    expect(models).toHaveLength(1);
+    expect(models[0]).toMatchObject({ name: "forest", instances: 200, load: 2_000, bucket: "green", batched: true, drawCalls: 1 });
+  });
+
+  it("a batched entry whose container lost its parent is omitted (no stale rows)", () => {
+    const { sandbox, posted, ready, sample } = bootProbe();
+    (sandbox as any).__arPerf = {
+      models: {},
+      batches: { ghostForest: { name: "ghostForest", triangles: 2_000, drawCalls: 1, count: 200, roots: [{ parent: null }] } },
+    };
+    ready();
+    sample();
+    expect(posted[0].event.snapshot.models).toHaveLength(0);
+  });
+
   it("resets the frame counter every sample so fps reflects the last window only", () => {
     const { sandbox, posted, ready, tick, sample } = bootProbe();
     (sandbox as any).__arPerf = { models: {} };
@@ -219,5 +294,38 @@ describe("buildPerfProbeScript — runtime behavior (sandboxed via node:vm)", ()
     sample();
     expect(posted[0].event.snapshot.fps).toBe(3);
     expect(posted[1].event.snapshot.fps).toBe(1);
+  });
+
+  // 2026-08-05 — "leave Ari and come back, the slowdown banner flashes for a
+  // couple seconds": a hidden tab genuinely renders zero frames, but that is
+  // NOT the same claim as "the game is slow" — posting it as a 0fps sample
+  // was enough on its own to satisfy the banner's 5-consecutive-low-sample
+  // rule the instant the tab became visible again.
+  it("posts NOTHING while the tab is hidden — a background gap must never read as a slow-fps sample", () => {
+    const { sandbox, posted, ready, tick, sample } = bootProbe();
+    (sandbox as any).__arPerf = { models: {} };
+    ready();
+    tick();
+    tick();
+    (sandbox as any).document.hidden = true;
+    sample(); // would-be near-zero-fps sample while backgrounded
+    sample(); // a second tick, in case the interval fired more than once
+    expect(posted).toHaveLength(0);
+  });
+
+  it("does not let frames accumulated before hiding leak into the first sample after becoming visible again", () => {
+    const { sandbox, posted, ready, tick, sample } = bootProbe();
+    (sandbox as any).__arPerf = { models: {} };
+    ready();
+    tick();
+    tick();
+    tick(); // 3 real frames before the tab is hidden
+    (sandbox as any).document.hidden = true;
+    sample(); // hidden — skipped, and the counter is cleared
+    (sandbox as any).document.hidden = false;
+    tick(); // exactly 1 real frame since becoming visible again
+    sample();
+    expect(posted).toHaveLength(1);
+    expect(posted[0].event.snapshot.fps).toBe(1); // NOT 4 (3 stale + 1 fresh)
   });
 });

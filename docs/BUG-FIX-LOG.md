@@ -11,6 +11,109 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-05 — Slowdown banner falsely flashed for a couple seconds after leaving Ari and coming back
+
+- **Symptom:** owner report — after switching away from a game preview and returning, the "running
+  slow — Make it faster" banner (`slowdown-nudge.ts`) appeared briefly (a couple seconds), then
+  disappeared on its own, even though the game was never actually slow.
+- **Root cause:** the injected perf probe (`perf-probe.ts`) estimates FPS by counting
+  `requestAnimationFrame` ticks over a fixed 1-second `setInterval` window and reporting that count
+  directly as `fps`, with no awareness of `document.hidden`. A backgrounded tab genuinely renders
+  zero frames — true, but not the same claim as "slow" — yet the probe posted that as a real 0fps
+  sample regardless. That alone is enough to satisfy the slowdown banner's 5-consecutive-low-sample
+  rule, so returning to a game that had been backgrounded even briefly could already have
+  `consecutiveLow` maxed out the moment it became visible again; the banner then cleared within a
+  couple seconds once genuine post-resume samples reset the counter. The frame governor
+  (`frameGovernor()`) already had `document.hidden` awareness for its own purpose (pausing the
+  game loop) — the perf probe's separate frame-counting layer never got the same treatment.
+- **Fix:** `snapshot()` now returns immediately without posting (and resets the frame counter)
+  whenever `document.hidden` is true, so a background gap is never reported as a real FPS reading
+  — the banner's low-sample counter simply never advances during a hidden period, instead of
+  advancing on false data and then self-correcting after the fact. Also fixed a retrofit gap
+  found while shipping this: `injectPerfProbe()` guarded on marker PRESENCE only (same class of
+  bug as `ensure-runtime.ts`'s stale-`loadModel`-helper issue from earlier the same day), which
+  would have silently prevented this fix from ever reaching a game already previewed once. Added
+  `PERF_PROBE_VERSION` + a version-aware guard that strips and replaces a stale probe, mirroring
+  `LOAD_MODEL_HELPER_VERSION`'s pattern.
+- **Verified:** `perf-probe.test.ts` — new `node:vm` cases confirm zero samples post while hidden,
+  and that frames accumulated before hiding don't leak into the first post-resume reading; new
+  retrofit case confirms a stale (unversioned) probe gets replaced, and a current one is left
+  byte-identical. Full suite: 188 files / 2010 passed, 1 skipped. `tsc --noEmit` clean.
+- **Impact:** reaches every already-previewed 3D game automatically on next preview (the version
+  guard is what makes that true — without it, this fix would only have helped brand-new games).
+- **Prevention — name the class:** *idle time reported as bad time.* Any measurement that samples
+  over a fixed wall-clock window needs to explicitly account for the window not being fully live
+  (hidden tab, throttled timer, paused execution) — silence and slowness look identical to a naive
+  counter, and only the surrounding context (`document.hidden`) can tell them apart.
+
+---
+
+## 2026-08-05 — Catalog-wide model-rig audit: dog had no run clip, held props floated at the character root, no fallback existed for models missing motion entirely
+
+- **Symptom:** owner reports across several unrelated games — a dog's legs never moved despite
+  correct game code, a cricketer couldn't hold a bat convincingly, a helicopter's rotor never spun.
+  Initially suspected as more fallout from the same-day `loadModel` cache regression (see the two
+  entries below); live investigation showed the runtime was fine — these were real gaps in the
+  asset catalog and the prompt teaching around it, not runtime bugs.
+- **Root cause, three separate findings from actually downloading and inspecting the real `.glb`
+  files (not assumed from symptoms):**
+  1. `dog.glb` (sourced from poly.pizza "Pug") only ever shipped `Idle`/`Jump` — no run, walk, or
+     gallop clip exists in the asset at all, despite having a complete 12-bone leg rig. Game code
+     searching `m.animations.find(a => /run|walk|gallop/i.test(a.name))` was correctly written and
+     always came back empty-handed.
+  2. `cricketer` (and, by shared rig, every "people"-pack character: `soldier`, `footballer`,
+     `explorer`, etc.) has **no hand or wrist bone** — only whole-arm nodes (`arm-left`/`arm-right`
+     for the Kenney blocky-character pack, `UpperArm.*`/`LowerArm.*` for the Quaternius
+     soldier/hazmat pack). The prompt's existing guidance (`soldier.add(gun)`) parented held props
+     to the character ROOT, which doesn't track arm movement at all — a bat/gun looked fixed in
+     space while the character's arm visibly swung independently.
+  3. `helicopter.glb` is a single static mesh (one node named literally "Cube") with zero
+     animation data and zero skeleton — there was never a separate rotor part for any amount of
+     code to spin. Same class as several rigid vehicle models.
+- **Fix — three parts, all in `Game/src/lib/assets/`:**
+  1. **Asset replacement for `dog`** (`scripts/vendor-models.mjs`): swapped the source to a
+     different Quaternius "Dog" (poly.pizza/m/2kUk0QqpCg) from the SAME `AnimalArmature`-rigged
+     pack already powering the working `cat`/`dino`/`chicken` entries — verified before pinning
+     (downloaded raw, confirmed real `Walk`/`Run` clips + full leg rig). Compressed through the
+     existing meshopt pipeline to 52.6 KB, essentially unchanged from the old dog's 48.5 KB (well
+     under the 150 KB model budget) — the 296 KB raw source size was a red herring, not a real
+     cost, since every model goes through the same compression pipeline regardless of source.
+     Vendored via `--only=dog --upload` (correct order: build → upload → verify-live → write
+     manifest, learned the hard way from the `three.js` bundle incident below).
+  2. **Held-prop attachment** (`prompt-catalog.ts`): both the people-pack and soldier-pack clauses
+     now teach parenting to the arm bone, not the root — `(m.getObjectByName("arm-right") ||
+     m).add(prop)` for the people pack, `(soldier.getObjectByName("LowerArm.R") ||
+     soldier).add(gun)` for the soldier pack. Both fall back to the OLD root-parenting behavior if
+     the named bone isn't found on a given model (defensive — worst case is unchanged, never a new
+     crash), since only ~6 of the ~20 people-pack models were actually checked against their real
+     bone names before shipping this.
+  3. **General procedural-motion fallback** (`prompt-catalog.ts` item 7, new): teaches Ari to
+     handle ANY model that needs to move but lacks the right clip or rig, without ever inventing a
+     nonexistent animation name — drive existing bones directly (sine-wave rotation keyed to
+     time/speed) if the model has a matching-named rig (`*Leg*`/`*Wing*`), or add its own simple
+     primitive part and spin that if the model is a single rigid mesh (names the helicopter
+     explicitly as the worked example). This is the system-level answer to "a child can't write a
+     technical patch prompt" — it's meant to fire automatically during normal generation, not only
+     when explicitly asked.
+- **Verified:** the dog asset swap — vendor script dry run confirmed compressed size/animations/
+  skin intact before upload; live CDN fetch confirmed post-upload; `manifest.test.ts` contract
+  tests green (20 files / 390 tests); full suite 188 files / 2006 tests green; `tsc --noEmit`
+  clean. The prompt changes — `prompt-catalog.test.ts`'s existing lockstep/token-ceiling tests
+  updated and green (ceiling raised 1900 → 2100 tokens, documented inline, for genuinely new
+  correctness content, not creep).
+- **NOT verified — flagged explicitly, not assumed:** item 7 (the procedural-motion fallback) has
+  not been observed firing on a real generated game yet. Same caution as the `SkeletonUtils`
+  lesson below: a reviewed, tested-for-shape prompt instruction is not the same as a proven one.
+  The next real game that needs this fallback (a plain, non-technical kid request — "make me a
+  helicopter game" — not a technical patch prompt) is the actual test; the generated code should
+  be pulled and checked, not just trusted because the game "looks done."
+- **Impact:** `dog` now animates correctly in every future/edited game. Held-prop attachment and
+  the motion fallback only reach NEW generations and edits — no retrofit path exists for
+  already-published games' stored code (same class as TECH_DEBT #87's tier-2 residual).
+- **Related:** TECH_DEBT #87 (residual: asset/prompt fixes don't retrofit stored game code).
+
+---
+
 ## 2026-08-05 — The app's own pasted error report got deflected as unsafe kid input ("Let's talk about something else!")
 
 - **Symptom (what the user saw):** owner pasted the copyable game error report (the one
@@ -43,6 +146,124 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
   (error reports, share snippets), run it through `RulesClassifier` in that feature's tests.
 - **Related:** 2026-07-31 Scunthorpe entries (same over-blocking class, profanity layer);
   KNOWN_BUGS #7/#12 (input-scan surface); `error-report.ts` (2026-07-20, the report generator).
+
+## 2026-08-05 — Animated 3D models (dog legs, human hands, helicopter rotors) froze at rest pose — regression from the same-day loadModel cache fix, live within hours of deploy
+
+- **Symptom:** owner report, live in production: skinned/rigged models stopped animating —
+  legs/arms/rotors sat completely still — across multiple unrelated games (a dog, a human
+  character, a helicopter), not one isolated case.
+- **Root cause:** the entry directly below this one (same day) added a template cache to
+  `window.loadModel()` and, for any model carrying animations, used `SkeletonUtils.clone()`
+  (newly vendored) to produce every returned instance — including the FIRST and only instance,
+  not just repeats. `SkeletonUtils.clone()`'s bone/skeleton re-targeting was never verified
+  against the actual hosted `.glb` rigs before shipping — only reviewed and unit-tested against
+  the generated-STRING shape (the established test convention for this file, since real `import
+  "three"` can't run in `node:vm`). It silently failed to correctly re-bind at least some of these
+  rigs, leaving every clone's skeleton at its bind (rest) pose — `AnimationMixer.update(delta)`
+  ran every frame exactly as the game intended, but nothing visibly moved, because the mixer had
+  nothing correctly bound to move. Universal, not multi-instance-specific: since the FIRST call for
+  any animated name also went through `SkeletonUtils.clone()`, a game with a single dog or a single
+  helicopter was equally broken.
+- **Fix:** `loadModel()`'s caching is now narrowed to STATIC (non-animated) models ONLY.
+  Animated models get ZERO behavior change from any part of this effort: every call does a fresh
+  `GLTFLoader.loadAsync()` and returns the pristine parsed scene untouched — byte-for-byte the
+  pre-2026-08-05 behavior, the one path known to be correct. The `.glb` bytes are still
+  HTTP-cached by the browser after the first load, so a repeat call is a re-parse, not a real
+  network round trip — that was always "good enough" for the animated case; the modest extra win
+  `SkeletonUtils.clone()` offered (slightly cheaper repeat crowd spawns) was never worth this risk.
+  `SkeletonUtils` is no longer imported by the injected helper script at all. `LOAD_MODEL_HELPER_VERSION`
+  bumped 2 → 3 so `ensure-runtime.ts`'s retrofit guard replaces the broken v2 helper in every
+  already-published game on next preview, same mechanism as the original cache rollout.
+- **Verified:** `runtime-helpers.test.ts` rewritten to assert the animated branch never calls
+  `.clone()`/`SkeletonUtils` and that a repeat call for an animated name re-enters the fresh-fetch
+  path (never short-circuits through the static cache); `ensure-runtime.test.ts` F.13 updated for
+  the renamed cache variable. Full suite: 188 files / 2002 passed, 1 skipped. `npx tsc --noEmit`
+  clean. Deployed same day.
+- **Impact:** animated 3D games broke in production for roughly the window between the v2 deploy
+  and this fix — not caught pre-deploy because the risk (SkeletonUtils correctness on real rigs)
+  was assessed by review only, never exercised against an actual browser + real hosted model.
+- **Prevention — name the class:** *unverified library-behavior assumption shipped straight to
+  every user of that code path.* `SkeletonUtils.clone()`'s correctness was treated as a given
+  because it's a documented three.js utility, not because it was actually tested against the game's
+  own real assets. Any future runtime-helper change touching THREE.js internals (skinning,
+  morph targets, custom shaders) needs a real-browser check against the actual manifest models
+  before shipping, not just a string-shape unit test — the string-shape convention this file
+  already uses is sufficient for verifying WHAT script gets generated, never for verifying that a
+  three.js API call inside it behaves correctly at runtime.
+- **Related:** the entry directly below (same day) — this is a regression WITHIN that fix, found
+  and corrected same-day via live testing, not a separate incident.
+
+---
+
+## 2026-08-05 — 3D games with many repeated props (forests, city blocks, crowds) tripped the "running slow" banner — global fix, not per-game
+
+- **Symptom:** the kid-facing "The game is running slow — Make it faster" banner
+  (`src/lib/slowdown-nudge.ts`, driven by the debug Perf tab's red/yellow/green load bucket,
+  `src/lib/assets/perf-probe.ts`) was firing across essentially every 3D game placing more than a
+  handful of the same prop. Root-caused against a real generated game (`City Helicopter Pilot`,
+  ~40 buildings + ~48 trees, each via `loadModel()`).
+- **Root cause:** `window.loadModel(name)` — the ONE shared runtime helper injected into every 3D
+  game (`src/lib/assets/runtime-helpers.ts`'s `loadModelHelper()`) — did an independent
+  `GLTFLoader.loadAsync()` (fresh network fetch, fresh parse, fresh `BufferGeometry`/
+  `Material`/`Mesh` graph) on EVERY call, even for a model already loaded seconds earlier. N
+  repeated props therefore cost N full draw-call-worthy mesh trees. Not a per-game authoring bug:
+  the build prompt (`src/lib/assets/prompt-catalog.ts`'s `modelsPromptSection()`) actively steered
+  the model toward "call `loadModel` again per instance... do NOT `.clone()`" — correct given the
+  OLD API (plain `.clone()` on a skinned mesh shares one skeleton and breaks independent
+  animation), but with no cheaper alternative offered.
+- **Fix — two tiers, both in `runtime-helpers.ts`:**
+  1. **Template cache.** `loadModel()` now caches the parsed GLTF once per model name; every call
+     after the first clones from the cached template instead of re-fetching/re-parsing —
+     `SkeletonUtils.clone()` (newly vendored, `scripts/vendor-three.mjs`) for a model with
+     animations (correctly re-binds bones/skeleton, unlike plain `.clone()`), plain `.clone()`
+     otherwise (cheap — shares geometry/material by reference). This is what finally makes the old
+     "do NOT `.clone()` a person" prompt warning obsolete — dropped from `modelsPromptSection()`.
+  2. **`loadModelBatch(name, count)`** — a new, explicitly opt-in API (NOT a silent change to
+     `loadModel()`'s return shape) that pools many identical STATIC placements into one
+     `InstancedMesh` draw call per distinct geometry/material part, returning
+     `{ mesh, setInstance(i, transform), boundsAt(i) }`. Kept separate because generated games
+     routinely do `new Box3().setFromObject(wrap)` on a loaded model for collision (the exact
+     pattern in the game that prompted this fix) — an `InstancedMesh` has no per-instance scene
+     subtree for that to walk, so silently swapping `loadModel`'s contract would have broken
+     collision in every existing game using that pattern. `boundsAt(i)` is the supported
+     replacement, taught alongside the new API in `modelsPromptSection()` item 6.
+  3. **Retrofit path.** `ensure-runtime.ts` re-floors the runtime helper into stored game HTML on
+     every preview render — the only path that reaches games that already exist — but its old
+     guard only checked whether `window.loadModel =` was present at all, not which version. A
+     stale helper would have stayed stuck on the old (uncached) behavior forever. Added
+     `window.__arLoadModelVersion` and a version-aware guard (`hasCurrentHelper`); a stale helper's
+     whole `<script>` block is now stripped (`stripStaleLoadModelHelper`, matched per-script-block
+     so it can't accidentally swallow a neighboring importmap/AR_ASSETS tag) before the current one
+     is spliced in — leaving both would let the OLD script run last (document order) and silently
+     re-clobber `window.loadModel` back to the slow path.
+  4. **`perf-probe.ts`** gained `computeBatchedLoad(triangles, drawCalls)` — a batched model's load
+     is now `triangles × drawCalls`, not `triangles × instanceCount`; the old formula would have
+     kept a 200-instance batched forest red even after its real draw-call cost dropped to ~1.
+- **Verified:** new/extended tests in `runtime-helpers.test.ts` (template-cache ordering,
+  SkeletonUtils-vs-plain-clone branching, `loadModelBatchHelper` shape), `perf-probe.test.ts`
+  (`computeBatchedLoad` unit tests + `node:vm` batched-snapshot scenarios), `ensure-runtime.test.ts`
+  (F.13 stale-helper-gets-replaced, F.14/F.15 batch-helper injected only when called), and
+  `prompt-catalog.test.ts`'s existing token-ceiling/lockstep-export tests (both re-verified green
+  after the prompt wording change). Full suite: 188 files / 2001 passed, 1 skipped.
+  `npx tsc --noEmit` clean.
+- **Impact:** every already-published 3D game gets the cheaper load path (tier 1) automatically on
+  next preview. The draw-call collapse (tier 2) does NOT retrofit into existing stored game code —
+  see `docs/TECH_DEBT.md` #87 for that residual scope.
+- **Prevention — name the class:** *shared-runtime cost, not per-game authoring* — when many
+  generated games show the same symptom, look at what they all share (the injected runtime helper,
+  the build prompt) before assuming N separate authoring mistakes. Also: an explicit new API
+  (`loadModelBatch`) beats a silent behavior change to an existing one whenever generated code
+  already leans on that existing API's return shape in ways not fully enumerable (here:
+  `Box3.setFromObject` on a loaded model for collision).
+- **⚠ CORRECTION (same day, see the entry directly above):** tier 1 as described below
+  originally cached AND `SkeletonUtils.clone()`'d animated models too. That broke skinned-model
+  animation in production (legs/arms/rotors frozen) within hours of deploy — animated models were
+  narrowed back out of the cache entirely; only static models are cached now. The rest of this
+  entry (static-model caching, `loadModelBatch`, the retrofit mechanism) is unaffected and still
+  accurate.
+- **Related:** TECH_DEBT #87 (this entry's residual — tier 2 needs per-game adoption).
+
+---
 
 ## 2026-08-01 — Build-progress narration on EDIT turns always fell back to "the whole ask", never showed per-step lines
 

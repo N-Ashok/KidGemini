@@ -19,9 +19,18 @@ export interface PerfModelEntry {
   instances: number;
   /** True if any live instance has a constructed AnimationMixer. */
   animated: boolean;
-  /** triangles × instances × (animated ? multiplier : 1). */
+  /** triangles × instances × (animated ? multiplier : 1) — or, for a
+   *  batched entry, triangles × drawCalls (see computeBatchedLoad). */
   load: number;
   bucket: LoadBucket;
+  /** True when this entry came from loadModelBatch() (perf-probe.ts's
+   *  computeBatchedLoad) rather than per-instance loadModel() calls —
+   *  `instances` is still the logical placement count, but render cost
+   *  tracks `drawCalls` instead. */
+  batched?: boolean;
+  /** Present only when `batched` is true: draw calls for this model (one
+   *  InstancedMesh per distinct geometry/material part). */
+  drawCalls?: number;
 }
 
 /** One per-second sample posted by the injected probe. */

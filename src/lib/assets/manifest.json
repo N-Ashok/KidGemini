@@ -3,11 +3,11 @@
     {
       "name": "three",
       "type": "engine",
-      "url": "https://assets.ariantra.com/three.b82585.js",
-      "bytes": 633974,
+      "url": "https://assets.ariantra.com/three.098b4c.js",
+      "bytes": 634839,
       "license": "MIT",
       "sourceUrl": "https://github.com/mrdoob/three.js",
-      "sha256": "b8258524675419a7ced93c895d75bee4cebbb15bc2de77837b849f4feaac01e3"
+      "sha256": "098b4cd3ba8e6fb66552611e76f82bb4252ef6c2d2f6dbf3096d0aaa49890420"
     },
     {
       "name": "car",
@@ -174,11 +174,11 @@
     {
       "name": "dog",
       "type": "model",
-      "url": "https://assets.ariantra.com/dog.7ea9cc.glb",
-      "bytes": 48528,
+      "url": "https://assets.ariantra.com/dog.ee90f4.glb",
+      "bytes": 53836,
       "license": "CC0",
-      "sourceUrl": "https://poly.pizza/m/1gXKv15ik8",
-      "sha256": "7ea9cc9000feee247f480e8541912c4d2774cd2099c7aa87c218809922487cd4"
+      "sourceUrl": "https://poly.pizza/m/2kUk0QqpCg",
+      "sha256": "ee90f4030142937cb935bf0d4da98af003c3f9416509f99caa3d7d8034e4e749"
     },
     {
       "name": "cat",

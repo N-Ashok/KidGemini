@@ -103,10 +103,16 @@ const MODELS = [
   // is covered by helicopter + spaceship + ufo (+ rocket above).
   {
     name: 'dog',
-    // "Pug" by Quaternius (animated).
-    source: { kind: 'url', url: 'https://static.poly.pizza/094335c0-632a-45f5-8583-27d5cab53b54.glb' },
-    sourceUrl: 'https://poly.pizza/m/1gXKv15ik8',
-    keepAnimations: ['Idle', 'Jump'],
+    // "Dog" by Quaternius (animated) — REPLACED 2026-08-05 (TECH_DEBT #87
+    // follow-up): the original "Pug" source only shipped Idle/Jump, no
+    // locomotion clip at all, so a dog could never visibly run/walk no
+    // matter what game code called it. This source is from the same
+    // AnimalArmature-rigged Quaternius pack as `cat`/`dino`/`chicken` and
+    // carries real Walk/Run clips (verified against the downloaded GLB
+    // before pinning here) plus a full leg rig (FrontLeg/BackLeg .L/.R).
+    source: { kind: 'url', url: 'https://static.poly.pizza/de55d76a-f578-4979-97ff-2a62edac32f3.glb' },
+    sourceUrl: 'https://poly.pizza/m/2kUk0QqpCg',
+    keepAnimations: ['Idle', 'Walk', 'Run'],
   },
   {
     name: 'cat',
