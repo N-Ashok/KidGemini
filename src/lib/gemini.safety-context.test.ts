@@ -33,7 +33,8 @@ vi.mock("./retry", () => ({
   withTimeout: (fn: () => unknown) => fn(),
 }));
 
-import { GeminiChatModel, CHILD_BUILDER_CONTEXT } from "./gemini";
+import { GeminiChatModel, CHILD_BUILDER_CONTEXT, CHILD_FIX_CONTEXT } from "./gemini";
+import { REPORT_HEADER } from "./error-report";
 import type { ChatMessage } from "@/types/chat.types";
 import type { PersonaId } from "./persona/persona";
 
@@ -92,6 +93,60 @@ describe("child-builder safety context injection (pinned)", () => {
   });
 
   it("the context is truthful child-designer framing (the shape verified live 2026-07-27)", () => {
+    expect(CHILD_BUILDER_CONTEXT).toMatch(/game designer/i);
+    expect(CHILD_BUILDER_CONTEXT).toMatch(/fiction|make-believe|cartoon/i);
+  });
+});
+
+/** BUG-FIX-LOG 2026-08-05 (second entry that day): a pasted "Ari — game error
+ *  report" (the app's OWN copyable report, error-report.ts) cleared the input
+ *  rules but the FIX generation blocked with finishReason SAFETY, attribution
+ *  [HARASSMENT:LOW, all else NEGLIGIBLE] — repeatedly, in production. The
+ *  battle-framing CHILD_BUILDER_CONTEXT was already riding on the turn (the
+ *  report contains "game") and did not clear it: it says nothing about error
+ *  reports or program code. Fix: error-report turns get CHILD_FIX_CONTEXT — the
+ *  builder framing PLUS truthful framing of the paste as this app's own
+ *  machine-generated report whose right answer is repaired code. */
+describe("child error-report fix-turn context injection (pinned)", () => {
+  beforeEach(() => {
+    generateContentStream.mockReset();
+    generateContentStream.mockImplementation(() => fakeStream("ok"));
+    process.env.GEMINI_API_KEY = "test-key";
+    process.env.GEMINI_CHAT_MODEL = "gemini-3-flash-preview";
+  });
+
+  const report = [
+    REPORT_HEADER,
+    "Game: Rainbow Dog Sled Adventure",
+    "Check result: clean",
+    "Errors (1):",
+    "1. Uncaught ReferenceError: Cannot access 'dogGroundY' before initialization (about:srcdoc:1612:44)",
+  ].join("\n");
+
+  it("a pasted error report (child persona) gets CHILD_FIX_CONTEXT as the leading user part", async () => {
+    const contents = await contentsSentToGemini({ message: report });
+    expect(finalTurnFirstText(contents)).toBe(CHILD_FIX_CONTEXT);
+  });
+
+  it("CHILD_FIX_CONTEXT is a superset of the builder framing — nothing verified-live is lost", () => {
+    expect(CHILD_FIX_CONTEXT.startsWith(CHILD_BUILDER_CONTEXT)).toBe(true);
+    expect(CHILD_FIX_CONTEXT).toMatch(/error report/i);
+    expect(CHILD_FIX_CONTEXT).toMatch(/code/i);
+  });
+
+  it("a build turn WITHOUT a report still gets plain CHILD_BUILDER_CONTEXT, not the fix framing", async () => {
+    const contents = await contentsSentToGemini({ message: "make me a game" });
+    expect(finalTurnFirstText(contents)).toBe(CHILD_BUILDER_CONTEXT);
+  });
+
+  it("bible-teacher (verified adult) pasting a report is NOT injected — same rule as build turns", async () => {
+    const contents = await contentsSentToGemini({ message: report, persona: "bible-teacher" });
+    expect(finalTurnFirstText(contents)).toBe(report);
+  });
+});
+
+describe("context constants stay truthful", () => {
+  it("kept for symmetry with the pinned shape above", () => {
     expect(CHILD_BUILDER_CONTEXT).toMatch(/game designer/i);
     expect(CHILD_BUILDER_CONTEXT).toMatch(/fiction|make-believe|cartoon/i);
   });

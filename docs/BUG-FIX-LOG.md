@@ -114,6 +114,46 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-05 — Error-report fix turns blocked by Gemini SAFETY (HARASSMENT:LOW) — "that one tangled me up" on every paste
+
+- **Symptom (what the user saw):** with the email-PII fix (entry below) deployed, pasting the
+  error report reached the model — but every attempt came back with `MODEL_GLITCH_RETRY`
+  ("Hmm, that one tangled me up!"): the fix generation itself was blocked, repeatedly.
+- **Surface area:** `src/lib/gemini.ts` (`buildContents` safety-context injection); production
+  pm2 logs show the block fired many times.
+- **Root cause:** Gemini returned `finishReason SAFETY` on the REGENERATED game code with
+  attribution `[HARASSMENT:LOW, all else NEGLIGIBLE]` — a false positive (a real block rates
+  MEDIUM/HIGH), but the child persona deliberately runs `BLOCK_LOW_AND_ABOVE` for harassment
+  (`persona.ts`), so LOW is enough. `CHILD_BUILDER_CONTEXT` WAS already riding on the turn
+  (a report contains "game", so `isGameBuildTurn` matched) and did not clear it: its battle/
+  rivals framing says nothing about error reports or program code, so the classifier misread
+  stack traces + regenerated dog-sled game code.
+- **Fix:** error-report turns (message contains `REPORT_HEADER`, now exported from
+  `error-report.ts`) get `CHILD_FIX_CONTEXT` — the builder framing PLUS truthful framing of the
+  paste as this app's own machine-generated report whose right answer is repaired code
+  (`gemini.ts`). Strict superset of the verified builder framing; thresholds untouched — same
+  no-posture-change pattern as BUG-FIX-LOG 2026-07-27, per the standing preference for user-turn
+  context injection over threshold relaxation. Rejected for now: relaxing child harassment
+  LOW→MEDIUM (posture change, owner's call if framing proves insufficient) and an auto-retry on
+  all-LOW/NEGLIGIBLE blocks (extra model cost; keep in reserve).
+- **Result (verified):** new pinned describe block in `gemini.safety-context.test.ts` (report
+  paste → `CHILD_FIX_CONTEXT` leading part; plain build turns keep `CHILD_BUILDER_CONTEXT`;
+  adult persona uninjected) — 2 failed before the fix. Full suite 2015 passed, tsc clean.
+  **Live UAT pending:** owner re-pastes the Rainbow Dog Sled report after deploy; the 2026-07-22
+  and 2026-07-27 precedents both live-verified that user-turn framing clears this class, but
+  this specific wording is not yet live-proven. Supporting live evidence (owner, same day,
+  pre-deploy): manually typing "I am a game developer" alongside the paste cleared the block
+  every time — the injection automates exactly that. If it still blocks, escalate to the
+  rejected options above.
+- **Impact:** the error-report → fix loop (the whole point of the copyable report) can work for
+  kids; no safety-posture change.
+- **Prevention — name the class:** *provider-classifier false positive on benign kid content at
+  the strictest threshold* — same class as 2026-07-27; the injection now has two pinned variants
+  and any new turn TYPE (report paste, future share-paste) should get its own truthful framing
+  sentence rather than a threshold change.
+- **Related:** entry directly below (same paste, input-rules layer); BUG-FIX-LOG 2026-07-27
+  (CHILD_BUILDER_CONTEXT); 2026-07-22 (framing clears provider false positives, verified live).
+
 ## 2026-08-05 — The app's own pasted error report got deflected as unsafe kid input ("Let's talk about something else!")
 
 - **Symptom (what the user saw):** owner pasted the copyable game error report (the one

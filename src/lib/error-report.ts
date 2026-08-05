@@ -10,6 +10,11 @@
 import type { GameConsoleMessage } from "@/types/game-console.types";
 import type { VerifyOutcome } from "@/types/preview-verify.types";
 
+/** First line of every report. Exported so the chat pipeline can recognize a
+ *  pasted report and frame it for the model (gemini.ts CHILD_FIX_CONTEXT,
+ *  BUG-FIX-LOG 2026-08-05). */
+export const REPORT_HEADER = "Ari — game error report";
+
 /** Keeps a pasted report readable (and clipboard-safe) however hard a broken
  *  game loops on its own errors. */
 export const MAX_REPORT_CHARS = 4_000;
@@ -47,7 +52,7 @@ export interface ErrorReportInput {
 
 export function buildErrorReport(input: ErrorReportInput): string {
   const hard = input.errors.filter(isHardError);
-  const lines: string[] = ["Ari — game error report"];
+  const lines: string[] = [REPORT_HEADER];
   if (input.gameTitle) lines.push(`Game: ${input.gameTitle}`);
   if (input.at) lines.push(`When: ${input.at}`);
   lines.push(`Check result: ${input.outcome ?? "unknown"}${input.failureCode ? ` (${input.failureCode})` : ""}`);

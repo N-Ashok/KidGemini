@@ -6,6 +6,7 @@ import { GoogleGenAI } from "@google/genai";
 import type { ChatMessage, ChatModel, ImageAttachment, StreamChunk, TokenUsage } from "@/types/chat.types";
 import type { ChainSummary } from "@/types/model-ledger.types";
 import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
+import { REPORT_HEADER } from "./error-report";
 import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection } from "./assets/prompt-catalog";
 import { PHYSICS_PROMPT_SECTION, physicsEnginePromptSection } from "./assets/physics-playbook";
 import { SAVE_STATE_PROMPT_SECTION } from "./assets/save-state-playbook";
@@ -477,6 +478,20 @@ const GEN_CONFIG = {
 export const CHILD_BUILDER_CONTEXT =
   "Context: a child game designer is building their own fictional, cartoon-style game to play with friends. Any battles, rivals, or conflict are make-believe game mechanics, not real content.";
 
+// BUG-FIX-LOG 2026-08-05: a pasted "Ari — game error report" (this app's OWN
+// copyable report, error-report.ts) blocked repeatedly in production with
+// finishReason SAFETY, attribution [HARASSMENT:LOW, all else NEGLIGIBLE] —
+// even though CHILD_BUILDER_CONTEXT was already riding on the turn (a report
+// contains "game"). The battle framing says nothing about error reports or
+// program code, so the classifier misread stack traces + regenerated game
+// code. Same verified pattern as above, more specific truth: name what the
+// paste IS and what the right answer looks like. Superset of the builder
+// framing (pinned in gemini.safety-context.test.ts) so nothing verified-live
+// is lost. No safety-posture change — thresholds untouched.
+export const CHILD_FIX_CONTEXT =
+  CHILD_BUILDER_CONTEXT +
+  " The message below contains a computer-generated error report produced by this app about the child's own game; the right reply is the repaired, kid-friendly program code for that same game.";
+
 /** Request shape sent to Gemini. Exported for tests (gemini.contents.test.ts pins it).
  *  An uploaded picture rides as inlineData on the FINAL user turn only — history
  *  never carries images (they aren't persisted; single-turn context by design).
@@ -571,7 +586,12 @@ export class GeminiChatModel implements ChatModel {
    *  need it; ordinary (non-build) chat never needs it. */
   private buildContents(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; persona?: PersonaId }) {
     const isChild = (PERSONAS[input.persona ?? "default"] ?? PERSONAS.default).id === "default";
-    const safetyContext = isChild && isGameBuildTurn(input.message, input.history) ? CHILD_BUILDER_CONTEXT : undefined;
+    // An error-report paste gets the more specific fix framing; every other
+    // build turn keeps the battle framing verified live 2026-07-27.
+    const safetyContext =
+      isChild && isGameBuildTurn(input.message, input.history)
+        ? (input.message.includes(REPORT_HEADER) ? CHILD_FIX_CONTEXT : CHILD_BUILDER_CONTEXT)
+        : undefined;
     return buildChatContents({ ...input, ...(safetyContext ? { safetyContext } : {}) });
   }
 
