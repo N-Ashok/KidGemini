@@ -11,6 +11,39 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-05 — The app's own pasted error report got deflected as unsafe kid input ("Let's talk about something else!")
+
+- **Symptom (what the user saw):** owner pasted the copyable game error report (the one
+  `error-report.ts` builds precisely FOR pasting into this chat — Rainbow Dog Sled Adventure,
+  `verify_failed`, three.js module errors) and Ari answered with the `KIND_REDIRECT` topic-change
+  deflection instead of engaging with the broken game. A false "child shared personal info"
+  parent alert fired too.
+- **Surface area:** `src/lib/safety.rules.ts` (PII email rule); hit via `/api/chat` input
+  fast-path (`route.ts` step 1) — any child-mode turn whose text contains a versioned URL.
+- **Root cause:** the email regex's domain part accepted any word chars
+  (`/\b[\w.+-]+@[\w-]+\.[\w.-]+\b/`), so the npm version specifier inside the report's CDN URL —
+  `cdn.jsdelivr.net/npm/three@0.158.0/...` — matched as "email" (`three@0.158.0`), which is a
+  `soft_block` → child mode blocks on any non-allow verdict → `KIND_REDIRECT` + parent alert.
+  Scunthorpe-class false positive (same family as 2026-07-31), but in the PII layer: the app's
+  own artifact tripped the filter meant for kid-typed PII.
+- **Fix:** require the domain to end in an alphabetic TLD:
+  `/\b[\w.+-]+@[\w-]+(\.[\w-]+)*\.[A-Za-z]{2,}\b/` (`safety.rules.ts:114-118`). Every real email
+  ends in a letters-only TLD; a semver specifier never does. Considered and rejected: whitelisting
+  the "Ari — game error report" header, because that would be a paste-able PII-scan bypass.
+- **Result (verified):** new `safety.rules.test.ts` describe block ("email-PII false positive on
+  npm version specifiers") — the full pasted report and a bare `three@0.158.0` now `allow`; both
+  failed before the fix. Genuine emails (incl. digit-bearing domains like `mail2.example.org`)
+  still `soft_block`. Full suite: 2003 passed; the 2 pre-existing `prompt-catalog.test.ts`
+  failures are unrelated (fail identically without this change).
+- **Impact:** kids/parents can now paste an error report (or any message with a versioned package
+  URL) and get help instead of a deflection; no more false PII parent alerts for it. Safety
+  posture: strictly fewer false positives, no weakening — real emails still blocked.
+- **Prevention:** regression tests above. **Class: filter false-positive on the product's own
+  machine-generated text** — when a feature generates text destined for the chat input
+  (error reports, share snippets), run it through `RulesClassifier` in that feature's tests.
+- **Related:** 2026-07-31 Scunthorpe entries (same over-blocking class, profanity layer);
+  KNOWN_BUGS #7/#12 (input-scan surface); `error-report.ts` (2026-07-20, the report generator).
+
 ## 2026-08-01 — Build-progress narration on EDIT turns always fell back to "the whole ask", never showed per-step lines
 
 - **Symptom:** owner reported that while editing an existing game, the build-progress strip

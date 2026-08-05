@@ -117,6 +117,40 @@ describe("RulesClassifier — full PROFANITY-list collision audit (BUG-FIX-LOG 2
   });
 });
 
+/** Production bug (2026-08-05, docs/BUG-FIX-LOG.md): the app's OWN error
+ *  report (error-report.ts, built for pasting into this chat) got soft-blocked
+ *  as "email" PII and answered with the KIND_REDIRECT deflection — because the
+ *  email regex matched the npm version specifier inside a CDN URL
+ *  ("https://cdn.jsdelivr.net/npm/three@0.158.0/..."). A real email address
+ *  always ends in an alphabetic TLD; a version specifier never does. */
+describe("RulesClassifier — email-PII false positive on npm version specifiers (BUG-FIX-LOG 2026-08-05)", () => {
+  it("does not soft-block a pasted game error report carrying a versioned CDN URL", () => {
+    const report = [
+      "Ari — game error report",
+      "Game: Rainbow Dog Sled Adventure",
+      "When: 2026-08-05T09:53:18.694Z",
+      "Check result: failed (verify_failed)",
+      "3. Uncaught SyntaxError: The requested module 'three' does not provide an export named 'BufferAttribute' (https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/utils/BufferGeometryUtils.js:2:2)",
+      "Browser: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+    ].join("\n");
+    expect(child(report).action).toBe("allow");
+  });
+
+  it("does not soft-block a bare scoped-package specifier ('three@0.158.0')", () => {
+    expect(child("my game loads three@0.158.0 from a cdn").action).toBe("allow");
+  });
+
+  it("still soft-blocks a genuine email address", () => {
+    const v = child("my email is kid123@gmail.com");
+    expect(v.action).toBe("soft_block");
+    expect(v.category).toBe("personal_info");
+  });
+
+  it("still soft-blocks a genuine email with digits in the domain", () => {
+    expect(child("write to me at someone@mail2.example.org").action).toBe("soft_block");
+  });
+});
+
 /** Production bug (KNOWN_BUGS #7 / #12, 2026-07-27): an oversized message
  *  (~100K chars of game source accidentally folded into a chat turn, see
  *  BUG-FIX-LOG same date) raised the odds of an accidental SELF_HARM

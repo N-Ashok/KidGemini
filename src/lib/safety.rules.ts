@@ -113,7 +113,10 @@ const MAX_SELF_HARM_SCAN_CHARS = 4000;
 
 const PII: Array<{ re: RegExp; label: string }> = [
   { re: /\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/, label: "phone number" },
-  { re: /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/, label: "email" },
+  // Domain must END in an alphabetic TLD (BUG-FIX-LOG 2026-08-05): npm version
+  // specifiers in CDN URLs ("cdn.jsdelivr.net/npm/three@0.158.0/...") match an
+  // any-word-char domain, which soft-blocked the app's own pasted error report.
+  { re: /\b[\w.+-]+@[\w-]+(\.[\w-]+)*\.[A-Za-z]{2,}\b/, label: "email" },
   { re: /\b\d{1,5}\s+[A-Za-z]{2,}\s+(street|st|road|rd|avenue|ave|lane|ln)\b/i, label: "address" },
 ];
 
