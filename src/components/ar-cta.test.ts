@@ -9,9 +9,10 @@ import { join } from "node:path";
 const read = (f: string) => readFileSync(join(__dirname, f), "utf8");
 
 describe("shared chrome CTAs (2026-07-11 revamp)", () => {
-  it("ArNav's loud CTA starts a game, not a WhatsApp booking", () => {
+  it("ArNav's loud CTA starts a game, not a WhatsApp booking (2026-08-06: landing's CTA wording)", () => {
     const nav = read("ArNav.tsx");
-    expect(nav).toContain("Create your first game");
+    expect(nav).toContain("Start their first game — free");
+    expect(nav).not.toContain("Create your first game"); // superseded 2026-08-06
     expect(nav).not.toContain("Book a free session");
   });
 

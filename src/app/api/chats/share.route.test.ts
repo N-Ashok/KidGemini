@@ -16,12 +16,12 @@ import { PUT as onePUT } from "./[id]/route";
 import { SqliteChatHistoryStore } from "@/lib/db";
 import type { NextRequest } from "next/server";
 
-function makeReq(opts: { cookie?: string; body?: unknown } = {}): NextRequest {
+function makeReq(opts: { cookie?: string; body?: unknown; headers?: Record<string, string> } = {}): NextRequest {
   return {
     json: async () => opts.body ?? {},
     nextUrl: { searchParams: new URLSearchParams(), origin: "https://games-lab.ariantra.com" },
     cookies: { get: (k: string) => (k === "kg_guest" && opts.cookie ? { value: opts.cookie } : undefined) },
-    headers: new Headers(),
+    headers: new Headers(opts.headers ?? {}),
   } as unknown as NextRequest;
 }
 
@@ -84,6 +84,43 @@ describe("POST /api/chats/:id/share", () => {
     expect(second).not.toBe(first);
     expect(store.getSharedByToken(first.split("/").at(-1)!)).toBeNull();
     expect(store.getSharedByToken(second.split("/").at(-1)!)).not.toBeNull();
+  });
+});
+
+// Owner UAT 2026-08-06: the live share sheet handed out
+// https://localhost:3001/share/chat/<token> — req.nextUrl.origin behind the
+// Caddy reverse proxy is the box-INTERNAL origin, never the public host. The
+// URL must come from the forwarded headers, with a canonical-host fallback in
+// production so a proxy misconfiguration can never leak localhost to a kid.
+describe("POST /api/chats/:id/share — public URL derivation (localhost leak)", () => {
+  async function mintUrl(headers: Record<string, string>): Promise<string> {
+    authMock.mockResolvedValue({ userId: "user:origin@x.com" });
+    parentMock.mockResolvedValue("user:origin@x.com");
+    const id = `org-${Math.random().toString(36).slice(2, 8)}`;
+    await onePUT(makeReq({ body: { convo: convo(id) } }), { params: { id } });
+    const req = {
+      json: async () => ({}),
+      nextUrl: { searchParams: new URLSearchParams(), origin: "http://localhost:3001" },
+      cookies: { get: () => undefined },
+      headers: new Headers(headers),
+    } as unknown as NextRequest;
+    return (await (await sharePOST(req, { params: { id } })).json()).url as string;
+  }
+
+  it("S.7 x-forwarded-host + proto win over the internal origin", async () => {
+    const url = await mintUrl({ host: "localhost:3001", "x-forwarded-host": "games-lab.ariantra.com", "x-forwarded-proto": "https" });
+    expect(url).toMatch(/^https:\/\/games-lab\.ariantra\.com\/share\/chat\/[0-9a-f]{32}$/);
+  });
+
+  it("S.8 with only a localhost host header, production falls back to the canonical host — localhost NEVER leaks", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    try {
+      const url = await mintUrl({ host: "localhost:3001" });
+      expect(url).toMatch(/^https:\/\/games-lab\.ariantra\.com\/share\/chat\//);
+      expect(url).not.toContain("localhost");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

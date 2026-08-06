@@ -5,7 +5,8 @@
 // studio / Ari (renamed from "kidgemini" 2026-07-17). Header-only rebrand:
 // the kid-styled interior is untouched.
 //
-// Canonical menu (2026-07-11: Skills added, mirrors the platform's nav-links.ts):
+// Canonical menu (2026-08-06: landing's parent-language labels win, owner
+// decision — mirrors the platform's nav-links.ts):
 //   Skills · Games · Games-Lab(active) · How it works · Videos · Studio · [Log in] · [Book CTA]
 // "Games-Lab" (not "Ari") is the label here deliberately — "Ari" is the
 // in-app AI-buddy PERSONA (chat identity, unchanged everywhere else — logo,
@@ -83,8 +84,8 @@ export function ArNav() {
           </a>
           <nav className="ar-nav-links">
             {/* Landing anchor — always prod, like #how/#videos below. */}
-            <a href="https://ariantra.com/#skills" className="ar-link">Skills</a>
-            <a href={GAMES_URL} className="ar-link">Games</a>
+            <a href="https://ariantra.com/#skills" className="ar-link">What they learn</a>
+            <a href={GAMES_URL} className="ar-link">Games by kids</a>
             <a href="/" className="ar-link on">Games-Lab</a>
             {/* Ari-local (not in the canonical platform menu): the kid's
                 Sparks wallet only exists on this app, and only means
@@ -93,6 +94,7 @@ export function ArNav() {
               <a href="/wallet" className="ar-link">⚡ Sparks</a>
             )}
             <a href={`${WWW_URL}/#how`} className="ar-link">How it works</a>
+            <a href={`${WWW_URL}/pricing.html`} className="ar-link">Pricing</a>
             <a href={`${WWW_URL}/#videos`} className="ar-link">Videos</a>
             <a href={STUDIO_URL} className="ar-link">Studio</a>
             {status !== "authenticated" && (
@@ -107,7 +109,7 @@ export function ArNav() {
           </nav>
           <div className="ar-nav-right">
             <a href={CREATE_URL} className="ar-cta">
-              Create your first game
+              Start their first game — free
             </a>
             {status !== "authenticated" && (
               <a
@@ -174,13 +176,14 @@ export function ArNav() {
             {/* Same link set as .ar-nav-links (desktop) — mobile never shows
                 that menu, so this is the only place these links exist there. */}
             <nav className="ar-nav-sheet-links" aria-label="Ariantra">
-              <a href="https://ariantra.com/#skills" className="ar-link" onClick={() => setMobileSheetOpen(false)}>Skills</a>
-              <a href={GAMES_URL} className="ar-link" onClick={() => setMobileSheetOpen(false)}>Games</a>
+              <a href="https://ariantra.com/#skills" className="ar-link" onClick={() => setMobileSheetOpen(false)}>What they learn</a>
+              <a href={GAMES_URL} className="ar-link" onClick={() => setMobileSheetOpen(false)}>Games by kids</a>
               <a href="/" className="ar-link on" onClick={() => setMobileSheetOpen(false)}>Games-Lab</a>
               {status === "authenticated" && (
                 <a href="/wallet" className="ar-link" onClick={() => setMobileSheetOpen(false)}>⚡ Sparks</a>
               )}
               <a href={`${WWW_URL}/#how`} className="ar-link" onClick={() => setMobileSheetOpen(false)}>How it works</a>
+              <a href={`${WWW_URL}/pricing.html`} className="ar-link" onClick={() => setMobileSheetOpen(false)}>Pricing</a>
               <a href={`${WWW_URL}/#videos`} className="ar-link" onClick={() => setMobileSheetOpen(false)}>Videos</a>
               <a href={STUDIO_URL} className="ar-link" onClick={() => setMobileSheetOpen(false)}>Studio</a>
               {status !== "authenticated" && (

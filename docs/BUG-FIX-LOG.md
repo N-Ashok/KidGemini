@@ -11,6 +11,30 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-06 — Share sheet handed out https://localhost:3001/share/chat/… in production
+
+- **Symptom:** owner UAT, minutes after the share feature deployed — the ShareChat sheet showed a
+  link with a `localhost:3001` origin on the live site. Forwarding it to anyone off the box would
+  have been a dead link.
+- **Root cause:** `share/route.ts` built the URL from `req.nextUrl.origin`. Behind the Caddy
+  reverse proxy, Next's view of the request origin is the box-INTERNAL one (`localhost:3001`),
+  not the public host — same proxy-blindness family as BUG_LOG #44 on the platform side
+  (Next's own header stamping vs what the proxy actually sends). Never surfaced in tests because
+  the mocked request's `nextUrl.origin` was set to the public host.
+- **Fix:** new `publicOrigin()` in the share route — `x-forwarded-host` (then `host`) +
+  `x-forwarded-proto` win; a localhost-ish host in production falls back to the hardcoded
+  canonical origin (`https://games-lab.ariantra.com`, same value as layout.tsx's `metadataBase`)
+  so an internal origin can never leak into a kid-forwarded link; dev keeps `nextUrl.origin`
+  (localhost is genuinely correct there).
+- **Verified:** regression tests S.7 (forwarded headers win over an internal origin) and S.8
+  (production + localhost-only host → canonical, asserts `not.toContain("localhost")`), written
+  failing-first; suite + typecheck green.
+- **Class note:** any OTHER absolute-self-URL built server-side has the same exposure —
+  `metadataBase` is static (fine); nothing else in the repo used `nextUrl.origin` for outbound
+  links at the time of this fix (grepped).
+
+---
+
 ## 2026-08-06 — Slowdown banner fired on games that weren't being played at all (unstarted preview, idle multiplayer lobby)
 
 - **Symptom:** owner report — "when we don't play a multiplayer game or when we don't start a game

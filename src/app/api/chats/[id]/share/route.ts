@@ -22,8 +22,26 @@ interface IdParams {
   params: { id: string };
 }
 
+/** The app's canonical public origin — same value as layout.tsx's
+ *  metadataBase. Fallback of last resort below, never the first choice. */
+const CANONICAL_ORIGIN = "https://games-lab.ariantra.com";
+
+/** Owner UAT 2026-08-06: req.nextUrl.origin behind the Caddy reverse proxy is
+ *  the box-INTERNAL origin — the live sheet handed out
+ *  https://localhost:3001/share/chat/… . Build the public URL from the
+ *  forwarded headers instead; if nothing trustworthy arrived (only a
+ *  localhost-ish host), production falls back to the canonical host so an
+ *  internal origin can never leak into a link a kid forwards. Dev keeps
+ *  localhost — that's genuinely where the page is. */
+function publicOrigin(req: NextRequest): string {
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "";
+  const proto = req.headers.get("x-forwarded-proto") ?? "https";
+  if (host && !/^(localhost|127\.)/i.test(host)) return `${proto}://${host}`;
+  return process.env.NODE_ENV === "production" ? CANONICAL_ORIGIN : req.nextUrl.origin;
+}
+
 function shareUrl(req: NextRequest, token: string): string {
-  return `${req.nextUrl.origin}/share/chat/${token}`;
+  return `${publicOrigin(req)}/share/chat/${token}`;
 }
 
 export async function POST(req: NextRequest, { params }: IdParams) {
