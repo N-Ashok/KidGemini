@@ -155,6 +155,13 @@ describe("modelsPromptSection — the catalog version-locks with the manifest (P
     expect(section).toContain("animations[0]"); // still the LAST-resort fallback, not the first choice
   });
 
+  it("warns that name lookups on rigid models silently find NOTHING (2026-08-06: helicopter rotor — the GLB is one mesh named 'Cube', so traverse(/rotor|blade|prop/) matched nothing, the spin loop ran over an empty array, and Ari claimed success for turns in a row)", () => {
+    expect(section).toMatch(/no\s+named\s+parts/i);
+    expect(section).toMatch(/finds?\s+nothing|matches?\s+nothing/i);
+    expect(section).toMatch(/silent/i); // the failure mode: a no-op, not an error
+    expect(section).toMatch(/you\s+add/i); // the only spinnable parts are ones YOU add
+  });
+
   it("is empty when the manifest has no models (nothing to teach, zero tokens)", () => {
     expect(modelsPromptSection({ assets: [fakeModels.assets[0]!] })).toBe("");
   });
@@ -233,6 +240,12 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // the documented revisit the PRD demanded (measured by this test during
     // implementation, not assumed). Model NAMES still dominate the section;
     // an accidental bulk import still trips this.
+    // Raised 2300 → 2350 (2026-08-06, BUG-FIX-LOG rotor no-op): rule 7 now
+    // states that rigid models have NO named parts and a name lookup is a
+    // silent no-op — verified against the live helicopter GLB (one mesh,
+    // "Cube") and a real stored game whose traverse(/rotor|blade|prop/)
+    // matched nothing while Ari claimed success. ~40 tokens of fault-driven
+    // teaching, not catalog creep. Measured 2334.
     // Raised 1900 → 2100 (2026-08-05, TECH_DEBT #87 follow-up — model-rig
     // audit, verified against the actual staged GLBs): the "people"/"soldier"
     // clauses gained held-prop guidance (parent to the arm/lower-arm bone,
@@ -249,7 +262,7 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // re-implemented by the model), not catalog creep. Measured ~2179 during
     // implementation. The category-map hybrid fallback the section doc
     // promises is the next step if a batch pushes past this line.
-    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_300);
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_350);
   });
 });
 

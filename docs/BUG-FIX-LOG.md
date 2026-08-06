@@ -11,6 +11,34 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-06 — "The rotor blade is not running": spinning parts looked up by name that no library model has
+
+- **Symptom:** owner UAT (Sky Patrol helicopter, prod) — kid asked repeatedly for the rotor
+  blades to spin; Ari answered "all the rotor blades, including the tail propeller, spin super
+  fast!" each time, and nothing on screen moved.
+- **Root cause:** read from the REAL artifacts, not theorized. The server's 24h `turn_results`
+  cache held the actual patched game: it collects spin targets via
+  `m.traverse(c => /rotor|blade|prop/i.test(c.name))`. The live helicopter GLB
+  (`helicopter.38b1ea.glb`, parsed directly) contains exactly two nodes — `RootNode` and a single
+  mesh named `Cube`. No rotor, no bones, no clips. The name match finds nothing, the spin loop
+  runs over an empty array, and nothing errors — a **silent no-op**, so every edit "succeeded".
+  Catalog rule 7 already said to ADD a primitive rotor on rigid meshes (naming the helicopter!),
+  but it also demonstrates name lookups for boned models, and Gemini kept betting on the lookup —
+  it cannot see at codegen time that the lookup will match nothing.
+- **Fix:** rule 7 (`prompt-catalog.ts`) now states the fact the model kept guessing wrong about:
+  rigid models have NO named parts — a name search finds nothing and the spin is a silent no-op;
+  the only spinnable parts are ones you add. Pinned by a failing-first test in
+  `prompt-catalog.test.ts`. Ceiling raised 2300 → 2350 from the measured value (2334) —
+  owner-approved exception to TECH_DEBT #89, recorded there (fault-driven teaching, not an asset
+  batch; the category-map hybrid stays the plan for the next batch).
+- **Verified:** owner pasted the equivalent instruction ("no parts named rotor — add your own
+  crossed thin boxes and spin those") into the live chat BEFORE the prompt change shipped, and the
+  rotor spun on the next edit — the wording is live-validated, not hoped.
+- **Class note:** same family as the sideways bike (below): when Ari repeatedly "fixes" a visual
+  with no effect, suspect an asset property the LLM cannot see (rest orientation, node names,
+  rig). The catalog must state what models DON'T have, not just what they have — absence is
+  invisible in a prompt that only lists presence.
+
 ## 2026-08-06 — The black bike drove sideways no matter what the model "fixed": asset authored 90° off the facing convention
 
 - **Symptom:** owner UAT (Sky Patrol, right after the AR_ASSETS fix made the bikes visible) — one

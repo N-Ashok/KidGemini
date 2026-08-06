@@ -199,7 +199,9 @@ ${categories}
    yourself: oscillate rotation with a sine wave keyed to time/speed, ease to
    rest when still. If it's a single RIGID mesh (vehicles, the helicopter),
    add your OWN thin primitive (a wheel/rotor) parented onto it and spin
-   that instead.${people.length ? `
+   that instead. Rigid models have NO named parts: a name search
+   (\`getObjectByName\`/\`traverse\`) finds nothing and your spin is a silent
+   no-op — the only spinnable parts are ones you add.${people.length ? `
    The people models (${people.join(", ")}) all share the same clips: idle,
    walk, sprint (= run), sit, drive, pick-up, interact-right/left, die, and
    emote-yes / emote-no. For a cheering stadium crowd, sit or stand them on
