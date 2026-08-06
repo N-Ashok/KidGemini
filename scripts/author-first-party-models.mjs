@@ -694,6 +694,248 @@ function marble() { return uvSphere(0.008, MARBLE_CLEAR); }
 function marbleBlue() { return uvSphere(0.008, MARBLE_BLUE); }
 function marbleGreen() { return uvSphere(0.008, MARBLE_GREEN); }
 
+// ── motorcycles (2026-08-06 batch — docs/2026-08-06_PRD_MotorcycleAssets.md) ─
+// The CC0 pool holds exactly ONE motorcycle (poly.pizza /m/j20srJUjpB, vendored
+// as `motorcycle` in vendor-models.mjs); every other two-wheeler on poly.pizza
+// is CC-BY 3.0, and Kenney/Quaternius publish none. Same remedy as
+// cricket/Indian games: first-party, dedicated CC0 (assets-src/LICENSE.md).
+//
+// One parameterized skeleton, ten reads. Convention: forward = +Z, up = +Y,
+// bike symmetric about x = 0, ground at y = 0 — wheels rotate about X, matching
+// how a kid's game drives the Kenney cars (move position, yaw about Y).
+
+const TIRE = [0.13, 0.13, 0.15];
+const RIM = [0.72, 0.73, 0.76];
+const ENGINE_GRAY = [0.42, 0.43, 0.47];
+const CHROME = [0.80, 0.81, 0.85];
+const SEAT_BLACK = [0.16, 0.16, 0.19];
+const HEADLIGHT = [0.98, 0.95, 0.80];
+const TAILLIGHT = [0.85, 0.15, 0.12];
+const SPORT_RED = [0.82, 0.14, 0.16];
+const RACE_GREEN = [0.16, 0.62, 0.30];
+const PLATE_WHITE = [0.95, 0.95, 0.93];
+const DIRT_ORANGE = [0.92, 0.45, 0.10];
+const CRUISER_BLUE = [0.14, 0.25, 0.52];
+const CHOPPER_BLACK = [0.10, 0.10, 0.12];
+const POLICE_WHITE = [0.93, 0.94, 0.95];
+const POLICE_BLUE = [0.12, 0.25, 0.60];
+const LIGHT_RED = [0.90, 0.12, 0.10];
+const LIGHT_BLUE = [0.15, 0.35, 0.95];
+const SCOOTER_TEAL = [0.10, 0.55, 0.55];
+const MOPED_CREAM = [0.91, 0.86, 0.72];
+const DELIVERY_ORANGE = [0.95, 0.52, 0.08];
+const BOX_BROWN = [0.62, 0.45, 0.28];
+const MINI_YELLOW = [0.95, 0.78, 0.12];
+const WINDSHIELD = [0.72, 0.83, 0.90];
+
+/** Box tilted about the X axis (the only rotation a bike profile needs —
+ *  forks, frame beams and windshields all lean in the YZ plane). tilt > 0
+ *  leans the top toward +Z (forward). */
+function tiltBox(b, cx, cy, cz, sx, sy, sz, tilt, color) {
+  const [x, y, z] = [sx / 2, sy / 2, sz / 2];
+  const [cs, sn] = [Math.cos(tilt), Math.sin(tilt)];
+  const p = (dx, dy, dz) => {
+    const [oy, oz] = [dy * y, dz * z];
+    return [cx + dx * x, cy + oy * cs - oz * sn, cz + oy * sn + oz * cs];
+  };
+  const faces = [
+    [p(-1, -1, 1), p(1, -1, 1), p(1, 1, 1), p(-1, 1, 1)],
+    [p(1, -1, -1), p(-1, -1, -1), p(-1, 1, -1), p(1, 1, -1)],
+    [p(1, -1, 1), p(1, -1, -1), p(1, 1, -1), p(1, 1, 1)],
+    [p(-1, -1, -1), p(-1, -1, 1), p(-1, 1, 1), p(-1, 1, -1)],
+    [p(-1, 1, 1), p(1, 1, 1), p(1, 1, -1), p(-1, 1, -1)],
+    [p(-1, -1, -1), p(1, -1, -1), p(1, -1, 1), p(-1, -1, 1)],
+  ];
+  for (const f of faces) b.poly(f, color);
+}
+
+/** Box strut whose long axis runs from (y0,z0) to (y1,z1) in the YZ plane at
+ *  lateral offset x — forks, frame beams and aprons are all strut calls.
+ *  tiltBox rotates +Z onto (−sin t, cos t) in YZ, so t = atan2(−dy, dz). */
+function strut(b, x, [y0, z0], [y1, z1], sx, thick, color, overlap = 0.06) {
+  const [dy, dz] = [y1 - y0, z1 - z0];
+  const len = Math.hypot(dy, dz) + overlap;
+  tiltBox(b, x, (y0 + y1) / 2, (z0 + z1) / 2, sx, thick, len, Math.atan2(-dy, dz), color);
+}
+
+/** Wheel on the X axle at (0, cy, cz): tire tread band + side walls + hub
+ *  discs. seg 14 reads road-smooth; seg 8 reads knobby (dirt/mini). */
+function wheel(b, cy, cz, r, w, seg = 14) {
+  const rim = (x, out) => {
+    const pts = [];
+    for (let i = 0; i < seg; i++) {
+      const a = (i / seg) * Math.PI * 2;
+      pts.push([x, cy + r * Math.cos(a), cz + r * Math.sin(a)]);
+    }
+    return orient(pts, out);
+  };
+  b.poly(rim(w / 2, [1, 0, 0]), TIRE);
+  b.poly(rim(-w / 2, [-1, 0, 0]), TIRE);
+  for (let i = 0; i < seg; i++) {
+    const [a0, a1] = [(i / seg) * Math.PI * 2, ((i + 1) / seg) * Math.PI * 2];
+    const e = (a, x) => [x, cy + r * Math.cos(a), cz + r * Math.sin(a)];
+    b.poly(orient([e(a0, w / 2), e(a0, -w / 2), e(a1, -w / 2), e(a1, w / 2)],
+      [0, Math.cos((a0 + a1) / 2), Math.sin((a0 + a1) / 2)]), TIRE);
+  }
+  const hr = r * 0.45, hw = w / 2 + 0.012;
+  const hub = (x, out) => {
+    const pts = [];
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      pts.push([x, cy + hr * Math.cos(a), cz + hr * Math.sin(a)]);
+    }
+    return orient(pts, out);
+  };
+  b.poly(hub(hw, [1, 0, 0]), RIM);
+  b.poly(hub(-hw, [-1, 0, 0]), RIM);
+}
+
+/** The shared motorcycle skeleton. Every dimension a variant needs to change
+ *  is a named option; `extras(b, o)` adds the variant's signature pieces. */
+function motorcycleBase(opts) {
+  const o = {
+    wheelR: 0.30, wheelW: 0.10, rearZ: -0.62, frontZ: 0.62, seg: 14,
+    forkTilt: 0.42,          // rake, radians about X
+    barY: 0.98,              // handlebar height
+    seatY: 0.72, seatZ: -0.32, seatLen: 0.42,
+    tankY: 0.80, tankZ: 0.12,
+    body: SPORT_RED, hasEngine: true, hasTank: true,
+    ...opts,
+  };
+  const b = meshBuilder();
+  wheel(b, o.wheelR, o.rearZ, o.wheelR, o.wheelW, o.seg);
+  wheel(b, o.wheelR, o.frontZ, o.wheelR, o.wheelW, o.seg);
+
+  // Front fork: twin legs from the steering head down to the front axle.
+  const headY = o.barY - 0.10;
+  const headZ = o.frontZ - Math.tan(o.forkTilt) * (headY - o.wheelR);
+  for (const x of [-0.05, 0.05]) {
+    strut(b, x, [o.wheelR, o.frontZ], [headY, headZ], 0.04, 0.05, CHROME);
+  }
+  // Handlebar: crossbar + grips.
+  b.box(0, o.barY, headZ - 0.02, 0.46, 0.045, 0.05, ENGINE_GRAY);
+  b.box(-0.23, o.barY + 0.01, headZ - 0.02, 0.09, 0.055, 0.055, SEAT_BLACK);
+  b.box(0.23, o.barY + 0.01, headZ - 0.02, 0.09, 0.055, 0.055, SEAT_BLACK);
+  // Headlight on the steering head.
+  b.box(0, headY, headZ + 0.10, 0.14, 0.14, 0.06, HEADLIGHT);
+
+  // Main frame beam: rear axle up to the steering head.
+  strut(b, 0, [o.wheelR + 0.16, o.rearZ], [headY - 0.04, headZ - 0.02], 0.10, 0.10, o.body);
+
+  // Engine, tank, seat, rear fender, tail light, exhaust — all scaled to the
+  // wheelbase so a small bike keeps small organs (the mini_bike's full-size
+  // engine block swallowed its rear wheel on the first render pass).
+  const s = (o.frontZ - o.rearZ) / 1.24;
+  if (o.hasEngine) b.box(0, o.wheelR + 0.06 * s, (o.rearZ + o.frontZ) / 2, 0.20 * s, 0.24 * s, 0.34 * s, ENGINE_GRAY);
+  if (o.hasTank) b.box(0, o.tankY, o.tankZ, 0.20, 0.16, 0.36 * s, o.body);
+  b.box(0, o.seatY, o.seatZ, 0.20, 0.07, o.seatLen, SEAT_BLACK);
+  b.box(0, o.wheelR + 0.14, o.rearZ - 0.05, 0.14, 0.05, 0.34 * s, o.body);
+  b.box(0, o.wheelR + 0.17, o.rearZ - 0.20 * s, 0.10, 0.05, 0.05, TAILLIGHT);
+  b.box(0.12, o.wheelR - 0.02, (o.rearZ + o.frontZ) / 2 - 0.1 * s, 0.07, 0.07, 0.55 * s, CHROME);
+  // Kickstand-ish rear swingarm hint.
+  b.box(0, o.wheelR, o.rearZ / 2, 0.06, 0.06, -o.rearZ, ENGINE_GRAY);
+
+  if (o.extras) o.extras(b, o, { headY, headZ });
+  return b.build();
+}
+
+/** Step-through body (scooter/moped/delivery): no exposed engine or tank —
+ *  floorboard, front apron and an under-seat tail instead. */
+function scooterBase(opts) {
+  const o = {
+    wheelR: 0.19, wheelW: 0.09, rearZ: -0.45, frontZ: 0.45, seg: 14,
+    forkTilt: 0.20, barY: 0.92, seatY: 0.70, seatZ: -0.25, seatLen: 0.34,
+    body: SCOOTER_TEAL, hasEngine: false, hasTank: false,
+    ...opts,
+  };
+  return motorcycleBase({
+    ...o,
+    extras(b, oo, ctx) {
+      b.box(0, oo.wheelR + 0.05, 0.02, 0.26, 0.06, 0.5, oo.body);            // floorboard
+      strut(b, 0, [oo.wheelR + 0.06, 0.25], [ctx.headY - 0.04, ctx.headZ + 0.08], 0.26, 0.06, oo.body); // apron
+      b.box(0, oo.seatY - 0.10, oo.seatZ, 0.24, 0.14, oo.seatLen + 0.06, oo.body); // under-seat tail
+      if (o.moreExtras) o.moreExtras(b, oo, ctx);
+    },
+  });
+}
+
+const MOTORCYCLES = {
+  sport_bike: () => motorcycleBase({
+    body: SPORT_RED, barY: 0.90, forkTilt: 0.36,
+    extras(b, o, { headY, headZ }) {
+      // Fairing wedge over the front + low windscreen.
+      tiltBox(b, 0, headY - 0.12, headZ + 0.16, 0.24, 0.30, 0.10, 0.55, o.body);
+      tiltBox(b, 0, headY + 0.08, headZ + 0.10, 0.20, 0.14, 0.03, 0.6, WINDSHIELD);
+    },
+  }),
+  race_bike: () => motorcycleBase({
+    body: RACE_GREEN, barY: 0.88, forkTilt: 0.36,
+    extras(b, o, { headY, headZ }) {
+      tiltBox(b, 0, headY - 0.12, headZ + 0.16, 0.24, 0.30, 0.10, 0.55, o.body);
+      tiltBox(b, 0, headY + 0.07, headZ + 0.10, 0.20, 0.12, 0.03, 0.6, WINDSHIELD);
+      // Number plate: white board on the nose (the racing read).
+      tiltBox(b, 0, headY - 0.10, headZ + 0.22, 0.16, 0.16, 0.02, 0.55, PLATE_WHITE);
+    },
+  }),
+  dirt_bike: () => motorcycleBase({
+    body: DIRT_ORANGE, wheelR: 0.32, wheelW: 0.11, seg: 8, barY: 1.05,
+    seatY: 0.82, tankY: 0.88, forkTilt: 0.30,
+    extras(b, o, { headY, headZ }) {
+      // High mudguards well clear of the knobby wheels.
+      tiltBox(b, 0, o.wheelR + 0.24, o.frontZ + 0.05, 0.16, 0.04, 0.42, 0.15, o.body);
+      b.box(0, o.seatY + 0.02, o.rearZ + 0.02, 0.15, 0.05, 0.40, o.body);
+    },
+  }),
+  cruiser_bike: () => motorcycleBase({
+    body: CRUISER_BLUE, wheelR: 0.28, wheelW: 0.12, rearZ: -0.68, frontZ: 0.68,
+    barY: 1.02, seatY: 0.62, seatZ: -0.30, seatLen: 0.50, tankY: 0.72,
+    extras(b, o) {
+      // Deep rear fender hugging the wheel + twin chrome pipes.
+      b.box(0, o.wheelR + 0.20, o.rearZ, 0.16, 0.08, 0.44, o.body);
+      b.box(-0.12, o.wheelR - 0.02, -0.15, 0.07, 0.07, 0.6, CHROME);
+    },
+  }),
+  chopper_bike: () => motorcycleBase({
+    body: CHOPPER_BLACK, frontZ: 0.85, rearZ: -0.55, forkTilt: 0.72,
+    barY: 1.15, seatY: 0.58, seatZ: -0.28, tankY: 0.68, tankZ: -0.02,
+    extras(b, o, { headZ }) {
+      // Ape-hanger risers: the tall twin bars ARE the chopper silhouette.
+      for (const x of [-0.16, 0.16]) b.box(x, o.barY - 0.14, headZ - 0.02, 0.045, 0.30, 0.045, CHROME);
+    },
+  }),
+  police_bike: () => motorcycleBase({
+    body: POLICE_WHITE, barY: 1.0,
+    extras(b, o, { headY, headZ }) {
+      b.box(0, o.tankY + 0.02, o.tankZ, 0.22, 0.06, 0.38, POLICE_BLUE);      // tank stripe
+      tiltBox(b, 0, headY + 0.16, headZ + 0.04, 0.30, 0.26, 0.03, 0.25, WINDSHIELD);
+      b.box(-0.06, o.barY + 0.08, headZ - 0.02, 0.1, 0.06, 0.06, LIGHT_RED); // light bar
+      b.box(0.06, o.barY + 0.08, headZ - 0.02, 0.1, 0.06, 0.06, LIGHT_BLUE);
+      for (const x of [-0.17, 0.17]) b.box(x, o.seatY - 0.14, o.rearZ + 0.05, 0.12, 0.20, 0.30, POLICE_WHITE); // panniers
+    },
+  }),
+  scooter: () => scooterBase({ body: SCOOTER_TEAL }),
+  moped: () => scooterBase({
+    body: MOPED_CREAM, wheelR: 0.23, wheelW: 0.06, rearZ: -0.52, frontZ: 0.52,
+    moreExtras(b) {
+      // Pedals on a crank — the moped-not-scooter read.
+      b.box(-0.14, 0.16, 0.06, 0.05, 0.03, 0.10, ENGINE_GRAY);
+      b.box(0.14, 0.16, -0.02, 0.05, 0.03, 0.10, ENGINE_GRAY);
+    },
+  }),
+  delivery_bike: () => scooterBase({
+    body: DELIVERY_ORANGE,
+    moreExtras(b, o) {
+      // The big top-box IS the delivery read.
+      b.box(0, o.seatY + 0.16, o.rearZ - 0.06, 0.34, 0.32, 0.34, BOX_BROWN);
+    },
+  }),
+  mini_bike: () => motorcycleBase({
+    body: MINI_YELLOW, wheelR: 0.16, wheelW: 0.12, seg: 8,
+    rearZ: -0.34, frontZ: 0.34, barY: 0.78, seatY: 0.48, seatZ: -0.16,
+    seatLen: 0.28, tankY: 0.54, tankZ: 0.04, forkTilt: 0.25,
+  }),
+};
+
 /** Kenney character-b re-skinned into the new "kabaddi" kit — shared verbatim
  *  by kho_kho_player too (PRD: both sports read as the same sleeveless-vest
  *  silhouette, so no separate kit is needed). Factored out of
@@ -758,5 +1000,7 @@ await writeGlb('marble_blue', marbleBlue());
 await writeGlb('marble_green', marbleGreen());
 await buildReskin('kabaddi_player', 'kabaddi');
 await buildReskin('kho_kho_player', 'kabaddi');
+
+for (const [name, build] of Object.entries(MOTORCYCLES)) await writeGlb(name, build());
 
 console.log('✓ all first-party sources written — run scripts/vendor-models.mjs next');

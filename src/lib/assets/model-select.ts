@@ -56,7 +56,12 @@ export const GENRES: readonly GenreDef[] = [
   {
     id: "racing",
     label: "racing / driving",
-    trigger: /\b(rac(e|ing|er)|driv(e|ing)|cars?|trucks?|police|taxis?|tractors?|ambulances?|chase|track|go-?karts?)\b/i,
+    // Motorcycle words added 2026-08-06 (docs/2026-08-06_PRD_MotorcycleAssets.md).
+    // "bike"/"bikes" deliberately included: kids call motorcycles "bikes", and
+    // the racing set is the right destination for a bicycle ask too (closest
+    // thing the library has).
+    // Road/highway words added with the roads batch (2026-08-06).
+    trigger: /\b(rac(e|ing|er)|driv(e|ing)|cars?|trucks?|police|taxis?|tractors?|ambulances?|chase|track|go-?karts?|motor\s?cycles?|motor\s?bikes?|bikes?|bikers?|scooters?|scooty|mopeds?|stunts?|wheelies?|roads?|highways?|flyovers?|ramps?)\b/i,
   },
   {
     id: "platformer",
@@ -66,7 +71,8 @@ export const GENRES: readonly GenreDef[] = [
   {
     id: "space",
     label: "space / flying",
-    trigger: /\b(space(ship)?|rockets?|aliens?|planets?|fly(ing)?|jets?|planes?|helicopters?|ufos?|galaxy|stars?)\b/i,
+    // airport/runway/airplane words added with the jets batch (2026-08-06).
+    trigger: /\b(space(ship)?|rockets?|aliens?|planets?|fly(ing)?|jets?|planes?|helicopters?|ufos?|galaxy|stars?|air(planes?|crafts?|ports?|force)|aeroplanes?|runways?|pilots?)\b/i,
   },
   {
     id: "animals",
@@ -81,7 +87,9 @@ export const GENRES: readonly GenreDef[] = [
   {
     id: "city",
     label: "city",
-    trigger: /\b(city|cities|town|buildings?|skyscrapers?|streets?|traffic|apartments?|shops?|offices?)\b/i,
+    // "bridge(s)" added with the bridges batch (2026-08-06): kids say "bridge
+    // game" with no other city word, and the city set holds the bridges.
+    trigger: /\b(city|cities|town|buildings?|skyscrapers?|streets?|traffic|apartments?|shops?|offices?|bridges?|flyovers?)\b/i,
   },
   {
     id: "nature",

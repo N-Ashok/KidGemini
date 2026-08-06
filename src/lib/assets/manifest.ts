@@ -17,11 +17,20 @@ export interface AssetEntry {
   /** Immutable public URL: {ASSET_HOST_ORIGIN}/{name}.{sha256[0:6]}.{ext} */
   url: string;
   bytes: number;
-  /** Library assets (model/sfx/music) are CC0-only — zero licensing risk
-   *  (PRD §2.6). The engine is the one exception: three.js is MIT, whose
-   *  notice ships inside the bundle (esbuild legal comments). */
-  license: "CC0" | "MIT";
-  /** Where the asset came from — the license proof trail. */
+  /** Library assets prefer CC0 (zero obligations — PRD §2.6). Owner decision
+   *  2026-08-06 (motorcycle batch): MODELS may also be CC-BY 3.0, because the
+   *  platform now discharges the attribution duty mechanically — inject.ts
+   *  bakes an art-credits chip into every game that uses a CC-BY model, and
+   *  the gallery + prompt catalog show the credit while making. The engine is
+   *  the other exception: three.js is MIT, whose notice ships inside the
+   *  bundle (esbuild legal comments). sfx/music stay CC0-only until the chip
+   *  covers audio too. */
+  license: "CC0" | "MIT" | "CC-BY-3.0";
+  /** Creator display name — REQUIRED for CC-BY entries (it IS the credit
+   *  line); omitted for CC0/MIT. */
+  author?: string;
+  /** Where the asset came from — the license proof trail, and for CC-BY the
+   *  link target of the credit line. */
   sourceUrl: string;
   /** Full sha256 (hex) of the exact published bytes. */
   sha256: string;
@@ -101,9 +110,15 @@ export function validateEntry(e: AssetEntry): void {
     );
   }
   if (!(e.type in BUDGET_BYTES)) throw new Error(`unknown asset type "${e.type}" for "${e.name}"`);
-  const allowedLicense = e.type === "engine" ? ["CC0", "MIT"] : ["CC0"];
+  const allowedLicense =
+    e.type === "engine" ? ["CC0", "MIT"] : e.type === "model" ? ["CC0", "CC-BY-3.0"] : ["CC0"];
   if (!allowedLicense.includes(e.license)) {
     throw new Error(`license must be ${allowedLicense.join(" or ")} for ${e.type} "${e.name}" (got "${e.license}")`);
+  }
+  if (e.license === "CC-BY-3.0" && !(e.author ?? "").trim()) {
+    throw new Error(
+      `CC-BY model "${e.name}" needs an author — the credits chip (inject.ts) has no name to show without it`,
+    );
   }
   if (!SHA256_RE.test(e.sha256)) throw new Error(`malformed sha256 for "${e.name}"`);
   if (!Number.isInteger(e.bytes) || e.bytes <= 0) throw new Error(`bytes must be a positive integer for "${e.name}"`);

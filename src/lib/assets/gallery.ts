@@ -15,6 +15,9 @@ export interface GalleryCard {
   url: string;
   /** The phrase the card teaches — saying it in chat unlocks the asset. */
   trigger: string;
+  /** CC-BY entries only: the credit line the license requires, ready to
+   *  render ("by Zsky · CC BY 3.0"), and where it links. Absent for CC0. */
+  credit?: { author: string; sourceUrl: string; license: string };
 }
 
 const EMOJI: Record<string, string> = {
@@ -240,6 +243,42 @@ const EMOJI: Record<string, string> = {
   marble: "🔮",
   marble_blue: "🔵",
   marble_green: "🟢",
+
+  // Motorcycle batch (2026-08-06).
+  motorcycle: "🏍️",
+  sport_bike: "🏍️",
+  race_bike: "🏍️",
+  dirt_bike: "🏍️",
+  cruiser_bike: "🏍️",
+  chopper_bike: "🏍️",
+  police_bike: "🚨",
+  scooter: "🛵",
+  moped: "🛵",
+  delivery_bike: "📦",
+  mini_bike: "🏍️",
+  military_motorbike: "🪖",
+  street_motorcycle: "🏍️",
+
+  // Roads / bridges / jets batch (2026-08-06).
+  road_straight: "🛣️",
+  road_curve: "🛣️",
+  road_intersection: "🛣️",
+  road_crossing: "🚸",
+  road_roundabout: "🔄",
+  road_ramp: "🛣️",
+  road_bridge: "🌉",
+  bridge_pillar: "🏗️",
+  highway_sign: "🪧",
+  wooden_bridge: "🌉",
+  truss_bridge: "🌉",
+  suspension_bridge: "🌉",
+  elevated_road: "🌁",
+  fighter_jet: "🛩️",
+  // (`airplane` already has its ✈️ in the legacy rows above)
+  small_plane: "🛩️",
+  seaplane: "🛩️",
+  biplane: "🛩️",
+  private_jet: "✈️",
 };
 
 /** Every card gets a face — unknown names fall back to the toy box. */
@@ -294,6 +333,9 @@ export function galleryCards(manifest: AssetManifest = manifestJson as AssetMani
         // carries the "3d" free-tier trigger (§9) + the model's name. The
         // chat's build-turn gate treats a bare "3d …" phrase as a game ask.
         trigger: `3d ${plural(a.name.replace(/_/g, " "))}`,
+        ...(a.license === "CC-BY-3.0" && a.author
+          ? { credit: { author: a.author, sourceUrl: a.sourceUrl, license: "CC BY 3.0" } }
+          : {}),
       });
     } else if (a.type === "sfx" || a.type === "music") {
       sounds.push({

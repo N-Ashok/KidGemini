@@ -310,6 +310,45 @@ export const TAXONOMY: Record<string, TaxonomyEntry> = {
   marble_blue: { genres: ["indian_games"], tags: ["goli", "marbles", "glass", "blue"] },
   marble_green: { genres: ["indian_games"], tags: ["goli", "marbles", "glass", "green"] },
 
+  // Motorcycle batch (2026-08-06, docs/2026-08-06_PRD_MotorcycleAssets.md).
+  // "motorbike"/"motorcycle" tags ride on every bike whose name doesn't carry
+  // the word — a kid says "motorcycle game", not "cruiser_bike". No brand
+  // tags (vespa/harley), §4.2.
+  motorcycle: { genres: ["racing", "city"], tags: ["motorbike", "bike", "purple", "rider"] },
+  sport_bike: { genres: ["racing"], tags: ["motorcycle", "motorbike", "superbike", "fast"] },
+  race_bike: { genres: ["racing"], tags: ["motorcycle", "motorbike", "racer", "racing"] },
+  dirt_bike: { genres: ["racing", "nature"], tags: ["motorcycle", "motorbike", "motocross", "scrambler", "offroad", "stunt"] },
+  cruiser_bike: { genres: ["racing", "city"], tags: ["motorcycle", "motorbike", "cruiser", "highway"] },
+  chopper_bike: { genres: ["racing", "city"], tags: ["motorcycle", "motorbike", "chopper", "cool"] },
+  police_bike: { genres: ["racing", "city"], tags: ["motorcycle", "motorbike", "cop", "patrol", "siren", "emergency"] },
+  scooter: { genres: ["racing", "city"], tags: ["scooty", "motorbike", "moped"] },
+  moped: { genres: ["racing", "city"], tags: ["scooty", "scooter", "motorbike", "pedals"] },
+  delivery_bike: { genres: ["racing", "city"], tags: ["scooter", "courier", "delivery", "parcel", "pizza"] },
+  mini_bike: { genres: ["racing"], tags: ["motorcycle", "motorbike", "minibike", "small", "kids"] },
+  military_motorbike: { genres: ["military", "racing"], tags: ["motorcycle", "motorbike", "army", "soldier", "vintage"] },
+  street_motorcycle: { genres: ["racing", "city"], tags: ["motorbike", "bike", "night", "black"] },
+
+  // Roads / bridges / jets batch (2026-08-06, docs/2026-08-06_PRD_RoadsBridgesJets.md).
+  road_straight: { genres: ["racing", "city"], tags: ["road", "street", "highway", "tarmac"] },
+  road_curve: { genres: ["racing", "city"], tags: ["road", "street", "bend", "turn"] },
+  road_intersection: { genres: ["racing", "city"], tags: ["road", "junction", "crossroad"] },
+  road_crossing: { genres: ["racing", "city"], tags: ["road", "zebra", "crosswalk", "pedestrian"] },
+  road_roundabout: { genres: ["racing", "city"], tags: ["road", "circle", "junction"] },
+  road_ramp: { genres: ["racing", "city"], tags: ["road", "slope", "flyover", "incline", "stunt"] },
+  road_bridge: { genres: ["racing", "city"], tags: ["road", "overpass", "flyover", "skybridge"] },
+  bridge_pillar: { genres: ["racing", "city"], tags: ["pillar", "column", "support", "flyover"] },
+  highway_sign: { genres: ["racing", "city"], tags: ["sign", "board", "overhead", "highway"] },
+  wooden_bridge: { genres: ["nature", "castle"], tags: ["bridge", "wood", "river", "crossing"] },
+  truss_bridge: { genres: ["city", "racing"], tags: ["bridge", "iron", "metal", "river", "train"] },
+  suspension_bridge: { genres: ["city", "water"], tags: ["bridge", "long", "cable", "river", "golden"] },
+  elevated_road: { genres: ["city", "racing"], tags: ["skybridge", "flyover", "overpass", "highway", "bridge"] },
+  fighter_jet: { genres: ["space", "military"], tags: ["jet", "plane", "aircraft", "airforce", "fly"] },
+  airplane: { genres: ["space", "city"], tags: ["plane", "airliner", "aeroplane", "airport", "passenger", "fly"] },
+  small_plane: { genres: ["space", "nature"], tags: ["plane", "cessna", "propeller", "aeroplane", "fly"] },
+  seaplane: { genres: ["space", "water"], tags: ["plane", "floatplane", "propeller", "sea", "fly"] },
+  biplane: { genres: ["space"], tags: ["plane", "propeller", "vintage", "stunt", "fly"] },
+  private_jet: { genres: ["space", "city"], tags: ["jet", "plane", "aircraft", "rich", "fly"] },
+
   man: { genres: ["people", "city"], tags: ["guy", "dad", "father", "person", "human", "adult"], rig: "kenney_blocky" },
   woman: { genres: ["people", "city"], tags: ["lady", "mum", "mom", "mother", "person", "human", "adult"], rig: "kenney_blocky" },
   girl: { genres: ["people", "city"], tags: ["kid", "child", "daughter", "sister"], rig: "kenney_blocky" },

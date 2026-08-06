@@ -174,6 +174,15 @@ document.addEventListener("click", function (e) {
                   <p data-note className="mt-1 text-sm text-ink-700">
                     Say <b className="text-brand-700">“{c.trigger}”</b> to use this!
                   </p>
+                  {c.credit && (
+                    <p className="mt-1 text-xs text-ink-500">
+                      🎨 Art by{" "}
+                      <a href={c.credit.sourceUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                        {c.credit.author}
+                      </a>{" "}
+                      ({c.credit.license}) — your game will show this credit automatically.
+                    </p>
+                  )}
                   <button
                     type="button"
                     data-say={`Say: ${c.trigger}`}

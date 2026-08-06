@@ -89,13 +89,33 @@ describe("validateEntry — every field is load-bearing", () => {
     expect(() => validateEntry(bad)).toThrow(/bytes|budget/i);
   });
 
-  it("rejects any license but CC0 for library assets — zero licensing risk is a goal, not a preference", () => {
-    expect(() => validateEntry(entry({ license: "CC-BY" as never }))).toThrow(/license/i);
+  it("rejects unknown licenses for library assets", () => {
+    expect(() => validateEntry(entry({ license: "GPL" as never }))).toThrow(/license/i);
     // MIT is allowed ONLY for the engine (three.js ships its notice in-bundle)
     expect(() => validateEntry(entry({ license: "MIT" }))).toThrow(/license/i);
     expect(() =>
       validateEntry(entry({ type: "engine", url: `${ASSET_HOST_ORIGIN}/car.a3f8c2.js`, license: "MIT" })),
     ).not.toThrow();
+  });
+
+  // Owner decision 2026-08-06 (motorcycle batch): CC-BY 3.0 models are allowed
+  // WITH attribution wired in — `author` is the machine-checked half of that
+  // promise (inject.ts renders the credits chip from it; a CC-BY entry without
+  // an author would publish games whose credit line has no name to show).
+  it("accepts a CC-BY-3.0 MODEL only when it carries its author", () => {
+    expect(() =>
+      validateEntry(entry({ license: "CC-BY-3.0", author: "Zsky", sourceUrl: "https://poly.pizza/m/9SwnIlPjNv" })),
+    ).not.toThrow();
+    expect(() => validateEntry(entry({ license: "CC-BY-3.0" }))).toThrow(/author/i);
+    expect(() => validateEntry(entry({ license: "CC-BY-3.0", author: "  " }))).toThrow(/author/i);
+  });
+
+  it("keeps sfx/music CC0-only — the credits chip is a MODEL mechanism", () => {
+    expect(() =>
+      validateEntry(
+        entry({ type: "sfx", url: `${ASSET_HOST_ORIGIN}/car.a3f8c2.mp3`, bytes: 9_000, license: "CC-BY-3.0", author: "x" }),
+      ),
+    ).toThrow(/license/i);
   });
 
   it("rejects a URL off the asset host (the contract forbids third-party references)", () => {

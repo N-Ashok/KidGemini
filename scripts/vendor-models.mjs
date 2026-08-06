@@ -6,9 +6,12 @@
  * the box (§6 ①).
  *
  * Sources are pinned per model below with the license-proof URL (the Kenney
- * asset page or the poly.pizza model page whose license section shows CC0) —
- * `sourceUrl` in the manifest IS the proof trail (§4.4). CC0-only; the
- * manifest validators refuse anything else.
+ * asset page or the poly.pizza model page whose license section shows the
+ * license) — `sourceUrl` in the manifest IS the proof trail (§4.4). CC0 by
+ * default; since 2026-08-06 (owner decision, motorcycle batch) a model may
+ * carry `license: 'CC-BY-3.0'` + `author:` — the manifest validators then
+ * REQUIRE the author, and inject.ts bakes the credit chip into every game
+ * that uses it. sfx/music stay CC0-only.
  *
  * Compression: gltf-transform + meshoptimizer (EXT_meshopt_compression +
  * quantization) — the only way the animated dino fits the 100 KB model
@@ -34,7 +37,7 @@
  */
 
 import { S3Client, PutObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
-import { NodeIO } from '@gltf-transform/core';
+import { NodeIO, getBounds } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { dedup, prune, resample, simplify, meshopt, weld } from '@gltf-transform/functions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
@@ -700,6 +703,107 @@ const MODELS = [
     sourceUrl: 'https://kenney.nl/assets/blocky-characters',
     keepAnimations: ['static', 'idle', 'walk', 'sprint', 'sit', 'drive', 'die', 'pick-up', 'emote-yes', 'emote-no', 'interact-right', 'interact-left'],
   })),
+
+  // ── Motorcycle batch (2026-08-06, docs/2026-08-06_PRD_MotorcycleAssets.md).
+  // Owner ask: "at least 10 types of motorcycle meshes". A poly.pizza sweep
+  // (30 terms, 2026-08-06) found exactly ONE CC0 motorcycle in the whole pool
+  // (below); Kenney has no motorcycle kit, Quaternius' only "bike" is a
+  // bicycle, OpenGameArt's one CC0 hit is an untextured .blend/.obj. So:
+  // ten FIRST-PARTY bikes (author-first-party-models.mjs, dedicated CC0) +
+  // the one CC0 find + five CC-BY 3.0 picks under the NEW attribution wiring
+  // (owner decision, same day: "we can provide attribution" — license/author
+  // ride the manifest, inject.ts bakes the credit chip into any game using
+  // them). Rejected at the thumbnail pass: Suzuki SV650 (/m/1yfyze7uGxS) and
+  // Harley "Sportster" (/m/0CZY9yGxi6Y) — branded, §4.2; Speeder Bike
+  // (/m/1hTD6Jy384m) — Star Wars fan art; Vespa (/m/blGLclvvdEM) — brand-name
+  // design; Google-Poly chopper (/m/cFvmALDjMKw) — duplicates chopper_bike.
+  ...[
+    'sport_bike', 'race_bike', 'dirt_bike', 'cruiser_bike', 'chopper_bike',
+    'police_bike', 'scooter', 'moped', 'delivery_bike', 'mini_bike',
+  ].map((name) => ({
+    name,
+    source: { kind: 'local', dir: `assets-src/models/${name}` },
+    sourceUrl: 'https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md',
+  })),
+  // "Cartoony Purple Motorcycle" by AliceCassie — the one CC0 motorcycle.
+  // Ships toy-sized (1.04 m long); normalized to read as a ridable bike.
+  { name: 'motorcycle', source: { kind: 'url', url: 'https://static.poly.pizza/3ff04d85-dfe6-487c-b01d-5ce92103cf30.glb' }, sourceUrl: 'https://poly.pizza/m/j20srJUjpB', normalizeLongest: 1.9, keepAnimations: [] },
+  // CC-BY 3.0 picks — author is REQUIRED (validators) and becomes the in-game
+  // credit line; sourceUrl is both proof AND the credit link target.
+  // Rejected over budget, recorded so nobody re-adds them (all flat-shaded, so
+  // simplify() is the documented no-op — probed 2026-08-06 through the full
+  // transform): scrambler_bike /m/bBbozwADWnS 507.8 KB (503.1 KB at ratio
+  // 0.25); classic_cruiser /m/5_MTCnqfUTr 1,062 KB (unchanged at ratio 0.12);
+  // superbike /m/dse64pqMKAR 1,062 KB-class sibling, same source pipeline.
+  // The sport/cruiser reads those two would have added are covered by the
+  // first-party sport_bike/race_bike/cruiser_bike above.
+  ...[
+    // Both ship at absurd author scales (5.2 m and 15.8 m long) — normalized
+    // to real-world bike length; the CC0 purple motorcycle is 1.04 m as
+    // shipped and stays untouched.
+    ['military_motorbike', '9SwnIlPjNv', 'b61993ed-4bd4-4439-89c0-933ad42384c7', 'Zsky', 2.3],
+    ['street_motorcycle', '0lBe-ApqJs4', '7d230a92-464a-4d1c-874e-712240e2db20', 'jeremy', 2.2],
+  ].map(([name, slug, uuid, author, normalizeLongest]) => ({
+    name,
+    source: { kind: 'url', url: `https://static.poly.pizza/${uuid}.glb` },
+    sourceUrl: `https://poly.pizza/m/${slug}`,
+    license: 'CC-BY-3.0',
+    author,
+    ...(normalizeLongest ? { normalizeLongest } : {}),
+    keepAnimations: [], // static vehicles — a game drives them by transform
+  })),
+
+  // ── Roads / bridges / jets batch (2026-08-06 later same day,
+  // docs/2026-08-06_PRD_RoadsBridgesJets.md). Owner ask: "more roads, long
+  // bridges, sky bridges, flying jets". Kenney's city-kit-roads (CC0, checked
+  // on the kenney.nl page) finally gives proper per-piece road GLBs — incl.
+  // the slant ramps and bridge pillars that let a kid BUILD a flyover/sky
+  // bridge. The fixed-wing gap the 2026-07-13 comment documents ("No CC0
+  // fixed-wing airplane...") is closed by the CC-BY unlock: the jets below
+  // are the license-checked, thumbnail-reviewed picks. Rejected: X-Wing /
+  // Arwing / Macross fan art (branded, §4.2); every Google-Poly jet probed or
+  // sized ≥ 1 MB raw flat-shaded (the simplify() no-op class); bvbo Metal
+  // Bridge + Quaternius arch Bridge (unreadable on render); jeremy road tiles
+  // + Ian MacGillivray sidewalk road (scene slabs / weaker than the Kenney
+  // pieces); KayKit Road Bits + Kenney "Modular Road Kit" poly.pizza listings
+  // (whole kits laid out as ONE mesh).
+  ...[
+    ['road_straight', 'road-straight'], ['road_curve', 'road-curve'],
+    ['road_intersection', 'road-intersection'], ['road_crossing', 'road-crossing'],
+    ['road_roundabout', 'road-roundabout'], ['road_ramp', 'road-slant'],
+    ['road_bridge', 'road-bridge'], ['bridge_pillar', 'bridge-pillar'],
+    ['highway_sign', 'sign-highway'],
+  ].map(([name, file]) => ({
+    name,
+    source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/city-kit-roads/74288c9459-1741864740/kenney_city-kit-roads.zip', innerPath: `Models/GLB format/${file}.glb` },
+    sourceUrl: 'https://kenney.nl/assets/city-kit-roads',
+  })),
+  // Bridges. The two CC0 finds ride as-is; the two CC-BY ones carry authors
+  // for the credits chip. normalizeLongest: the suspension bridge is a whole
+  // scene (water + shore) shipped 9.4 m long — a car-scale span needs real
+  // length; same for the truss/elevated pieces.
+  { name: 'wooden_bridge', source: { kind: 'url', url: 'https://static.poly.pizza/e36966b4-e13e-46e8-aa2c-f9b643536d46.glb' }, sourceUrl: 'https://poly.pizza/m/j4KsIuJYnq', keepAnimations: [] },
+  { name: 'truss_bridge', source: { kind: 'url', url: 'https://static.poly.pizza/6e5f2f42-6ccb-41cf-9602-89ca933ad5e2.glb' }, sourceUrl: 'https://poly.pizza/m/orI7eNSB38', normalizeLongest: 15, keepAnimations: [] },
+  ...[
+    ['suspension_bridge', 'a648BwpXx-A', '5cdea6e9-dc24-45e8-8070-d40d0ca1abd1', 'Steren Giannini', 50],
+    ['elevated_road', '6x1uuAavZA7', '0289d6b9-a243-4429-b993-8074675790b3', 'Jarlan Perez', 15],
+    // Jets & planes — all CC-BY 3.0, all static rigid meshes (a game flies
+    // them by transform + its own spun propeller per catalog item 7).
+    ['fighter_jet', '6fyLMORhgGK', '19d58465-dafb-4df0-a3b8-b0500bd9ed4b', 'jeremy', 14],
+    ['airplane', '9Ev6pklkSYp', '7823e338-576d-49b1-82e1-30fa6cbdb57e', 'jeremy', 36],
+    ['small_plane', '7cvx6ex-xfL', '077afae1-24b7-4bac-a31d-53d367002a04', 'Vojtěch Balák', 10],
+    ['seaplane', '5xG_QGFWF99', 'e30b0d49-fae4-44e0-9c55-69a8fb33b351', 'Neil M (monkeymad2)', 8],
+    ['biplane', 'amIu9ua-L0A', '5cfb30a6-25ab-4f27-94f4-dec75879eac4', 'Jake Blakeley', 7],
+    ['private_jet', '1uXmHq-ELhz', 'fcc3a5a9-1154-4f06-88aa-43af532bc974', 'Eik Røgeberg', 13],
+  ].map(([name, slug, uuid, author, normalizeLongest]) => ({
+    name,
+    source: { kind: 'url', url: `https://static.poly.pizza/${uuid}.glb` },
+    sourceUrl: `https://poly.pizza/m/${slug}`,
+    license: 'CC-BY-3.0',
+    author,
+    ...(normalizeLongest ? { normalizeLongest } : {}),
+    keepAnimations: [],
+  })),
 ];
 
 // --only a,b,c: process just the named models (2026-07-26). A full re-run
@@ -827,6 +931,24 @@ async function prepare(model) {
   // still find and rotate a tank's turret child. It is also simplify()'s
   // prerequisite. Added 2026-07-29: it is what brings tank_rusty from 150,348 B
   // (348 over the raised line) to 146.8 KB.
+  // normalizeLongest (2026-08-06, motorcycle batch): some poly.pizza sources
+  // ship at absurd author scales (street_motorcycle measured 15.8 m long) —
+  // the library convention is real-world size, so bake a uniform root-node
+  // scale that brings the longest axis to the given metres. Node-level, so it
+  // is deterministic and survives every later transform untouched.
+  if (model.normalizeLongest) {
+    const scene = doc.getRoot().getDefaultScene() ?? doc.getRoot().listScenes()[0];
+    const { min, max } = getBounds(scene);
+    const longest = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+    if (longest > 0) {
+      const f = model.normalizeLongest / longest;
+      for (const node of scene.listChildren()) {
+        node.setScale(node.getScale().map((s) => s * f));
+        node.setTranslation(node.getTranslation().map((t) => t * f));
+      }
+      console.log(`  normalized: longest axis ${longest.toFixed(2)} → ${model.normalizeLongest} m`);
+    }
+  }
   const steps = [dedup(), prune(), resample(), weld({ tolerance: 1e-4 })];
   if (model.simplifyRatio) {
     steps.push(simplify({ simplifier: MeshoptSimplifier, ratio: model.simplifyRatio, error: 0.001 }));
@@ -915,7 +1037,8 @@ for (const p of prepared) {
     type: 'model',
     url: p.url,
     bytes: p.bytes.length,
-    license: 'CC0',
+    license: p.model.license ?? 'CC0',
+    ...(p.model.author ? { author: p.model.author } : {}),
     sourceUrl: p.model.sourceUrl,
     sha256: p.sha256,
   };

@@ -2402,6 +2402,304 @@
       "license": "CC0",
       "sourceUrl": "https://kenney.nl/assets/blocky-characters",
       "sha256": "adde16872701f056e262ab31447ac45945c7ae5c3a823f75fa76c72a4f6e177b"
+    },
+    {
+      "name": "sport_bike",
+      "type": "model",
+      "url": "https://assets.ariantra.com/sport_bike.435411.glb",
+      "bytes": 6380,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "4354113d7b3c24d1a6ad1865f5f5f90fd0bc4035c597e48e1d0bfb7b6e791459"
+    },
+    {
+      "name": "race_bike",
+      "type": "model",
+      "url": "https://assets.ariantra.com/race_bike.1f840e.glb",
+      "bytes": 6588,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "1f840eaea63037e70a2f0bf46377684b1e3f293bac9cb263caedd995ce28d1a4"
+    },
+    {
+      "name": "dirt_bike",
+      "type": "model",
+      "url": "https://assets.ariantra.com/dirt_bike.0a6492.glb",
+      "bytes": 5940,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "0a6492a7678a1f04c16233c606089b3a7e35bdb9da3cd635c23c58337c7cded8"
+    },
+    {
+      "name": "cruiser_bike",
+      "type": "model",
+      "url": "https://assets.ariantra.com/cruiser_bike.a80256.glb",
+      "bytes": 6364,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "a80256c73eb11224af5d2c5e57f480ed49a082921804c71fd3f60cb7fbbd82f4"
+    },
+    {
+      "name": "chopper_bike",
+      "type": "model",
+      "url": "https://assets.ariantra.com/chopper_bike.7ad81c.glb",
+      "bytes": 6312,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "7ad81c1f8241805b53987fc1904e78788e68c5e2b5536d8ff31ed77ffeca7d0c"
+    },
+    {
+      "name": "police_bike",
+      "type": "model",
+      "url": "https://assets.ariantra.com/police_bike.52507f.glb",
+      "bytes": 7052,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "52507f9a293638e046a61fff56bbd062f4d2b45fa9e46d827d41749731c66769"
+    },
+    {
+      "name": "scooter",
+      "type": "model",
+      "url": "https://assets.ariantra.com/scooter.b0e05f.glb",
+      "bytes": 6236,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "b0e05f3f531803f89a19c906929fad6bae8fab3342344d5719804ec7bf70e8f4"
+    },
+    {
+      "name": "moped",
+      "type": "model",
+      "url": "https://assets.ariantra.com/moped.525e6e.glb",
+      "bytes": 6544,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "525e6e04db55bfd3b68574fb98f01422508816156d4df682b8358c34629afeae"
+    },
+    {
+      "name": "delivery_bike",
+      "type": "model",
+      "url": "https://assets.ariantra.com/delivery_bike.5e548f.glb",
+      "bytes": 6448,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "5e548f6c35bf7595ef84003bc3b43287320cb4ca7ca00e1a5e6979c415074d46"
+    },
+    {
+      "name": "mini_bike",
+      "type": "model",
+      "url": "https://assets.ariantra.com/mini_bike.723c41.glb",
+      "bytes": 5552,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "723c4183e085e20c2da5d6d8dc088fc3ac556064871217f8041427afafab00d1"
+    },
+    {
+      "name": "motorcycle",
+      "type": "model",
+      "url": "https://assets.ariantra.com/motorcycle.048305.glb",
+      "bytes": 20016,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/j20srJUjpB",
+      "sha256": "04830566d953f445238d57312764e1b93ddb341de2d44ed74f284f7b4cb55de3"
+    },
+    {
+      "name": "military_motorbike",
+      "type": "model",
+      "url": "https://assets.ariantra.com/military_motorbike.3e81c2.glb",
+      "bytes": 42912,
+      "license": "CC-BY-3.0",
+      "author": "Zsky",
+      "sourceUrl": "https://poly.pizza/m/9SwnIlPjNv",
+      "sha256": "3e81c28eb374fda5364abf574da296a1082ddab19be0c45013f87dba552539cb"
+    },
+    {
+      "name": "street_motorcycle",
+      "type": "model",
+      "url": "https://assets.ariantra.com/street_motorcycle.81cfd2.glb",
+      "bytes": 32220,
+      "license": "CC-BY-3.0",
+      "author": "jeremy",
+      "sourceUrl": "https://poly.pizza/m/0lBe-ApqJs4",
+      "sha256": "81cfd20b117f09fee3a421c00e187eddbec8940e80a5248471944a0b32e5e82a"
+    },
+    {
+      "name": "road_straight",
+      "type": "model",
+      "url": "https://assets.ariantra.com/road_straight.fdc2aa.glb",
+      "bytes": 11676,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-roads",
+      "sha256": "fdc2aa11943679ded3ad2d1bf46ba2158e634627a03c3ed4e45b2826f9044cc7"
+    },
+    {
+      "name": "road_curve",
+      "type": "model",
+      "url": "https://assets.ariantra.com/road_curve.96879a.glb",
+      "bytes": 13464,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-roads",
+      "sha256": "96879a292aaab4a045e86397e15fdf8fe597782e7b48c7ae33c2fd4b96ca9861"
+    },
+    {
+      "name": "road_intersection",
+      "type": "model",
+      "url": "https://assets.ariantra.com/road_intersection.6bd9c2.glb",
+      "bytes": 12076,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-roads",
+      "sha256": "6bd9c240e562def7bf096756f5d125f1bba45630d185d57df7354ad6b0b0f977"
+    },
+    {
+      "name": "road_crossing",
+      "type": "model",
+      "url": "https://assets.ariantra.com/road_crossing.3187ec.glb",
+      "bytes": 12024,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-roads",
+      "sha256": "3187ec5a27e5d9dc9719a04014d478d06182c72f0aaefcf94a087567dca624d1"
+    },
+    {
+      "name": "road_roundabout",
+      "type": "model",
+      "url": "https://assets.ariantra.com/road_roundabout.ef4447.glb",
+      "bytes": 21008,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-roads",
+      "sha256": "ef4447063d956f58e0175177570232f46041f0dc9cbde4e82d00ed8f835b4cdd"
+    },
+    {
+      "name": "road_ramp",
+      "type": "model",
+      "url": "https://assets.ariantra.com/road_ramp.11c642.glb",
+      "bytes": 11728,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-roads",
+      "sha256": "11c642248d33cb2a7255f019d2eab775eda2dd79d2daee16d015056330e3f87b"
+    },
+    {
+      "name": "road_bridge",
+      "type": "model",
+      "url": "https://assets.ariantra.com/road_bridge.0168d0.glb",
+      "bytes": 14868,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-roads",
+      "sha256": "0168d007d2555bfc7e75cbdb86870cc3edc5c053aaf4232f6a6fb440894eab1b"
+    },
+    {
+      "name": "bridge_pillar",
+      "type": "model",
+      "url": "https://assets.ariantra.com/bridge_pillar.0f0606.glb",
+      "bytes": 11880,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-roads",
+      "sha256": "0f060610f37ba7b4660be84f99d55812849977c0584a751a41270977045e51d3"
+    },
+    {
+      "name": "highway_sign",
+      "type": "model",
+      "url": "https://assets.ariantra.com/highway_sign.35fc9c.glb",
+      "bytes": 13280,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/city-kit-roads",
+      "sha256": "35fc9c68016da9f9b23d8bccaa648255b35bb2b8ea8f98eb1b59a392cb4be773"
+    },
+    {
+      "name": "wooden_bridge",
+      "type": "model",
+      "url": "https://assets.ariantra.com/wooden_bridge.c821bf.glb",
+      "bytes": 20380,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/j4KsIuJYnq",
+      "sha256": "c821bf56c5e2c974a5bb21d3d05c9680f7e36057ac75e3c41d1497ffe0487827"
+    },
+    {
+      "name": "truss_bridge",
+      "type": "model",
+      "url": "https://assets.ariantra.com/truss_bridge.87ae43.glb",
+      "bytes": 57144,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/orI7eNSB38",
+      "sha256": "87ae436b32bfe762efd5ed4c4b05a6fa3a9f20fd308faa8a9fc35f734e9e3e29"
+    },
+    {
+      "name": "suspension_bridge",
+      "type": "model",
+      "url": "https://assets.ariantra.com/suspension_bridge.cef108.glb",
+      "bytes": 48672,
+      "license": "CC-BY-3.0",
+      "author": "Steren Giannini",
+      "sourceUrl": "https://poly.pizza/m/a648BwpXx-A",
+      "sha256": "cef108918d830585ea0674c558e3e053caef6ad7a6829e32a4ea70408ea47ba9"
+    },
+    {
+      "name": "elevated_road",
+      "type": "model",
+      "url": "https://assets.ariantra.com/elevated_road.775824.glb",
+      "bytes": 50444,
+      "license": "CC-BY-3.0",
+      "author": "Jarlan Perez",
+      "sourceUrl": "https://poly.pizza/m/6x1uuAavZA7",
+      "sha256": "775824f63e7ebc1dc4c2e337b994c066172d5c8a00eda23e11d91c4415c1cd22"
+    },
+    {
+      "name": "fighter_jet",
+      "type": "model",
+      "url": "https://assets.ariantra.com/fighter_jet.36c646.glb",
+      "bytes": 22028,
+      "license": "CC-BY-3.0",
+      "author": "jeremy",
+      "sourceUrl": "https://poly.pizza/m/6fyLMORhgGK",
+      "sha256": "36c6462e3f1cfe2b01733a86a23f06b7deecf0757a1b39eb3cd76aea1c7d368f"
+    },
+    {
+      "name": "airplane",
+      "type": "model",
+      "url": "https://assets.ariantra.com/airplane.4abd7e.glb",
+      "bytes": 28332,
+      "license": "CC-BY-3.0",
+      "author": "jeremy",
+      "sourceUrl": "https://poly.pizza/m/9Ev6pklkSYp",
+      "sha256": "4abd7eaa588a4a3c0561b515d1fe7d13282667b6844c6249f6fcd6587a835a0f"
+    },
+    {
+      "name": "small_plane",
+      "type": "model",
+      "url": "https://assets.ariantra.com/small_plane.7bb060.glb",
+      "bytes": 15520,
+      "license": "CC-BY-3.0",
+      "author": "Vojtěch Balák",
+      "sourceUrl": "https://poly.pizza/m/7cvx6ex-xfL",
+      "sha256": "7bb060d5fadcab5b26f1e4f7dcafad8a4ce484f2714e270ece152fd86d1fcc7b"
+    },
+    {
+      "name": "seaplane",
+      "type": "model",
+      "url": "https://assets.ariantra.com/seaplane.02c7f4.glb",
+      "bytes": 29132,
+      "license": "CC-BY-3.0",
+      "author": "Neil M (monkeymad2)",
+      "sourceUrl": "https://poly.pizza/m/5xG_QGFWF99",
+      "sha256": "02c7f42f608b913f1a21ca8c2621722d998d626dfeb232f94bcbf056cbe299a7"
+    },
+    {
+      "name": "biplane",
+      "type": "model",
+      "url": "https://assets.ariantra.com/biplane.be094f.glb",
+      "bytes": 17952,
+      "license": "CC-BY-3.0",
+      "author": "Jake Blakeley",
+      "sourceUrl": "https://poly.pizza/m/amIu9ua-L0A",
+      "sha256": "be094fb5450579192185b7f98e2228ab80f7d3d7546fb87163792e456f3ca779"
+    },
+    {
+      "name": "private_jet",
+      "type": "model",
+      "url": "https://assets.ariantra.com/private_jet.01584d.glb",
+      "bytes": 13224,
+      "license": "CC-BY-3.0",
+      "author": "Eik Røgeberg",
+      "sourceUrl": "https://poly.pizza/m/1uXmHq-ELhz",
+      "sha256": "01584d0344b9429da89fe46537dae417e2d5364da7726a0ed427a546789e87f2"
     }
   ]
 }

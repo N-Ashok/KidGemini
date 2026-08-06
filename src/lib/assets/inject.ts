@@ -10,7 +10,7 @@ import "server-only";
 import type { AssetEntry, AssetManifest } from "./manifest";
 import manifestJson from "./manifest.json";
 import { THREE_MARKER, PHYSICS_MARKER, MODELS_MARKER_RE, AUDIO_MARKER_RE, stripAssetMarkers } from "./markers";
-import { insertEarly, loadModelHelper, loadModelBatchHelper, audioHelper } from "./runtime-helpers";
+import { insertEarly, loadModelHelper, loadModelBatchHelper, audioHelper, creditsHelper } from "./runtime-helpers";
 
 const CALLS_LOADMODELBATCH_RE = /\bloadModelBatch\s*\(/;
 
@@ -133,6 +133,14 @@ export function injectAssets(html: string, manifest: AssetManifest = manifestJso
   if (modelNames.length > 0) markup += loadModelHelper();
   if (modelNames.length > 0 && CALLS_LOADMODELBATCH_RE.test(html)) markup += loadModelBatchHelper();
   if (audioNames.length > 0) markup += audioHelper();
+  // CC-BY models carry an attribution duty; the chip discharges it in every
+  // injected copy (preview AND published) with zero reliance on the LLM.
+  const attributed = models.filter((m) => m.license === "CC-BY-3.0");
+  if (attributed.length > 0) {
+    markup += creditsHelper(
+      attributed.map((m) => ({ name: m.name, author: m.author ?? "unknown", sourceUrl: m.sourceUrl })),
+    );
+  }
   out = insertEarly(out, markup);
 
   return {

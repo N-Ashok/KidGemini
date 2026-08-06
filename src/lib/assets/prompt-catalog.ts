@@ -150,6 +150,11 @@ export function modelsPromptSection(
   const available = new Set(models.map((m) => m.name));
   const people = peopleModels(available);
   const soldiers = soldierModels(available);
+  // CC-BY models (manifest-derived, so the section stays byte-stable per
+  // manifest — same cache contract as everything else here): the model must
+  // know the platform adds the credit chip, so it neither removes it nor
+  // wastes tokens re-implementing attribution.
+  const attributed = models.filter((m) => m.license === "CC-BY-3.0").map((m) => m.name);
   const categories = categoryLines(available);
   const hasSports = modelsInGenre("sports", available).length > 0;
   return `**Ready-made 3D models**: for a 3D game you may ALSO use these
@@ -209,7 +214,11 @@ ${categories}
    (\`CharacterArmature|Run\`), so match by search, never by exact string. Same
    mixer/clone rules as the people. Weapons are SEPARATE models — parent to
    the lower arm, not the root: \`(soldier.getObjectByName("LowerArm.R") ||
-   soldier).add(gun)\`.` : ""}${hasSports ? SPORTS_PLAYBOOK : ""}`;
+   soldier).add(gun)\`.` : ""}${attributed.length ? `
+   Community-art models (${attributed.join(", ")}) come with an automatic
+   small "🎨 art" credit chip the platform itself adds to the game — the
+   artist's license requires it. Never remove, hide, cover, or re-implement
+   the chip; leave the bottom-left corner clear of controls.` : ""}${hasSports ? SPORTS_PLAYBOOK : ""}`;
 }
 
 /**

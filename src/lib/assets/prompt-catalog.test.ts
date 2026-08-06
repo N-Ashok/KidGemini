@@ -242,7 +242,14 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // on a rigid mesh) for any model missing the locomotion clip or rig a
     // game needs — a real, common gap (confirmed on `dog`/`bird`/vehicles),
     // not catalog creep.
-    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_100);
+    // Raised 2100 → 2300 (2026-08-06, docs/2026-08-06_PRD_MotorcycleAssets.md):
+    // the motorcycle batch adds 13 names (owner ask: "at least 10 types of
+    // motorcycle") plus the community-art credit clause — the clause is
+    // LICENSE-required teaching (the platform's chip must not be removed or
+    // re-implemented by the model), not catalog creep. Measured ~2179 during
+    // implementation. The category-map hybrid fallback the section doc
+    // promises is the next step if a batch pushes past this line.
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_300);
   });
 });
 

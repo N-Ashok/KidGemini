@@ -106,3 +106,41 @@ describe("injectAssets — first-load transfer budget (≤ 2 MB, inject-time)", 
     expect(r.dropped).toEqual(["dino"]);
   });
 });
+
+describe("injectAssets — CC-BY art-credits chip (owner decision 2026-08-06)", () => {
+  const withBike: AssetManifest = {
+    assets: [
+      entry("three", "engine", 580_000, "a"),
+      entry("car", "model", 14_000, "b"),
+      { ...entry("military_motorbike", "model", 90_000, "e"), license: "CC-BY-3.0" as const, author: "Zsky", sourceUrl: "https://poly.pizza/m/9SwnIlPjNv" },
+    ],
+  };
+
+  it("bakes the chip (author + source link + license) into a game that uses a CC-BY model", () => {
+    const r = injectAssets(
+      `<html><head></head><body>${THREE_MARKER}<!--USES_MODELS: military_motorbike--><script>go()</script></body></html>`,
+      withBike,
+    );
+    expect(r.html).toContain('id = "ar-credits"');
+    expect(r.html).toContain("Zsky");
+    expect(r.html).toContain("https://poly.pizza/m/9SwnIlPjNv");
+    expect(r.html).toContain("CC BY 3.0");
+  });
+
+  it("adds NO chip when the game only uses CC0 models — no duty, no chrome", () => {
+    const r = injectAssets(
+      `<html><head></head><body>${THREE_MARKER}<!--USES_MODELS: car--><script>go()</script></body></html>`,
+      withBike,
+    );
+    expect(r.html).not.toContain("ar-credits");
+  });
+
+  it("adds NO chip when the CC-BY model was dropped (unknown/budget) — a credit for absent art is a lie", () => {
+    const r = injectAssets(
+      `<html><head></head><body>${THREE_MARKER}<!--USES_MODELS: car, military_motorbike--><script>go()</script></body></html>`,
+      { assets: withBike.assets.map((a) => (a.name === "military_motorbike" ? { ...a, bytes: 1_500_000 } : a)) },
+    );
+    expect(r.dropped).toEqual(["military_motorbike"]);
+    expect(r.html).not.toContain("ar-credits");
+  });
+});

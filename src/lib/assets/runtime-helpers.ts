@@ -265,6 +265,61 @@ window.loadModelBatch = async function (name, count) {
 </script>`;
 }
 
+/** One line of the art-credits chip: what to show and where it links. */
+export interface CreditLine {
+  /** Catalog name, shown human-readably (underscores become spaces). */
+  name: string;
+  author: string;
+  sourceUrl: string;
+}
+
+/** The art-credits chip (owner decision 2026-08-06, motorcycle batch): games
+ *  that use a CC-BY model get a small fixed "🎨 art" chip that expands into
+ *  the credit lines the license requires (title, author, source link, license
+ *  name). Injected mechanically by inject.ts — never left to the LLM or the
+ *  kid to remember — so the preview shows it while making and every published
+ *  copy carries it. Plain script, no framework, fails soft: if the DOM calls
+ *  throw (e.g. a game that nukes document.body), the game itself is untouched. */
+export function creditsHelper(credits: CreditLine[]): string {
+  const payload = escapeForInlineScript(JSON.stringify(credits));
+  return `<script>
+(function () {
+  function mount() {
+    try {
+      var credits = ${payload};
+      if (!credits.length || document.getElementById("ar-credits")) return;
+      var chip = document.createElement("div");
+      chip.id = "ar-credits";
+      chip.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:99999;font:11px/1.4 system-ui,sans-serif;";
+      var btn = document.createElement("button");
+      btn.textContent = "\\uD83C\\uDFA8 art";
+      btn.setAttribute("aria-label", "Art credits");
+      btn.style.cssText = "border:0;border-radius:10px;padding:3px 8px;background:rgba(0,0,0,.45);color:#fff;cursor:pointer;font:inherit;";
+      var panel = document.createElement("div");
+      panel.style.cssText = "display:none;margin-top:4px;background:rgba(0,0,0,.75);color:#fff;border-radius:8px;padding:6px 10px;max-width:75vw;";
+      for (var i = 0; i < credits.length; i++) {
+        var c = credits[i], row = document.createElement("div");
+        var a = document.createElement("a");
+        a.href = c.sourceUrl; a.target = "_blank"; a.rel = "noopener";
+        a.style.cssText = "color:#9cf;text-decoration:underline;";
+        a.textContent = "\\"" + c.name.replace(/_/g, " ") + "\\" by " + c.author;
+        row.appendChild(a);
+        row.appendChild(document.createTextNode(" (CC BY 3.0)"));
+        panel.appendChild(row);
+      }
+      btn.addEventListener("click", function () {
+        panel.style.display = panel.style.display === "none" ? "block" : "none";
+      });
+      chip.appendChild(btn); chip.appendChild(panel);
+      document.body.appendChild(chip);
+    } catch (e) { /* credits must never break a game */ }
+  }
+  if (document.body) mount();
+  else addEventListener("DOMContentLoaded", mount);
+})();
+</script>`;
+}
+
 /** playSound / playMusic (PRD §5b, §10b R2). Web Audio ONLY — no <audio>
  *  element: MP3 encoders add priming/padding samples, so element-level
  *  looping gaps/clicks at every restart; the helper decodes the buffer and
