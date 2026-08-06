@@ -29,6 +29,7 @@ investigate (see Monitoring).
 |---|---|---|---|
 | Child-safety system prompt | ~1,100 | input, every turn | stable, necessary |
 | 3D engine section (keyword/artifact-gated) | ~450 | input, 3D turns | `catalog-gate.ts` |
+| Motion/physics playbook (3D-gated) | ~826 | input, 3D build turns | `physics-playbook.ts` — 456→763→826 (SOLID THINGS, 2026-08-06); budget test caps at 830; next addition must displace, not extend |
 | Model catalog (**the whole library**, 106 models) | ~889 | input | `prompt-catalog.ts` — static since 2026-07-24 (was a varying 150–290; see waste ledger #4). Grows with the library; ceiling 1,500 pinned by test |
 | Audio catalog (keyword-gated) | ~150 | input | |
 | Save/continue building clause (keyword/artifact-gated) | ~500 | input, build/world turns | `save-state-playbook.ts`, `gates.save` in `catalog-gate.ts` — docs/2026-08-01_PRD_SaveContinueBuilding.md |

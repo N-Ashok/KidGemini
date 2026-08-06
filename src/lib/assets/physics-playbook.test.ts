@@ -121,6 +121,30 @@ describe("PHYSICS_PROMPT_SECTION — dead objects must not block spawning", () =
   });
 });
 
+// Owner report 2026-08-06: "3d objects should not pass through each other…
+// we have to specifically tell". Nothing in the prompt taught solidity as a
+// DEFAULT, so Gemini wrote collision only where game logic obviously needed it
+// (pickups, finish lines) and scenery stayed ghost-permeable. Deliberately
+// compressed to ~55 tokens at the owner's ask — the how-to (boundsAt etc.) is
+// already taught by catalog rule 6.
+describe("PHYSICS_PROMPT_SECTION — solidity is the default, not an ask", () => {
+  it("states that solids never pass through each other", () => {
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/solid/i);
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/pass(es)?\s+through/i);
+  });
+
+  it("teaches the cheap default: bounds on everything, push out, slide", () => {
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/bounding\s+(box|sphere)/i);
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/shortest\s+axis/i);
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/slide/i);
+  });
+
+  it("exempts pickups/triggers — there, overlap IS the event", () => {
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/pickup|trigger/i);
+    expect(PHYSICS_PROMPT_SECTION).toMatch(/overlap\s+IS\s+the\s+event/);
+  });
+});
+
 describe("PHYSICS_PROMPT_SECTION — cache + wiring contract", () => {
   it("is a static constant: it can never vary with the child's message", () => {
     // Same rule as SPORTS_PLAYBOOK. A per-message system prompt breaks the
@@ -162,9 +186,12 @@ describe("PHYSICS_PROMPT_SECTION — cache + wiring contract", () => {
     // justification. Recurring cost: this rides every 3D build turn.
     // 470 -> 670 -> 770 across one day, each raise answering a fault the owner
     // actually hit (heat, then a silent spawn deadlock). Set from the MEASURED
-    // value each time, not a guess. This now rides EVERY 3D build turn at ~763
-    // tokens, so the next addition should displace something rather than extend
-    // it — the section has stopped being cheap.
-    expect(Math.ceil(PHYSICS_PROMPT_SECTION.length / 4)).toBeLessThanOrEqual(770);
+    // value each time, not a guess.
+    // 770 -> 830 (2026-08-06): SOLID THINGS — owner report "3d objects should
+    // not pass through each other… we have to specifically tell". The owner
+    // set the token cap themselves (~50) and the clause landed at ~63 by
+    // leaning on catalog rule 6 for the how-to. Measured 826. The prior note
+    // stands, doubly now: the next addition must displace something.
+    expect(Math.ceil(PHYSICS_PROMPT_SECTION.length / 4)).toBeLessThanOrEqual(830);
   });
 });

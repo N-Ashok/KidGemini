@@ -50,6 +50,11 @@ and one step teleports the player through the floor.
    Add a rest threshold — below a small speed set it to 0 and stop — or the
    ball jitters against the floor forever.
 
+   SOLID THINGS. Solids never pass through each other: give each a bounding
+   box or sphere; after moving, push any overlap out along the shortest axis
+   so movers slide along surfaces. Pickups/triggers are the exception —
+   overlap IS the event.
+
    STOP WHEN NOBODY IS WATCHING. Rendering on while the tab is hidden or the
    window sits behind another burns battery and heats phones and laptops. Pause
    it — and on resume reset the clock FIRST, or the first frame back carries the

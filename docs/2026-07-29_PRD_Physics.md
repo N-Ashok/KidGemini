@@ -178,6 +178,25 @@ raised from the measured value each time (470 → 670 → 770) with the reason
 recorded; the comment now says the section has stopped being cheap and the next
 addition should displace something rather than extend it.
 
+## 6c. Amendment 2026-08-06 — solidity is the default (SOLID THINGS)
+
+Owner report: "3d objects should not pass through each other. but that is not
+happening and we have to specifically tell." The playbook taught motion feel
+but nowhere said solidity is a DEFAULT, so Gemini wrote collision only where
+game logic obviously needed it (pickups, finish lines) and scenery stayed
+ghost-permeable.
+
+Fix: a new **SOLID THINGS** playbook clause — bounds on every solid, push
+overlap out along the shortest axis so movers slide, pickups/triggers exempt
+(overlap IS the event). The owner set a token cap of ~50 for it; it landed at
+~63 by leaning on catalog rule 6 (`boundsAt`) for the how-to instead of
+repeating it. Budget test raised 770 → 830 from the measured value (826).
+
+Same reach caveat as every prompt rule: it applies to newly generated/edited
+turns only. Existing games stay as-built until their next edit — there is no
+healing floor for game logic, and an edit's minimal SEARCH/REPLACE patch will
+not retrofit collision the child didn't ask about.
+
 ## 7. Out of scope
 
 Vehicle raycast suspension (`RaycastVehicle` is deliberately not vendored — the
