@@ -10,9 +10,32 @@ import "server-only";
 import type { AssetEntry, AssetManifest } from "./manifest";
 import manifestJson from "./manifest.json";
 import { THREE_MARKER, PHYSICS_MARKER, MODELS_MARKER_RE, AUDIO_MARKER_RE, stripAssetMarkers } from "./markers";
-import { insertEarly, loadModelHelper, loadModelBatchHelper, audioHelper, creditsHelper } from "./runtime-helpers";
+import {
+  insertEarly,
+  loadModelHelper,
+  loadModelBatchHelper,
+  audioHelper,
+  creditsHelper,
+  parseAssetTables,
+  stripAssetTables,
+} from "./runtime-helpers";
 
 const CALLS_LOADMODELBATCH_RE = /\bloadModelBatch\s*\(/;
+
+const ANY_IMPORTMAP_RE = /<script[^>]*type=["']importmap["'][^>]*>[\s\S]*?<\/script>/gi;
+// Per-block, non-greedy: each match stays within one <script> tag, so dropping
+// an injected helper never swallows a neighboring game script (same lesson as
+// ensure-runtime's stripStaleLoadModelHelper).
+const SCRIPT_BLOCK_RE = /<script[^>]*>[\s\S]*?<\/script>/g;
+/** Drops echoed copies of the blocks THIS module emits (loader, batch loader,
+ *  audio helper, credits chip) — each is re-emitted fresh below when needed. */
+function stripInjectedHelperBlocks(html: string): string {
+  return html.replace(SCRIPT_BLOCK_RE, (block) =>
+    /window\.(loadModel|loadModelBatch|playSound)\s*=/.test(block) || block.includes('getElementById("ar-credits")')
+      ? ""
+      : block,
+  );
+}
 
 // Markers are defined in ./markers (pure, non-server) so the edit-patch
 // reconciliation can share them without importing this server-only module.
@@ -65,8 +88,32 @@ export function injectAssets(html: string, manifest: AssetManifest = manifestJso
   const wantsPhysics = html.includes(PHYSICS_MARKER);
   const modelNames = parseNames(html, MODELS_MARKER_RE);
   const audioNames = parseNames(html, AUDIO_MARKER_RE);
-  if (!wantsThree && !wantsPhysics && modelNames.length === 0 && audioNames.length === 0) {
+  // Edit turns echo the PREVIOUS injection back (the model is shown the stored,
+  // post-injection artifact) — those tables are the only record of models the
+  // existing game code still loads, and leaving them in place lets the stale
+  // assignment overwrite the fresh one (BUG-FIX-LOG 2026-08-06: the Sky Patrol
+  // bikes). Their names are reclaimed below; the blocks themselves are stripped.
+  const legacyTables = parseAssetTables(html);
+  if (!wantsThree && !wantsPhysics && modelNames.length === 0 && audioNames.length === 0 && legacyTables.length === 0) {
     return { html, referencedUrls: [], dropped: [] };
+  }
+
+  const modelsByName = new Map(manifest.assets.filter((a) => a.type === "model").map((a) => [a.name, a]));
+  const audioByName = new Map(manifest.assets.filter((a) => a.type === "sfx" || a.type === "music").map((a) => [a.name, a]));
+
+  // Reclaim manifest-known names from echoed tables: the fresh marker lists the
+  // model's CURRENT intent, but turn-1 code still calls loadModel on the old
+  // names. Marker names stay first so a budget squeeze drops reclaimed history
+  // before this turn's ask. Names no longer in the manifest drop with the
+  // table (fail-soft, same as an unknown marker name).
+  for (const table of legacyTables) {
+    for (const name of Object.keys(table)) {
+      if (modelsByName.has(name)) {
+        if (!modelNames.includes(name)) modelNames.push(name);
+      } else if (audioByName.has(name) && !audioNames.includes(name)) {
+        audioNames.push(name);
+      }
+    }
   }
 
   // Models imply the engine (the loader lives in it); audio alone does not.
@@ -78,9 +125,6 @@ export function injectAssets(html: string, manifest: AssetManifest = manifestJso
   if (needsEngine && !engine) throw new Error("manifest has no three engine entry — run scripts/vendor-three.mjs --upload");
   const physics = wantsPhysics ? manifest.assets.find((a) => a.type === "engine" && a.name === "physics") : undefined;
   if (wantsPhysics && !physics) throw new Error("manifest has no cannon engine entry — run scripts/vendor-cannon.mjs --upload");
-
-  const modelsByName = new Map(manifest.assets.filter((a) => a.type === "model").map((a) => [a.name, a]));
-  const audioByName = new Map(manifest.assets.filter((a) => a.type === "sfx" || a.type === "music").map((a) => [a.name, a]));
 
   const dropped: string[] = [];
   let firstLoadBytes = (engine?.bytes ?? 0) + (physics?.bytes ?? 0);
@@ -118,6 +162,17 @@ export function injectAssets(html: string, manifest: AssetManifest = manifestJso
   }
 
   let out = stripAssetMarkers(html);
+  // Strip the echoed previous injection so exactly ONE copy of each runtime
+  // block survives. Document order matters: insertEarly prepends, so any stale
+  // block left behind would execute LATER and win — a stale AR_ASSETS
+  // assignment silently erases every model added this turn.
+  out = stripAssetTables(out);
+  out = stripInjectedHelperBlocks(out);
+  if (engine || physics) {
+    // A fresh import map is emitted below; an echoed one alongside it would be
+    // browser-ignored noise (only the first map counts) — drop it.
+    out = out.replace(ANY_IMPORTMAP_RE, "");
+  }
 
   let markup = "";
   if (engine || physics) {

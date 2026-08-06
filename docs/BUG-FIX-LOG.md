@@ -11,6 +11,47 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-06 — Models added mid-game never appeared: edit turns left TWO AR_ASSETS tables, the stale one winning
+
+- **Symptom:** owner UAT ("Sky Patrol" helicopter game, prod) — kid asked twice for bikes on the
+  roads; Ari replied "I've added cool motorcycles and scooters" both times, yet nothing rendered.
+  Gemini's code was CORRECT (real `loadModel("street_motorcycle")` spawn/roam logic, verified in
+  the stored artifact). The road stripes it added as a "fix" DID show (plain geometry, no asset
+  lookup) — the model was effectively gaslit by our pipeline.
+- **Root cause:** edit turns show the model the stored artifact, which we keep POST-injection, so
+  its output echoes the previous turn's injected runtime back. `injectAssets` stripped asset
+  *markers* but never a previous *injection*, then `insertEarly` PREPENDED the fresh blocks — so
+  the echoed stale `window.AR_ASSETS = {…}` executed later in document order and overwrote the
+  fresh table. Every model added mid-game resolved to `unknown model` → `loadModel` → `null` →
+  silently skipped (fail-soft by design). Harmless while the model set never changed (identical
+  map overwrote identical map) — fatal on exactly the first add-a-new-model edit, which is why
+  every fresh-game UAT passed. Same mechanism, second symptom: `ensureAssetRuntime`'s probe call
+  was guarded by marker PRESENCE, short-circuiting before `injectPerfProbe`'s own version check —
+  stranding stored games on perf-probe v2, which predates the idle/`playing` slowdown-banner fix.
+- **Fix (two layers):**
+  - `inject.ts` — parses echoed tables, reclaims their manifest-known names into the model/audio
+    lists (marker names first, so a budget squeeze drops history before this turn's ask), then
+    strips all echoed tables/helpers/import-maps before injecting exactly one fresh copy of each.
+  - `ensure-runtime.ts` — AR_ASSETS healing is now unconditional for any game calling
+    `loadModel`: all tables collapse to ONE union table (newest wins, names re-resolved against
+    the current manifest, literal call sites merged in), and the probe guard is gone
+    (`injectPerfProbe` is version-aware itself). This floor runs on every preview render, so
+    already-broken stored games heal on next open — no new chat turn, no migration.
+  - Shared table parse/strip/count helpers live in `runtime-helpers.ts` (one source of truth).
+- **Verified:** 8 regression tests written failing-first — inject: edit-turn re-injection yields
+  one table containing the new model, one helper, one import map; stale-table names survive a
+  forgetful fresh marker; idempotent on own output. ensure-runtime H.1–H.4: duplicate tables
+  collapse to the union (the exact Sky Patrol shape — names picked from an array, so no literal
+  call sites to recover from); single stale table gains literally-called models; healthy table
+  byte-identical; old probe replaced not skipped. Full suite + typecheck green.
+- **Class note:** injected-runtime blocks must be REPLACE-on-reinject, never prepend-and-hope or
+  skip-if-present — presence is not freshness. Loader helper already did this right
+  (version-stamped strip); table + probe-caller now match it. Published games are static S3
+  files no floor touches at view time — any published from a broken artifact need a restamp
+  (scan + restamp tracked separately).
+
+---
+
 ## 2026-08-06 — Share sheet handed out https://localhost:3001/share/chat/… in production
 
 - **Symptom:** owner UAT, minutes after the share feature deployed — the ShareChat sheet showed a

@@ -222,3 +222,62 @@ window.loadModel = async function (name) {
     expect(out).not.toContain("window.loadModelBatch");
   });
 });
+
+// BUG-FIX-LOG 2026-08-06 (Sky Patrol: bikes never appeared). Edit turns used
+// to leave TWO AR_ASSETS tables in the stored artifact — the stale one sat
+// later in document order and overwrote the fresh one, erasing every model
+// added mid-game. The floor runs on EVERY preview render, so fixing the table
+// here heals already-broken stored games with no new chat turn. Same class:
+// the perf probe was skip-if-present at this call site, stranding old games
+// on a probe version whose bugs were already fixed.
+describe("ensureAssetRuntime — asset-table healing (2026-08-06)", () => {
+  const STREET = manifest.assets.find((a) => a.type === "model" && a.name === "street_motorcycle")!.url;
+  const tableBlocks = (html: string) => html.match(/window\.AR_ASSETS\s*=/g) ?? [];
+  const tableOf = (html: string) => {
+    const m = html.match(/window\.AR_ASSETS\s*=\s*(\{[\s\S]*?\})\s*;/);
+    return JSON.parse(m![1]!) as Record<string, string>;
+  };
+  // The real Sky Patrol shape: models chosen from an ARRAY, so no literal
+  // loadModel("street_motorcycle") call site exists to recover names from —
+  // the tables themselves are the only record of what the game may load.
+  const dynamicGame = (tables: string) =>
+    page(
+      `${tables}<script type="module">import { Scene } from "three"; const kinds=["street_motorcycle","car"]; loadModel(kinds[i]);</script>`,
+    );
+
+  it("H.1 duplicate tables collapse to ONE holding the union (fresh names must survive)", () => {
+    const fresh = `<script>window.AR_ASSETS=${JSON.stringify({ car: CAR, street_motorcycle: STREET })};</script>`;
+    const stale = `<script>window.AR_ASSETS=${JSON.stringify({ car: CAR })};</script>`;
+    const out = ensureAssetRuntime(dynamicGame(fresh + stale));
+    expect(tableBlocks(out).length).toBe(1);
+    expect(tableOf(out)).toEqual({ car: CAR, street_motorcycle: STREET });
+  });
+
+  it("H.2 a single stale table missing a literally-called manifest model gains it", () => {
+    const stale = `<script>window.AR_ASSETS=${JSON.stringify({ car: CAR })};</script>`;
+    const raw = page(
+      `${stale}<script type="module">import { Scene } from "three"; loadModel("car"); loadModel("street_motorcycle");</script>`,
+    );
+    const out = ensureAssetRuntime(raw);
+    expect(tableBlocks(out).length).toBe(1);
+    expect(tableOf(out).street_motorcycle).toBe(STREET);
+    expect(tableOf(out).car).toBe(CAR);
+  });
+
+  it("H.3 a complete single table is left byte-identical (idempotence)", () => {
+    const raw = page(
+      `<script>window.AR_ASSETS=${JSON.stringify({ car: CAR })};</script><script type="module">import { Scene } from "three"; loadModel("car");</script>`,
+    );
+    const out = ensureAssetRuntime(raw);
+    expect(ensureAssetRuntime(out)).toBe(out);
+  });
+
+  it("H.4 an old-version perf probe is REPLACED, not skipped, on the floor pass", () => {
+    const oldProbe = `<!--ari-perf-probe--><script>(function(){window.__arPerfProbeVersion = 2;})();</script>`;
+    const raw = page(`${oldProbe}<script type="module">import { Scene } from "three"; new Scene();</script>`);
+    const out = ensureAssetRuntime(raw);
+    expect(out).not.toContain("__arPerfProbeVersion = 2");
+    expect(out).toMatch(/__arPerfProbeVersion = [3-9]/);
+    expect((out.match(/<!--ari-perf-probe-->/g) ?? []).length).toBe(1); // exactly one probe block
+  });
+});

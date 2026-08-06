@@ -144,3 +144,54 @@ describe("injectAssets — CC-BY art-credits chip (owner decision 2026-08-06)", 
     expect(r.html).not.toContain("ar-credits");
   });
 });
+
+// BUG-FIX-LOG 2026-08-06 (bikes never appeared in the Sky Patrol helicopter
+// game): on an EDIT turn the model is shown the previous artifact — which we
+// store POST-injection — so its output echoes the old injected runtime back.
+// injectAssets used to prepend fresh blocks without stripping the echoed
+// ones; the stale window.AR_ASSETS assignment sat LATER in document order and
+// overwrote the fresh table, so every model added mid-game silently vanished
+// (loadModel → unknown model → null → skipped). These tests re-inject the
+// injector's OWN output, the exact shape a real edit turn produces.
+describe("injectAssets — edit turns strip and reclaim the previous injection", () => {
+  const firstTurn = injectAssets(
+    `<html><head></head><body>${THREE_MARKER}<!--USES_MODELS: car, tree--><script type="module">import "three"; loadModel(pick());</script></body></html>`,
+    manifest,
+  );
+
+  function editTurn(prevHtml: string, marker: string): string {
+    // What delivery sees on an edit: the echoed injected doc, with the model's
+    // fresh markers re-emitted (the prompt requires markers on every turn).
+    return prevHtml.replace("<body>", `<body>${THREE_MARKER}<!--USES_MODELS: ${marker}-->`);
+  }
+
+  it("re-injecting with a NEW model yields exactly one AR_ASSETS table that contains it", () => {
+    const r = injectAssets(editTurn(firstTurn.html, "car, tree, dino"), manifest);
+    expect(r.html.match(/window\.AR_ASSETS\s*=/g)?.length).toBe(1);
+    expect(assetsTable(r.html)).toEqual({ car: urlOf("car"), tree: urlOf("tree"), dino: urlOf("dino") });
+  });
+
+  it("keeps exactly one loadModel helper and one import map", () => {
+    const r = injectAssets(editTurn(firstTurn.html, "car, dino"), manifest);
+    expect(r.html.match(/window\.loadModel\s*=/g)?.length).toBe(1);
+    expect(r.html.match(/<script type="importmap">/g)?.length).toBe(1);
+  });
+
+  it("reclaims manifest-known models from the stale table even when the fresh marker forgets them", () => {
+    // The game's code still calls loadModel("car") from turn 1; the model's
+    // new marker lists only the addition. The old table is the only record —
+    // its names must survive the strip, or the edit breaks the existing game.
+    const r = injectAssets(editTurn(firstTurn.html, "dino"), manifest);
+    const table = assetsTable(r.html);
+    expect(table.car).toBe(urlOf("car"));
+    expect(table.tree).toBe(urlOf("tree"));
+    expect(table.dino).toBe(urlOf("dino"));
+    expect(r.referencedUrls).toContain(urlOf("car"));
+  });
+
+  it("is idempotent — injecting the injector's own output changes nothing but the marker strip", () => {
+    const again = injectAssets(editTurn(firstTurn.html, "car, tree"), manifest);
+    expect(assetsTable(again.html)).toEqual(assetsTable(firstTurn.html));
+    expect(again.html.match(/window\.AR_ASSETS\s*=/g)?.length).toBe(1);
+  });
+});

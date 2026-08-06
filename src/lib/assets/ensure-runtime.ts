@@ -13,8 +13,17 @@
 import manifestJson from "./manifest.json";
 import type { AssetManifest } from "./manifest";
 import { THREE_MARKER, PHYSICS_MARKER } from "./markers";
-import { insertEarly, loadModelHelper, loadModelBatchHelper, frameGovernor, LOAD_MODEL_HELPER_VERSION } from "./runtime-helpers";
-import { injectPerfProbe, PERF_PROBE_MARKER } from "./perf-probe";
+import {
+  insertEarly,
+  loadModelHelper,
+  loadModelBatchHelper,
+  frameGovernor,
+  LOAD_MODEL_HELPER_VERSION,
+  parseAssetTables,
+  stripAssetTables,
+  countAssetTables,
+} from "./runtime-helpers";
+import { injectPerfProbe } from "./perf-probe";
 
 const IMPORTS_THREE_RE = /\bfrom\s*["']three["']/;
 // Physics games import the second engine by its own bare specifier; an
@@ -25,7 +34,6 @@ const CALLS_LOADMODELBATCH_RE = /\bloadModelBatch\s*\(/;
 const LOADMODEL_ARG_RE = /\bloadModel\s*\(\s*["']([a-z0-9_]+)["']/gi;
 const ANY_IMPORTMAP_RE = /<script[^>]*type=["']importmap["'][^>]*>[\s\S]*?<\/script>/gi;
 const HAS_HELPER_RE = /window\.loadModel\s*=/;
-const HAS_AR_ASSETS_RE = /window\.AR_ASSETS\s*=/;
 const HAS_LOADMODELBATCH_HELPER_RE = /window\.loadModelBatch\s*=/;
 // A stale helper (published before the 2026-08-05 template-cache change, or
 // any earlier version) still matches HAS_HELPER_RE but carries no version
@@ -122,7 +130,41 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
     markup += frameGovernor();
   }
 
-  // (3) loadModel scaffolding — inject when the game calls it and either the
+  // (3) the AR_ASSETS table — healed UNCONDITIONALLY when the game calls
+  // loadModel (BUG-FIX-LOG 2026-08-06, the Sky Patrol bikes): edit turns used
+  // to leave a SECOND, stale table later in document order that overwrote the
+  // fresh one and erased every model added mid-game. This floor runs on every
+  // preview render, so it is the path that repairs games already stored with
+  // the duplicate. The healthy table is the UNION of every table present
+  // (earliest = newest wins — insertEarly prepends) plus any literally-called
+  // manifest models; names are re-resolved against the current manifest.
+  // A single already-complete table is left byte-identical.
+  if (usesLoadModel) {
+    const tables = parseAssetTables(out);
+    const union: Record<string, string> = {};
+    for (const t of [...tables].reverse()) Object.assign(union, t);
+    const urlByName = new Map(manifest.assets.map((a) => [a.name, a.url] as const));
+    for (const m of html.matchAll(LOADMODEL_ARG_RE)) {
+      const name = m[1]!.toLowerCase();
+      const url = urlByName.get(name);
+      if (url) union[name] = url; // unknown/hallucinated names omitted → loadModel returns null
+    }
+    for (const name of Object.keys(union)) {
+      const current = urlByName.get(name);
+      if (current) union[name] = current; // manifest is the source of truth for known names
+    }
+    const single = countAssetTables(out) === 1 ? tables[0] : undefined;
+    const alreadyHealthy =
+      single !== undefined &&
+      Object.keys(single).length === Object.keys(union).length &&
+      Object.keys(union).every((k) => single[k] === union[k]);
+    if (!alreadyHealthy) {
+      out = stripAssetTables(out);
+      markup += `<script>window.AR_ASSETS=${JSON.stringify(union)};</script>`;
+    }
+  }
+
+  // (3a) loadModel helper — inject when the game calls it and either the
   // helper is entirely absent, or present but STALE (an older
   // LOAD_MODEL_HELPER_VERSION than this build teaches — e.g. a game published
   // before the 2026-08-05 template-cache change). A stale helper is stripped
@@ -130,18 +172,6 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
   if (usesLoadModel && !hasCurrentHelper(out)) {
     if (HAS_HELPER_RE.test(out)) {
       out = stripStaleLoadModelHelper(out);
-    }
-    if (!HAS_AR_ASSETS_RE.test(out)) {
-      const modelsByName = new Map(
-        manifest.assets.filter((a) => a.type === "model").map((a) => [a.name, a.url] as const),
-      );
-      const table: Record<string, string> = {};
-      for (const m of html.matchAll(LOADMODEL_ARG_RE)) {
-        const name = m[1]!.toLowerCase();
-        const url = modelsByName.get(name);
-        if (url) table[name] = url; // unknown/hallucinated names omitted → loadModel returns null
-      }
-      markup += `<script>window.AR_ASSETS=${JSON.stringify(table)};</script>`;
     }
     markup += loadModelHelper();
   }
@@ -161,5 +191,10 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
   // preview render), so an old stored game gains the probe automatically the
   // next time it's previewed — no per-game migration. Never kid-facing on its
   // own; the debug tab that reads it is gated in ArtifactFrame.
-  return floored.includes(PERF_PROBE_MARKER) ? floored : injectPerfProbe(floored);
+  // Unconditional since 2026-08-06: injectPerfProbe is itself version-aware
+  // (skips only a CURRENT probe, replaces an older one). The old
+  // marker-presence guard here short-circuited before the version check ever
+  // ran, stranding every stored game on whatever probe it was first given —
+  // e.g. v2, which predates the idle/`playing` fix to the slowdown banner.
+  return injectPerfProbe(floored);
 }

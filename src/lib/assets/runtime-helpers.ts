@@ -20,6 +20,41 @@ export function insertEarly(html: string, markup: string): string {
   return markup + html;
 }
 
+// The injected asset-table script blocks (`<script>window.AR_ASSETS={...};</script>`).
+// Shared by inject.ts (edit turns echo the previous injection back — BUG-FIX-LOG
+// 2026-08-06, the Sky Patrol bikes) and ensure-runtime.ts (the preview-render
+// floor that heals already-stored games). Non-greedy to the first `</script>`:
+// the table script never contains a nested close tag (it's JSON of asset URLs).
+const arAssetsBlockRe = () => /<script[^>]*>\s*window\.AR_ASSETS\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/g;
+
+/** Every parseable AR_ASSETS table in the document, in document order.
+ *  Unparseable blocks are skipped (never thrown on) — a kid's game must
+ *  survive anything. */
+export function parseAssetTables(html: string): Array<Record<string, string>> {
+  const tables: Array<Record<string, string>> = [];
+  for (const m of html.matchAll(arAssetsBlockRe())) {
+    try {
+      const parsed: unknown = JSON.parse(m[1]!);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        tables.push(parsed as Record<string, string>);
+      }
+    } catch {
+      /* not our block shape — leave it to the strip's own regex miss */
+    }
+  }
+  return tables;
+}
+
+/** Removes every AR_ASSETS table block. Callers re-emit exactly one. */
+export function stripAssetTables(html: string): string {
+  return html.replace(arAssetsBlockRe(), "");
+}
+
+/** How many AR_ASSETS table blocks the document carries. */
+export function countAssetTables(html: string): number {
+  return [...html.matchAll(arAssetsBlockRe())].length;
+}
+
 /** Neutralizes a literal `</script>` inside a string about to be inlined
  *  into an HTML `<script>` block — `<\/script>` is identical to `</script>`
  *  inside a JS string (or JSON, which has no special meaning for a lone
