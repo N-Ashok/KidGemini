@@ -37,6 +37,12 @@ export interface PerfModelEntry {
 export interface PerfSnapshot {
   /** rAF ticks observed in the last sample window (~1s) — an FPS estimate. */
   fps: number;
+  /** Probe v3 (owner report 2026-08-06): frames were produced this window AND
+   *  the kid touched the game within PLAYING_INPUT_WINDOW_MS. The slowdown
+   *  banner only trusts low fps while playing — an unstarted game / idle
+   *  lobby renders nothing by design. Absent on snapshots from an old cached
+   *  v2 probe (treated as playing). */
+  playing?: boolean;
   /** WebGLRenderer.info.render.calls at sample time, or null (no renderer
    *  registered yet — e.g. before the game constructs one). */
   drawCalls: number | null;

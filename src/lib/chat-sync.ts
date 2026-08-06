@@ -13,16 +13,18 @@ export const SYNC_FLAG = "kidgemini:chats:synced:v1";
  * device. Server entries carry no messages, so search filters them by title.
  */
 export function mergeRecents(
-  localRecents: Array<{ id: string; title: string }>,
+  localRecents: Array<{ id: string; title: string; pinnedAt?: number | null }>,
   remote: ConvoSummary[],
   query: string,
-): Array<{ id: string; title: string }> {
+): Array<{ id: string; title: string; pinnedAt?: number | null }> {
   const seen = new Set(localRecents.map((r) => r.id));
   const q = query.trim().toLowerCase();
   const remoteOnly = remote
     .filter((r) => !seen.has(r.id))
     .filter((r) => !q || r.title.toLowerCase().includes(q))
-    .map((r) => ({ id: r.id, title: r.title }));
+    // pinnedAt rides along (owner ask 2026-08-06) so a server-only pinned
+    // chat still floats — sortPinnedFirst runs on the MERGED list.
+    .map((r) => ({ id: r.id, title: r.title, pinnedAt: r.pinnedAt ?? null }));
   return [...localRecents, ...remoteOnly];
 }
 

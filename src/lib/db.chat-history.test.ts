@@ -201,4 +201,82 @@ describe("SqliteChatHistoryStore", () => {
     storeWithFake.softDelete("user:di@x.com", "d8", 2000);
     expect(calls).toEqual(["d8"]);
   });
+
+  // Rename + pin (owner ask 2026-08-06: the sidebar's ⋮ menu). Rename must
+  // NOT bump recency — a title fix on an old chat shouldn't catapult it to
+  // the top of Recents; pinning is its own field the client sorts on.
+  it("H.19 rename updates the title without touching recency", () => {
+    store.upsert("user:rn@x.com", convo("r1"), 1000);
+    store.upsert("user:rn@x.com", convo("r2"), 2000);
+    expect(store.rename("user:rn@x.com", "r1", "Dino ideas")).toBe(true);
+    expect(store.get("user:rn@x.com", "r1")!.title).toBe("Dino ideas");
+    expect(store.list("user:rn@x.com", 10).map((s) => s.id)).toEqual(["r2", "r1"]);
+  });
+
+  it("H.20 rename is fail-closed: foreign, unknown, and soft-deleted ids all return false unchanged", () => {
+    store.upsert("user:rn2@x.com", convo("r3", "Mine"), 1000);
+    expect(store.rename("guest:thief", "r3", "Stolen")).toBe(false);
+    expect(store.rename("user:rn2@x.com", "nope", "Ghost")).toBe(false);
+    store.softDelete("user:rn2@x.com", "r3", 2000);
+    expect(store.rename("user:rn2@x.com", "r3", "Zombie")).toBe(false);
+    // the row itself kept its pre-delete title (system copy untouched)
+  });
+
+  it("H.21 setPinned round-trips into list() summaries; unpin clears it", () => {
+    store.upsert("user:pin@x.com", convo("pn1"), 1000);
+    store.upsert("user:pin@x.com", convo("pn2"), 2000);
+    expect(store.setPinned("user:pin@x.com", "pn1", true, 5000)).toBe(true);
+    const rows = store.list("user:pin@x.com", 10);
+    expect(rows.find((s) => s.id === "pn1")!.pinnedAt).toBe(5000);
+    expect(rows.find((s) => s.id === "pn2")!.pinnedAt).toBeNull();
+    expect(store.setPinned("user:pin@x.com", "pn1", false, 6000)).toBe(true);
+    expect(store.list("user:pin@x.com", 10).find((s) => s.id === "pn1")!.pinnedAt).toBeNull();
+  });
+
+  it("H.22 setPinned is fail-closed: foreign, unknown, and soft-deleted ids all return false", () => {
+    store.upsert("user:pin2@x.com", convo("pn3"), 1000);
+    expect(store.setPinned("guest:thief", "pn3", true, 5000)).toBe(false);
+    expect(store.setPinned("user:pin2@x.com", "nope", true, 5000)).toBe(false);
+    store.softDelete("user:pin2@x.com", "pn3", 2000);
+    expect(store.setPinned("user:pin2@x.com", "pn3", true, 5000)).toBe(false);
+  });
+
+  // Share link (2026-08-06_PRD_ShareConversation.md): the public read is the
+  // ONLY unauthenticated query on this table — these pin its whole contract.
+  it("H.23 share token round-trips: set → public read by token alone; owner sees the live token", () => {
+    store.upsert("user:sh@x.com", convo("s1", "Shared chat"), 1000);
+    expect(store.setShareToken("user:sh@x.com", "s1", "tok-abc")).toBe(true);
+    expect(store.getShareToken("user:sh@x.com", "s1")).toEqual({ shareToken: "tok-abc" });
+    const pub = store.getSharedByToken("tok-abc")!;
+    expect(pub.title).toBe("Shared chat");
+    expect(pub.messages[0]!.text).toBe("make me a game");
+  });
+
+  it("H.24 revoke (token → null) kills the public read; owner state shows unshared", () => {
+    store.upsert("user:sh2@x.com", convo("s2"), 1000);
+    store.setShareToken("user:sh2@x.com", "s2", "tok-live");
+    expect(store.setShareToken("user:sh2@x.com", "s2", null)).toBe(true);
+    expect(store.getSharedByToken("tok-live")).toBeNull();
+    expect(store.getShareToken("user:sh2@x.com", "s2")).toEqual({ shareToken: null });
+  });
+
+  it("H.25 share writes are fail-closed: foreign, unknown, and soft-deleted ids all refuse", () => {
+    store.upsert("user:sh3@x.com", convo("s3"), 1000);
+    expect(store.setShareToken("guest:thief", "s3", "tok-steal")).toBe(false);
+    expect(store.getShareToken("guest:thief", "s3")).toBeNull();
+    expect(store.setShareToken("user:sh3@x.com", "nope", "tok-x")).toBe(false);
+    store.softDelete("user:sh3@x.com", "s3", 2000);
+    expect(store.setShareToken("user:sh3@x.com", "s3", "tok-late")).toBe(false);
+  });
+
+  it("H.26 soft-deleting a SHARED chat makes its live link dead (page dies with the chat)", () => {
+    store.upsert("user:sh4@x.com", convo("s4"), 1000);
+    store.setShareToken("user:sh4@x.com", "s4", "tok-dies");
+    expect(store.getSharedByToken("tok-dies")).not.toBeNull();
+    store.softDelete("user:sh4@x.com", "s4", 2000);
+    expect(store.getSharedByToken("tok-dies")).toBeNull();
+    // empty/unknown tokens are a plain miss, never an oracle
+    expect(store.getSharedByToken("")).toBeNull();
+    expect(store.getSharedByToken("tok-unknown")).toBeNull();
+  });
 });

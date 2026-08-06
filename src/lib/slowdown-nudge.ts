@@ -47,8 +47,14 @@ export const initialSlowdownBannerState: SlowdownBannerState = {
 };
 
 export type SlowdownBannerEvent =
-  /** One perf-probe snapshot arrived — `fps` is that sample's reading. */
-  | { type: "sample"; fps: number; now: number }
+  /** One perf-probe snapshot arrived — `fps` is that sample's reading.
+   *  `playing` (probe v3, owner report 2026-08-06): frames were actually
+   *  being produced AND the kid touched the game recently. An unstarted
+   *  game, an idle multiplayer lobby, or the frame governor's deliberate
+   *  idling all read as near-zero fps — that is "not running", not "running
+   *  slow", and must never satisfy the sustained-low rule. Omitted (old
+   *  cached probe) → treated as playing, the pre-v3 behavior. */
+  | { type: "sample"; fps: number; now: number; playing?: boolean }
   /** The kid tapped "Make it faster". */
   | { type: "fixTapped"; now: number }
   /** A new game / generation — docKey changed, so any half-accumulated
@@ -74,6 +80,13 @@ export function nextSlowdownBannerState(
       // elapsed" branch below, which starts counting from THIS sample).
       if (state.cooldownUntil !== null && event.now < state.cooldownUntil) {
         return { visible: false, consecutiveLow: 0, cooldownUntil: state.cooldownUntil };
+      }
+      // Not playing (owner report 2026-08-06): low fps while the game isn't
+      // producing frames / being touched is expected, not a symptom — drop
+      // the streak, but leave an already-visible banner up (the kid stopping
+      // to READ the banner is itself "not playing").
+      if (event.playing === false) {
+        return { ...state, consecutiveLow: 0, cooldownUntil: null };
       }
       const consecutiveLow = event.fps < LOW_FPS_THRESHOLD ? state.consecutiveLow + 1 : 0;
       return {

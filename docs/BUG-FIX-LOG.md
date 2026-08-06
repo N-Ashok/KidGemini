@@ -11,6 +11,36 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-06 — Slowdown banner fired on games that weren't being played at all (unstarted preview, idle multiplayer lobby)
+
+- **Symptom:** owner report — "when we don't play a multiplayer game or when we don't start a game
+  in the preview pane, we see the game-is-running-slow warning… the design is to slow down during
+  non-working and it is picking [that] up." The banner must "fire only when it feels lagging ON the
+  game."
+- **Root cause:** the same class as the 2026-08-05 hidden-tab entry below, one ring further out.
+  That fix taught the probe that a *hidden tab's* zero frames aren't lag — but a fully VISIBLE
+  game that simply isn't running yet (start-screen games whose loop begins on tap, a multiplayer
+  lobby waiting for a friend) also renders few/zero frames **by design** (no loop; the frame
+  governor's deliberate idling). The probe reported those honest near-zero readings as fps, and
+  five quiet seconds satisfied `SUSTAINED_LOW_SAMPLES`. Conceptually: low fps means "running slow"
+  only while frames are being *attempted and felt* — i.e. during play.
+- **Fix (probe v3 + reducer, regression tests in both):** `perf-probe.ts` now tracks the last real
+  input inside the iframe (pointerdown/keydown/touchstart, capture phase) and stamps every
+  snapshot with `playing` = frames > 0 AND input within `PLAYING_INPUT_WINDOW_MS` (10s).
+  `PERF_PROBE_VERSION` bumped to 3 so the version-aware retrofit replaces cached v2 probes on the
+  next preview render. `slowdown-nudge.ts`'s reducer drops the low-streak on a `playing: false`
+  sample — but deliberately does NOT hide an already-visible banner (the kid stopping to READ the
+  banner is itself "not playing"); omitted `playing` (stale probe) keeps pre-v3 behavior.
+- **Verified:** vm-sandbox probe tests (never-touched → `playing:false` even with frames; recent
+  input + frames → `true`; input but zero frames → `false`) + reducer tests (idle samples never
+  accumulate/show, idle mid-streak resets, visible banner survives idle) — full suite green.
+- **Owner's second ask in the same report** — "can we know which component is causing this… helpful
+  in solving by Ari" — already ships: the "Make it faster" tap sends Ari `buildSlowdownHint()`,
+  which names the heaviest model with instance count and animated state (the kid never sees the
+  technical text). No change needed there.
+
+---
+
 ## 2026-08-05 — Slowdown banner falsely flashed for a couple seconds after leaving Ari and coming back
 
 - **Symptom:** owner report — after switching away from a game preview and returning, the "running

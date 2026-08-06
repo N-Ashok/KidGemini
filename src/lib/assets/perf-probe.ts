@@ -38,8 +38,15 @@ export const PERF_SAMPLE_MS = 1_000;
  *  behavior, but the 2026-08-05 hidden-tab fix (below) needs to actually
  *  REACH games that were already previewed once (and so already carry an old
  *  probe), not just new ones. Bump this whenever buildPerfProbeScript()'s
- *  BEHAVIOR changes. */
-export const PERF_PROBE_VERSION = 2;
+ *  BEHAVIOR changes. v3 (2026-08-06): snapshots carry `playing` — see below. */
+export const PERF_PROBE_VERSION = 3;
+
+/** How recently the kid must have touched the game (pointer/key/touch inside
+ *  the iframe) for a snapshot to count as "playing". Owner report 2026-08-06:
+ *  the slowdown banner fired on unstarted games and idle multiplayer lobbies
+ *  — near-zero fps while nothing is being played is DESIGN (frame governor,
+ *  no game loop yet), not lag. Lag is only ever FELT during play. */
+export const PLAYING_INPUT_WINDOW_MS = 10_000;
 
 export function computeLoad(triangles: number, instances: number, animated: boolean): number {
   return triangles * instances * (animated ? ANIMATED_LOAD_MULTIPLIER : 1);
@@ -106,6 +113,17 @@ export function buildPerfProbeScript(): string {
     };
   }
 
+  // "Playing" signal (v3, owner report 2026-08-06): frames alone can't tell
+  // "running slow" from "not running" — an unstarted game or idle lobby
+  // renders little/nothing by design. Track the last real input so the
+  // slowdown banner only trusts samples taken while the kid is actually
+  // playing. Capture phase: game code often stopPropagation()s.
+  var lastInput = 0;
+  var inputEvents = ["pointerdown", "keydown", "touchstart"];
+  for (var ie = 0; ie < inputEvents.length; ie++) {
+    addEventListener(inputEvents[ie], function () { lastInput = Date.now(); }, true);
+  }
+
   function snapshot() {
     // A hidden tab/panel genuinely renders zero frames — that's true, but it
     // is NOT the same claim as "the game is running slow," which is what
@@ -164,7 +182,8 @@ export function buildPerfProbeScript(): string {
       drawCalls = perf.renderer.info.render.calls;
       rendererTriangles = perf.renderer.info.render.triangles;
     }
-    post({ type: "snapshot", snapshot: { fps: frames, drawCalls: drawCalls, rendererTriangles: rendererTriangles, models: models } });
+    var playing = frames > 0 && lastInput > 0 && (Date.now() - lastInput) < ${PLAYING_INPUT_WINDOW_MS};
+    post({ type: "snapshot", snapshot: { fps: frames, playing: playing, drawCalls: drawCalls, rendererTriangles: rendererTriangles, models: models } });
     frames = 0;
   }
   setInterval(snapshot, ${PERF_SAMPLE_MS});

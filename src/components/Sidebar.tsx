@@ -15,6 +15,9 @@ import { useSession, signIn, signOut } from "@/lib/useAriantraSession";
 interface RecentItem {
   id: string;
   title: string;
+  /** Timestamp when pinned, null/absent otherwise — pinned rows are sorted
+   *  first by the container (chat-organize.ts). */
+  pinnedAt?: number | null;
 }
 
 interface SidebarProps {
@@ -30,6 +33,14 @@ interface SidebarProps {
   /** Soft delete (owner ask 2026-07-26): hides the chat from this account's
    *  view — server keeps the row. Fired only after the in-row confirm tap. */
   onDelete: (id: string) => void;
+  /** Rename via the ⋮ menu (owner ask 2026-08-06) — fired with the trimmed
+   *  non-empty new title after the in-row editor confirms. */
+  onRename: (id: string, title: string) => void;
+  /** Pin/unpin toggle via the ⋮ menu (owner ask 2026-08-06). */
+  onTogglePin: (id: string) => void;
+  /** Share via the ⋮ menu (2026-08-06_PRD_ShareConversation.md) — opens the
+   *  parent-gated ShareChat sheet; all gating lives there, not here. */
+  onShare: (id: string) => void;
   /** True while the server has older chats beyond the loaded index. */
   hasMore?: boolean;
   /** Scrolling near the bottom of Recents asks the container for the next page. */
@@ -46,12 +57,25 @@ interface SidebarProps {
 export function Sidebar(props: SidebarProps) {
   const {
     recents, activeId, isOpen, searchQuery, onSearchChange, onClose, onNewChat, onSelect,
-    onDelete, hasMore, onEndReached, recentsError, onRetryRecents, collapsed, onToggleCollapsed,
+    onDelete, onRename, onTogglePin, onShare, hasMore, onEndReached, recentsError, onRetryRecents,
+    collapsed, onToggleCollapsed,
   } = props;
   const [isSearching, setIsSearching] = useState(false);
   // Two-tap delete: the 🗑️ tap swaps the row for an in-row "Delete / Keep"
   // confirm — no browser confirm() popup, no accidental one-tap loss.
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  // ⋮ per-row menu (owner ask 2026-08-06: Rename / Pin / Delete — replaces
+  // the lone hover-✕, which offered delete only). One open at a time;
+  // outside-click closes via the transparent full-screen backdrop below.
+  const [menuId, setMenuId] = useState<string | null>(null);
+  // In-row rename editor, same swap-the-row pattern as the delete confirm.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  function commitRename(id: string) {
+    const title = renameDraft.trim();
+    setRenamingId(null);
+    if (title) onRename(id, title);
+  }
   function closeSearch() {
     onSearchChange("");
     setIsSearching(false);
@@ -197,7 +221,35 @@ export function Sidebar(props: SidebarProps) {
             </li>
           )}
           {recents.map((r) =>
-            confirmingId === r.id ? (
+            renamingId === r.id ? (
+              <li key={r.id} className="flex items-center gap-1.5 rounded-lg bg-neutral-100 px-2 py-1.5">
+                <input
+                  autoFocus
+                  value={renameDraft}
+                  maxLength={200}
+                  onChange={(e) => setRenameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitRename(r.id);
+                    if (e.key === "Escape") setRenamingId(null);
+                  }}
+                  aria-label={`New name for chat ${r.title}`}
+                  className="min-w-0 flex-1 rounded-lg border border-neutral-300 px-2 py-1 text-sm"
+                />
+                <button
+                  onClick={() => commitRename(r.id)}
+                  disabled={!renameDraft.trim()}
+                  className="shrink-0 rounded-lg bg-neutral-800 px-2 py-1 text-xs font-medium text-white disabled:opacity-40"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => setRenamingId(null)}
+                  className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-200/60"
+                >
+                  Cancel
+                </button>
+              </li>
+            ) : confirmingId === r.id ? (
               <li key={r.id} className="flex items-center gap-1.5 rounded-lg bg-red-50 px-3 py-1.5">
                 <span className="min-w-0 flex-1 truncate text-sm text-red-700" title={r.title}>
                   Delete “{r.title}”?
@@ -219,7 +271,7 @@ export function Sidebar(props: SidebarProps) {
                 </button>
               </li>
             ) : (
-              <li key={r.id} className="group flex items-center">
+              <li key={r.id} className="group relative flex items-center">
                 <button
                   data-active={r.id === activeId}
                   onClick={() => {
@@ -230,20 +282,77 @@ export function Sidebar(props: SidebarProps) {
                     ${r.id === activeId ? "bg-neutral-200 text-neutral-900" : "text-neutral-600 hover:bg-neutral-200/60"}`}
                   title={r.title}
                 >
+                  {r.pinnedAt != null && <span aria-label="Pinned" className="mr-1">📌</span>}
                   {r.title}
                 </button>
-                {/* Deliberately near-invisible (owner ask 2026-07-26): a subtle ✕
-                    that only appears when the pointer is over the row (or the
-                    button is keyboard-focused) — never an obvious affordance. */}
+                {/* ⋮ menu (owner ask 2026-08-06, replaces the lone hover-✕):
+                    Rename / Pin / Delete, like other chat apps. Keeps the
+                    subtle hover-reveal (owner ask 2026-07-26) so rows stay
+                    quiet until pointed at; keyboard-reachable via focus. */}
                 <button
-                  aria-label={`Delete chat ${r.title}`}
-                  title="Delete chat"
-                  onClick={() => setConfirmingId(r.id)}
-                  className="shrink-0 rounded-lg px-2 py-2 text-xs text-neutral-400 opacity-0
-                             hover:text-red-600 focus:opacity-100 group-hover:opacity-100"
+                  aria-label={`Chat options for ${r.title}`}
+                  aria-haspopup="menu"
+                  aria-expanded={menuId === r.id}
+                  title="Chat options"
+                  onClick={() => setMenuId(menuId === r.id ? null : r.id)}
+                  className="shrink-0 rounded-lg px-2 py-2 text-sm text-neutral-400 opacity-0
+                             hover:text-neutral-700 focus:opacity-100 group-hover:opacity-100"
                 >
-                  ✕
+                  ⋮
                 </button>
+                {menuId === r.id && (
+                  <>
+                    {/* transparent backdrop: any outside tap closes the menu */}
+                    <div className="fixed inset-0 z-20" onClick={() => setMenuId(null)} />
+                    <div
+                      role="menu"
+                      onKeyDown={(e) => { if (e.key === "Escape") setMenuId(null); }}
+                      className="absolute right-1 top-9 z-30 w-36 overflow-hidden rounded-xl border border-neutral-200 bg-white py-1 shadow-lg"
+                    >
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuId(null);
+                          setRenameDraft(r.title);
+                          setRenamingId(r.id);
+                        }}
+                        className="block w-full px-3 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100"
+                      >
+                        ✏️ Rename
+                      </button>
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuId(null);
+                          onTogglePin(r.id);
+                        }}
+                        className="block w-full px-3 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100"
+                      >
+                        {r.pinnedAt != null ? "📌 Unpin" : "📌 Pin"}
+                      </button>
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuId(null);
+                          onShare(r.id);
+                        }}
+                        className="block w-full px-3 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100"
+                      >
+                        🔗 Share
+                      </button>
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuId(null);
+                          setConfirmingId(r.id);
+                        }}
+                        className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                      >
+                        🗑️ Delete
+                      </button>
+                    </div>
+                  </>
+                )}
               </li>
             ),
           )}

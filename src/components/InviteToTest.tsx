@@ -1,8 +1,10 @@
 "use client";
-// "🎮 Invite a friend to test" (PRD-MULTIPLAYER.md Phase 4, §Preview-pane
-// hosting) — bottom-sheet, deliberately simpler than PublishToArcade: no
-// naming step, no parent PIN (nothing is published — see api/arcade/test-link
-// route's own comment). Tapping the button immediately creates the link.
+// "🧪 Test link" (PRD-MULTIPLAYER.md Phase 4, §Preview-pane hosting; renamed
+// from "🎮 Invite a friend to test" 2026-08-06 — the old name read like it
+// starts a multiplayer session) — bottom-sheet, deliberately simpler than
+// PublishToArcade: no naming step, no parent PIN (nothing is published — see
+// api/arcade/test-link route's own comment). Tapping the button immediately
+// creates the link.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { signIn, useSession } from "@/lib/useAriantraSession";
@@ -83,8 +85,8 @@ export function InviteToTest({ html, suggestedName, onClose }: Props) {
 
         {step === "creating" && (
           <div className="py-6 text-center">
-            <div className="mb-2 text-5xl">🎮</div>
-            <h3 className="font-display text-xl font-bold">Getting a link ready…</h3>
+            <div className="mb-2 text-5xl">🧪</div>
+            <h3 className="font-display text-xl font-bold">Getting a test link ready…</h3>
           </div>
         )}
 
@@ -103,19 +105,32 @@ export function InviteToTest({ html, suggestedName, onClose }: Props) {
 
         {step === "ready" && (
           <div className="py-2 text-center">
-            <div className="mb-1 text-5xl">🎮</div>
-            <h3 className="font-display text-xl font-bold">Send this to your friend!</h3>
+            <div className="mb-1 text-5xl">🧪</div>
+            <h3 className="font-display text-xl font-bold">Your test link is ready!</h3>
+            {/* Owner UAT 2026-08-06 round 2: the link alone does NOT put two
+                people in one session — someone must OPEN it, tap 🎮 and host,
+                then forward the room link. Say exactly that, in steps. */}
             <p className="mb-3 text-sm text-neutral-500">
-              They tap it, and you can both play together. This link stops working in 2 hours.
+              Try your multiplayer game for real before it goes live: open the link, tap 🎮 in the
+              game and pick <b>Invite a friend</b> — that makes a room link that brings your friend
+              straight in. Nothing is published, and this test link stops working in 2 hours.
             </p>
             <div className="mb-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-sm font-extrabold text-orange-600 break-all">
               {url}
             </div>
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mb-2 block w-full rounded-2xl bg-orange-500 py-3.5 text-center text-base font-extrabold text-white shadow-lg shadow-orange-500/30"
+            >
+              ▶ Open it and host
+            </a>
             <button
               onClick={share}
-              className="mb-2 block w-full rounded-2xl bg-orange-500 py-3.5 text-base font-extrabold text-white shadow-lg shadow-orange-500/30"
+              className="mb-2 block w-full rounded-2xl border-2 border-orange-500 py-3 text-base font-extrabold text-orange-600"
             >
-              {copied ? "✓ Copied!" : "📤 Send to a friend"}
+              {copied ? "✓ Copied!" : "📤 Send the link instead"}
             </button>
             <button onClick={onClose} className="block w-full rounded-2xl border-2 border-neutral-200 py-3 text-base font-bold text-neutral-800">
               Done

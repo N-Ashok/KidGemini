@@ -264,7 +264,7 @@ export function ArtifactFrame({
   }, [docKey]);
   useEffect(() => {
     if (!perfSnapshot) return;
-    dispatchSlowdown({ type: "sample", fps: perfSnapshot.fps, now: Date.now() });
+    dispatchSlowdown({ type: "sample", fps: perfSnapshot.fps, now: Date.now(), playing: perfSnapshot.playing });
   }, [perfSnapshot]);
   // Server-visible logging (2026-08-04): the instant the banner FLIPS to
   // visible (edge-triggered — reportedRef guards against re-firing on every
@@ -525,16 +525,18 @@ export function ArtifactFrame({
     </div>
   );
 
-  // Invite a friend to test (PRD-MULTIPLAYER.md Phase 4) — ONLY for games
-  // the model actually built multiplayer (MULTIPLAYER_MARKER); on any other
-  // game this button would be a dead end (no friend session to join).
+  // Test link (PRD-MULTIPLAYER.md Phase 4; renamed from "🎮 Invite" 2026-08-06:
+  // owner UAT — "Invite" read like it starts a multiplayer session, but it
+  // mints a temporary try-before-publish link) — ONLY for games the model
+  // actually built multiplayer (MULTIPLAYER_MARKER); on any other game this
+  // button would be a dead end (no friend session to join).
   const inviteButton = !busy && state.currentHtml.includes(MULTIPLAYER_MARKER) && (
     <button
       onClick={() => setInviting(true)}
       className="rounded-full border-2 border-orange-500 px-3 py-1.5 text-sm font-extrabold text-orange-600"
-      aria-label="Invite a friend to test"
+      aria-label="Get a test link to try this game with a friend"
     >
-      🎮 <span className="hidden sm:inline">Invite</span>
+      🧪 <span className="hidden sm:inline">Test link</span>
     </button>
   );
 

@@ -22,7 +22,7 @@ import { CUSTOM_PLAN_KEY } from "./billing.config";
 import type { PaymentRecord, PaymentStore } from "@/types/billing.types";
 import type { ChatHistoryStore, ConvoSummary } from "@/types/chat-history.types";
 import type { TurnResult, TurnResultStore } from "@/types/turn-result.types";
-import type { Conversation, Workspace } from "@/types/chat.types";
+import type { ChatMessage, Conversation, Workspace } from "@/types/chat.types";
 import type {
   HelpAuditEntry,
   HelpCreateResult,
@@ -314,6 +314,19 @@ export function getDb(): Database.Database {
   if (!convoCols.some((c) => c.name === "deletedAt")) {
     db.exec(`ALTER TABLE conversations ADD COLUMN deletedAt INTEGER;`);
   }
+  // Pin (owner ask 2026-08-06, sidebar ⋮ menu): NULL = unpinned. Sorting is
+  // client-side (chat-organize.ts) so list()'s cursor pagination stays pure
+  // recency.
+  if (!convoCols.some((c) => c.name === "pinnedAt")) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN pinnedAt INTEGER;`);
+  }
+  // Share link (2026-08-06_PRD_ShareConversation.md): NULL = not shared;
+  // a 32-hex token makes the transcript readable at /share/chat/<token>.
+  // Indexed for the public token-only lookup.
+  if (!convoCols.some((c) => c.name === "shareToken")) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN shareToken TEXT;`);
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_convos_share ON conversations(shareToken);`);
   // Per-account alert scoping (PRD-PARENT-AUTH-ALERT-SCOPING §8 Phase 2). Pre-
   // migration rows get accountId = NULL, so they're shown to NO parent — the
   // safe outcome (an un-owned global alert stops leaking across families).
@@ -966,13 +979,13 @@ export class SqliteChatHistoryStore implements ChatHistoryStore {
     const rows = (
       before === undefined
         ? getDb()
-            .prepare(`SELECT id, title, updatedAt FROM conversations WHERE userId = ? AND workspace = ? AND deletedAt IS NULL ORDER BY updatedAt DESC, id LIMIT ?`)
+            .prepare(`SELECT id, title, updatedAt, pinnedAt FROM conversations WHERE userId = ? AND workspace = ? AND deletedAt IS NULL ORDER BY updatedAt DESC, id LIMIT ?`)
             .all(userId, workspace, limit)
         : getDb()
             .prepare(
               // Composite cursor: strictly older, OR same-ms rows after the
               // prior page's last id (ORDER BY ... id ASC ties the order).
-              `SELECT id, title, updatedAt FROM conversations
+              `SELECT id, title, updatedAt, pinnedAt FROM conversations
                WHERE userId = @userId AND workspace = @workspace AND deletedAt IS NULL AND (updatedAt < @u OR (updatedAt = @u AND id > @i))
                ORDER BY updatedAt DESC, id LIMIT @limit`,
             )
@@ -1015,6 +1028,58 @@ export class SqliteChatHistoryStore implements ChatHistoryStore {
       if (result.changes > 0) this.gameSaves.deleteByConversation(id);
       return result.changes > 0;
     })();
+  }
+
+  /** Rename (owner ask 2026-08-06): title only — updatedAt is deliberately
+   *  untouched so a rename never reorders Recents. Fail-closed: foreign,
+   *  unknown, or soft-deleted ids match nothing. */
+  rename(userId: string, id: string, title: string): boolean {
+    const result = getDb()
+      .prepare(`UPDATE conversations SET title = @title WHERE id = @id AND userId = @userId AND deletedAt IS NULL`)
+      .run({ title, id, userId });
+    return result.changes > 0;
+  }
+
+  /** Pin/unpin (owner ask 2026-08-06). Same fail-closed contract as rename. */
+  setPinned(userId: string, id: string, pinned: boolean, now: number): boolean {
+    const result = getDb()
+      .prepare(`UPDATE conversations SET pinnedAt = @p WHERE id = @id AND userId = @userId AND deletedAt IS NULL`)
+      .run({ p: pinned ? now : null, id, userId });
+    return result.changes > 0;
+  }
+
+  /** Share link (2026-08-06_PRD_ShareConversation.md). Token or null (revoke);
+   *  same fail-closed contract as rename/setPinned. */
+  setShareToken(userId: string, id: string, token: string | null): boolean {
+    const result = getDb()
+      .prepare(`UPDATE conversations SET shareToken = @t WHERE id = @id AND userId = @userId AND deletedAt IS NULL`)
+      .run({ t: token, id, userId });
+    return result.changes > 0;
+  }
+
+  /** The owner's view of a chat's share state: null = no such (visible) chat;
+   *  otherwise the live token or null when unshared. */
+  getShareToken(userId: string, id: string): { shareToken: string | null } | null {
+    const row = getDb()
+      .prepare(`SELECT shareToken FROM conversations WHERE id = ? AND userId = ? AND deletedAt IS NULL`)
+      .get(id, userId) as { shareToken: string | null } | undefined;
+    return row ?? null;
+  }
+
+  /** PUBLIC read for /share/chat/[token] — the ONLY unauthenticated query on
+   *  this table, keyed by token alone. Revoked (NULL never matches a token)
+   *  and soft-deleted chats are unreachable. */
+  getSharedByToken(token: string): { title: string; messages: ChatMessage[]; updatedAt: number } | null {
+    if (!token) return null;
+    const row = getDb()
+      .prepare(`SELECT title, messages, updatedAt FROM conversations WHERE shareToken = ? AND deletedAt IS NULL`)
+      .get(token) as { title: string; messages: string; updatedAt: number } | undefined;
+    if (!row) return null;
+    try {
+      return { title: row.title, messages: JSON.parse(row.messages), updatedAt: row.updatedAt };
+    } catch {
+      return null; // corrupt row — treat as missing, never throw into a page
+    }
   }
 
   claim(fromUserId: string, toUserId: string): number {

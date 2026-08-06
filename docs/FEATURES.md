@@ -37,9 +37,33 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   on one request, regardless of what's left in localStorage. Ownership
   fail-closed at the SQL layer (`/api/chats*`, `SqliteChatHistoryStore`);
   write-through happens once per finished turn, never per streamed token
-- **Delete a chat** (2026-07-26, owner ask): each sidebar row has a SUBTLE ✕
-  — invisible until the row is hovered (or the button keyboard-focused);
-  deliberately not an obvious affordance — with an in-row two-tap confirm
+- **Chat ⋮ menu — Rename / Pin / Delete** (2026-08-06, owner ask; supersedes
+  the lone hover-✕ of 2026-07-26): each sidebar row has a hover-revealed ⋮
+  (same subtle reveal as the old ✕) opening a per-row menu, like other chat
+  apps. **Rename**: in-row editor (Enter/Escape), `PATCH /api/chats/:id
+  { title }` — deliberately does NOT bump `updatedAt`, so renaming an old
+  chat never reorders Recents; the container's auto-title only fires while
+  the title is still "New chat", so a manual name is never clobbered.
+  **Pin**: `PATCH { pinned }` stamps a `pinnedAt` column; pinned chats sort
+  FIRST in Recents (📌 badge), most recently pinned on top — sorting is
+  client-side (`chat-organize.ts` `sortPinnedFirst`, applied after
+  `mergeRecents` so server-only pinned chats float too) and the SQL list
+  order stays pure recency, keeping cursor pagination untouched. Both verbs
+  are optimistic + fire-and-forget (offline/local-only chats still work) and
+  fail-closed 404 on foreign ids. Pure transitions in `chat-organize.ts`
+  (CO.1–CO.5), store methods H.19–H.22, route C.11–C.14.
+  **Share** (same day, owner picked the parent-gated model —
+  `docs/2026-08-06_PRD_ShareConversation.md`): ⋮ → 🔗 Share opens the
+  ShareChat sheet — parent PIN (same verify-pin → `ari_parent` cookie gate
+  as publish) → a revocable 32-hex secret link to `/share/chat/<token>`, a
+  TEXT-ONLY server-rendered transcript (game code is never executed there —
+  games render as a "🎮 built a game here" chip), `noindex`, dead the moment
+  the link is revoked or the chat deleted. Revoking needs no PIN (it only
+  reduces exposure). Re-sharing after a revoke mints a fresh token; old
+  links stay dead. Store H.23–H.26, route S.1–S.6 (403 without a parent
+  session even for the owner).
+- **Delete a chat** (2026-07-26, owner ask; now the ⋮ menu's Delete item —
+  the ✕ itself is gone): in-row two-tap confirm
   ("Delete / Keep" — no browser popup). SOFT
   delete: `DELETE /api/chats/:id` stamps `deletedAt` and the chat leaves the
   account's VIEW (list + get filter on `deletedAt IS NULL`) — the row stays
@@ -453,12 +477,15 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   surfaces on this side): tries `whatsapp://send?text=` first (mobile app or
   WhatsApp Desktop, hands off immediately — no "select WhatsApp Web" step),
   falls back to `wa.me` only if the page is still visible ~1.2s later
-- **🎮 Multiplayer generation + "Invite a friend to test"**
-  (2026-07-14, `../Ariantra-Platform/docs/PRD-MULTIPLAYER.md` Phase 4): asking
+- **🎮 Multiplayer generation + "🧪 Test link"** (2026-07-14,
+  `../Ariantra-Platform/docs/PRD-MULTIPLAYER.md` Phase 4; button renamed from
+  "🎮 Invite a friend to test" 2026-08-06 — owner UAT: "Invite" read like it
+  starts a multiplayer session, when it actually mints a temporary
+  try-before-publish link): asking
   for a 2-player/co-op/versus game conditionally teaches the model
   `Ariantra.broadcast()`/`onMessage()`/`onPlayers()` (never `host()`/`join()`
   — the platform's injected lobby overlay owns those) plus the
-  `<!--USES_MULTIPLAYER-->` marker. A "🎮 Invite" button appears next to
+  `<!--USES_MULTIPLAYER-->` marker. A "🧪 Test link" button appears next to
   🚀 Arcade ONLY on games carrying that marker, and creates a real friend
   session before anything is published — no naming, no parent PIN, no `Game`
   record; the link expires in 2 hours (`InviteToTest.tsx` + `/api/arcade/
@@ -979,7 +1006,10 @@ server-to-server contract as `arcade-partner.ts`).
   metering (`SparksService.canStart`/`debitUsage`) is the real usage gate.
 - NOT linked from the kid UI (2026-07-11, still true): the sidebar's "Go
   premium" tab was removed — Sparks are sold on ariantra.com's pricing page,
-  which links to `/upgrade`. `/upgrade` stays reachable by direct link only.
+  which links to `/upgrade`. Since 2026-08-06 the PIN-gated Parent area's
+  Sparks Management tab carries a "⚡ Buy Sparks" CTA to `/upgrade`
+  (`SparksParentCard.tsx`, guarded by `sparks-parent-buy-cta.test.ts`) — the
+  kid-facing sidebar still never links it (`sidebar-no-premium.test.ts`).
   Guarded by `src/components/sidebar-no-premium.test.ts`
 - Packs (2026-08-01, down to 2 tiers from the 2026-07-27 three-tier ladder):
   `pack500` / `pack1000` (₹500/₹1000 → 50,000/1,00,000 ⚡, same flat rate — 1

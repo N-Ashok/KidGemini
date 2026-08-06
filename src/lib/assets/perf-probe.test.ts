@@ -178,7 +178,7 @@ describe("buildPerfProbeScript — runtime behavior (sandboxed via node:vm)", ()
       rafCb?.(Date.now());
     };
     const sample = () => intervalCb?.();
-    return { sandbox, posted, ready, tick, sample };
+    return { sandbox, posted, ready, tick, sample, handlers };
   }
 
   it("buffers snapshots until the parent's ready handshake, then flushes", () => {
@@ -328,4 +328,39 @@ describe("buildPerfProbeScript — runtime behavior (sandboxed via node:vm)", ()
     expect(posted).toHaveLength(1);
     expect(posted[0].event.snapshot.fps).toBe(1); // NOT 4 (3 stale + 1 fresh)
   });
+// Owner report 2026-08-06 (probe v3): near-zero fps on an UNSTARTED game or
+  // an idle multiplayer lobby is design (no game loop yet, frame governor),
+  // not lag — so every snapshot now carries `playing`: frames were produced
+  // AND the kid touched the game recently. The banner reducer
+  // (slowdown-nudge.ts) only builds its streak from playing samples.
+  it("playing=false when the kid has never touched the game, even with frames flowing", () => {
+    const { sandbox, posted, ready, tick, sample } = bootProbe();
+    (sandbox as any).__arPerf = { models: {} };
+    ready();
+    tick();
+    tick();
+    sample();
+    expect(posted[0].event.snapshot.playing).toBe(false);
+  });
+
+  it("playing=true once recent input AND frames coincide", () => {
+    const { sandbox, posted, ready, tick, sample, handlers } = bootProbe();
+    (sandbox as any).__arPerf = { models: {} };
+    ready();
+    handlers["pointerdown"]?.forEach((fn) => fn({}));
+    tick();
+    sample();
+    expect(posted[0].event.snapshot.playing).toBe(true);
+  });
+
+  it("playing=false when input is recent but NO frames rendered (game loop not running)", () => {
+    const { sandbox, posted, ready, sample, handlers } = bootProbe();
+    (sandbox as any).__arPerf = { models: {} };
+    ready();
+    handlers["keydown"]?.forEach((fn) => fn({}));
+    sample();
+    expect(posted[0].event.snapshot.fps).toBe(0);
+    expect(posted[0].event.snapshot.playing).toBe(false);
+  });
 });
+

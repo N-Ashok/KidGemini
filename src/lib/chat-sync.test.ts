@@ -8,7 +8,7 @@ describe("chat-sync — sidebar merge", () => {
     const merged = mergeRecents([{ id: "a", title: "Local A" }], [s("a", "Server A"), s("b", "Server B")], "");
     expect(merged).toEqual([
       { id: "a", title: "Local A" }, // local copy wins (it may be newer, unsynced)
-      { id: "b", title: "Server B" },
+      { id: "b", title: "Server B", pinnedAt: null }, // pin state rides along (⋮ menu, 2026-08-06)
     ]);
   });
 

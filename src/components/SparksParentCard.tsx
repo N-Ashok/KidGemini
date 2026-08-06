@@ -100,6 +100,18 @@ export function SparksParentCard() {
         )}
       </div>
 
+      {/* Buy path (owner ask 2026-08-06): checkout shipped 2026-07-27 but was
+          reachable by direct link only — the parent tab is its home. The kid
+          UI deliberately never links /upgrade (sidebar-no-premium.test.ts). */}
+      <div className="flex flex-wrap items-center gap-3 border-t border-gray-200 pt-3">
+        <a href="/upgrade" className="btn-primary no-underline">
+          ⚡ Buy Sparks
+        </a>
+        <p className="text-xs text-ink-700">
+          Top up your child&rsquo;s building balance — pay by card or UPI, Sparks land instantly.
+        </p>
+      </div>
+
       {/* Full statement — the append-only ledger, verbatim */}
       {txns.length > 0 && (
         <div className="divide-y divide-gray-100 border-t border-gray-200 pt-2 text-sm">

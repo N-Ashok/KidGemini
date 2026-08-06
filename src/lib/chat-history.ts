@@ -5,7 +5,7 @@
 import type { ChatMessage, Conversation } from "@/types/chat.types";
 
 const MAX_ID = 100;
-const MAX_TITLE = 200;
+export const MAX_TITLE = 200;
 const MAX_MESSAGES = 500;
 /** A game-building chat runs ~200KB with artifacts; 2MB is generous headroom. */
 export const MAX_CONVO_BYTES = 2_000_000;
@@ -55,6 +55,11 @@ export function sanitizeConversation(input: unknown): Conversation | null {
     // cross-device restore still publishes to the same subdomain. Validated to
     // the platform slug shape; anything else is dropped, not rejected.
     ...(typeof c.editSlug === "string" && /^[a-z0-9-]{2,40}$/.test(c.editSlug) ? { editSlug: c.editSlug } : {}),
+    // Preserve the pin (owner ask 2026-08-06) so a device's write-through PUT
+    // doesn't strip what its own local state carries. The server's pinnedAt
+    // COLUMN is canonical (set via PATCH; upsert never writes it) — this only
+    // keeps the client-side round-trip honest.
+    ...(typeof c.pinnedAt === "number" ? { pinnedAt: c.pinnedAt } : {}),
   };
   if (JSON.stringify(convo).length > MAX_CONVO_BYTES) return null;
   return convo;

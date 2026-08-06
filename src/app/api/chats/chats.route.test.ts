@@ -10,7 +10,7 @@ const authMock = vi.fn();
 vi.mock("@/lib/ariantra-session.server", () => ({ getAriantraSession: () => authMock() }));
 
 import { GET as listGET, POST as bulkPOST } from "./route";
-import { GET as oneGET, PUT as onePUT } from "./[id]/route";
+import { GET as oneGET, PUT as onePUT, PATCH as onePATCH } from "./[id]/route";
 import type { NextRequest } from "next/server";
 
 function makeReq(opts: { cookie?: string; body?: unknown; query?: Record<string, string> } = {}): NextRequest {
@@ -127,6 +127,52 @@ describe("GET /api/chats — guest→account claim on login", () => {
     await listGET(makeReq({ cookie: "guest:merge2" }));
     const list = await (await listGET(makeReq({ cookie: "guest:merge2" }))).json();
     expect(list.chats.map((c: { id: string }) => c.id)).toEqual(["m2a"]);
+  });
+});
+
+// PATCH /api/chats/:id — rename + pin (owner ask 2026-08-06, sidebar ⋮ menu).
+// Same fail-closed identity contract as GET/DELETE: foreign/unknown id → 404.
+describe("PATCH /api/chats/:id — rename + pin", () => {
+  it("C.11 renames a chat and the new title shows in the list", async () => {
+    authMock.mockResolvedValue({ userId: "user:ren@x.com" });
+    await onePUT(makeReq({ body: { convo: convo("rn1") } }), { params: { id: "rn1" } });
+    const res = await onePATCH(makeReq({ body: { title: "  Space ideas  " } }), { params: { id: "rn1" } });
+    expect(res.status).toBe(200);
+    const list = await (await listGET(makeReq({}))).json();
+    expect(list.chats.find((c: { id: string }) => c.id === "rn1").title).toBe("Space ideas");
+  });
+
+  it("C.12 pins and unpins — pinnedAt appears in the list index and clears again", async () => {
+    authMock.mockResolvedValue({ userId: "user:pin@x.com" });
+    await onePUT(makeReq({ body: { convo: convo("pi1") } }), { params: { id: "pi1" } });
+    expect((await onePATCH(makeReq({ body: { pinned: true } }), { params: { id: "pi1" } })).status).toBe(200);
+    let list = await (await listGET(makeReq({}))).json();
+    expect(list.chats.find((c: { id: string }) => c.id === "pi1").pinnedAt).toEqual(expect.any(Number));
+    expect((await onePATCH(makeReq({ body: { pinned: false } }), { params: { id: "pi1" } })).status).toBe(200);
+    list = await (await listGET(makeReq({}))).json();
+    expect(list.chats.find((c: { id: string }) => c.id === "pi1").pinnedAt).toBeNull();
+  });
+
+  it("C.13 fail-closed: foreign id → 404; no identity → 401; empty/invalid body → 400", async () => {
+    await onePUT(makeReq({ cookie: "guest:owner2", body: { convo: convo("pv2") } }), { params: { id: "pv2" } });
+    expect((await onePATCH(makeReq({ body: { title: "x" } }), { params: { id: "pv2" } })).status).toBe(401);
+    authMock.mockResolvedValue({ userId: "user:other2@x.com" });
+    expect((await onePATCH(makeReq({ body: { title: "x" } }), { params: { id: "pv2" } })).status).toBe(404);
+    expect((await onePATCH(makeReq({ body: {} }), { params: { id: "pv2" } })).status).toBe(400);
+    expect((await onePATCH(makeReq({ body: { title: "   " } }), { params: { id: "pv2" } })).status).toBe(400);
+  });
+
+  it("C.14 a manual rename survives the next turn's write-through upsert (the '=== New chat' guard)", async () => {
+    // The container only auto-titles when title is still "New chat" — but the
+    // PUT write-through sends the CLIENT's title, so the client state must
+    // carry the rename; this pins the server half: a PUT with the renamed
+    // title keeps it (upsert writes title verbatim, rename isn't special).
+    authMock.mockResolvedValue({ userId: "user:keep@x.com" });
+    await onePUT(makeReq({ body: { convo: convo("kp1") } }), { params: { id: "kp1" } });
+    await onePATCH(makeReq({ body: { title: "Kept name" } }), { params: { id: "kp1" } });
+    await onePUT(makeReq({ body: { convo: { ...convo("kp1"), title: "Kept name" } } }), { params: { id: "kp1" } });
+    const list = await (await listGET(makeReq({}))).json();
+    expect(list.chats.find((c: { id: string }) => c.id === "kp1").title).toBe("Kept name");
   });
 });
 

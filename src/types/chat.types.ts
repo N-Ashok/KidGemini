@@ -70,6 +70,10 @@ export interface Conversation {
    *  "you're editing X" banner. Set on chats seeded from Studio's Edit
    *  button; absent on ordinary chats. */
   editSlug?: string;
+  /** Pin (owner ask 2026-08-06, sidebar ⋮ menu): timestamp when pinned, null/
+   *  absent otherwise. Pinned chats sort first in Recents (chat-organize.ts);
+   *  server column is canonical via PATCH /api/chats/:id { pinned }. */
+  pinnedAt?: number | null;
   /** The Idea Queue (docs/PRD-IDEA-QUEUE-V2.md), oldest first: every idea the
    *  kid had while Ari was busy — typed (`build`) or spoken (`tweak`). Rides
    *  on the conversation so a reload — or a different device, via the server

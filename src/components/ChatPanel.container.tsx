@@ -54,6 +54,8 @@ import { PanelResizeHandle } from "./PanelResizeHandle";
 import { searchChats } from "@/lib/chat-search";
 import { appendPage, chatToAutoRestore, mergeRecents, SYNC_FLAG } from "@/lib/chat-sync";
 import { stateAfterDelete } from "@/lib/chat-delete";
+import { stateAfterRename, stateAfterPin, sortPinnedFirst } from "@/lib/chat-organize";
+import { ShareChat } from "./ShareChat";
 import { fileOpenPlan, openedFileLine, uploadHistoryLine } from "@/lib/file-open";
 import { parseEditEntry, stripEditParams, seedingConversation, applySeed, applySeedFailure, threeDConversation, type EditEntry } from "@/lib/edit-entry";
 import { loadSidebarCollapsed, saveSidebarCollapsed } from "@/lib/sidebar-pane";
@@ -601,10 +603,12 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   // this device (title-searched; their messages load when opened).
   const recents = useMemo(
     () =>
-      mergeRecents(
-        searchChats(convos, searchQuery).map((c) => ({ id: c.id, title: c.title })),
-        remoteIndex,
-        searchQuery,
+      sortPinnedFirst(
+        mergeRecents(
+          searchChats(convos, searchQuery).map((c) => ({ id: c.id, title: c.title, pinnedAt: c.pinnedAt ?? null })),
+          remoteIndex,
+          searchQuery,
+        ),
       ),
     [convos, searchQuery, remoteIndex],
   );
@@ -945,6 +949,58 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     }
     setConvos(next.convos);
     setActiveId(next.nextActiveId);
+  }
+
+  /** Rename (owner ask 2026-08-06, sidebar ⋮ menu). Optimistic: local state
+   *  first, PATCH fire-and-forget — a 404 just means the chat never synced
+   *  (local-only), where the local rename is the whole job. The auto-title
+   *  guard (`title === "New chat"`) can't clobber this: a renamed title is
+   *  never "New chat" (the input rejects empty). */
+  function handleRenameChat(id: string, rawTitle: string) {
+    const title = rawTitle.trim().slice(0, 200);
+    if (!title) return;
+    void fetch(`/api/chats/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title }),
+    }).catch(() => {/* offline — local rename still applies; syncs via next PUT */});
+    const next = stateAfterRename(convos, remoteIndex, id, title);
+    setConvos(next.convos);
+    setRemoteIndex(next.remoteIndex);
+  }
+
+  /** Pin/unpin (owner ask 2026-08-06): toggles. Pinned chats sort first in
+   *  Recents (sortPinnedFirst in the recents memo). Same optimistic +
+   *  fire-and-forget contract as rename. */
+  function handleTogglePin(id: string) {
+    const current =
+      convos.find((c) => c.id === id)?.pinnedAt ?? remoteIndex.find((r) => r.id === id)?.pinnedAt ?? null;
+    const pinnedAt = current == null ? Date.now() : null;
+    void fetch(`/api/chats/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pinned: pinnedAt != null }),
+    }).catch(() => {/* offline — local pin still applies */});
+    const next = stateAfterPin(convos, remoteIndex, id, pinnedAt);
+    setConvos(next.convos);
+    setRemoteIndex(next.remoteIndex);
+  }
+
+  /** Share (2026-08-06_PRD_ShareConversation.md): gating (parent PIN, sign-in)
+   *  lives in the ShareChat sheet. A local-only chat is best-effort synced
+   *  first so the share route can find it server-side. */
+  const [sharingChat, setSharingChat] = useState<{ id: string; title: string } | null>(null);
+  async function handleShareChat(id: string) {
+    const local = convos.find((c) => c.id === id);
+    if (local && local.messages.length > 0) {
+      await fetch(`/api/chats/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ convo: local }),
+      }).catch(() => {/* offline — the sheet will show a friendly retry */});
+    }
+    const title = local?.title ?? remoteIndex.find((r) => r.id === id)?.title ?? "This chat";
+    setSharingChat({ id, title });
   }
 
   function handleSelect(id: string) {
@@ -1567,6 +1623,9 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         onNewChat={handleNewChat}
         onSelect={handleSelect}
         onDelete={handleDeleteChat}
+        onRename={handleRenameChat}
+        onTogglePin={handleTogglePin}
+        onShare={(id) => void handleShareChat(id)}
         hasMore={remoteHasMore}
         onEndReached={() => void loadMoreRemote()}
         recentsError={recentsError}
@@ -1962,6 +2021,10 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         // platform age gate (sign-in + adult self-declaration + consent) so the
         // teacher persona can be unlocked; every other surface signs in plainly.
         <LoginGate message={gate.text} showUpgrade={gate.upgrade} onSignIn={() => (persona ? verifyAge() : signIn())} />
+      )}
+
+      {sharingChat && (
+        <ShareChat chatId={sharingChat.id} title={sharingChat.title} onClose={() => setSharingChat(null)} />
       )}
     </div>
   );

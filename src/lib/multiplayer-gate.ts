@@ -14,8 +14,8 @@ import { isGameBuildTurn } from "./builder-mode";
 const MULTIPLAYER_TRIGGER = /\b(multiplayer|(2|two)[- ]?player|co-?op|with (a|my) friend|versus|vs\.?|race (against|with)|play together)\b/i;
 
 /** The opt-in marker the model writes (multiplayer-prompt.ts teaches it) — the
- *  same string ArtifactFrame checks to decide whether to show "🎮 Invite a
- *  friend to test" at all (a single-player game showing that button would be
+ *  same string ArtifactFrame checks to decide whether to show the "🧪 Test
+ *  link" button at all (a single-player game showing that button would be
  *  a dead end). Mirrors THREE_MARKER's role in assets/inject.ts. */
 export const MULTIPLAYER_MARKER = "<!--USES_MULTIPLAYER-->";
 
@@ -40,7 +40,7 @@ const SDK_MULTIPLAYER_CALL = /Ariantra\.(broadcast|onMessage|onPlayers)\s*\(/;
  *  it did not even provide invite button"): the model sometimes writes real
  *  `Ariantra.broadcast`/`onMessage` game logic but forgets the
  *  `<!--USES_MULTIPLAYER-->` opt-in line it was taught — and the marker is
- *  the ONLY signal the preview's "🎮 Invite" button and the publish-time
+ *  the ONLY signal the preview's "🧪 Test link" button and the publish-time
  *  lobby overlay key off, so working multiplayer shipped with no way to use
  *  it. Called on every delivered game (api/chat/route.ts `toDeliverable`):
  *  if the game genuinely calls the multiplayer SDK and the marker is

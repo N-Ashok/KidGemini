@@ -57,6 +57,52 @@ describe("nextSlowdownBannerState — debounced sustained-low-FPS banner", () =>
     expect(s.consecutiveLow).toBe(0);
   });
 
+  // Owner report 2026-08-06: the banner fired on games that weren't being
+  // PLAYED at all — an unstarted game or an idle multiplayer lobby renders
+  // few/zero frames by DESIGN (frame governor, no game loop yet), and the
+  // probe's near-zero fps readings satisfied the 5-low-samples rule. "Slow"
+  // is a claim about frames arriving slowly DURING play, so a sample taken
+  // while not playing (no frames, or no recent input) must never build the
+  // streak — and must not hide an already-visible banner either (the kid
+  // pauses to READ the banner; that pause is itself "not playing").
+  it("samples while NOT playing never accumulate a streak or show the banner", () => {
+    let s = initialSlowdownBannerState;
+    for (let i = 0; i < SUSTAINED_LOW_SAMPLES * 2; i++) {
+      s = nextSlowdownBannerState(s, { type: "sample", fps: 0, now: i * 1_000, playing: false });
+    }
+    expect(s.visible).toBe(false);
+    expect(s.consecutiveLow).toBe(0);
+  });
+
+  it("an idle gap mid-streak resets the count — resuming play needs a FRESH sustained run", () => {
+    let s = initialSlowdownBannerState;
+    for (let i = 0; i < SUSTAINED_LOW_SAMPLES - 1; i++) {
+      s = nextSlowdownBannerState(s, { type: "sample", fps: 10, now: i * 1_000, playing: true });
+    }
+    s = nextSlowdownBannerState(s, { type: "sample", fps: 0, now: 5_000, playing: false });
+    s = nextSlowdownBannerState(s, { type: "sample", fps: 10, now: 6_000, playing: true });
+    expect(s.visible).toBe(false);
+    expect(s.consecutiveLow).toBe(1);
+  });
+
+  it("a not-playing sample does NOT hide a banner that already fired (kid may be reading it)", () => {
+    let s = initialSlowdownBannerState;
+    for (let i = 0; i < SUSTAINED_LOW_SAMPLES; i++) {
+      s = nextSlowdownBannerState(s, { type: "sample", fps: 10, now: i * 1_000, playing: true });
+    }
+    expect(s.visible).toBe(true);
+    s = nextSlowdownBannerState(s, { type: "sample", fps: 0, now: 10_000, playing: false });
+    expect(s.visible).toBe(true);
+  });
+
+  it("omitted `playing` (old probe still cached in a game) keeps the previous behavior", () => {
+    let s = initialSlowdownBannerState;
+    for (let i = 0; i < SUSTAINED_LOW_SAMPLES; i++) {
+      s = nextSlowdownBannerState(s, { type: "sample", fps: 10, now: i * 1_000 });
+    }
+    expect(s.visible).toBe(true);
+  });
+
   it("shows once FPS has been low for SUSTAINED_LOW_SAMPLES consecutive samples", () => {
     let s: SlowdownBannerState = initialSlowdownBannerState;
     for (let i = 0; i < SUSTAINED_LOW_SAMPLES - 1; i++) {
