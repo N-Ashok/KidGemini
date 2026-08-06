@@ -2515,12 +2515,12 @@
     {
       "name": "street_motorcycle",
       "type": "model",
-      "url": "https://assets.ariantra.com/street_motorcycle.81cfd2.glb",
-      "bytes": 32220,
+      "url": "https://assets.ariantra.com/street_motorcycle.3a0900.glb",
+      "bytes": 32276,
       "license": "CC-BY-3.0",
       "author": "jeremy",
       "sourceUrl": "https://poly.pizza/m/0lBe-ApqJs4",
-      "sha256": "81cfd20b117f09fee3a421c00e187eddbec8940e80a5248471944a0b32e5e82a"
+      "sha256": "3a090071d9b25781b9c9726b7a785bf0834504c76dc05c5cf6c03441838a077b"
     },
     {
       "name": "road_straight",

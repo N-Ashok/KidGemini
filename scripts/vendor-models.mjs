@@ -41,6 +41,7 @@ import { NodeIO, getBounds } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { dedup, prune, resample, simplify, meshopt, weld } from '@gltf-transform/functions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
+import { assertLongAxisZ, yRotation } from './lib/orientation.mjs';
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -512,6 +513,13 @@ const MODELS = [
   ...[
     // Four tanks so a battle has visibly distinct SIDES (a kid saying "my tank
     // vs the enemy tank" needs two meshes, not one recolored at runtime).
+    // ⚠️ KNOWN off-convention (2026-08-06 orientation audit): tank_desert and
+    // tank_rusty are authored X-long (sideways per the vehicle facing
+    // convention). Deliberately NOT rotated and NOT assertLongAxis-flagged:
+    // they shipped 2026-07-29 and existing war-game chats may compensate in
+    // code — silently flipping the asset would break them the same way the
+    // sideways bike broke Sky Patrol. Rotate + flag WITH a blast-radius check
+    // at the next military-asset touch (TECH_DEBT #91).
     ['tank', 'cW3zvvkMOM', '58c387b2-636f-49dc-a900-13b0852717d6'],          // olive, classic
     ['tank_desert', 'FA5daiyZQq', '4a40c214-87f9-4cdb-bc72-003c96f49f76'],   // sand
     ['tank_toy', 'Dc4k4CooN3', '2568b2cb-58e0-49d8-9d3b-6f208ad281c7'],      // yellow cartoon
@@ -724,10 +732,11 @@ const MODELS = [
     name,
     source: { kind: 'local', dir: `assets-src/models/${name}` },
     sourceUrl: 'https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md',
+    assertLongAxis: 'z', // vehicle facing convention (orientation.mjs)
   })),
   // "Cartoony Purple Motorcycle" by AliceCassie — the one CC0 motorcycle.
   // Ships toy-sized (1.04 m long); normalized to read as a ridable bike.
-  { name: 'motorcycle', source: { kind: 'url', url: 'https://static.poly.pizza/3ff04d85-dfe6-487c-b01d-5ce92103cf30.glb' }, sourceUrl: 'https://poly.pizza/m/j20srJUjpB', normalizeLongest: 1.9, keepAnimations: [] },
+  { name: 'motorcycle', source: { kind: 'url', url: 'https://static.poly.pizza/3ff04d85-dfe6-487c-b01d-5ce92103cf30.glb' }, sourceUrl: 'https://poly.pizza/m/j20srJUjpB', normalizeLongest: 1.9, keepAnimations: [], assertLongAxis: 'z' },
   // CC-BY 3.0 picks — author is REQUIRED (validators) and becomes the in-game
   // credit line; sourceUrl is both proof AND the credit link target.
   // Rejected over budget, recorded so nobody re-adds them (all flat-shaded, so
@@ -741,16 +750,21 @@ const MODELS = [
     // Both ship at absurd author scales (5.2 m and 15.8 m long) — normalized
     // to real-world bike length; the CC0 purple motorcycle is 1.04 m as
     // shipped and stays untouched.
-    ['military_motorbike', '9SwnIlPjNv', 'b61993ed-4bd4-4439-89c0-933ad42384c7', 'Zsky', 2.3],
-    ['street_motorcycle', '0lBe-ApqJs4', '7d230a92-464a-4d1c-874e-712240e2db20', 'jeremy', 2.2],
-  ].map(([name, slug, uuid, author, normalizeLongest]) => ({
+    // street_motorcycle rotateYDeg: -90 (2026-08-06, "the sideways black
+    // bike" — BUG-FIX-LOG same date): authored nose-at-+X, the one library
+    // vehicle off the facing convention; verified by render before AND after.
+    ['military_motorbike', '9SwnIlPjNv', 'b61993ed-4bd4-4439-89c0-933ad42384c7', 'Zsky', 2.3, 0],
+    ['street_motorcycle', '0lBe-ApqJs4', '7d230a92-464a-4d1c-874e-712240e2db20', 'jeremy', 2.2, -90],
+  ].map(([name, slug, uuid, author, normalizeLongest, rotateYDeg]) => ({
     name,
     source: { kind: 'url', url: `https://static.poly.pizza/${uuid}.glb` },
     sourceUrl: `https://poly.pizza/m/${slug}`,
     license: 'CC-BY-3.0',
     author,
     ...(normalizeLongest ? { normalizeLongest } : {}),
+    ...(rotateYDeg ? { rotateYDeg } : {}),
     keepAnimations: [], // static vehicles — a game drives them by transform
+    assertLongAxis: 'z', // vehicle facing convention (orientation.mjs)
   })),
 
   // ── Roads / bridges / jets batch (2026-08-06 later same day,
@@ -936,6 +950,20 @@ async function prepare(model) {
   // the library convention is real-world size, so bake a uniform root-node
   // scale that brings the longest axis to the given metres. Node-level, so it
   // is deterministic and survives every later transform untouched.
+  // rotateYDeg (2026-08-06, "the sideways black bike"): bake a Y rotation into
+  // the root nodes so the model meets the library facing convention (vehicles
+  // face +Z at rest — see scripts/lib/orientation.mjs). Node-level like
+  // normalizeLongest: deterministic, survives every later transform. The
+  // assertLongAxis lint below is what tells a curator this is needed.
+  if (model.rotateYDeg) {
+    const scene = doc.getRoot().getDefaultScene() ?? doc.getRoot().listScenes()[0];
+    const { composeQuat, rotateVec } = yRotation(model.rotateYDeg);
+    for (const node of scene.listChildren()) {
+      node.setRotation(composeQuat(node.getRotation()));
+      node.setTranslation(rotateVec(node.getTranslation()));
+    }
+    console.log(`  rotated: ${model.rotateYDeg}° about Y (facing convention)`);
+  }
   if (model.normalizeLongest) {
     const scene = doc.getRoot().getDefaultScene() ?? doc.getRoot().listScenes()[0];
     const { min, max } = getBounds(scene);
@@ -955,6 +983,16 @@ async function prepare(model) {
   }
   steps.push(meshopt({ encoder: MeshoptEncoder, level: 'high' }));
   await doc.transform(...steps);
+  // Orientation lint (2026-08-06): entries marked `assertLongAxis: 'z'`
+  // (vehicles) must end the pipeline Z-long — nose at +Z, the library facing
+  // convention. Runs AFTER all transforms so a rotateYDeg fix is what's
+  // measured. Opt-in per entry: characters T-pose X-wide, guns/fences/bridges
+  // are legitimately X-long, so a blanket rule would false-positive (full
+  // audit 2026-08-06: 77 X-long models, 3 actual defects).
+  if (model.assertLongAxis === 'z') {
+    const scene = doc.getRoot().getDefaultScene() ?? doc.getRoot().listScenes()[0];
+    assertLongAxisZ(model.name, getBounds(scene));
+  }
   const bytes = Buffer.from(await io.writeBinary(doc));
   if (bytes.length < 12 || bytes.subarray(0, 4).toString('ascii') !== 'glTF') {
     throw new Error(`${model.name}: compressed output is not a GLB (magic bytes)`);

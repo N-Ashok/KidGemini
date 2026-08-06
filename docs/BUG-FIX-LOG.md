@@ -11,6 +11,44 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-06 — The black bike drove sideways no matter what the model "fixed": asset authored 90° off the facing convention
+
+- **Symptom:** owner UAT (Sky Patrol, right after the AR_ASSETS fix made the bikes visible) — one
+  black motorcycle always travels sideways; the kid reported it three times and Ari confidently
+  "fixed" its steering logic each time with no effect.
+- **Root cause:** measured (gltf-transform bounds + real-browser renders, both directions), not
+  guessed: `street_motorcycle` was authored nose-at-+X while every other vehicle in the library
+  faces +Z. A model's rest orientation is invisible asset metadata — the manifest has no
+  orientation field and the catalog taught no convention, so Gemini's one shared `rotation.y`
+  rule was right for every bike except this one, and no amount of game-code iteration could ever
+  fix it. Full library audit: 77 X-long models, of which 74 are legitimate (T-posing characters,
+  guns, fences, bridges span X by design) and 3 are true defects — this bike + both desert/rusty
+  tanks (tanks deferred, TECH_DEBT #91: shipped 2026-07-29, existing war-game chats may
+  compensate in code; flipping the asset silently would recreate this bug in reverse).
+- **Fix (the scalable convention, not a per-game patch):**
+  - `scripts/lib/orientation.mjs` — pure facing math (long-horizontal-axis, Y-rotation
+    quaternion/translation bake, fix-it lint message), unit-tested from
+    `src/lib/assets/orientation-lint.test.ts` (4 tests, failing-first).
+  - `vendor-models.mjs` — `rotateYDeg` bakes a facing fix into root nodes (same node-level
+    pattern as `normalizeLongest`); `assertLongAxis: 'z'` FAILS curation on any sideways vehicle
+    (opt-in per entry — the audit shows a blanket rule false-positives). Flag set on all 13 bike
+    entries.
+  - `street_motorcycle` re-vendored with `rotateYDeg: -90` → `street_motorcycle.3a0900.glb`,
+    uploaded + sha-verified on the asset host; manifest updated (append-only, old URL still live
+    for published snapshots). Verified by BEFORE and AFTER renders: nose was at the +X marker,
+    now at the +Z marker.
+  - `prompt-catalog.ts` rule 4 now teaches the convention globally ("every model faces +Z at
+    rest — steer with `rotation.y` alone; +Z is forward") — worded to stay under the 2,300-token
+    ceiling (#89 forbids raising it), pinned by test.
+- **Existing games:** the same-day AR_ASSETS healing floor re-resolves known model names to the
+  CURRENT manifest URL on every preview render, so Sky Patrol picks up the corrected GLB on next
+  open after deploy — no chat turn, no migration. No published game references street_motorcycle
+  (scanned all 110).
+- **Class note:** when a kid reports the same visual bug repeatedly and the LLM keeps
+  "fixing" it, suspect an ASSET property the LLM cannot see before suspecting its code. The
+  conventions a generator relies on must be enforced where assets enter (curation lint), not
+  re-taught per game.
+
 ## 2026-08-06 — Models added mid-game never appeared: edit turns left TWO AR_ASSETS tables, the stale one winning
 
 - **Symptom:** owner UAT ("Sky Patrol" helicopter game, prod) — kid asked twice for bikes on the

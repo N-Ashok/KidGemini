@@ -176,7 +176,8 @@ ${categories}
    If \`m\` is null, simply keep the placeholder — the game must keep working
    without the model.
 4. Models load at their own natural size — set \`m.scale\` and \`m.position\`
-   so they fit your scene.
+   so they fit your scene. Every model faces +Z at rest — steer with
+   \`rotation.y\` alone; +Z is forward.
 5. Some models carry NAMED animations in \`m.animations\` — don't blindly play
    \`m.animations[0]\`: it's often an idle pose, or even an attack, so picking
    it for a "running" character makes it look like it's attacking instead of

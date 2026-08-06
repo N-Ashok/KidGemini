@@ -459,3 +459,16 @@ describe("catalog scale ceilings (PRD §14, amended 2026-07-24: teach-everything
     expect(models.length).toBeLessThanOrEqual(320);
   });
 });
+
+// BUG-FIX-LOG 2026-08-06 ("the sideways black bike"): a model's rest
+// orientation is invisible to the LLM, so the library's facing convention
+// must be TAUGHT globally (one line, ~15 tokens) and ENFORCED at curation
+// (vendor-models.mjs orientation lint) — never patched per-model in games.
+describe("the facing convention is taught (2026-08-06)", () => {
+  it("tells the model everything faces +Z and rotation.y alone steers", () => {
+    const section = modelsPromptSection(realManifest as AssetManifest);
+    expect(section).toContain("faces +Z at rest");
+    expect(section).toContain("rotation.y");
+    expect(section).toContain("+Z is forward");
+  });
+});
