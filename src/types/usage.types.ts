@@ -138,6 +138,9 @@ export interface UsageStore {
    * Powers the server-enforced guest gate.
    */
   tokensUsedByUser(userId: string, sinceMs?: number): number;
+  /** Real (kind='chat', unblocked) turns within the window — the guest
+   *  ONE-ASK gate's counter (owner funnel 2026-08-08). */
+  chatTurnsByUser(userId: string, sinceMs?: number): number;
   /** Guest tokens spent from an IP across ALL guest cookies — the cookie-clearing backstop. */
   guestTokensUsedByIp(ip: string, sinceMs?: number): number;
   /** Tokens attributed to a user since a timestamp — powers the signed-in daily budget. */

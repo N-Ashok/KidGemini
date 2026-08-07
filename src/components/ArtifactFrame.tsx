@@ -49,6 +49,11 @@ interface ArtifactFrameProps {
       bought. Sits above the verify cover — an out-of-Sparks kid sees the
       paywall, not "Testing your game…". */
   sparksLocked?: boolean;
+  /** Owner funnel 2026-08-08: a signed-out visitor's one free build renders
+      behind THIS cover — "Your game is ready! Sign in free to see it."
+      Highest-priority cover (a guest can't be sparks-locked). */
+  signInLocked?: boolean;
+  onSignIn?: () => void;
   /** The kid's ask that produced this game — repair prompts carry it (§7). */
   originalRequest?: string;
   onClose: () => void;
@@ -161,6 +166,8 @@ export function ArtifactFrame({
   html,
   busy,
   sparksLocked,
+  signInLocked,
+  onSignIn,
   originalRequest,
   onClose,
   expanded,
@@ -890,6 +897,26 @@ export function ArtifactFrame({
               {!covered && helpTab}
             </div>
           </div>
+          {/* Sign-in lock (owner funnel 2026-08-08): the guest's one free
+              build renders under this cover — the hook is "it's READY, sign
+              in to see it". Chats are server-claimed into the account on
+              login, so nothing is lost by signing in. Highest cover. */}
+          {signInLocked && (
+            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-white px-6 text-center">
+              <span className="text-4xl" aria-hidden>🎉</span>
+              <p className="text-lg font-semibold text-neutral-800">Your game is ready!</p>
+              <p className="max-w-xs text-sm text-neutral-600">
+                Sign in free to see it and play — you'll keep this game forever and get 2,000 free Sparks to keep building.
+              </p>
+              <button
+                onClick={onSignIn}
+                className="rounded-full bg-neutral-800 px-5 py-3 text-base font-medium text-white hover:bg-neutral-700"
+              >
+                🔆 Sign in to see your game
+              </button>
+            </div>
+          )}
+
           {/* Sparks exhaustion lock (2026-08-07): above the verify cover — an
               out-of-Sparks kid sees the paywall, not "Testing your game…".
               The game stays SAFE underneath (nothing is deleted); it unlocks

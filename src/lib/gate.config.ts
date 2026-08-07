@@ -2,8 +2,18 @@
 // A signed-out "guest" may use the app up to GUEST_TOKEN_LIMIT total tokens (chat + safety,
 // prompt + output) before /api/chat requires Google sign-in. Signed-in users are unlimited.
 
+/** Owner funnel 2026-08-08: a signed-out visitor on the DEFAULT surface gets
+ *  exactly this many real asks (kind='chat', unblocked) in the rolling
+ *  window — the first ask builds the game (the client locks its preview
+ *  behind sign-in), the next ask walls. Counted per device cookie; the
+ *  per-IP token cap below still backstops serial-incognito. The
+ *  bible-teacher surface keeps its own token trial instead. */
+export const GUEST_ASK_LIMIT = 1;
+
 /** Total tokens a guest may spend WITHIN THE ROLLING WINDOW before the
- *  sign-in wall. Resets naturally as old usage ages out of the window. */
+ *  sign-in wall. Since the one-ask rule (GUEST_ASK_LIMIT) this acts as a
+ *  volume belt on the default surface and the actual trial for the
+ *  bible-teacher surface. Resets as old usage ages out of the window. */
 export const GUEST_TOKEN_LIMIT = 10_000;
 
 /**

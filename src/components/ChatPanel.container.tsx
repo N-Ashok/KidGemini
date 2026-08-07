@@ -1933,6 +1933,13 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             html={artifact}
             busy={busy}
             sparksLocked={sparksLocked}
+            // Owner funnel 2026-08-08: a signed-out visitor's ONE free build
+            // renders behind a sign-in cover — "your game is ready, sign in
+            // to see it". Their chats are server-claimed into the account on
+            // login (store.claim via /api/chats), so the game survives
+            // sign-up. 'loading' must not flash the cover.
+            signInLocked={authStatus === "unauthenticated"}
+            onSignIn={() => signIn()}
             // Themed preview leaderboard (PRD-PREVIEW-WYSIWYG): biblical seed
             // names on the teacher surface, generic names elsewhere.
             previewTheme={workspace === "bible-teacher" ? "bible" : "default"}

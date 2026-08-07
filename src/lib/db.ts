@@ -444,6 +444,19 @@ export class SqliteUsageStore implements UsageStore {
     return row.total;
   }
 
+  chatTurnsByUser(userId: string, sinceMs = 0): number {
+    // The guest one-ask gate (owner funnel 2026-08-08): real chat turns only —
+    // safety screens/repairs/fallbacks are our overhead, and a BLOCKED turn
+    // must not burn the one free ask (the kid never got a game from it).
+    const row = getDb()
+      .prepare(
+        `SELECT COUNT(*) AS n FROM usage_events
+         WHERE userId = ? AND createdAt >= ? AND kind = 'chat' AND blocked = 0`,
+      )
+      .get(userId, sinceMs) as { n: number };
+    return row.n;
+  }
+
   guestTokensUsedByIp(ip: string, sinceMs = 0): number {
     const row = getDb()
       .prepare(

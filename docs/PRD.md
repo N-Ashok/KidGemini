@@ -306,6 +306,20 @@ an access period, but no entitlement gate consumes it. The gate is a deliberate 
 **Decision (2026-07-03, supersedes 2026-06-25 force-login):** the guest trial is RESTORED —
 the product funnel is *try free → sign in → (later) pay*.
 
+**Decision (2026-08-08, tightens the above — owner):** the default-surface guest
+trial is **ONE ask** (`GUEST_ASK_LIMIT`, counted as real unblocked `chat` turns
+via `chatTurnsByUser`, same rolling window). The first ask builds the game but
+its **preview renders behind a sign-in cover** ("Your game is ready! Sign in
+free to see it") — the second ask hits the wall. Rationale: the token tally
+counts only visible text and under-measured real spend ~13× (live measure: one
+guest session = 70K real tokens ≈ 1,131⚡ vs 5.5K counted), so a "10K-token"
+trial was actually richer than the signed-in 2,000⚡ grant — backwards. The
+funnel is now: 1 guest ask → sign in (guest chats server-`claim`ed into the
+account, game survives) → 2,000⚡ grant → Sparks paywall → ₹120 trial pack
+(once) → ₹500+ packs. The token limit below stays as a volume belt and as the
+bible-teacher surface's own trial; the per-IP cap still backstops
+serial-incognito.
+
 - **Guest trial:** anyone may chat up to `GUEST_TOKEN_LIMIT` (10K tokens) per device
   (httpOnly `ari_guest` cookie, falling back to the legacy `kg_guest` cookie for
   devices that had one from before the 2026-07-17 rename), server-enforced, over a

@@ -91,6 +91,7 @@ vi.mock("@/lib/sparks-bridge", () => ({
 
 // DB stores — knobs the tests turn.
 const usedByUser = vi.fn((..._a: unknown[]): number => 0); // device tally (guests, windowed)
+const chatTurnsByUser = vi.fn((..._a: unknown[]): number => 0); // guest ask counter (one-ask funnel, 2026-08-08)
 const usedByIp = vi.fn((..._a: unknown[]): number => 0); // guest tokens across an IP (windowed)
 const usedByUserSince = vi.fn((): number => 0); // signed-in daily tally
 const rateHit = vi.fn((): { state: string; mustPay?: boolean; until?: number } => ({ state: "ok" }));
@@ -135,6 +136,9 @@ vi.mock("@/lib/db", () => ({
     }
     tokensUsedByUser(...a: unknown[]) {
       return usedByUser(...a);
+    }
+    chatTurnsByUser(...a: unknown[]) {
+      return chatTurnsByUser(...a);
     }
     guestTokensUsedByIp(...a: unknown[]) {
       return usedByIp(...a);
@@ -191,6 +195,8 @@ async function codeNodes(markdown: string): Promise<Array<{ lang: string | null;
 
 beforeEach(() => {
   authMock.mockReset();
+  chatTurnsByUser.mockReset();
+  chatTurnsByUser.mockReturnValue(0);
   fetchGateMock.mockReset();
   fetchGateMock.mockResolvedValue({ status: 200, data: { canStart: true, trialUsed: false } });
   replyStreamMock.mockReset();
@@ -268,6 +274,47 @@ describe("POST /api/chat — guest trial (10K) with layered abuse control", () =
     const res = await POST(makeReq({ message: "hello", history: [] }));
 
     expect(res.headers.get("set-cookie")).not.toContain("Domain=");
+  });
+
+  // Owner funnel 2026-08-08: a signed-out visitor gets exactly ONE ask — the
+  // game builds (client locks the preview behind sign-in), and the SECOND ask
+  // walls. The token tally stays only as the per-IP backstop and the
+  // bible-teacher surface's own trial.
+  it("G.6 a guest's SECOND ask → 401 sign-in wall, Gemini never called (one-ask funnel)", async () => {
+    authMock.mockResolvedValue(null);
+    chatTurnsByUser.mockReturnValue(1); // the one free ask is spent
+    usedByUser.mockReturnValue(500); // token tally is irrelevant now
+
+    const res = await POST(makeReq({ message: "make it faster", history: [] }));
+
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body.error).toBe("auth_required");
+    expect(body.message).toMatch(/sign in/i);
+    expect(replyStreamMock).not.toHaveBeenCalled();
+  });
+
+  it("G.6b the FIRST ask still streams (chatTurnsByUser = 0)", async () => {
+    authMock.mockResolvedValue(null);
+    chatTurnsByUser.mockReturnValue(0);
+    replyStreamMock.mockReturnValue(one("Here's your game!"));
+
+    const res = await POST(makeReq({ message: "make a game", history: [] }));
+
+    expect(res.status).toBe(200);
+    expect(replyStreamMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("G.6c the bible-teacher surface keeps its own token trial — the one-ask rule doesn't apply there", async () => {
+    authMock.mockResolvedValue(null);
+    chatTurnsByUser.mockReturnValue(3); // would wall on the default surface
+    usedByUser.mockReturnValue(0); // but its 2K token trial is untouched
+    replyStreamMock.mockReturnValue(one("Hello!"));
+
+    const res = await POST(makeReq({ message: "hello", history: [], persona: "bible-teacher" }));
+
+    expect(res.status).toBe(200);
+    expect(replyStreamMock).toHaveBeenCalledTimes(1);
   });
 
   it("G.2 guest over the 10K device limit → 401 sign-in wall, Gemini never called", async () => {

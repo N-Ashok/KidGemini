@@ -36,7 +36,7 @@ import { getAriantraSession } from "@/lib/ariantra-session.server";
 import { SESSION_COOKIE } from "@/lib/ariantra-session";
 import { billSparks, fetchGate } from "@/lib/sparks-bridge";
 import { resolvePersona } from "@/lib/persona/persona";
-import { GUEST_COOKIE, GUEST_COOKIE_LEGACY, GUEST_COOKIE_MAX_AGE_S, GUEST_WINDOW_MS, IP_GUEST_TOKEN_CAP, guestTokenLimitFor, signedInDailyTokenLimit } from "@/lib/gate.config";
+import { GUEST_ASK_LIMIT, GUEST_COOKIE, GUEST_COOKIE_LEGACY, GUEST_COOKIE_MAX_AGE_S, GUEST_WINDOW_MS, IP_GUEST_TOKEN_CAP, guestTokenLimitFor, signedInDailyTokenLimit } from "@/lib/gate.config";
 import { validateImageAttachment } from "@/lib/image-attachment";
 import type { ChatMessage, ImageAttachment, TokenUsage } from "@/types/chat.types";
 import type { SafetyVerdict } from "@/types/safety.types";
@@ -224,8 +224,29 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Owner funnel 2026-08-08: on the DEFAULT surface a guest gets exactly
+    // ONE real ask — the game builds (its preview locks behind sign-in
+    // client-side), and the next ask walls here. Ask count, not tokens: the
+    // token tally counts only visible text and undercounted real spend ~13×
+    // (live measure 2026-08-08: one guest session = 70K real tokens ≈ 1,131⚡
+    // vs 5.5K counted). The bible-teacher surface keeps its own token trial
+    // (PRD §3a); the per-IP token cap above backstops serial-incognito.
+    if (requestedPersona !== "bible-teacher") {
+      const asks = usage.chatTurnsByUser(guestId, Date.now() - GUEST_WINDOW_MS);
+      console.log(`[api/chat] guest ${guestId} asks=${asks}/${GUEST_ASK_LIMIT}`);
+      if (asks >= GUEST_ASK_LIMIT) {
+        console.log(`[api/chat] ⛔ gate: guest one-ask limit → 401 sign-in wall`);
+        return NextResponse.json(
+          { error: "auth_required", reason: "guest_limit",
+            message: "Your game is waiting! Sign in free to see it, keep it forever, and get 2,000 free Sparks to keep building ✨" },
+          { status: 401, headers: guestCookieHeader(setGuestCookie) },
+        );
+      }
+    }
+
     // The bible-teacher surface gets a SMALLER free trial (PRD §3a) before the
-    // sign-in + adult gate; every other surface keeps the default guest limit.
+    // sign-in + adult gate; every other surface keeps a token VOLUME belt
+    // behind the one-ask rule.
     const guestLimit = guestTokenLimitFor(requestedPersona);
     const used = usage.tokensUsedByUser(guestId, Date.now() - GUEST_WINDOW_MS);
     console.log(`[api/chat] guest ${guestId} used=${used}/${guestLimit} tokens (persona=${requestedPersona ?? "default"})`);
