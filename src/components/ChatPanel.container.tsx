@@ -98,7 +98,6 @@ import {
 } from "@/lib/chat-copy";
 import type { HelpReasonCode } from "@/types/help.types";
 import { useWakeLock } from "./useWakeLock";
-import { RenameNoticeBanner } from "./RenameNoticeBanner";
 import { ScreenTimeNudgeBanner } from "./ScreenTimeNudgeBanner";
 
 const KIND_FALLBACK = "Let's talk about something else! How about a game? 🌟";
@@ -1670,7 +1669,6 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
           <span className="text-base font-semibold text-neutral-700">✨ Ari</span>
         </div>
         <div className="px-4 pt-3">
-          <RenameNoticeBanner />
           <ScreenTimeNudgeBanner />
         </div>
         {/* Edit-a-launched-game binding banner (approved mockup 2026-07-24):

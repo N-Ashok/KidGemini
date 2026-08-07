@@ -1,5 +1,6 @@
 // Feature 4 (2026-07-28) — once-per-UTC-day shown-tracking for the child
-// nudge banner. Mirrors rename-notice.test.ts's storage-fake approach.
+// nudge banner. Storage-fake approach (pattern from the since-retired
+// rename-notice tests, removed 2026-08-08).
 import { describe, it, expect } from "vitest";
 import {
   defaultScreenTimeNudgeStore,

@@ -1,7 +1,8 @@
 // Once-per-UTC-day "nearing your screen-time cap" child-facing nudge banner
-// (Feature 4, 2026-07-28). Mirrors rename-notice.ts's shown-tracking
-// contract exactly: pure, storage-injected, fail-open. Unlike rename-notice
-// (shown at most once ever), this resets daily — a new UTC day means a new
+// (Feature 4, 2026-07-28). Shown-tracking contract (originated in the
+// since-retired rename-notice.ts, removed 2026-08-08): pure,
+// storage-injected, fail-open. Unlike a shown-once-ever notice,
+// this resets daily — a new UTC day means a new
 // cap window, so a kid who logs in tomorrow and approaches the cap again
 // should see it again. The key is namespaced per UTC-day-start so yesterday's
 // "seen" doesn't suppress today's.
