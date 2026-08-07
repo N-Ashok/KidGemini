@@ -66,6 +66,14 @@ export function billSparks(opts: {
   });
 }
 
+/** 2026-08-07 exhaustion gate — the cheap pre-turn check. `canStart` false ⇒
+ *  the chat route refuses the NEW turn (the in-flight one always completes —
+ *  debits are post-usage) and the preview locks; `trialUsed` drives the
+ *  once-only ₹120 trial pack (order-route refusal + /upgrade visibility). */
+export function fetchGate(sessionToken: string): Promise<SparksResult> {
+  return sparksPost({ sessionToken, gate: true });
+}
+
 /** Kid-safe wallet payload (credits-only history, gauge, referral code). */
 export function fetchWallet(sessionToken: string): Promise<SparksResult> {
   return sparksPost({ sessionToken, wallet: true });

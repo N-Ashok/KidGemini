@@ -44,6 +44,11 @@ interface ArtifactFrameProps {
   html: string | null;
   /** True while the reply is still streaming — publish waits for the full game. */
   busy?: boolean;
+  /** Sparks exhaustion (2026-08-07, platform PRD-SPARKS trial amendment):
+      true ⇒ the preview is covered by a buy-Sparks card until a pack is
+      bought. Sits above the verify cover — an out-of-Sparks kid sees the
+      paywall, not "Testing your game…". */
+  sparksLocked?: boolean;
   /** The kid's ask that produced this game — repair prompts carry it (§7). */
   originalRequest?: string;
   onClose: () => void;
@@ -155,6 +160,7 @@ const CHECK_LABELS: Record<VerifyCheckId, string> = {
 export function ArtifactFrame({
   html,
   busy,
+  sparksLocked,
   originalRequest,
   onClose,
   expanded,
@@ -884,6 +890,29 @@ export function ArtifactFrame({
               {!covered && helpTab}
             </div>
           </div>
+          {/* Sparks exhaustion lock (2026-08-07): above the verify cover — an
+              out-of-Sparks kid sees the paywall, not "Testing your game…".
+              The game stays SAFE underneath (nothing is deleted); it unlocks
+              the moment a pack lands. */}
+          {sparksLocked && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-white px-6 text-center">
+              <span className="text-4xl" aria-hidden>⚡</span>
+              <p className="text-lg font-semibold text-neutral-800">Your Sparks are over!</p>
+              <p className="max-w-xs text-sm text-neutral-600">
+                Your game is saved and waiting — nothing is lost. Ask a grown-up to add Sparks so you can keep playing and finish building it!
+              </p>
+              {/* sparks.html parent promise: "never a buy button" AT the kid —
+                  the CTA is addressed to the grown-up and lands on /upgrade,
+                  where top-ups happen on the account as promised. */}
+              <a
+                href="/upgrade"
+                className="rounded-full bg-neutral-800 px-5 py-3 text-base font-medium text-white hover:bg-neutral-700"
+              >
+                ⚡ Add Sparks (grown-ups)
+              </a>
+            </div>
+          )}
+
           {/* §8.1 — the cover card. The iframe is RENDERED AND PAINTING under
               this opaque layer (display:none would stop rAF and make healthy
               games look dead); the kid sees the checklist, not the probes. */}

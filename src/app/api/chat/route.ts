@@ -28,13 +28,13 @@ import { buildFallbackNextAskHints, kidHintsEnabled } from "@/lib/next-ask-hints
 import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
 import { RulesClassifier } from "@/lib/safety.rules";
-import { KIND_REDIRECT, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY, BUILD_STARTER_SPLIT, adultSafetyBlockMessage } from "@/lib/chat-copy";
+import { KIND_REDIRECT, SPARKS_OVER_LINE, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY, BUILD_STARTER_SPLIT, adultSafetyBlockMessage } from "@/lib/chat-copy";
 import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore, SqliteTurnResultStore, SqliteScreenTimeStore } from "@/lib/db";
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
 import { SESSION_COOKIE } from "@/lib/ariantra-session";
-import { billSparks } from "@/lib/sparks-bridge";
+import { billSparks, fetchGate } from "@/lib/sparks-bridge";
 import { resolvePersona } from "@/lib/persona/persona";
 import { GUEST_COOKIE, GUEST_COOKIE_LEGACY, GUEST_COOKIE_MAX_AGE_S, GUEST_WINDOW_MS, IP_GUEST_TOKEN_CAP, guestTokenLimitFor, signedInDailyTokenLimit } from "@/lib/gate.config";
 import { validateImageAttachment } from "@/lib/image-attachment";
@@ -389,6 +389,25 @@ export async function POST(req: NextRequest) {
     return ndjson((send) => {
       send({ type: "done", text: THREE_D_NEW_GAME_LINE, artifactHtml: null, threeDNewGame: true });
     }, guestCookieHeader(setGuestCookie));
+  }
+
+  // ── 1c. Sparks exhaustion gate (2026-08-07, platform PRD-SPARKS trial
+  // amendment). Runs AFTER the free refusals (safety, 3D-conversion) and
+  // BEFORE anything billable: an exhausted kid's in-flight reply already
+  // completed (debits are post-usage — nothing here can cut a stream); the
+  // NEXT turn is refused with the buy-Sparks line, and the client locks the
+  // preview off the same event (`sparksOver`). Fail OPEN on a platform
+  // hiccup: a Sparks outage must never stop a kid's turn (mirror of
+  // billSparks's fire-and-forget stance; money is protected fail-CLOSED at
+  // the order route instead). Guests never bill, so they are never gated.
+  if (sparksToken) {
+    const gate = await fetchGate(sparksToken);
+    if (gate.status === 200 && gate.data.canStart === false) {
+      console.log(`[api/chat] ⚡ sparks exhausted — turn refused @${ms()}ms`);
+      return ndjson((send) => {
+        send({ type: "paywall", text: SPARKS_OVER_LINE, sparksOver: true });
+      }, guestCookieHeader(setGuestCookie));
+    }
   }
 
   // ── 2. STREAM generation. Output safety = Gemini built-in blocking + the

@@ -7,6 +7,8 @@ import { resolveUserId, resolvePlayerId } from "@/lib/auth-identity";
 import { RazorpayGateway } from "@/lib/razorpay";
 import { SqlitePaymentStore } from "@/lib/db";
 import { findPack, CURRENCY, CUSTOM_PLAN_KEY, validateCustomAmountPaise } from "@/lib/billing.config";
+import { SESSION_COOKIE } from "@/lib/ariantra-session";
+import { fetchGate } from "@/lib/sparks-bridge";
 
 export const runtime = "nodejs";
 
@@ -47,6 +49,16 @@ export async function POST(req: NextRequest) {
   } else {
     const pack = findPack(body.planKey ?? "");
     if (!pack) return NextResponse.json({ error: "unknown_plan" }, { status: 400 });
+    // 2026-08-07: the ₹120 trial pack is purchasable ONCE per player — checked
+    // at ORDER time (refusing after payment would strand real money), platform
+    // ledger as the source of truth. Fail CLOSED on a gate outage: a kid can
+    // wait a minute to buy a trial; a double-sold trial can't be unsold.
+    if (pack.trialOnce) {
+      const sessionToken = req.cookies.get(SESSION_COOKIE)?.value ?? "";
+      const gate = sessionToken ? await fetchGate(sessionToken) : { status: 401, data: {} as { trialUsed?: boolean } };
+      if (gate.status !== 200) return NextResponse.json({ error: "trial_check_unavailable" }, { status: 502 });
+      if (gate.data.trialUsed) return NextResponse.json({ error: "trial_used" }, { status: 400 });
+    }
     amountPaise = pack.amountPaise;
     planKey = pack.key;
     planLabel = pack.label;

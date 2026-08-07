@@ -144,6 +144,26 @@ export interface ChatPanelContainerProps {
 
 export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   const { status: authStatus } = useSession();
+  // Sparks exhaustion preview lock (2026-08-07, platform PRD-SPARKS trial
+  // amendment): true ⇒ ArtifactFrame covers the preview with a buy-Sparks
+  // card. Set from the chat `paywall` event's sparksOver flag, and on load
+  // from the kid-safe wallet payload (canStart), so a kid who ran out
+  // yesterday is still locked after a refresh. Fail OPEN (stay unlocked) on
+  // any fetch hiccup — the chat gate re-locks on the next attempted turn.
+  const [sparksLocked, setSparksLocked] = useState(false);
+  useEffect(() => {
+    if (authStatus !== "authenticated") return;
+    let cancelled = false;
+    void fetch("/api/wallet")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((w: { canStart?: boolean } | null) => {
+        if (!cancelled && w?.canStart === false) setSparksLocked(true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [authStatus]);
   // This surface's workspace (PRD-BIBLE-TEACHER): the teacher surface keeps its
   // own recents list + localStorage bucket, separate from the kid default.
   const workspace: Workspace = persona === "bible-teacher" ? "bible-teacher" : "default";
@@ -1196,7 +1216,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
           const line = buffer.slice(0, nl).trim();
           buffer = buffer.slice(nl + 1);
           if (!line) continue;
-          const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null; newGamePrompt?: boolean; threeDNewGame?: boolean; nextAskHints?: string[] };
+          const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null; newGamePrompt?: boolean; threeDNewGame?: boolean; nextAskHints?: string[]; sparksOver?: boolean };
           if (ev.type === "thinking") {
             if (ev.text) setThinking(ev.text);
           } else if (ev.type === "delta") {
@@ -1252,6 +1272,9 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
           } else if (ev.type === "paywall") {
             setReply(ev.text ?? "Upgrade to keep chatting. 💳");
             setGate({ text: ev.text ?? "You've hit the free limit too many times.", upgrade: true });
+            // Sparks exhaustion (2026-08-07): the same event also locks the
+            // game preview until a pack is bought — completing the paywall.
+            if (ev.sparksOver) setSparksLocked(true);
             finalized = true;
             console.warn(`[chat] paywall — strikes exhausted`);
           } else if (ev.type === "error") {
@@ -1909,6 +1932,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
           <ArtifactFrame
             html={artifact}
             busy={busy}
+            sparksLocked={sparksLocked}
             // Themed preview leaderboard (PRD-PREVIEW-WYSIWYG): biblical seed
             // names on the teacher surface, generic names elsewhere.
             previewTheme={workspace === "bible-teacher" ? "bible" : "default"}

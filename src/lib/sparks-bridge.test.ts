@@ -1,7 +1,7 @@
 /** Sparks bridge — contract + fail-safety. The platform owns the ledger;
  *  these tests pin what Ari SENDS and that failures never propagate. */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { billSparks, fetchWallet, redeemCoupon, submitSocialShare, creditPurchase } from "./sparks-bridge";
+import { billSparks, fetchGate, fetchWallet, redeemCoupon, submitSocialShare, creditPurchase } from "./sparks-bridge";
 
 const okJson = (data: unknown) =>
   Promise.resolve({ status: 200, json: () => Promise.resolve(data) } as unknown as Response);
@@ -67,6 +67,20 @@ describe("reads and parent actions", () => {
     fetchMock.mockImplementation(() => Promise.reject(new Error("timeout")));
     const w = await fetchWallet("jwt");
     expect(w.status).toBe(502);
+  });
+
+  // 2026-08-07 exhaustion gate: the cheap pre-turn check (canStart) + the
+  // once-only trial flag (trialUsed) — chat refuses a new turn and the order
+  // route refuses a repeat trial purchase off this one call.
+  it("fetchGate sends { sessionToken, gate: true } and passes canStart/trialUsed through", async () => {
+    fetchMock.mockImplementation(() => okJson({ canStart: false, trialUsed: true }));
+    const g = await fetchGate("jwt");
+    expect(g.status).toBe(200);
+    expect(g.data.canStart).toBe(false);
+    expect(g.data.trialUsed).toBe(true);
+    const body = JSON.parse(fetchMock.mock.calls.at(-1)![1].body as string);
+    expect(body.gate).toBe(true);
+    expect(body.sessionToken).toBe("jwt");
   });
 });
 

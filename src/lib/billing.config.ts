@@ -20,6 +20,19 @@ import type { SparkPack } from "@/types/billing.types";
 export const CURRENCY = "INR";
 
 export const SPARK_PACKS: SparkPack[] = [
+  // 2026-08-07 owner decision: the ₹120 trial pack RETURNS, purchasable
+  // exactly once per player (order route enforces via the platform's
+  // trialUsed; /upgrade hides it once used) — after the trial, ₹500 is the
+  // minimum. Pairs with the 2,000⚡ signup grant: the grant gives a real
+  // taste mid-build, the trial finishes the first game.
+  {
+    key: "pack120",
+    label: "Trial pack",
+    amountPaise: 12_000, // ₹120
+    sparks: 12_000,
+    description: "₹120 — 12,000 ⚡ (one time only — finishes your first game!)",
+    trialOnce: true,
+  },
   {
     key: "pack500",
     label: "Starter pack",

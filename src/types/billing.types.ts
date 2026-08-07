@@ -10,11 +10,15 @@
  *  (₹1 = 100). Repeatable: buying a pack twice credits twice, unlike the
  *  superseded yearly-access plans this replaced. */
 export interface SparkPack {
-  key: string; // "pack120" | "pack200" | "pack500" — public contract, pinned by billing.config.test.ts
+  key: string; // "pack120" | "pack500" | "pack1000" — public contract, pinned by billing.config.test.ts
   label: string; // shown on the pack card
   amountPaise: number; // charge amount in paise
   sparks: number; // Sparks credited to the Platform ledger on success
   description: string; // human price line, e.g. "₹120 — 12,000 ⚡"
+  /** 2026-08-07: purchasable exactly ONCE per player (the ₹120 trial). The
+   *  order route refuses a repeat via the platform's trialUsed flag; the
+   *  /upgrade UI hides the card once used. Absent = freely repurchasable. */
+  trialOnce?: boolean;
 }
 
 export type PaymentStatus = "created" | "paid" | "failed";

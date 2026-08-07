@@ -19,9 +19,25 @@ import {
   CUSTOM_PLAN_KEY,
 } from "./billing.config";
 
-describe("Sparks packs (2026-08-01 pricing)", () => {
-  it("sells exactly the two pricing.html packs", () => {
-    expect(SPARK_PACKS.map((p) => p.key)).toEqual(["pack500", "pack1000"]);
+describe("Sparks packs (2026-08-07 pricing: trial returns, once per player)", () => {
+  // 2026-08-07 owner decision: ₹120 trial pack is BACK, purchasable exactly
+  // once per player (enforced by the order route via the platform's
+  // trialUsed flag); after the trial, ₹500 is the minimum. Same flat rate
+  // (1 Spark = 1 paisa) — the trial is small, not discounted.
+  it("sells exactly three packs: the once-only trial, then ₹500 minimum", () => {
+    expect(SPARK_PACKS.map((p) => p.key)).toEqual(["pack120", "pack500", "pack1000"]);
+  });
+
+  it("pack120 is the ₹120 trial: 12,000 Sparks, flagged trialOnce", () => {
+    const p = findPack("pack120");
+    expect(p?.amountPaise).toBe(12_000);
+    expect(p?.sparks).toBe(12_000);
+    expect(p?.trialOnce).toBe(true);
+  });
+
+  it("the ₹500/₹1000 packs are NOT trial-gated", () => {
+    expect(findPack("pack500")?.trialOnce).toBeUndefined();
+    expect(findPack("pack1000")?.trialOnce).toBeUndefined();
   });
 
   it("pack500 is ₹500 for 50,000 Sparks", () => {

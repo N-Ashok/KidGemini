@@ -31,11 +31,19 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+const fetchGateMock = vi.fn();
+vi.mock("@/lib/sparks-bridge", () => ({
+  fetchGate: (...args: unknown[]) => fetchGateMock(...args),
+}));
+
 import { POST } from "./route";
 import type { NextRequest } from "next/server";
 
-function makeReq(body: unknown): NextRequest {
-  return { json: async () => body } as unknown as NextRequest;
+function makeReq(body: unknown, sessionToken = "jwt-abc"): NextRequest {
+  return {
+    json: async () => body,
+    cookies: { get: (name: string) => (name === "ariantra_session" && sessionToken ? { value: sessionToken } : undefined) },
+  } as unknown as NextRequest;
 }
 
 describe("POST /api/billing/order", () => {
@@ -45,6 +53,7 @@ describe("POST /api/billing/order", () => {
     resolvePlayerIdMock.mockResolvedValue("player-1");
     createOrderMock.mockReset();
     createPaymentMock.mockReset();
+    fetchGateMock.mockReset();
   });
 
   it("returns 401 and never calls Razorpay when unauthenticated", async () => {
@@ -121,5 +130,42 @@ describe("POST /api/billing/order", () => {
     const res = await POST(makeReq({ amountPaise: 50_000 }));
     expect(res.status).toBe(401);
     expect(createOrderMock).not.toHaveBeenCalled();
+  });
+
+  // 2026-08-07: the ₹120 trial pack is purchasable ONCE per player. The gate
+  // runs at ORDER time — refusing after payment would strand real money.
+  describe("trial pack — once per player", () => {
+    beforeEach(() => {
+      resolveUserIdMock.mockResolvedValue("user:kid@example.com");
+      createOrderMock.mockResolvedValue({ id: "order_1", amount: 12_000, currency: "INR" });
+    });
+
+    it("refuses a repeat pack120 purchase with 400 trial_used — Razorpay never called", async () => {
+      fetchGateMock.mockResolvedValue({ status: 200, data: { canStart: true, trialUsed: true } });
+      const res = await POST(makeReq({ planKey: "pack120" }));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: "trial_used" });
+      expect(createOrderMock).not.toHaveBeenCalled();
+    });
+
+    it("allows the FIRST pack120 purchase when the platform says trial unused", async () => {
+      fetchGateMock.mockResolvedValue({ status: 200, data: { canStart: true, trialUsed: false } });
+      const res = await POST(makeReq({ planKey: "pack120" }));
+      expect(res.status).toBe(200);
+      expect(createOrderMock).toHaveBeenCalled();
+    });
+
+    it("fails CLOSED when the platform gate is unreachable — no order, 502", async () => {
+      fetchGateMock.mockResolvedValue({ status: 502, data: {} });
+      const res = await POST(makeReq({ planKey: "pack120" }));
+      expect(res.status).toBe(502);
+      expect(createOrderMock).not.toHaveBeenCalled();
+    });
+
+    it("non-trial packs never consult the gate", async () => {
+      const res = await POST(makeReq({ planKey: "pack500" }));
+      expect(res.status).toBe(200);
+      expect(fetchGateMock).not.toHaveBeenCalled();
+    });
   });
 });

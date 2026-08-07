@@ -83,6 +83,12 @@ vi.mock("@/lib/safety.rules", () => ({
 // Geo — a stable IP so the IP-layer gates are exercised.
 vi.mock("@/lib/geo", () => ({ resolveGeo: () => ({ ip: "203.0.113.9", country: null, region: null, city: null }) }));
 
+const fetchGateMock = vi.fn();
+vi.mock("@/lib/sparks-bridge", () => ({
+  billSparks: () => {},
+  fetchGate: (token: unknown) => fetchGateMock(token),
+}));
+
 // DB stores — knobs the tests turn.
 const usedByUser = vi.fn((..._a: unknown[]): number => 0); // device tally (guests, windowed)
 const usedByIp = vi.fn((..._a: unknown[]): number => 0); // guest tokens across an IP (windowed)
@@ -185,6 +191,8 @@ async function codeNodes(markdown: string): Promise<Array<{ lang: string | null;
 
 beforeEach(() => {
   authMock.mockReset();
+  fetchGateMock.mockReset();
+  fetchGateMock.mockResolvedValue({ status: 200, data: { canStart: true, trialUsed: false } });
   replyStreamMock.mockReset();
   replyMock.mockReset();
   strictEditRetryMock.mockReset();
@@ -327,6 +335,53 @@ describe("POST /api/chat — no post-hoc safety retraction (chess-block class, 2
     const text = await res.text();
     expect(text).toContain('"type":"done"');
     expect(text).not.toContain('"type":"retract"');
+  });
+});
+
+// 2026-08-07 owner decision (platform PRD-SPARKS trial amendment): when a
+// kid's Sparks run out, the IN-FLIGHT response completes (debits are
+// post-usage, so nothing here can cut a stream), but the NEXT turn is
+// refused with a buy-Sparks message. Fail OPEN on a platform hiccup — a
+// Sparks outage must never stop a kid's turn (mirror of billSparks's
+// fire-and-forget stance; money is protected at the ORDER route, not here).
+describe("POST /api/chat — Sparks exhaustion gate (2026-08-07)", () => {
+  const SESSION = { userId: "user:kid@example.com", email: "kid@example.com", name: "Kid" };
+  const COOKIES = { ariantra_session: "jwt-kid" };
+
+  beforeEach(() => {
+    authMock.mockResolvedValue(SESSION);
+    replyStreamMock.mockReturnValue(one("Here is your game!"));
+  });
+
+  it("out of sparks → paywall event with the buy-sparks message, Gemini never called", async () => {
+    fetchGateMock.mockResolvedValue({ status: 200, data: { canStart: false, trialUsed: false } });
+    const res = await POST(makeReq({ message: "add a boss", history: [] }, COOKIES));
+    const text = await res.text();
+    expect(text).toContain('"type":"paywall"');
+    expect(text).toContain('"sparksOver":true');
+    expect(text).toMatch(/buy sparks/i);
+    expect(replyStreamMock).not.toHaveBeenCalled();
+  });
+
+  it("sparks remaining → the turn streams normally", async () => {
+    fetchGateMock.mockResolvedValue({ status: 200, data: { canStart: true, trialUsed: false } });
+    const res = await POST(makeReq({ message: "add a boss", history: [] }, COOKIES));
+    expect(await res.text()).toContain('"type":"done"');
+    expect(replyStreamMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("platform gate unreachable → fail OPEN, the turn streams (an outage never blocks a kid)", async () => {
+    fetchGateMock.mockResolvedValue({ status: 502, data: {} });
+    const res = await POST(makeReq({ message: "add a boss", history: [] }, COOKIES));
+    expect(await res.text()).toContain('"type":"done"');
+    expect(replyStreamMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("guests (no session cookie) are never gated — nothing bills for them either", async () => {
+    authMock.mockResolvedValue(null);
+    const res = await POST(makeReq({ message: "make a game", history: [] }));
+    expect(res.status).toBe(200);
+    expect(fetchGateMock).not.toHaveBeenCalled();
   });
 });
 

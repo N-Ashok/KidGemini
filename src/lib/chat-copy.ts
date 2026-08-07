@@ -11,6 +11,13 @@
 export const KIND_REDIRECT =
   "Let's talk about something else! How about a fun fact, a story, or a game? 🌟";
 
+// 2026-08-07 Sparks exhaustion (platform PRD-SPARKS trial amendment): the
+// in-flight reply always completes (debits are post-usage); this line refuses
+// the NEXT turn and rides the `paywall` event, so the client shows the
+// upgrade CTA to /upgrade automatically.
+export const SPARKS_OVER_LINE =
+  "Your Sparks are over! ⚡ Your game is saved — nothing is lost. Please ask a grown-up to buy Sparks to complete it: the one-time ₹120 trial pack finishes your first game.";
+
 // A MODEL false-positive — the request was fine (input rules allowed it) but the
 // provider's own safety layer blocked the generation (finishReason SAFETY). We
 // own the hiccup AND give an actionable HINT: adding a little context (what the

@@ -72,6 +72,23 @@ export function UpgradePlans() {
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
   const [autoStarted, setAutoStarted] = useState(false);
+  // 2026-08-07: the ₹120 trial pack is once-only. null = unknown (show the
+  // card optimistically — the order route is the enforcer); true = hide it.
+  const [trialUsed, setTrialUsed] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (authStatus !== "authenticated") return;
+    let cancelled = false;
+    void fetch("/api/wallet")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((w: { trialUsed?: boolean } | null) => {
+        if (!cancelled && typeof w?.trialUsed === "boolean") setTrialUsed(w.trialUsed);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [authStatus]);
 
   // Deep link from ariantra.com's pricing section: /upgrade?plan=<key> opens
   // Checkout for that pack as soon as the signed-in state is known. Signed-out
@@ -100,7 +117,14 @@ export function UpgradePlans() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ planKey }),
       });
-      if (!res.ok) throw new Error(`Couldn't start checkout (${res.status}).`);
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => ({}))) as { error?: string };
+        if (detail.error === "trial_used") {
+          setTrialUsed(true);
+          throw new Error("You've already used your one-time trial pack — the Starter pack is the next step! ⚡");
+        }
+        throw new Error(`Couldn't start checkout (${res.status}).`);
+      }
       const order = (await res.json()) as {
         orderId: string;
         amount: number;
@@ -182,7 +206,7 @@ export function UpgradePlans() {
       </p>
 
       <div className="mt-8 flex flex-col items-stretch justify-center gap-6 sm:flex-row">
-        {SPARK_PACKS.map((pack) => (
+        {SPARK_PACKS.filter((pack) => !pack.trialOnce || trialUsed !== true).map((pack) => (
           <PlanCard
             key={pack.key}
             plan={pack}
