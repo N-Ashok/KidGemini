@@ -20,7 +20,7 @@ import { stripAssetMarkers } from "@/lib/assets/markers";
 import { applyPatch } from "@/lib/repair-prompt";
 import { injectAssets } from "@/lib/assets/inject";
 import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
-import { newUnknownThreeImports, unknownThreeImports } from "@/lib/assets/three-import-lint";
+import { ensureThreeImports, newUnknownThreeImports, unknownThreeImports } from "@/lib/assets/three-import-lint";
 import { CURATED_IMPORT_NAMES } from "@/lib/assets/prompt-catalog";
 import { ensureMultiplayerMarker } from "@/lib/multiplayer-gate";
 import { parseNextAskLine } from "@/lib/next-ask-sentinel";
@@ -486,10 +486,14 @@ export async function POST(req: NextRequest) {
         // <!--USES_THREE--> marker, injectAssets no-ops and the game would ship
         // with an unresolvable specifier. The floor guarantees the import map
         // regardless; it's idempotent on already-injected HTML.
-        return ensureMultiplayerMarker(ensureAssetRuntime(injected.html));
+        // ensureThreeImports (BUG-FIX-LOG 2026-08-07): a used-but-not-imported
+        // three name (`new PointLight(...)` missing from the import list) is a
+        // play-time ReferenceError the verify pass can't see — heal it
+        // deterministically; byte-identical when nothing is missing.
+        return ensureMultiplayerMarker(ensureAssetRuntime(ensureThreeImports(injected.html)));
       } catch (err) {
         console.error(`[api/chat] ✖ asset injection failed @${ms()}ms (serving raw artifact): ${(err as Error).message}`);
-        return ensureMultiplayerMarker(ensureAssetRuntime(rawHtml));
+        return ensureMultiplayerMarker(ensureAssetRuntime(ensureThreeImports(rawHtml)));
       }
     }
 

@@ -27,6 +27,21 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
   published SDK's accessor semantics so sandbox and prod behave identically either way.
 - **Tests:** `multiplayer-prompt.test.ts` (+1 roster-idiom pin), `preview-sdk-stub.test.ts`
   (+1 accessor parity), both failing-first.
+- **Addendum (same day, platform BUG_LOG #51):** the game was STILL dead published — the
+  deeper gap was that the preview stub fires `onPlayers` with a solo roster immediately but
+  the published SDK fired nothing until the lobby overlay ran, so roster-spawned games showed
+  an empty world solo. The platform SDK now implements the same solo-session semantics in
+  production; this repo's `multiplayer-prompt.ts` rule 3 updated (myPlayerId is "always a
+  real string", roster always contains at least you as host).
+- **Addendum 2 (same day, PointLight class killed for future games):** the same game used
+  `new PointLight(...)` with PointLight missing from its `import { ... } from "three"` list —
+  a play-time ReferenceError the verify pass reports as "clean" (nothing executes the spawn
+  path at load). New `ensureThreeImports()` in `three-import-lint.ts` — the MIRROR of the
+  existing used-import lint — deterministically appends used-but-unimported CURATED names to
+  the game's own import list at delivery (`toDeliverable`), byte-identical otherwise; only
+  vendored exports are ever added so the heal can't itself create an import-line crash.
+  Tests: `three-import-lint.test.ts` (+10, failing-first). The already-published game was
+  healed in S3 directly (platform BUG_LOG #50 rollout notes).
 
 ## 2026-08-06 — "The rotor blade is not running": spinning parts looked up by name that no library model has
 

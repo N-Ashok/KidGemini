@@ -34,8 +34,10 @@ never enforce it yourself; the platform's lobby already rejects a 6th joiner.
    compared against \`Ariantra.myPlayerId()\`) is the ONLY way to answer
    "am I the host?"; there is no host-getter function to call.
 3. Six calls cover everything a multiplayer game needs:
-   \`Ariantra.myPlayerId()\` — your OWN player id, or \`null\` before a
-   session exists. Never invent your own random id — compare
+   \`Ariantra.myPlayerId()\` — your OWN player id, always a real string
+   (before anyone else joins it is your solo id, and the roster already
+   contains just you, as host — the game starts and plays solo with no
+   waiting). Never invent your own random id — compare
    \`players[i].playerId === Ariantra.myPlayerId()\` wherever the game needs
    to tell its own roster row, avatar, or car apart from a peer's.
    \`Ariantra.onPlayers((players) => { ... })\` — fires with the live roster
