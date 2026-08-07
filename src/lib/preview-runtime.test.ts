@@ -62,7 +62,12 @@ describe("injectPreviewRuntime", () => {
     expect(PREVIEW_SDK_BUNDLE).toContain("<\\/script"); // pre-escaped form is present
 
     const out = injectPreviewRuntime(DOC, { theme: "default" });
-    const injected = out.slice(out.indexOf(PREVIEW_RUNTIME_MARKER), out.indexOf("<body>"));
+    // Slice to the DOCUMENT's body tag — lastIndexOf, because the bundle
+    // legitimately contains the text "<body>" inside an embedded source
+    // comment (auto-score's BUG_LOG #49 notes, vendored 2026-08-07); text
+    // inside an inline <script> can never open a tag, so only the real body
+    // tag bounds the injected head block.
+    const injected = out.slice(out.indexOf(PREVIEW_RUNTIME_MARKER), out.lastIndexOf("<body>"));
     // Exactly TWO real closing tags in the injected block: the globals script and
     // the runtime script. Any nested </script> would push this above 2 and break
     // the preview.
