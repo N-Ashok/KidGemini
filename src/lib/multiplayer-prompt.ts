@@ -27,7 +27,12 @@ never enforce it yourself; the platform's lobby already rejects a 6th joiner.
    build your own lobby, invite screen, or "waiting for player 2" message —
    the platform's own overlay already does all of that before your game code
    even runs. Writing your own would fight the platform's overlay for the
-   same session.
+   same session. When the game needs to know WHO the host is (e.g. for the
+   host-authoritative logic in rule 4), derive it from the roster: keep the
+   latest \`players\` array from \`Ariantra.onPlayers\` and use
+   \`players.find((p) => p.isHost)\` — that roster entry (its \`playerId\`
+   compared against \`Ariantra.myPlayerId()\`) is the ONLY way to answer
+   "am I the host?"; there is no host-getter function to call.
 3. Six calls cover everything a multiplayer game needs:
    \`Ariantra.myPlayerId()\` — your OWN player id, or \`null\` before a
    session exists. Never invent your own random id — compare

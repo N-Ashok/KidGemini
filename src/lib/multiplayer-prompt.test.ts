@@ -33,6 +33,16 @@ describe("MULTIPLAYER_PROMPT_SECTION — overlay ownership (Phase 3 correction)"
     expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/host-authoritative/i);
   });
 
+  // BUG_LOG #50 (Ariantra-Platform repo): a real published game called
+  // `Ariantra.host()` no-arg from its game loop as a "who is the host?"
+  // accessor — each call was a room-creation attempt in prod (429 storm,
+  // malformed `create`), masked by the preview stub. The SDK now tolerates
+  // the accessor form, but the prompt must teach the roster idiom so the
+  // model stops guessing APIs in the first place.
+  it("teaches deriving the host from the onPlayers roster (isHost), never a host-getter call", () => {
+    expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/players\.find\(\s*\(?p\)?\s*=>\s*p\.isHost\s*\)/);
+  });
+
   it("requires the game to still work alone before a friend joins (no dead single-player state)", () => {
     expect(MULTIPLAYER_PROMPT_SECTION).toMatch(/work,? alone/i);
   });

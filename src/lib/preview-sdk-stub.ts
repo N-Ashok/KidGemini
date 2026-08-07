@@ -44,8 +44,11 @@ export function buildPreviewSdkStub(): string {
     broadcastState: function () {},
     getPeerState: function () { return null; },
     // Games are told never to call these (the platform's lobby owns them);
-    // harmless no-ops in case one slips through — never a crash.
-    host: function () { return Promise.resolve(null); },
+    // harmless no-ops in case one slips through — never a crash. No-arg
+    // host() mirrors the published SDK's roster accessor (BUG_LOG #50,
+    // Ariantra-Platform repo): the kid IS the solo host, so host-gated game
+    // logic behaves the same in the sandbox as on the real URL.
+    host: function (gameSlug) { return gameSlug === undefined ? SOLO[0] : Promise.resolve(null); },
     join: function () { return Promise.resolve(null); }
   };
 })();

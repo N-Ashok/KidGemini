@@ -11,6 +11,23 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-07 — "Worked in sandbox, dead published": generated game guessed a no-arg `Ariantra.host()` accessor the preview stub silently swallowed
+
+- **Symptom:** owner report — `cartoon-tank-battle.ariantra.com` broken though the Ari preview
+  played fine; separately the error reporter surfaced `ReferenceError: PointLight is not
+  defined` from the same game's sandbox.
+- **Root cause:** full analysis in Ariantra-Platform `docs/BUG_LOG.md #50`. Ari's generated
+  code called `Ariantra.host()` with no arguments from the game loop as a "who is the host?"
+  accessor. The preview stub's `host()` no-op masked it; the published SDK treated every call
+  as a room-creation attempt (turn-credentials 429 storm, malformed WS `create`). The
+  PointLight crash was a missing name in the game's `import { ... } from "three"` list.
+- **Fix (this repo):** `multiplayer-prompt.ts` rule 2 now teaches the roster idiom explicitly
+  (`players.find((p) => p.isHost)` — "there is no host-getter function to call");
+  `preview-sdk-stub.ts` no-arg `host()` now returns the solo host row, matching the hardened
+  published SDK's accessor semantics so sandbox and prod behave identically either way.
+- **Tests:** `multiplayer-prompt.test.ts` (+1 roster-idiom pin), `preview-sdk-stub.test.ts`
+  (+1 accessor parity), both failing-first.
+
 ## 2026-08-06 — "The rotor blade is not running": spinning parts looked up by name that no library model has
 
 - **Symptom:** owner UAT (Sky Patrol helicopter, prod) — kid asked repeatedly for the rotor

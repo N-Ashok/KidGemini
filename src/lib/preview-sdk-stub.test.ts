@@ -62,6 +62,19 @@ describe("injectPreviewSdkStub", () => {
     expect(w.__peer).toBeNull(); // no peers — getPeerState stays null
   });
 
+  // BUG_LOG #50 (Ariantra-Platform repo) parity: the published SDK's no-arg
+  // host() is a roster accessor (host row or null). The preview stub must
+  // answer the same way — the old Promise.resolve(null) was truthy with an
+  // undefined .playerId, so host-gated code silently behaved differently in
+  // the sandbox than published ("worked in preview, dead on the real URL").
+  it("host() with NO arguments returns the solo host row, matching the published SDK accessor", () => {
+    const w = runScripts(injectPreviewSdkStub(MP_GAME));
+    const ariantra = w.Ariantra as { host: (slug?: string) => unknown };
+    expect(ariantra.host()).toMatchObject({ playerId: "preview-solo", isHost: true });
+    // The slug form games are taught never to call stays an inert promise.
+    expect(ariantra.host("some-game")).toBeInstanceOf(Promise);
+  });
+
   it("never overwrites a real SDK (defensive only-if-undefined)", () => {
     const out = injectPreviewSdkStub(MP_GAME);
     const sandbox: Record<string, unknown> = { window: undefined };
