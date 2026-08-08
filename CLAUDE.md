@@ -251,6 +251,20 @@ Pause and surface to the human — in every mode, including autonomous:
   the plan is part of the deliverable.
 - **Scope creep** — work needs something outside the approved plan → stop and ask.
 - **Unexplained regression** — a previously-green test fails for an unrelated reason.
+- **Re-sourcing a value live users depend on** — moving where a value is READ from (an SSO/JWT
+  claim → a DB lookup, one table → another, session → server) is a **behaviour change, not a
+  refactor**, even inside a bug fix. → **STOP and get an explicit owner decision before it
+  ships**, and bring a **production coverage count** proving the new source covers the old one.
+  Prefer adding the new source as a *fallback*; removing the old one is a separate, later,
+  separately-approved change. Global non-negotiable #11 has the full rule.
+
+  **Worked example (2026-08-08, `docs/BUG-FIX-LOG.md`).** The parent-PIN OTP stopped reading
+  `session.email` and read `ownerProfiles.contactEmail()` instead, assuming the profile was a
+  superset. It held an address for **18 of 2,447** accounts: 32 of 50 registered users — 24 of
+  them working the day before — lost the parent PIN in production. **The whole suite stayed
+  green**, because the fakes in `parent-pin-otp.integration.test.ts` always create a profile.
+  Lesson to carry: when you remove a source, add a fixture for its ABSENCE, and count the
+  replacement's real coverage before writing the code.
 
 ## 11. Environment
 
