@@ -438,7 +438,7 @@ const MODELS = [
   // so origin == footprint centre and `i * modelSize(n).z` tiles edge-to-edge.
   { name: 'race_track_straight', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadStraight.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit', recenterXZ: true , pathAxis: 'z' },
   { name: 'race_track_curve', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadCurved.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit', recenterXZ: true , pathAxis: 'none' },
-  { name: 'finish_line', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadStart.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' , pathAxis: 'z' },
+  { name: 'finish_line', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadStart.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit', recenterXZ: true, pathAxis: 'z' },
   { name: 'checkered_flag', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/flagCheckers.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
   { name: 'grandstand', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/grandStand.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
   { name: 'pit_garage', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/pitsGarage.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
@@ -1195,7 +1195,11 @@ for (const p of prepared) {
     sha256: p.sha256,
     // Omitted for skinned models — see the measurement block in prepare().
     ...(p.size ? { size: p.size } : {}),
-    ...(p.pathAxis ? { pathAxis: p.pathAxis } : {}),
+    // p.model, NOT p: pathAxis is a DECLARATION on the model entry, not
+    // something prepare() measures off the bytes (unlike size). Reading it
+    // from `p` silently dropped it on every re-vendored entry — caught by the
+    // stage-5 contract gate on the 2026-08-08 race_track upload.
+    ...(p.model.pathAxis ? { pathAxis: p.model.pathAxis } : {}),
   };
   const existing = manifest.assets.findIndex((a) => a.name === p.model.name);
   if (existing >= 0) manifest.assets[existing] = entryJson;

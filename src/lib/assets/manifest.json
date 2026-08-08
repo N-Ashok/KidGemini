@@ -1352,11 +1352,11 @@
     {
       "name": "race_track_straight",
       "type": "model",
-      "url": "https://assets.ariantra.com/race_track_straight.cdb68f.glb",
-      "bytes": 4192,
+      "url": "https://assets.ariantra.com/race_track_straight.9a39d3.glb",
+      "bytes": 4124,
       "license": "CC0",
       "sourceUrl": "https://kenney.nl/assets/racing-kit",
-      "sha256": "cdb68f05d76f95cad3d39606befe6cac4dcdb986adff563585bc9ae78526f072",
+      "sha256": "9a39d3584f04f8f8d154f28e9538781406ffbad056a9f848d54f8123d01379bb",
       "size": [
         1,
         0.02,
@@ -1367,11 +1367,11 @@
     {
       "name": "race_track_curve",
       "type": "model",
-      "url": "https://assets.ariantra.com/race_track_curve.c73685.glb",
-      "bytes": 7712,
+      "url": "https://assets.ariantra.com/race_track_curve.f46149.glb",
+      "bytes": 6408,
       "license": "CC0",
       "sourceUrl": "https://kenney.nl/assets/racing-kit",
-      "sha256": "c73685f6a653e159d023eef44db01a0cf1d66394e9682ac549da2b1d599f1c47",
+      "sha256": "f461492eba3662d6051ed2117810dd63ca964c717cdf6812b99c2fc911c18f20",
       "size": [
         1.5,
         0.02,
@@ -1382,11 +1382,11 @@
     {
       "name": "finish_line",
       "type": "model",
-      "url": "https://assets.ariantra.com/finish_line.a6a676.glb",
-      "bytes": 5920,
+      "url": "https://assets.ariantra.com/finish_line.4e63bd.glb",
+      "bytes": 5504,
       "license": "CC0",
       "sourceUrl": "https://kenney.nl/assets/racing-kit",
-      "sha256": "a6a676713345229488f2bcb99f589e9d583354fc2281afa68b0e8527f21fdfe4",
+      "sha256": "4e63bdb2452774f87dac7af9087a849f0204c2276d18cc237c2bfdc8107d6c8f",
       "size": [
         1.26,
         0.668,
