@@ -26,7 +26,7 @@ export const runtime = "nodejs";
 
 const store = new SqliteParentPinOtpStore();
 
-export async function POST() {
+export async function POST(req: Request) {
   const session = await getAriantraSession();
   if (!session) {
     return NextResponse.json({ error: "signed_out" }, { status: 401 });
@@ -39,10 +39,17 @@ export async function POST() {
     return NextResponse.json({ error: gate.reason, retryAt: gate.retryAt }, { status: 429 });
   }
 
+  // Hotfix 2026-08-08: the parent may be supplying a contact address for the
+  // FIRST time, straight from the PIN screen, because the platform holds none
+  // (32 of 50 registered accounts were in that state and could not set a PIN
+  // at all). Optional — an account that already has an address ignores it.
+  const body = (await req.json().catch(() => ({}))) as { email?: unknown };
+  const firstContactEmail = typeof body.email === "string" ? body.email.trim() : undefined;
+
   const code = generateOtpCode();
   const record = nextOtpRecord(session.userId, code, existing, now);
 
-  const result = await sendParentPinOtpEmail(session.playerId, code);
+  const result = await sendParentPinOtpEmail(session.playerId, code, firstContactEmail || undefined);
   if (!result.ok) {
     if (result.error === "no_email") {
       // A genuine gap, not the bug this fix closes: the account truly has no
@@ -51,7 +58,10 @@ export async function POST() {
       return NextResponse.json(
         {
           error: "no_email",
-          message: "No parent email is on file yet. Add one in your Studio account (studio.ariantra.com), then try again.",
+          // `needsEmail` is what turns a dead end into a next step: the PIN
+          // screen shows an address field instead of an apology.
+          needsEmail: true,
+          message: "We don't have a parent email for this account yet — add one below and we'll send the code there.",
         },
         { status: 422 },
       );

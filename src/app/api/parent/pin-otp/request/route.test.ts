@@ -36,15 +36,25 @@ vi.mock("@/lib/db", () => ({
 
 type BridgeResult = { ok: true; maskedEmail: string } | { ok: false; error: "no_email" | "send_failed" };
 let bridgeResult: BridgeResult = { ok: true, maskedEmail: "p****@example.com" };
-const sendCalls: Array<{ playerId: string; code: string }> = [];
+const sendCalls: Array<{ playerId: string; code: string; email?: string }> = [];
 vi.mock("@/lib/parent-pin-otp-bridge", () => ({
-  sendParentPinOtpEmail: (playerId: string, code: string) => {
-    sendCalls.push({ playerId, code });
+  sendParentPinOtpEmail: (playerId: string, code: string, email?: string) => {
+    sendCalls.push({ playerId, code, email });
     return Promise.resolve(bridgeResult);
   },
 }));
 
 import { POST } from "./route";
+
+/** The route now reads an optional { email } body (2026-08-08 hotfix), so every
+ *  call needs a real Request. Bodyless by default — that is the common case. */
+function otpReq(body?: Record<string, unknown>): Request {
+  return new Request("https://ari.ariantra.com/api/parent/pin-otp/request", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+}
 
 const SECRET = "test-secret-long-enough-0123456789";
 const OLD = process.env.AUTH_JWT_SECRET;
@@ -81,13 +91,13 @@ afterEach(() => {
 describe("POST /api/parent/pin-otp/request", () => {
   it("R.1 signed out → 401, nothing sent", async () => {
     cookieJar.token = "";
-    expect((await POST()).status).toBe(401);
+    expect((await POST(otpReq())).status).toBe(401);
     expect(sendCalls).toHaveLength(0);
   });
 
   it("R.2 signed in, no freshness required (old bug: this used to demand a login within 5 min) → 200", async () => {
     cookieJar.token = await sessionToken();
-    const res = await POST();
+    const res = await POST(otpReq());
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.ok).toBe(true);
@@ -103,7 +113,7 @@ describe("POST /api/parent/pin-otp/request", () => {
   // server-side by playerId, not from this claim.
   it("R.2b a session with NO email claim (username/password login) still requests successfully — the old bug", async () => {
     cookieJar.token = await sessionToken({ sub: "player-nopwd-email" }); // no `email` passed
-    const res = await POST();
+    const res = await POST(otpReq());
     expect(res.status).toBe(200);
     expect((await res.json()).ok).toBe(true);
     expect(sendCalls[0]!.playerId).toBe("player-nopwd-email");
@@ -111,15 +121,15 @@ describe("POST /api/parent/pin-otp/request", () => {
 
   it("R.3 code is never returned to the client, only sent", async () => {
     cookieJar.token = await sessionToken();
-    const res = await POST();
+    const res = await POST(otpReq());
     const text = JSON.stringify(await res.json());
     expect(text).not.toContain(sendCalls[0]!.code);
   });
 
   it("R.4 resend within the cooldown → 429, no second send", async () => {
     cookieJar.token = await sessionToken();
-    await POST();
-    const res = await POST();
+    await POST(otpReq());
+    const res = await POST(otpReq());
     expect(res.status).toBe(429);
     expect((await res.json()).error).toBe("cooldown");
     expect(sendCalls).toHaveLength(1);
@@ -128,7 +138,7 @@ describe("POST /api/parent/pin-otp/request", () => {
   it("R.5 transport/send failure → 502, and the slot is NOT persisted (doesn't burn the cooldown)", async () => {
     cookieJar.token = await sessionToken();
     bridgeResult = { ok: false, error: "send_failed" };
-    const res = await POST();
+    const res = await POST(otpReq());
     expect(res.status).toBe(502);
     expect(rows.size).toBe(0);
   });
@@ -139,7 +149,7 @@ describe("POST /api/parent/pin-otp/request", () => {
   it("R.6 forwards the bridge's maskedEmail verbatim", async () => {
     bridgeResult = { ok: true, maskedEmail: "*@example.com" };
     cookieJar.token = await sessionToken();
-    const res = await POST();
+    const res = await POST(otpReq());
     expect((await res.json()).maskedEmail).toBe("*@example.com");
   });
 
@@ -149,11 +159,48 @@ describe("POST /api/parent/pin-otp/request", () => {
   it("R.7 the platform genuinely has no contact email on file → 422 no_email, not persisted", async () => {
     cookieJar.token = await sessionToken();
     bridgeResult = { ok: false, error: "no_email" };
-    const res = await POST();
+    const res = await POST(otpReq());
     expect(res.status).toBe(422);
     const data = await res.json();
     expect(data.error).toBe("no_email");
-    expect(data.message).toMatch(/studio/i); // points somewhere actionable, not a dead end
+    // Hotfix 2026-08-08: the answer is now a QUESTION the screen can ask, not
+    // a redirect to another site. `needsEmail` is what renders the field.
+    expect(data.needsEmail).toBe(true);
     expect(rows.size).toBe(0);
+  });
+
+  // R.8-R.10 — 2026-08-08 hotfix (docs/BUG-FIX-LOG.md). The 2026-08-08 redesign
+  // moved email resolution to the platform, which held an address for only 18
+  // of 2,447 accounts — so 32 of 50 registered users hit R.7 and could not set
+  // a parent PIN at all, including 24 Google accounts that had worked the day
+  // before. The parent can now supply the address right here.
+  it("R.8 forwards an address the parent typed on the PIN screen", async () => {
+    cookieJar.token = await sessionToken();
+    bridgeResult = { ok: true, maskedEmail: "n****@example.com" };
+    const res = await POST(otpReq({ email: "new@example.com" }));
+    expect(res.status).toBe(200);
+    expect(sendCalls.at(-1)!.email).toBe("new@example.com");
+  });
+
+  it("R.9 trims the address, and sends undefined rather than an empty string", async () => {
+    cookieJar.token = await sessionToken();
+    bridgeResult = { ok: true, maskedEmail: "n****@example.com" };
+    await POST(otpReq({ email: "  spaced@example.com  " }));
+    expect(sendCalls.at(-1)!.email).toBe("spaced@example.com");
+    rows.clear(); // else the resend cooldown 429s the next call and nothing sends
+    await POST(otpReq({ email: "   " }));
+    expect(sendCalls.at(-1)!.email).toBeUndefined();
+  });
+
+  it("R.10 a bodyless request still works — the common case must not regress", async () => {
+    // Every existing caller sent no body at all; breaking that would take the
+    // whole flow down for the 18 accounts that DO have an address on file.
+    cookieJar.token = await sessionToken();
+    bridgeResult = { ok: true, maskedEmail: "p****@example.com" };
+    const res = await POST(
+      new Request("https://ari.ariantra.com/api/parent/pin-otp/request", { method: "POST" }),
+    );
+    expect(res.status).toBe(200);
+    expect(sendCalls.at(-1)!.email).toBeUndefined();
   });
 });

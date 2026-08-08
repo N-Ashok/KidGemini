@@ -11,6 +11,28 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-08 — the same-day parent-PIN fix locked 24 Google families OUT (hotfix)
+
+- **Symptom:** owner report hours after the fix below shipped — "First time here?" in the parent
+  area still says no email is on file. Owner: *"it was perfectly working till yesterday."* True.
+- **Root cause:** that fix removed this route's `session.email` gate and made the platform the
+  sole resolver, via `OwnerProfile.parentEmail`. It assumed profile-email was a superset of
+  session-email. Production disagreed: only **18 of 2,447** accounts had an owner profile at all,
+  and `players` stores just a one-way `emailHash`. So **32 of 50** registered users could no
+  longer set a parent PIN — **24 of them Google accounts that worked the previous day** (Google
+  sign-in is what populates `session.email`). It fixed 14 and broke 24. Full analysis, with the
+  production numbers, in the platform repo's `docs/BUG_LOG.md` #53.
+- **Fix:** ask for the address in place instead of sending the parent to Studio.
+  `pin-otp/request` now returns `needsEmail: true` (not a dead end), forwards an optional
+  parent-typed address to the bridge, and the parent screen renders an email field with
+  purpose-limitation copy right where the address is captured. The platform stores it via a new
+  narrow `setContactEmail`, and uses a supplied address **only** when it holds none — so it can
+  never redirect an account that already has one (this screen sits behind a child's session).
+- **Tests:** `pin-otp/request/route.test.ts` R.8–R.10 (forwards the typed address, trims it,
+  and a bodyless request still works — every existing caller sent no body). 2159 green.
+- **Not fixed here:** no Terms/Privacy pages exist to link from the capture copy; the copy states
+  purpose and limits in words only. Standing debt.
+
 ## 2026-08-08 — 3D tracks came out fragmented, and no amount of re-prompting fixed it
 
 - **Symptom:** owner report — a kid asked for "3D race track, green car, 3 laps". The game

@@ -25,7 +25,15 @@ export type SendParentPinOtpResult =
  *  never as a silent success. `{ok:false, error:'no_email'}` is a distinct,
  *  legitimate outcome (the account genuinely has no contact email on file)
  *  the caller should show the parent, not swallow. */
-export async function sendParentPinOtpEmail(playerId: string, code: string): Promise<SendParentPinOtpResult> {
+export async function sendParentPinOtpEmail(
+  playerId: string,
+  code: string,
+  /** OPTIONAL address the parent just typed on the PIN screen, forwarded ONLY
+   *  when the platform holds none (BUG-FIX-LOG 2026-08-08 hotfix). The platform
+   *  ignores it whenever the account already has an address, so it can never
+   *  redirect an existing family's codes — see the route's note. */
+  firstContactEmail?: string,
+): Promise<SendParentPinOtpResult> {
   const secret = process.env.AUTH_JWT_SECRET ?? "";
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -33,7 +41,7 @@ export async function sendParentPinOtpEmail(playerId: string, code: string): Pro
     const res = await fetch(`${PLATFORM_BASE}/api/studio/partner/parent-pin-otp`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-admin-secret": secret },
-      body: JSON.stringify({ playerId, code }),
+      body: JSON.stringify({ playerId, code, ...(firstContactEmail ? { email: firstContactEmail } : {}) }),
       signal: controller.signal,
     });
     const data = (await res.json().catch(() => ({}))) as { ok?: boolean; maskedEmail?: string; error?: string };

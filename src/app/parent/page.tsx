@@ -90,6 +90,12 @@ export default function ParentPage() {
   const [otpCode, setOtpCode] = useState("");
   const [otpSending, setOtpSending] = useState(false);
   const [otpRequestError, setOtpRequestError] = useState("");
+  // First-contact email capture (BUG-FIX-LOG 2026-08-08). The platform holds
+  // the only decryptable contact address, and most accounts have none — which
+  // made the PIN gate a dead end. When the server says `needsEmail`, we ask
+  // for one here instead of sending the parent away to Studio.
+  const [needsEmail, setNeedsEmail] = useState(false);
+  const [parentEmail, setParentEmail] = useState("");
   // Multiplayer toggle (PRD-MULTIPLAYER.md Phase 4) — null = not fetched yet.
   const [games, setGames] = useState<FamilyGame[] | null>(null);
   const [togglingSlug, setTogglingSlug] = useState<string | null>(null);
@@ -307,6 +313,8 @@ export default function ParentPage() {
     setOtpMaskedEmail("");
     setOtpCode("");
     setOtpRequestError("");
+    setNeedsEmail(false);
+    setParentEmail("");
   }
 
   function startReset() {
@@ -322,18 +330,31 @@ export default function ParentPage() {
     setOtpRequestError("");
     setOtpSending(true);
     try {
-      const res = await fetch("/api/parent/pin-otp/request", { method: "POST" });
+      const res = await fetch("/api/parent/pin-otp/request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(parentEmail.trim() ? { email: parentEmail.trim() } : {}),
+      });
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
         message?: string;
         maskedEmail?: string;
         retryAt?: number;
+        needsEmail?: boolean;
       };
       if (res.status === 401) { setView({ kind: "signed-out" }); return; }
       if (res.ok) {
         setOtpRequested(true);
+        setNeedsEmail(false);
         setOtpMaskedEmail(data.maskedEmail ?? "your email");
         setOtpCode("");
+        return;
+      }
+      if (data.needsEmail) {
+        // Not an error the parent caused — it is a question we should have
+        // asked earlier. Show the field; keep any message as guidance.
+        setNeedsEmail(true);
+        setOtpRequestError(parentEmail.trim() ? (data.message ?? "") : "");
         return;
       }
       if (res.status === 429) {
@@ -513,14 +534,44 @@ export default function ParentPage() {
                   </>
                 )}
               </p>
+              {needsEmail && (
+                <div className="space-y-2 rounded-kid bg-brand-50 p-3">
+                  <label htmlFor="parent-email" className="block text-sm font-semibold text-ink-800">
+                    Parent&rsquo;s email address
+                  </label>
+                  <p className="text-sm text-ink-700">
+                    We don&rsquo;t have one for this account yet. We&rsquo;ll send the 6-digit code
+                    here.
+                  </p>
+                  <input
+                    id="parent-email"
+                    autoFocus
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    value={parentEmail}
+                    onChange={(e) => setParentEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    className="w-full rounded-kid border-2 border-brand-100 px-4 py-3 outline-none focus:border-brand-500"
+                  />
+                  {/* Purpose limitation at the point of capture — the parent
+                      should never have to guess what an address will be used
+                      for, or fear it becomes marketing. */}
+                  <p className="text-xs text-ink-600">
+                    Used only to confirm it&rsquo;s you: parent codes and safety notices about your
+                    child&rsquo;s account. Never shown on games, never shared, no marketing. You can
+                    change it any time in your Studio account.
+                  </p>
+                </div>
+              )}
               {otpRequestError && <p className="text-sm font-medium text-danger-600">{otpRequestError}</p>}
               <button
                 type="button"
                 onClick={requestOtp}
-                disabled={otpSending}
+                disabled={otpSending || (needsEmail && !parentEmail.trim())}
                 className="btn-primary w-full disabled:opacity-40"
               >
-                {otpSending ? "Sending…" : "Send code to my email"}
+                {otpSending ? "Sending…" : needsEmail ? "Save email & send code" : "Send code to my email"}
               </button>
             </>
           ) : (
