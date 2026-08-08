@@ -226,8 +226,31 @@ When a bug is reported (UAT, user, log alert):
 5. **Document.** Append a `docs/BUG-FIX-LOG.md` entry (newest first, template in that file);
    name the class and link prior repeats in **Related**. Move/close the row in `docs/KNOWN_BUGS.md`.
 
+6. **PROVE IT ON THE REAL PATH BEFORE ASKING THE OWNER TO LOOK.** A bug that lives in
+   *generated output* (what the model writes, how a game behaves in a browser) is NOT verified by
+   a green unit suite. Unit tests assert on strings; the bug is in behaviour. Before shipping,
+   reproduce the fix end-to-end yourself with the instruments that already exist:
+   - `node scripts/golden-prompts.mjs <id>` — runs a real child-shaped prompt through the real
+     generation path, then through the browser verifier. **Read the generated code**: did it
+     actually call the helper you added? Count the call sites.
+   - `node scripts/verify-game-html.mjs <file>` — loads any game (including one pulled straight
+     out of the production DB) in a real browser and reports console errors, failed assets, and
+     whether `loadModel`/a canvas actually exist at runtime.
+   - `node scripts/render-assets.mjs <names>` — for anything geometric, look at the asset.
+
+   **The owner's production UAT is NOT the test loop.** Shipping a plausible fix and asking them
+   to check is only acceptable once the local instruments say it works. Established 2026-08-09
+   after FOUR consecutive rounds of exactly that on one bug — `modelAxis` teaching, then
+   `rotateToJoin`, then `fitTile`, then a one-kit-one-scale rule — each shipped on a green suite,
+   each still broken in the owner's hands, and the harness that would have caught every one of
+   them had been built that same day and left unused. If an instrument for the class does not
+   exist, **build it first**: that is cheaper than the round trip, every time.
+
 **Hard rule:** the BUG-FIX-LOG entry must exist *before* the commit. The entry IS the deliverable —
 code without it is incomplete.
+
+**Hard rule:** "tests are green" is not a claim that the bug is fixed. Say what you actually
+verified and on what — and when you have only a hypothesis, say that word.
 
 ## 10. Always-on hard stops
 

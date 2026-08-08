@@ -11,6 +11,64 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-09 — RESOLVED, and not by any of the four fixes: the model fixed its own spacing
+
+- **Outcome:** owner has a working closed loop. Verified on the real artifact — runs clean in a
+  browser, 24 cells, **gap between neighbours 2.00 m → 0.00 m**.
+- **What actually fixed it:** the model, told plainly *"The track is disjointed"*, wrote
+  `const TILE_SIZE = 4.4; // Slightly overlap to ensure no gaps` and `m.scale.set(4.4, 4.4, 4.4);
+  // Scale to match TILE_SIZE`. The tile is 1 m, so scale 4.4 on a 4.4 m grid is an EXACT fit (it
+  believed it was overlapping slightly; it isn't). Spacing and scale finally agreed.
+- **What did NOT fix it — measured on the generated code, not assumed:** `fitTile` **0**,
+  `modelSize` **0**, `modelJoins` **0**, `rotateToJoin` **0**, `modelAxis` **0**. **None of the
+  four shipped fixes were used by the model that produced the working track.**
+
+### The real lesson: four fixes shipped, zero adoption
+
+`modelAxis` teaching → `rotateToJoin` → `fitTile` → the one-kit-one-scale rule. Each was correct
+code, each shipped on a fully green suite, each cost a deploy and a round of the owner's UAT, and
+the generated code called **none of them**. Publishing a capability is not the same as the model
+using it, and the only way to know which happened is to READ THE GENERATED CODE and count the call
+sites — a green unit suite cannot tell you, because it asserts on strings the injector emits either
+way.
+
+Two of the four fixes were nonetheless real and are keepers, because they fixed faults that were
+independently reachable: the import-map ordering outage (every stored 3D game, entry below) and the
+greedy AR_EDGES strip. The two aimed at *teaching* — `rotateToJoin` and `fitTile` — remain unused.
+
+**Protocol change (owner instruction, same day):** `CLAUDE.md` §9 gains step 6 and global
+non-negotiable #12 — never use the owner's production UAT as the test loop. Anything living in
+generated output must be reproduced end-to-end locally first (`scripts/golden-prompts.mjs`,
+`scripts/verify-game-html.mjs`), and if no instrument exists for the class, build it BEFORE
+shipping. Both instruments existed here and were built the same day; neither was run.
+
+### Residual, NOT fixed (owner is unblocked — raise before touching)
+
+Two of the four corners in the working track are rotated 180° from what their neighbours imply:
+
+| corner | needs | correct | used |
+|---|---|---|---|
+| (0.0, −17.6) | +z, +x | 0 | 0 ✓ |
+| (22.0, −17.6) | +z, −x | π/2 | 3π/2 ✗ |
+| (22.0, 13.2) | −z, −x | π | π ✓ |
+| (0.0, 13.2) | −z, +x | 3π/2 | π/2 ✗ |
+
+Computed from the measured rest joins (`+z`, `+x`), not eyeballed. The owner reports the loop looks
+good, so either it reads acceptably at play scale or those two corners are mirrored in a way not yet
+noticed. **Not acted on** — the spacing fix is what mattered, and shipping another unverified change
+is the exact pattern step 6 now forbids.
+
+### Not shipped, deliberately
+
+A `layTrack(cells)` / `__arTrackPlan` helper was written during this session — it derives scale from
+`modelSize` and rotation from each cell's neighbours, so both faults become impossible. It was
+**discarded uncommitted**: its whole value depends on the model choosing to call it, adoption cannot
+be verified without a local `GEMINI_API_KEY` (absent), and four consecutive fixes had already gone
+unused. Shipping a fifth unverifiable one would be adding complexity on a hope. Recorded here so the
+design is not lost if the class recurs.
+
+---
+
 ## 2026-08-09 — a fresh track picked the right kit, then rotated all four corners wrong
 
 - **Symptom:** owner UAT on a FRESH build (new chat, `3D - make a race track with 4 corners and a
