@@ -28,8 +28,18 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
   purpose-limitation copy right where the address is captured. The platform stores it via a new
   narrow `setContactEmail`, and uses a supplied address **only** when it holds none — so it can
   never redirect an account that already has one (this screen sits behind a child's session).
-- **Tests:** `pin-otp/request/route.test.ts` R.8–R.10 (forwards the typed address, trims it,
-  and a bodyless request still works — every existing caller sent no body). 2159 green.
+- **Follow-up same review (2026-08-09), owner challenge — "the email is in the JWT, why was the
+  lookup changed?":** correct, and it still is. `session.email` (`ariantra-session.ts:23,51`) was
+  never removed; 2026-08-08 simply stopped READING it. Restored as a **fallback**, not as the
+  source of truth — being the source of truth was the original bug, since the claim is absent for
+  every username/password login. Order is now: address the parent typed → `session.email` → ask.
+  A Google family therefore sees no email field at all, exactly as before 2026-08-08, and the
+  address gets persisted on first use so it survives a later password login.
+- **Tests:** `pin-otp/request/route.test.ts` R.8–R.12 — forwards the typed address, trims it, a
+  bodyless request still works (every existing caller sent no body), falls back to the session's
+  Google email, and a typed address still WINS over the session claim (a parent correcting the
+  address must not be overridden by whichever Google account is signed in on a shared device).
+  2161 green.
 - **Policy links:** the capture copy links `https://ariantra.com/privacy.html` and
   `/terms.html`. (An earlier draft of this entry claimed no such pages existed — wrong: they live
   in the **Ariantra AI** marketing repo, not in either app repo, which is why a search of these

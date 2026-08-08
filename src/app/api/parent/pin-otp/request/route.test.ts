@@ -192,6 +192,26 @@ describe("POST /api/parent/pin-otp/request", () => {
     expect(sendCalls.at(-1)!.email).toBeUndefined();
   });
 
+  it("R.11 falls back to the SSO session's Google email so a Google parent never retypes it", async () => {
+    // The seamless path, restored 2026-08-09 after owner review: the email
+    // claim was never removed from the JWT — 2026-08-08 simply stopped reading
+    // it. A Google family should see no email field at all.
+    cookieJar.token = await sessionToken({ email: "google-parent@example.com" });
+    bridgeResult = { ok: true, maskedEmail: "g***********@example.com" };
+    const res = await POST(otpReq());
+    expect(res.status).toBe(200);
+    expect(sendCalls.at(-1)!.email).toBe("google-parent@example.com");
+  });
+
+  it("R.12 a typed address still wins over the session claim", async () => {
+    // A parent correcting the address on screen must not be silently overridden
+    // by whichever Google account happens to be signed in on a shared device.
+    cookieJar.token = await sessionToken({ email: "google-parent@example.com" });
+    bridgeResult = { ok: true, maskedEmail: "t****@example.com" };
+    await POST(otpReq({ email: "typed@example.com" }));
+    expect(sendCalls.at(-1)!.email).toBe("typed@example.com");
+  });
+
   it("R.10 a bodyless request still works — the common case must not regress", async () => {
     // Every existing caller sent no body at all; breaking that would take the
     // whole flow down for the 18 accounts that DO have an address on file.

@@ -44,7 +44,20 @@ export async function POST(req: Request) {
   // (32 of 50 registered accounts were in that state and could not set a PIN
   // at all). Optional — an account that already has an address ignores it.
   const body = (await req.json().catch(() => ({}))) as { email?: unknown };
-  const firstContactEmail = typeof body.email === "string" ? body.email.trim() : undefined;
+  const typed = typeof body.email === "string" ? body.email.trim() : "";
+  // Prefer what the parent just typed; otherwise fall back to the SSO session's
+  // own `email` claim. That claim is populated by GOOGLE sign-in and only by it
+  // (a username/password login has never carried one — the account's address is
+  // stored as a one-way hash), and reading it is exactly what made this flow
+  // work seamlessly for Google families until 2026-08-08, when the redesign
+  // stopped reading it and locked 24 of them out.
+  //
+  // Restored as a FALLBACK, not as the source of truth — treating it AS the
+  // source of truth was the original bug, because it is absent for half the
+  // user base. The platform honours either address only when it holds none of
+  // its own, so this can never redirect an existing family's codes; and it
+  // persists what it accepts, so the next request needs neither.
+  const firstContactEmail = typed || session.email || undefined;
 
   const code = generateOtpCode();
   const record = nextOtpRecord(session.userId, code, existing, now);
