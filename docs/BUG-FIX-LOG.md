@@ -11,6 +11,46 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-08 — Error reports read "undefined (undefined:undefined:undefined)": subresource failures misclassified as script errors
+
+- **Symptom:** owner report — a kid's game ("Super Hero Teleport Battle!") failed its start-up
+  check and the copyable error report listed 8 errors, every one of them literally
+  `undefined (undefined:undefined:undefined)`. Nothing in the report said what actually failed,
+  so neither a grown-up nor the auto-repair loop had anything to act on.
+- **Root cause:** `src/lib/game-console.ts` — the injected capture script's capture-phase
+  `error` listener decided "is this a failed subresource?" by testing whether
+  `e.target.src || e.target.href` was **truthy**. That test misses real subresource failures:
+  a media element keeps its URL on `currentSrc` (not `src`), a failed `<source>` child leaves
+  nothing on the parent element, and `src=""` is falsy. Those events then fell through to the
+  script-error branch — but a subresource failure is a plain `Event`, not an `ErrorEvent`, so
+  `e.message` / `e.filename` / `e.lineno` / `e.colno` are all `undefined`. The branch
+  string-concatenated them unguarded:
+  `fmt(e && e.message) + " (" + (e && e.filename) + ":" + ... + ")"` → the literal text
+  `"undefined (undefined:undefined:undefined)"`. Present since the self-healing preview
+  landed (`d419e78`, 2026-07-10) — a latent bug that only surfaces on games loading assets
+  this way. **Not** related to any deploy: the day's parent-PIN fix never reached production
+  (its deploy was declined), and it touches no rendering/SDK/verify code.
+- **Second-order damage (the worse half):** `classifyVerify` (`preview-verify.ts:287`) keys
+  the specific, repairable `resource_404` verdict off `kind === "resource"`. A misclassified
+  event never carries that kind, so verify fell through to `load_error` — and handed the
+  auto-repair loop an "error" with no message, no filename and no stack to repair from. A
+  clean missing-asset failure was converted into an undiagnosable one.
+- **Fix:** classify by the EVENT, not by whether a URL happens to be readable — only a real
+  `ErrorEvent` carries a string `message`, so anything else with an element target is a
+  resource failure. URL resolution now tries `currentSrc || src || href` and tolerates none
+  of them being present (the report names the element instead, e.g.
+  `Failed to load <audio> (the element carried no source URL)`). The script branch can no
+  longer emit a bare `undefined`: an undescribable error now says so in words.
+- **Tests (failing-first, `game-console.test.ts` +3):** V.3b media failure with the URL on
+  `currentSrc` is `kind:"resource"`; V.3c a subresource failure with no readable URL is still
+  a resource error and names the element; V.3d an error event with no details at all never
+  emits `undefined`. V.3d reproduced the reported string byte-for-byte before the fix.
+- **Class check:** `lineno`/`colno` handling exists in exactly one place across both repos —
+  this file. No platform-side copy to fix.
+- **Verify:** full suite green (2105 tests), `tsc --noEmit` clean. What the fix restores is
+  the *information*: the 8 failures were real missing resources, and the old report destroyed
+  the evidence of which ones. Owner re-test on the affected game owed.
+
 ## 2026-08-08 — Parent-PIN OTP (and the screen-time cap alert) falsely reported "no email on file" for username/password logins
 
 - **Symptom:** owner report with a screenshot — `demo` account (username/password login)

@@ -128,6 +128,45 @@ describe("injectConsoleCapture — runtime behavior (sandboxed via node:vm)", ()
     expect(sandbox).toBeDefined();
   });
 
+  // BUG-FIX-LOG 2026-08-08: the resource branch used to be gated on
+  // `t.src || t.href` being TRUTHY. Any subresource failure that doesn't
+  // expose its URL that way — a media element (URL lives on currentSrc), a
+  // failed <source> child (nothing on the parent), src="" — fell through to
+  // the script-error branch, where a plain Event has no message/filename/
+  // lineno/colno, so the kid's error report read literally
+  // "undefined (undefined:undefined:undefined)" 8 times over.
+  it("V.3b a media element failure with the URL on currentSrc is a RESOURCE error, not a phantom script error", () => {
+    const { posted, fire, ready } = runInSandbox();
+    ready();
+    fire("error", { target: { tagName: "AUDIO", src: "", currentSrc: "https://assets.ariantra.com/pop.mp3" } });
+    expect(posted).toHaveLength(1);
+    expect(posted[0].message).toMatchObject({
+      level: "error",
+      kind: "resource",
+      url: "https://assets.ariantra.com/pop.mp3",
+    });
+    expect(posted[0].message.text).not.toContain("undefined");
+  });
+
+  it("V.3c a subresource failure with NO readable URL is still a resource error and never reports 'undefined'", () => {
+    const { posted, fire, ready } = runInSandbox();
+    ready();
+    fire("error", { target: { tagName: "AUDIO" } }); // failed <source> child: nothing on the parent
+    expect(posted).toHaveLength(1);
+    expect(posted[0].message.kind).toBe("resource");
+    expect(posted[0].message.text).not.toContain("undefined");
+    expect(posted[0].message.text).toMatch(/audio/i);
+  });
+
+  it("V.3d an error event carrying no details at all never emits a bare 'undefined' text", () => {
+    const { posted, fire, ready } = runInSandbox();
+    ready();
+    fire("error", {}); // no message, no target — nothing to describe
+    expect(posted).toHaveLength(1);
+    expect(posted[0].message.text).not.toContain("undefined");
+    expect(posted[0].message.text.length).toBeGreaterThan(10); // says something actionable
+  });
+
   it("captures unhandled promise rejections with their stack", () => {
     const { posted, fire, ready } = runInSandbox();
     ready();

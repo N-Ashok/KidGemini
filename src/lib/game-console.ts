@@ -59,18 +59,45 @@ export function buildConsoleCaptureScript(): string {
   // fields — especially the stack — are the repair input (PRD §5.1).
   addEventListener("error", function (e) {
     var t = e && e.target;
-    if (t && t !== window && (t.src || t.href)) {
-      var url = String(t.src || t.href);
-      post({ level: "error", text: "Failed to load: " + url, kind: "resource", url: url });
+    // Classify by the EVENT, not by whether a URL happens to be readable.
+    // Only a real ErrorEvent carries a string \`message\`; a failed subresource
+    // is a plain Event whose target is the element. Media elements keep their
+    // URL on currentSrc, a failed <source> child leaves nothing on the parent,
+    // and src can legitimately be "" — so the old \`t.src || t.href\` gate
+    // misrouted all of those into the script branch below, where message /
+    // filename / lineno are undefined and the kid's report read literally
+    // "undefined (undefined:undefined:undefined)". It also denied
+    // classifyVerify the kind:"resource" it needs to say resource_404, so
+    // auto-repair went chasing a load_error with nothing to repair from.
+    // (BUG-FIX-LOG 2026-08-08.)
+    var isScriptError = !!(e && typeof e.message === "string");
+    if (!isScriptError && t && t !== window) {
+      var url = String(t.currentSrc || t.src || t.href || "");
+      var tag = String(t.tagName || "").toLowerCase();
+      post({
+        level: "error",
+        kind: "resource",
+        text:
+          "Failed to load" +
+          (tag ? " <" + tag + ">" : " a resource") +
+          (url ? ": " + url : " (the element carried no source URL)"),
+        url: url,
+      });
       return;
     }
+    // An error we cannot describe is still worth reporting — but it must say
+    // so in words, never as a bare "undefined".
+    var msg = isScriptError && e.message ? e.message : "Unknown error (the browser reported no details)";
+    var file = (e && e.filename) || "";
+    var ln = (e && e.lineno) || 0;
+    var cl = (e && e.colno) || 0;
     post({
       level: "error",
       kind: "error",
-      text: fmt(e && e.message) + " (" + (e && e.filename) + ":" + (e && e.lineno) + ":" + (e && e.colno) + ")",
-      filename: (e && e.filename) || "",
-      line: (e && e.lineno) || 0,
-      col: (e && e.colno) || 0,
+      text: msg + (file ? " (" + file + ":" + ln + ":" + cl + ")" : ""),
+      filename: file,
+      line: ln,
+      col: cl,
       stack: e && e.error && e.error.stack ? String(e.error.stack) : "",
     });
   }, true);
