@@ -30,8 +30,13 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
   never redirect an account that already has one (this screen sits behind a child's session).
 - **Tests:** `pin-otp/request/route.test.ts` R.8–R.10 (forwards the typed address, trims it,
   and a bodyless request still works — every existing caller sent no body). 2159 green.
-- **Not fixed here:** no Terms/Privacy pages exist to link from the capture copy; the copy states
-  purpose and limits in words only. Standing debt.
+- **Policy links:** the capture copy links `https://ariantra.com/privacy.html` and
+  `/terms.html`. (An earlier draft of this entry claimed no such pages existed — wrong: they live
+  in the **Ariantra AI** marketing repo, not in either app repo, which is why a search of these
+  two repos found nothing. The `.html` extension is load-bearing; `/privacy` and `/terms` are 404.)
+- **Open gap:** `privacy.html` lists the parent email's purpose as *"sending session summaries and
+  receipts"* — it does NOT yet mention parent-PIN codes or safety notices, which is what this
+  screen captures it for. The policy needs that line before the copy and the policy fully agree.
 
 ## 2026-08-08 — 3D tracks came out fragmented, and no amount of re-prompting fixed it
 

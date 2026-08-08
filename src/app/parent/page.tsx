@@ -554,13 +554,34 @@ export default function ParentPage() {
                     placeholder="you@example.com"
                     className="w-full rounded-kid border-2 border-brand-100 px-4 py-3 outline-none focus:border-brand-500"
                   />
-                  {/* Purpose limitation at the point of capture — the parent
-                      should never have to guess what an address will be used
-                      for, or fear it becomes marketing. */}
+                  {/* Purpose limitation AND the policy links, at the point of
+                      capture — the parent should never have to guess what an
+                      address will be used for, or go hunting for the terms they
+                      are agreeing to. Absolute URLs: these pages live on the
+                      marketing site (Hostinger), not in this app. The .html
+                      extension is load-bearing — /privacy and /terms are 404. */}
                   <p className="text-xs text-ink-600">
                     Used only to confirm it&rsquo;s you: parent codes and safety notices about your
                     child&rsquo;s account. Never shown on games, never shared, no marketing. You can
-                    change it any time in your Studio account.
+                    change it any time in your Studio account. See our{" "}
+                    <a
+                      href="https://ariantra.com/privacy.html"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-brand-600 underline"
+                    >
+                      Privacy Policy
+                    </a>{" "}
+                    and{" "}
+                    <a
+                      href="https://ariantra.com/terms.html"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-brand-600 underline"
+                    >
+                      Terms
+                    </a>
+                    .
                   </p>
                 </div>
               )}
