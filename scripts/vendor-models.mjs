@@ -438,6 +438,15 @@ const MODELS = [
   // so origin == footprint centre and `i * modelSize(n).z` tiles edge-to-edge.
   { name: 'race_track_straight', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadStraight.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit', recenterXZ: true , pathAxis: 'z' },
   { name: 'race_track_curve', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadCurved.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit', recenterXZ: true , pathAxis: 'none' },
+  // Real 90-degree CORNERS (2026-08-08, BUG-FIX-LOG "poorly formed race track").
+  // These were never vendored, which is the whole bug: `race_track_curve` is
+  // Kenney's roadCurved.glb — a CHICANE (enters -Z, leaves +Z shifted 0.5 m
+  // sideways, hence its 1.5 x 2 footprint), and the model was dutifully trying
+  // to build loops out of a lane-shift because the name said "curve". Both
+  // corners below are square and on the kit's 1 m module, so they tile against
+  // race_track_straight with no rescaling and no arc distortion.
+  { name: 'race_track_corner', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadCornerSmall.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit', recenterXZ: true, pathAxis: 'none' },
+  { name: 'race_track_corner_wide', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadCornerLarge.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit', recenterXZ: true, pathAxis: 'none' },
   { name: 'finish_line', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadStart.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit', recenterXZ: true, pathAxis: 'z' },
   { name: 'checkered_flag', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/flagCheckers.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
   { name: 'grandstand', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/grandStand.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },

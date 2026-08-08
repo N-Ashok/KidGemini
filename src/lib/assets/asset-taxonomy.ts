@@ -138,7 +138,14 @@ export const TAXONOMY: Record<string, TaxonomyEntry> = {
   driveway: { genres: ["city"], tags: ["road", "path", "drive"] },
   planter: { genres: ["city"], tags: ["plant", "pot", "flowerbed"] },
   race_track_straight: { genres: ["racing"], tags: ["road", "track", "tarmac"] },
-  race_track_curve: { genres: ["racing"], tags: ["road", "track", "bend", "corner"] },
+  // NOT a corner (2026-08-08, BUG-FIX-LOG "poorly formed race track"): this is
+  // Kenney's roadCurved.glb, a CHICANE — the carriageway enters at -Z and
+  // leaves at +Z shifted 0.5 m sideways, which is why it measures 1.5 x 2 and
+  // can never close a loop. The old "corner" tag actively taught the model to
+  // misuse it; race_track_corner{,_wide} below are the real corners.
+  race_track_curve: { genres: ["racing"], tags: ["road", "track", "chicane", "bend", "shift"] },
+  race_track_corner: { genres: ["racing"], tags: ["road", "track", "corner", "bend", "turn"] },
+  race_track_corner_wide: { genres: ["racing"], tags: ["road", "track", "corner", "bend", "turn", "wide"] },
   finish_line: { genres: ["racing"], tags: ["finish", "start", "goal"] },
   checkered_flag: { genres: ["racing"], tags: ["finish", "win", "race"] },
   grandstand: { genres: ["people", "racing"], tags: ["stadium", "seats", "crowd", "audience", "bleachers"] },

@@ -118,6 +118,8 @@ const EMOJI: Record<string, string> = {
   planter: "🪴",
   race_track_straight: "🛣️",
   race_track_curve: "🛣️",
+  race_track_corner: "↩️",
+  race_track_corner_wide: "🔄",
   finish_line: "🏁",
   checkered_flag: "🏁",
   grandstand: "🏟️",

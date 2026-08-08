@@ -3934,6 +3934,36 @@
         3.067,
         12.9
       ]
+    },
+    {
+      "name": "race_track_corner",
+      "type": "model",
+      "url": "https://assets.ariantra.com/race_track_corner.0f2f9e.glb",
+      "bytes": 5284,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/racing-kit",
+      "sha256": "0f2f9e4661095496fe89dcf399c19ee737f1575b35f0925c9237f646030c5dd7",
+      "size": [
+        1,
+        0.02,
+        1
+      ],
+      "pathAxis": "none"
+    },
+    {
+      "name": "race_track_corner_wide",
+      "type": "model",
+      "url": "https://assets.ariantra.com/race_track_corner_wide.39cdbf.glb",
+      "bytes": 5364,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/racing-kit",
+      "sha256": "39cdbfabfd9c32600d9b1087bba0a1944d3075d7b0311f2b6cfe371947e8a2b4",
+      "size": [
+        2,
+        0.02,
+        2
+      ],
+      "pathAxis": "none"
     }
   ]
 }
