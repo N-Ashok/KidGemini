@@ -1361,7 +1361,8 @@
         1,
         0.02,
         1
-      ]
+      ],
+      "pathAxis": "z"
     },
     {
       "name": "race_track_curve",
@@ -1375,7 +1376,8 @@
         1.5,
         0.02,
         2
-      ]
+      ],
+      "pathAxis": "none"
     },
     {
       "name": "finish_line",
@@ -1389,7 +1391,8 @@
         1.26,
         0.668,
         2
-      ]
+      ],
+      "pathAxis": "z"
     },
     {
       "name": "checkered_flag",
@@ -3664,7 +3667,8 @@
         1,
         0.02,
         1
-      ]
+      ],
+      "pathAxis": "x"
     },
     {
       "name": "road_curve",
@@ -3678,7 +3682,8 @@
         2,
         0.02,
         2
-      ]
+      ],
+      "pathAxis": "none"
     },
     {
       "name": "road_intersection",
@@ -3692,7 +3697,8 @@
         1,
         0.02,
         1
-      ]
+      ],
+      "pathAxis": "none"
     },
     {
       "name": "road_crossing",
@@ -3706,7 +3712,8 @@
         1,
         0.02,
         1
-      ]
+      ],
+      "pathAxis": "x"
     },
     {
       "name": "road_roundabout",
@@ -3720,7 +3727,8 @@
         3,
         0.02,
         3
-      ]
+      ],
+      "pathAxis": "none"
     },
     {
       "name": "road_ramp",
@@ -3734,7 +3742,8 @@
         1,
         0.27,
         1
-      ]
+      ],
+      "pathAxis": "x"
     },
     {
       "name": "road_bridge",

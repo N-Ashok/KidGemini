@@ -290,11 +290,13 @@ describe("loadModelHelper — modelSize(name)", () => {
     expect(script).toContain("obj.userData.arSize = window.modelSize(name)");
   });
 
-  it("bumped the helper version so stored games get modelSize retrofitted", () => {
+  // 4 → 5 (2026-08-08): the version bump is what retrofits modelAxis() onto
+  // ALREADY-STORED games — same mechanism the v4 modelSize bump used.
+  it("bumped the helper version so stored games get modelSize + modelAxis retrofitted", () => {
     // Without the bump, ensureAssetRuntime leaves an existing v3 helper alone
     // and modelSize never reaches any game that already exists.
-    expect(LOAD_MODEL_HELPER_VERSION).toBe(4);
-    expect(script).toContain("window.__arLoadModelVersion = 4");
+    expect(LOAD_MODEL_HELPER_VERSION).toBe(5);
+    expect(script).toContain("window.__arLoadModelVersion = 5");
   });
 
   it("answers null rather than a made-up number for an unmeasured model", () => {

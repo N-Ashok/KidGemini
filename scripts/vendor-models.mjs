@@ -63,6 +63,15 @@ const CACHE_CONTROL = 'public, max-age=31536000, immutable'; // hash naming make
 // sourceUrl = the kit page (its License.txt says CC0, kept in the zip).
 // kind 'url': a direct CC0 GLB; sourceUrl = the poly.pizza model page whose
 // license section shows CC0 (checked at curation time, 2026-07-12).
+const CITY_ROAD_AXIS = {
+  road_straight: 'x',
+  road_ramp: 'x',
+  road_crossing: 'x',
+  road_curve: 'none',
+  road_intersection: 'none',
+  road_roundabout: 'none',
+};
+
 const MODELS = [
   {
     name: 'car',
@@ -427,9 +436,9 @@ const MODELS = [
   // never wrong, so no amount of scale normalization would have helped: a game
   // stepping the correct 1 m still scattered the geometry. Bake the offset out
   // so origin == footprint centre and `i * modelSize(n).z` tiles edge-to-edge.
-  { name: 'race_track_straight', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadStraight.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit', recenterXZ: true },
-  { name: 'race_track_curve', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadCurved.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit', recenterXZ: true },
-  { name: 'finish_line', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadStart.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
+  { name: 'race_track_straight', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadStraight.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit', recenterXZ: true , pathAxis: 'z' },
+  { name: 'race_track_curve', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadCurved.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit', recenterXZ: true , pathAxis: 'none' },
+  { name: 'finish_line', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadStart.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' , pathAxis: 'z' },
   { name: 'checkered_flag', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/flagCheckers.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
   { name: 'grandstand', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/grandStand.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
   { name: 'pit_garage', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/pitsGarage.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
@@ -783,6 +792,7 @@ const MODELS = [
   // are the license-checked, thumbnail-reviewed picks. Rejected: X-Wing /
   // Arwing / Macross fan art (branded, §4.2); every Google-Poly jet probed or
   // sized ≥ 1 MB raw flat-shaded (the simplify() no-op class); bvbo Metal
+  // road_bridge is absent on purpose — see the pathAxis note below.
   // Bridge + Quaternius arch Bridge (unreadable on render); jeremy road tiles
   // + Ian MacGillivray sidewalk road (scene slabs / weaker than the Kenney
   // pieces); KayKit Road Bits + Kenney "Modular Road Kit" poly.pizza listings
@@ -797,11 +807,21 @@ const MODELS = [
   // road_straight measures -0.5..0.5 on both axes), so the bake is a no-op; it
   // is declared to make the tiling contract explicit and to catch a future
   // kit swap that quietly breaks it. See the race_track_* pair, which was NOT.
+  // pathAxis: which way the road RUNS at rest. This kit runs along X — the
+  // RACING kit runs along Z, and nothing else exposes the difference (these
+  // tiles are 1x1 m squares, so `size` cannot). Before this was published the
+  // prompt's "every model faces +Z" made the model rotate every one of these
+  // 90 degrees wrong, every time (BUG-FIX-LOG 2026-08-08). Declared, not
+  // detected: two independent geometric probes agreed on the straights but
+  // DISAGREED on road_bridge, so that one is deliberately left undeclared
+  // rather than shipped as a guess. 'none' = a hub/corner with no single run
+  // axis, which is a real answer, not a missing one.
   ].map(([name, file]) => ({
     name,
     source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/city-kit-roads/74288c9459-1741864740/kenney_city-kit-roads.zip', innerPath: `Models/GLB format/${file}.glb` },
     sourceUrl: 'https://kenney.nl/assets/city-kit-roads',
     recenterXZ: true,
+    ...(CITY_ROAD_AXIS[name] ? { pathAxis: CITY_ROAD_AXIS[name] } : {}),
   })),
   // Bridges. The two CC0 finds ride as-is; the two CC-BY ones carry authors
   // for the credits chip. normalizeLongest: the suspension bridge is a whole
@@ -1175,6 +1195,7 @@ for (const p of prepared) {
     sha256: p.sha256,
     // Omitted for skinned models — see the measurement block in prepare().
     ...(p.size ? { size: p.size } : {}),
+    ...(p.pathAxis ? { pathAxis: p.pathAxis } : {}),
   };
   const existing = manifest.assets.findIndex((a) => a.name === p.model.name);
   if (existing >= 0) manifest.assets[existing] = entryJson;

@@ -175,12 +175,14 @@ ${categories}
    \`loadModel("${models[0]!.name}").then((m) => { if (m) { m.scale.set(2, 2, 2); scene.add(m); player = m; } });\`
    If \`m\` is null, simply keep the placeholder — the game must keep working
    without the model.
-4. \`modelSize(name)\` gives a model's REAL metres \`{x, y, z}\` BEFORE you load
-   it (null if unknown — then eyeball it). NEVER guess a size or a spacing:
-   tiles are small, a road piece is ~1 m, not 10. Lay roads/tracks/paths
-   edge-to-edge by stepping that footprint, and scale by want ÷ actual:
-   \`const w = modelSize("road_straight").z; place(i * w);\`
-   Every model faces +Z at rest — steer with \`rotation.y\` alone; +Z is forward.
+4. \`modelSize(name)\` gives REAL metres \`{x, y, z}\` before you load (null =
+   unknown, eyeball it). NEVER guess a size or spacing — a road piece is ~1 m,
+   not 10. Scale by want ÷ actual; tile edge-to-edge by stepping the footprint:
+   \`const w = modelSize("road_straight").x; place(i * w);\`
+   VEHICLES/CHARACTERS face +Z — steer with \`rotation.y\`. ROAD TILES DON'T:
+   \`modelAxis(name)\` gives the run axis ("x"/"z"/"none"/null). Kits differ and
+   a square tile's size can't reveal it — never assume, or every tile lands
+   ACROSS the road. Step along that axis; rotate only to change it.
 5. Some models carry NAMED animations in \`m.animations\` — don't blindly play
    \`m.animations[0]\`: it's often an idle pose, or even an attack, so picking
    it for a "running" character makes it look like it's attacking instead of

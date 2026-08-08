@@ -25,6 +25,9 @@ import {
   parseSizeTables,
   stripSizeTables,
   countSizeTables,
+  countAxisTables,
+  parseAxisTables,
+  stripAxisTables,
 } from "./runtime-helpers";
 import { injectPerfProbe } from "./perf-probe";
 
@@ -192,6 +195,27 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
       out = stripSizeTables(out);
       if (Object.keys(sizes).length > 0) {
         markup += `<script>window.AR_SIZES=${JSON.stringify(sizes)};</script>`;
+      }
+    }
+
+    // (3d) the AR_AXES table — which axis each path piece runs along, behind
+    // modelAxis() (2026-08-08, BUG-FIX-LOG poorly-formed race track). Same
+    // reasoning as (3c): the v5 helper retrofits onto stored games, and
+    // without the table it would answer null for everything — i.e. the bug.
+    // Derived from the manifest; undeclared pieces are absent by construction.
+    const axisByName = new Map(
+      manifest.assets.flatMap((a) => (a.type === "model" && a.pathAxis ? [[a.name, a.pathAxis] as const] : [])),
+    );
+    const axes: Record<string, string> = {};
+    for (const name of Object.keys(union)) {
+      const ax = axisByName.get(name);
+      if (ax) axes[name] = ax;
+    }
+    const singleAxes = countAxisTables(out) === 1 ? parseAxisTables(out)[0] : undefined;
+    if (singleAxes === undefined || JSON.stringify(singleAxes) !== JSON.stringify(axes)) {
+      out = stripAxisTables(out);
+      if (Object.keys(axes).length > 0) {
+        markup += `<script>window.AR_AXES=${JSON.stringify(axes)};</script>`;
       }
     }
   }

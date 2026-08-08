@@ -76,6 +76,57 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
   origins; the seven `road_*` pieces (the modular kit) are correct today. Owner UAT owed:
   regenerate the racer and confirm a continuous track.
 
+## 2026-08-08 — "The race track is poorly formed": the two road kits run along OPPOSITE axes and nothing said so
+
+- **Symptom:** owner UAT, repeated. "The track looks a square and much smaller for car. Also it
+  looks road orientation is wrong and the overlapping is there" → Ari rebuilt → "even now the
+  roads don't look correct… it orientation looks very wrong." Re-prompting could never fix it.
+- **Root cause.** Measured directly against the LIVE glbs: the city kit's `road_straight` runs
+  along **X**; the racing kit's `race_track_straight` runs along **Z**. They are perpendicular.
+  Nothing exposed that, and `size` structurally cannot — `road_straight` is **1 × 1 m, perfectly
+  square**, so its footprint carries zero orientation information. Meanwhile `prompt-catalog.ts`
+  rule 4 asserted, as a universal, *"Every model faces +Z at rest"* — true of the racing kit,
+  **false** of the city kit. The model believed it, rotated every city tile 90°, and produced
+  roads laid ACROSS the direction of travel. Deterministic: same wrong answer every time.
+- **What it was NOT.** TECH_DEBT #94 (the un-uploaded race_track origin recentring) looked like
+  the culprit and is not: this game builds from `road_*`, whose origins measure exactly (0, 0).
+  Running that pending `--upload` would have fixed only the `finish_line` being 1.65 m out of
+  place. Worth doing; unrelated to this report. Confirming that before proposing a fix is the
+  whole reason the fix is right.
+- **Fix — ship the orientation as DATA, and stop the prompt lying.** New optional
+  `pathAxis: "x" | "z" | "none"` on manifest model entries, published to games as
+  `window.AR_AXES` + `modelAxis(name)` (mirrors the AR_SIZES/modelSize channel exactly: separate
+  table, string values, no nested `}` for the block regexes to trip on). Rule 4 now scopes +Z
+  facing to vehicles/characters and points tiles at `modelAxis()`. `loadModelHelper` v4 → v5, so
+  **already-stored games get `modelAxis` retrofitted on their next preview render** (verified:
+  a v4-helper game with no axis table gains `{"road_straight":"x"}` and stays idempotent).
+- **DECLARED, not auto-detected — deliberately.** Two independent geometric probes were built
+  and both rejected as sources of truth: extrusion-uniformity and raised-kerb/railing runs agree
+  on the straights but **disagree on `road_bridge`**, and a deck-edge probe called `road_straight`
+  open on all four sides. Shipping a detector's guess would be exactly the confidently-wrong
+  value TECH_DEBT #93 exists to refuse, so `road_bridge` is left UNDECLARED and `modelAxis()`
+  answers null for it — the game eyeballs it, as it always did. Declarations live beside
+  `assertLongAxis`/`recenterXZ` in `vendor-models.mjs`, the same declare-then-lint discipline.
+- **Backfill, not re-upload:** `scripts/backfill-path-axis.mjs` writes the declarations into
+  `manifest.json` without touching the asset host. Unlike `size` this is not measured from bytes,
+  so there is nothing to re-derive — a re-upload of unchanged assets to publish a hand-declared
+  string would be an absurd price. Idempotent; doubles as a verification pass.
+- **Prompt token ceiling 2400 → 2450 (+39 net).** Not a free raise: rule 4 was compressed to pay
+  for most of the new teaching, and the raise is justified in the test comment in the same terms
+  as the 2300→2350 rotor and 2350→2400 modelSize raises before it — fault-driven teaching that
+  DELETES the wrong teaching it replaces. The baseline was 2398 against a 2400 line, i.e. two
+  tokens of headroom, so this could not have been absorbed silently.
+- **Tests (+11):** manifest — city=x / racing=z (the disagreement itself), hubs='none',
+  `road_bridge` explicitly undeclared, non-path models never carry an axis, and the racing kit
+  pinned as OFF the whole-metre module (`race_track_curve` is 1.5 × 2, and the existing module
+  test matches only `/^road_/`, so the kit was never checked — now it fails loudly if re-vendored);
+  inject — AR_AXES emitted with exactly one table, omitted entirely when undeclared, and
+  `modelAxis()` shipped; prompt — the universal "+Z" claim is asserted ABSENT so it cannot return.
+- **Still open, unchanged by this:** the layout arithmetic in the generated game had a genuine
+  25 m hole (bottom row ends x=275, corner placed at x=325, tiles 25 m wide) — that is the model's
+  own maths, not an asset defect, and better axis data should reduce but not guarantee it away.
+  TECH_DEBT #94's `--upload` is still owed for the off-centre `race_track_*`/`finish_line` pair.
+
 ## 2026-08-08 — Edit turns threw away a working patch and ran a full regeneration (`reconcileBailed=new-asset`, plus a marker-whitespace gap)
 
 - **Symptom:** prod log, four escalations in one window —

@@ -202,6 +202,16 @@ export function injectAssets(html: string, manifest: AssetManifest = manifestJso
   if (Object.keys(sizes).length > 0) {
     markup += `<script>window.AR_SIZES=${JSON.stringify(sizes)};</script>`;
   }
+  // Which axis each PATH piece runs along (2026-08-08 — the poorly-formed-track
+  // fix). A 1x1 square road tile's size cannot reveal it, and the two kits
+  // genuinely disagree, so without this the model had to guess. Same shape
+  // rules as AR_SIZES: models only, absent when undeclared, modelAxis() null.
+  const axes = Object.fromEntries(
+    models.flatMap((m) => (m.pathAxis ? [[m.name, m.pathAxis] as const] : [])),
+  );
+  if (Object.keys(axes).length > 0) {
+    markup += `<script>window.AR_AXES=${JSON.stringify(axes)};</script>`;
+  }
   if (modelNames.length > 0) markup += loadModelHelper();
   if (modelNames.length > 0 && CALLS_LOADMODELBATCH_RE.test(html)) markup += loadModelBatchHelper();
   if (audioNames.length > 0) markup += audioHelper();

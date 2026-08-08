@@ -291,3 +291,46 @@ describe("the committed manifest.json", () => {
     expect(offGrid).toEqual([]);
   });
 });
+
+// pathAxis (2026-08-08, BUG-FIX-LOG "poorly formed race track"). The two road
+// kits run along DIFFERENT axes and a 1×1 m square tile's `size` cannot reveal
+// which — so the model guessed, and got it wrong every time. These pin the
+// declarations that now tell it.
+describe("the committed manifest.json — path-piece orientation", () => {
+  const byName = (n: string) =>
+    (manifest as AssetManifest).assets.find((a) => a.name === n && a.type === "model");
+
+  it("declares the CITY kit running along X and the RACING kit along Z — the disagreement that caused the bug", () => {
+    expect(byName("road_straight")?.pathAxis).toBe("x");
+    expect(byName("race_track_straight")?.pathAxis).toBe("z");
+  });
+
+  it("marks hubs and corners 'none' — a real answer, not a missing one", () => {
+    for (const n of ["road_curve", "road_intersection", "road_roundabout", "race_track_curve"]) {
+      expect(byName(n)?.pathAxis, n).toBe("none");
+    }
+  });
+
+  it("leaves road_bridge UNDECLARED — two geometric probes disagreed, and a confidently-wrong axis is worse than none", () => {
+    expect(byName("road_bridge")?.pathAxis).toBeUndefined();
+  });
+
+  it("never declares an axis on a non-path model (a car has a facing, not a run axis)", () => {
+    for (const n of ["sedan", "tree", "dino"]) {
+      expect(byName(n)?.pathAxis, n).toBeUndefined();
+    }
+  });
+
+  // The gap that let race_track_curve's 1.5 m width through: the module test
+  // above matches ONLY /^road_/, so the racing kit was never checked. A curve
+  // that isn't on the module can never tile against its own 1×1 straight.
+  it("flags the racing kit as OFF the whole-metre module (known, TECH_DEBT — pinned so it can't regress silently)", () => {
+    const curve = byName("race_track_curve")!;
+    const [x, , z] = curve.size!;
+    const offGrid = [x, z].filter((v) => Math.abs(v - Math.round(v)) > 0.01);
+    // race_track_curve is 1.5 × 2 — the 1.5 is the defect. Asserting it
+    // EXPLICITLY means the day someone re-vendors the kit on-module, this test
+    // fails and forces the manifest + this expectation to be updated together.
+    expect(offGrid).toEqual([1.5]);
+  });
+});

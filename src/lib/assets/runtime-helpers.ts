@@ -100,6 +100,40 @@ export function countSizeTables(html: string): number {
   return [...html.matchAll(arSizesBlockRe())].length;
 }
 
+// The injected path-AXIS table (`<script>window.AR_AXES={...};</script>`),
+// added 2026-08-08 for the poorly-formed-track bug (BUG-FIX-LOG). Separate
+// from AR_SIZES for the same four reasons AR_SIZES is separate from AR_ASSETS
+// (see above) — chiefly that these regexes are non-greedy to the first `}`,
+// so nesting silently truncates the capture. Values are plain strings, so no
+// `}` can ever appear inside one.
+const arAxesBlockRe = () => /<script[^>]*>\s*window\.AR_AXES\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/g;
+
+/** Every parseable AR_AXES table in the document, in document order. */
+export function parseAxisTables(html: string): Array<Record<string, string>> {
+  const tables: Array<Record<string, string>> = [];
+  for (const m of html.matchAll(arAxesBlockRe())) {
+    try {
+      const parsed: unknown = JSON.parse(m[1]!);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        tables.push(parsed as Record<string, string>);
+      }
+    } catch {
+      /* not our block shape — fail soft, same floor as parseSizeTables */
+    }
+  }
+  return tables;
+}
+
+/** Removes every AR_AXES table block. Callers re-emit exactly one. */
+export function stripAxisTables(html: string): string {
+  return html.replace(arAxesBlockRe(), "");
+}
+
+/** How many AR_AXES table blocks the document carries. */
+export function countAxisTables(html: string): number {
+  return [...html.matchAll(arAxesBlockRe())].length;
+}
+
 /** Neutralizes a literal `</script>` inside a string about to be inlined
  *  into an HTML `<script>` block — `<\/script>` is identical to `</script>`
  *  inside a JS string (or JSON, which has no special meaning for a lone
@@ -148,7 +182,7 @@ export function countTriangles(obj: { traverse: (cb: (child: any) => void) => vo
  *  over the AR_SIZES table. The bump is what retrofits it onto games ALREADY
  *  stored: ensureAssetRuntime strips the v3 block and injects v4 on the next
  *  preview render, so no migration is needed. */
-export const LOAD_MODEL_HELPER_VERSION = 4;
+export const LOAD_MODEL_HELPER_VERSION = 5;
 
 /** The runtime helper 3D games call: resolves a catalog name via AR_ASSETS,
  *  loads the GLB with GLTFLoader + meshopt (models are meshopt-compressed),
@@ -203,6 +237,17 @@ window.AR_SIZES = window.AR_SIZES || {};
 window.modelSize = function (name) {
   var s = window.AR_SIZES[name];
   return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
+};
+// modelAxis (2026-08-08, the poorly-formed-track fix): which axis a PATH
+// piece's road runs along at rest — "x", "z", or "none" for a hub/corner. The
+// two road kits genuinely disagree (city road_straight runs along X, racing
+// race_track_straight along Z) and a 1x1 square tile's size cannot reveal it,
+// so before this a game had to guess and got it wrong every time. Unknown
+// answers null — then eyeball it, same as before.
+window.AR_AXES = window.AR_AXES || {};
+window.modelAxis = function (name) {
+  var a = window.AR_AXES[name];
+  return (a === "x" || a === "z" || a === "none") ? a : null;
 };
   const __arLoader = new GLTFLoader();
 __arLoader.setMeshoptDecoder(MeshoptDecoder);

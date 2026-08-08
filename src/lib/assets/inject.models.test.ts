@@ -251,3 +251,33 @@ describe("injectAssets — the AR_SIZES table", () => {
     expect(sizesTable(again)).toEqual(sizesTable(first));
   });
 });
+
+// AR_AXES end-to-end (2026-08-08, BUG-FIX-LOG "poorly formed race track").
+// The declaration is worthless unless it actually reaches the running game.
+describe("AR_AXES — the run axis reaches the game", () => {
+  it("emits the axis table alongside AR_SIZES for the tiles in play", () => {
+    const html = injectAssets(
+      `<html><body><!--USES_THREE--><!--USES_MODELS: road_straight, road_curve--><script>loadModel("road_straight")</script></body></html>`,
+    ).html;
+    const table = JSON.parse(html.match(/window\.AR_AXES=(\{.*?\});/)![1]!);
+    expect(table).toEqual({ road_straight: "x", road_curve: "none" });
+    // Exactly ONE table — a stale second would win by document order, the
+    // duplicate-table class from the 2026-08-06 Sky Patrol bikes bug.
+    expect(html.match(/window\.AR_AXES=/g)!.length).toBe(1);
+  });
+
+  it("omits an undeclared piece entirely, so modelAxis() answers null rather than guessing", () => {
+    const html = injectAssets(
+      `<html><body><!--USES_THREE--><!--USES_MODELS: road_bridge--><script>loadModel("road_bridge")</script></body></html>`,
+    ).html;
+    expect(html).not.toContain("window.AR_AXES=");
+  });
+
+  it("ships modelAxis() itself, reading that table and rejecting anything else", () => {
+    const html = injectAssets(
+      `<html><body><!--USES_THREE--><!--USES_MODELS: road_straight--><script>loadModel("road_straight")</script></body></html>`,
+    ).html;
+    expect(html).toContain("window.modelAxis = function (name)");
+    expect(html).toContain('(a === "x" || a === "z" || a === "none") ? a : null');
+  });
+});

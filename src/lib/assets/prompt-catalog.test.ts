@@ -227,14 +227,16 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
   // the prompt. These pin the teaching that replaced it.
   it("teaches modelSize() instead of telling the model to guess a size", () => {
     expect(section).toMatch(/modelSize\(name\)/);
-    expect(section).toMatch(/NEVER guess a size or a spacing/);
+    expect(section).toMatch(/NEVER guess a size or spacing/);
     // The exact sentence that caused the bug must not come back.
     expect(section).not.toMatch(/load at their own natural size/);
   });
 
   it("shows tiles being stepped by their measured footprint, not by a made-up number", () => {
     expect(section).toMatch(/edge-to-edge/);
-    expect(section).toMatch(/modelSize\("road_straight"\)\.z/);
+    // .x, not .z (2026-08-08): road_straight RUNS along X, so stepping it by
+    // its z would lay the row across the road — the very bug being fixed.
+    expect(section).toMatch(/modelSize\("road_straight"\)\.x/);
   });
 
   it("does not depend on the child's message — this is what makes the prefix cacheable", () => {
@@ -293,7 +295,17 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // The category-map hybrid the section doc promises is still the next step
     // if an ASSET BATCH pushes past this line — it is not a licence to keep
     // raising it for prose.
-    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_400);
+    //
+    // 2400 → 2450 (2026-08-08, BUG-FIX-LOG "poorly formed race track"). Same
+    // category as the 2300 → 2350 rotor raise and the 2350 → 2400 modelSize
+    // one: fault-driven teaching that DELETES the wrong teaching it replaces.
+    // Rule 4 asserted "Every model faces +Z at rest" as a universal — TRUE of
+    // the racing kit, FALSE of the city kit, whose road_straight runs along X.
+    // A 1×1 m square tile's size cannot reveal the difference, so the model
+    // rotated every city tile 90° wrong and no re-prompt could fix it. The
+    // replacement teaches modelAxis() and costs +39 tokens net after rule 4
+    // was compressed to pay for most of it. Measured 2437.
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_450);
   });
 });
 
@@ -509,10 +521,17 @@ describe("catalog scale ceilings (PRD §14, amended 2026-07-24: teach-everything
 // must be TAUGHT globally (one line, ~15 tokens) and ENFORCED at curation
 // (vendor-models.mjs orientation lint) — never patched per-model in games.
 describe("the facing convention is taught (2026-08-06)", () => {
-  it("tells the model everything faces +Z and rotation.y alone steers", () => {
+  // SUPERSEDED 2026-08-08 (BUG-FIX-LOG "poorly formed race track"). The old
+  // pin demanded the section assert "+Z is forward" for EVERY model — which is
+  // exactly the falsehood that broke every road build: the city kit's
+  // road_straight runs along X. The facing rule is now scoped to
+  // vehicles/characters, and tiles get modelAxis() instead.
+  it("scopes +Z facing to vehicles/characters and teaches modelAxis for tiles", () => {
     const section = modelsPromptSection(realManifest as AssetManifest);
-    expect(section).toContain("faces +Z at rest");
+    expect(section).toContain("VEHICLES/CHARACTERS face +Z");
     expect(section).toContain("rotation.y");
-    expect(section).toContain("+Z is forward");
+    expect(section).toContain("modelAxis(name)");
+    // The universal claim must never come back — it was never true.
+    expect(section).not.toMatch(/Every model faces \+Z/);
   });
 });

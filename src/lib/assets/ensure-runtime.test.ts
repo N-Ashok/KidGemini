@@ -242,7 +242,7 @@ window.loadModel = async function (name) { return null; };
         `<script type="module">import { Scene } from "three"; loadModel("car");</script>`,
     );
     const out = ensureAssetRuntime(stored);
-    expect(out).toContain("window.__arLoadModelVersion = 4");
+    expect(out).toContain("window.__arLoadModelVersion = 5");
     expect(out).toContain("window.modelSize");
     // The helper alone would be useless — it must find real metres to read.
     const carSize = manifest.assets.find((a) => a.name === "car")!.size;

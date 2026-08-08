@@ -53,6 +53,28 @@ export interface AssetEntry {
    *  shipped in AR_SIZES — so the injector is a pass-through and the table's
    *  values contain no `}` for the block regexes to trip over. */
   size?: [number, number, number];
+  /** Which axis a PATH piece's road/track runs along at rest — `'x'`, `'z'`,
+   *  or `'none'` for a hub/corner (intersection, roundabout, curve) that has
+   *  no single run axis. Reaches a generated game as `window.AR_AXES` /
+   *  `modelAxis(name)`.
+   *
+   *  WHY THIS EXISTS (BUG-FIX-LOG 2026-08-08, "poorly formed race track").
+   *  The two road kits disagree: the CITY kit's `road_straight` runs along X,
+   *  the RACING kit's `race_track_straight` runs along Z. Nothing exposed
+   *  that, and `size` cannot: `road_straight` is 1 × 1 m — perfectly square,
+   *  so its footprint carries zero orientation information. The prompt
+   *  meanwhile asserted "Every model faces +Z at rest", which is true of the
+   *  racing kit and FALSE of the city kit — so the model dutifully rotated
+   *  every city tile 90° wrong, every time, and no amount of re-prompting
+   *  could fix it.
+   *
+   *  DECLARED, not auto-detected — same discipline as `assertLongAxis`. Two
+   *  independent geometric heuristics (extrusion uniformity, raised
+   *  kerb/railing runs) agree on the straights but DISAGREE on `road_bridge`,
+   *  so shipping a detector's guess would have been the confidently-wrong
+   *  number TECH_DEBT #93 exists to refuse. Absent = unknown; `modelAxis()`
+   *  answers null and the game eyeballs it, exactly as before. */
+  pathAxis?: "x" | "z" | "none";
 }
 
 export interface AssetManifest {
@@ -163,6 +185,14 @@ export function validateEntry(e: AssetEntry): void {
           `size for "${e.name}" must be positive finite metres under 1000 (got ${v})`,
         );
       }
+    }
+  }
+  if (e.pathAxis !== undefined) {
+    if (e.type !== "model") {
+      throw new Error(`only models carry a pathAxis — "${e.name}" is a ${e.type}`);
+    }
+    if (e.pathAxis !== "x" && e.pathAxis !== "z" && e.pathAxis !== "none") {
+      throw new Error(`pathAxis for "${e.name}" must be "x", "z" or "none" (got ${JSON.stringify(e.pathAxis)})`);
     }
   }
   if (!/^https:\/\//.test(e.sourceUrl)) throw new Error(`sourceUrl must be https for "${e.name}" — it is the license proof`);
