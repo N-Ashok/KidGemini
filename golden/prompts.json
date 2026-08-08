@@ -1,0 +1,9 @@
+{
+  "_comment": "Golden prompts (docs/2026-08-08_PRD_AssetFitnessAndReview.md Layer 2). A FIXED, SMALL set of child-shaped prompts run on demand against the real model, so a regression in generated output is caught before a child finds it. Kids never see these; nothing in the generation pipeline reads this file. Keep the set small and DIVERSE — a large set tempts tuning the prompt against a fixed target, which is how every kid's game starts looking the same.",
+  "prompts": [
+    { "id": "race-track", "text": "3D - make a race track with 4 corners and a start line", "why": "The 2026-08-08 and 2026-08-09 bugs both lived here: corner rotation, one kit at one scale, finish-line proportion." },
+    { "id": "city-roads", "text": "3D - make a city with roads and cars driving around", "why": "The OTHER road kit. City runs X, racing runs Z — the disagreement that caused the first fault." },
+    { "id": "dino-runner", "text": "3D - make a dinosaur running game", "why": "Animated/skinned models and named animation clips — a different subsystem from tiles." },
+    { "id": "plain-2d", "text": "make a simple catch the falling stars game", "why": "The 2D floor. Most games are 2D and must never be disturbed by 3D pipeline work." }
+  ]
+}

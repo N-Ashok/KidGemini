@@ -338,3 +338,63 @@ describe("ensureAssetRuntime — asset-table healing (2026-08-06)", () => {
     expect((out.match(/<!--ari-perf-probe-->/g) ?? []).length).toBe(1); // exactly one probe block
   });
 });
+
+// PRODUCTION OUTAGE 2026-08-09 (BUG-FIX-LOG). Every stored 3D game broke with
+// `Failed to resolve module specifier "three"` and `loadModel is not defined`.
+//
+// The import map was PRESENT and byte-identical to ours, so step (1)'s
+// `singleOursAlready` left it exactly where it sat — 8,970 bytes into the real
+// document. Meanwhile the v5→v6 helper bump made the helper stale, so it was
+// re-injected, and insertEarly prepends to the top of <head>. The helper is a
+// `<script type="module">` that imports "three", so it ended up ~8.5 KB ABOVE
+// the map that resolves it. A browser ignores an import map that appears after
+// module resolution has begun.
+//
+// The flaw was latent for as long as the map has been placed anywhere but the
+// top; the version bump activated it for every stored 3D game at once.
+describe("the import map must precede every module script we prepend", () => {
+  const MAP = `<script type="importmap">${JSON.stringify({ imports: { three: ENGINE } })}</script>`;
+
+  // Mirrors the real stored artifact: a CORRECT, single, ours-already import
+  // map sitting deep in the document, below where insertEarly splices.
+  const storedWithDeepMap = (helperVersion: number) =>
+    `<!DOCTYPE html><html lang="en"><head></head><body>` +
+    `<div id="ui">lots of game chrome</div>` +
+    `<script>window.AR_ASSETS=${JSON.stringify({ car: CAR })};</script>` +
+    MAP +
+    `<script type="module">
+  import { GLTFLoader } from "three";
+  window.__arLoadModelVersion = ${helperVersion};
+window.loadModel = async function (name) { return null; };
+</script>` +
+    `<script type="module">import { Scene } from "three"; loadModel("car");</script>` +
+    `</body></html>`;
+
+  const firstIndexOf = (html: string, re: RegExp) => {
+    const m = re.exec(html);
+    return m ? m.index : -1;
+  };
+
+  it("re-emits the map ABOVE the helper when a stale helper is re-injected", () => {
+    // A stale helper is exactly what a version bump creates, for every stored
+    // game, all at once — so this is the common case, not an edge case.
+    const out = ensureAssetRuntime(storedWithDeepMap(3));
+    const mapIdx = firstIndexOf(out, /<script[^>]*type=["']importmap["']/i);
+    const modIdx = firstIndexOf(out, /<script[^>]*type=["']module["']/i);
+    expect(mapIdx).toBeGreaterThanOrEqual(0);
+    expect(modIdx).toBeGreaterThanOrEqual(0);
+    expect(mapIdx, "import map must come before the first module script").toBeLessThan(modIdx);
+  });
+
+  it("leaves exactly ONE import map — a second is discarded by the browser", () => {
+    const out = ensureAssetRuntime(storedWithDeepMap(3));
+    expect([...out.matchAll(/type=["']importmap["']/gi)]).toHaveLength(1);
+  });
+
+  it("still touches nothing when the document is already fully current", () => {
+    // The map must NOT be pointlessly relocated on every render — that would
+    // rewrite every stored game forever and defeat the idempotence check.
+    const healed = ensureAssetRuntime(storedWithDeepMap(3));
+    expect(ensureAssetRuntime(healed)).toBe(healed);
+  });
+});

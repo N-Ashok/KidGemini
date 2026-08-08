@@ -11,6 +11,101 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-09 — EVERY stored 3D game broke in production: the import map was correct, and in the wrong place
+
+- **Symptom:** owner UAT on production after deploying the fix below. Five errors, repeated:
+  `Failed to resolve module specifier "three"` and `loadModel is not defined`. The whole track
+  vanished. Re-prompting could not help — and separately could not run at all (see the Gemini
+  credit exhaustion note at the end).
+- **Severity:** every 3D game that had ever been stored, all at once. Not a race-track bug.
+- **Root cause — POSITION, not presence.** Dumped the owner's actual stored artifact from the box
+  (`conversations` row `6a14c96d…`, message 30) and censused its script order:
+
+  | byte | element |
+  |---|---|
+  | 394 | `<script type="module"> import { GLTFLoader … } from "three"` — the loadModel helper |
+  | 5654 | second module script importing `"three"` (batch helper) |
+  | **8970** | `<script type="importmap">` |
+
+  A browser IGNORES an import map that appears after module resolution has begun. The map was
+  byte-perfect; it was 8.5 KB too late.
+
+  `ensure-runtime.ts` step (1) asked only *"is there exactly one map and is it ours?"*
+  (`singleOursAlready`). For this document the answer was yes, so the map was left exactly where
+  it sat — deep in the body — while `insertEarly` prepended the freshly re-injected helper to the
+  top of `<head>`. Every other check in that function asks "present and correct", never "early
+  enough".
+- **What activated it:** the `LOAD_MODEL_HELPER_VERSION` 5 → 6 bump in the entry below. A version
+  bump makes the helper stale for EVERY stored game simultaneously, so every one of them
+  re-injected a module script above its own valid import map on the next render. The flaw was
+  latent for as long as maps have been written below the head insertion point.
+- **Why the redeploy did not fix it:** the stored artifact was already v6 with an AR_EDGES table,
+  so `ensureAssetRuntime` judged it current, produced empty `markup`, and returned the document
+  byte-identical — misordering intact. A first fix that only re-emitted the map "when something
+  else is being prepended" therefore did nothing here. The correct invariant is unconditional:
+  **if the map sits after any module script, move it.**
+- **Fix:** `ensure-runtime.ts` now detects `mapAfterModule` (first map index > first module-script
+  index) and forces a strip-and-re-emit, and the map is prepended FIRST in `markup` so it precedes
+  every helper being spliced in. Guarded on `markup` being non-empty elsewhere, so an already-current
+  document is still returned byte-identical and no stored game is rewritten pointlessly.
+- **Self-heals:** `ensureAssetRuntime` runs on every preview render, so already-broken stored games
+  repair themselves the next time a child opens them. No restamp campaign.
+- **Verified on the REAL bytes**, not a fixture — the owner's own artifact, through the new browser
+  harness:
+  - before: `✖ loadModel:undefined helper:vnull` + `Failed to resolve module specifier "three"` ×2
+    + `loadModelBatch is not defined`
+  - after: `✓ loadModel:function joins:function helper:v6 assets:6 sizes:6 edges:3 canvas:1`
+  - and `ensureAssetRuntime(healed) === healed` (idempotent).
+
+### Why 2,190 green tests did not catch it
+
+Every asset test in this repo asserts on STRINGS in the generated HTML — `expect(html).toContain(
+"importmap")`. "The import map is present" and "the import map still resolves `three` at runtime"
+are different claims, and only the first was ever tested. Document ORDER was untested, so a
+correct map in a fatal position was invisible to all of them.
+
+Two instruments were built in response, and the first found this bug on its first run after four
+synthetic fixtures had failed to reproduce it:
+
+- **`scripts/verify-game-html.mjs`** — loads a game in a real browser via iframe `srcdoc` (faithful
+  to production; the live report said `about:srcdoc`, and module resolution differs there),
+  captures console + page errors from every frame, flags 4xx asset fetches, then probes the LIVE
+  window: is `loadModel` a function, is `AR_ASSETS` populated, was a canvas drawn. No model call —
+  it runs on any game HTML, including one pulled straight out of the database.
+- **`scripts/golden-prompts.mjs`** + `golden/prompts.json` — Layer 2 of the fitness PRD, finally
+  built. A small, deliberately DIVERSE set of child-shaped prompts (race track, city roads, dino
+  runner, and one plain 2D game so 3D work cannot disturb the 2D floor), run on demand through the
+  real generation path and then through the verifier. It never asserts sameness — that would make
+  every child's game converge, which is the opposite of the point.
+
+### Also fixed in the same pass (a real defect, but NOT the cause)
+
+The `AR_EDGES` strip regex shipped GREEDY, on the reasoning that its NESTED values needed it. Wrong:
+the match is anchored on `</script>`, not on `}`, so a lazy quantifier expands until the TAIL fits
+and necessarily stops inside its own block — which is exactly why AR_SIZES and AR_AXES have always
+been lazy. Greedy ran to the last `}`+`</script>` in the document, deleting the loadModel helper and
+capturing markup that then failed `JSON.parse` silently inside the fail-soft catch. It made
+`ensureAssetRuntime` non-idempotent (11612 → 11269 → 11612 across renders; now stable).
+
+This was initially diagnosed as the outage. It was not — `injectAssets` emits byte-identical output
+either way, and both builds run clean in the browser. Recorded here because the wrong diagnosis was
+briefly acted on, and because a plausible theory that survives a redeploy is worth writing down.
+
+New guard: `src/lib/assets/runtime-tables.invariant.test.ts` tests the property that matters for all
+four runtime tables — `strip_X(doc)` must equal `doc` with block X removed **and nothing else**,
+byte-exact. Confirmed to fail (4 tests) against the greedy code and pass against the fix. Its
+fixture's game script ends with `}` immediately before `</script>`, which is how real generated games
+end — three earlier attempts at this test PASSED against broken code because their fixtures did not.
+
+### Unrelated, found while reading the logs (owner action)
+
+`[model-runner]` was returning 429 `RESOURCE_EXHAUSTED` — *"Your prepayment credits are depleted"* —
+on chat AND repair, across all three fallback models. No child could generate or fix a game
+regardless of any code fix. Owner topped up. Worth a standing alert: this failure is invisible from
+the outside except as *"Oops! Something went wrong."*
+
+---
+
 ## 2026-08-09 — the race track STILL didn't close: corners had no join data
 
 - **Symptom:** owner UAT, second round. *"The curves did not come properly; the starting and

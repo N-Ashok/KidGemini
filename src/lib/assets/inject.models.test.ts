@@ -322,3 +322,54 @@ describe("AR_EDGES — which edges a tile's road reaches (2026-08-09)", () => {
     expect(html).not.toContain("window.AR_EDGES=");
   });
 });
+
+// PRODUCTION REGRESSION 2026-08-09 (BUG-FIX-LOG). The AR_EDGES strip regex
+// shipped GREEDY — `(\{[\s\S]*\})` — on the reasoning that AR_EDGES holds
+// NESTED objects and a lazy match would truncate at the first inner `}`. That
+// reasoning was wrong: the match is anchored on `</script>`, not on `}`, so a
+// lazy quantifier expands until the TAIL fits. Which is exactly why AR_SIZES
+// and AR_AXES have always been lazy and always worked.
+//
+// Greedy ran past its own block's `</script>` to the LAST one in the document,
+// so on an EDIT turn (the model is shown the stored, post-injection artifact)
+// it deleted everything from the table onward — the loadModel helper included.
+// Live errors: "loadModel is not defined" and "Failed to resolve module
+// specifier three", and the owner's whole track vanished.
+describe("stripping a runtime table must never reach past its own </script>", () => {
+  // The game script MUST end with `}` immediately before its `</script>` —
+  // `});` or a bare closing brace, which is how essentially every generated
+  // game ends. That detail is the whole bug: a first attempt at this test used
+  // a script ending in `loadModel(...);` and PASSED against the broken code,
+  // because the greedy match needs `}` + optional `;` + `</script>` to reach
+  // that far. A fixture that cannot express the fault is worse than no test.
+  const echoed = injectAssets(
+    `<html><body><!--USES_THREE--><!--USES_MODELS: race_track_corner-->` +
+      `<script type="module">import { Scene } from "three";\n` +
+      `function createTrack() {\n  loadModel("race_track_corner");\n}\ncreateTrack();\n</script>` +
+      `</body></html>`,
+  ).html;
+
+  it("an edit turn re-injecting the previous output keeps the helper and the import map", () => {
+    expect(echoed).toContain("window.AR_EDGES=");
+    const edit = injectAssets(echoed.replace("<body>", `<body><!--USES_THREE--><!--USES_MODELS: race_track_corner, car-->`)).html;
+    expect(edit).toContain("window.loadModel"); // error #2 in the live report
+    expect(edit).toContain('<script type="importmap">'); // errors #1/#3/#4/#5
+    expect(edit).toContain("window.rotateToJoin");
+    // ...and the child's OWN game code must survive too — that is "the whole
+    // track vanished".
+    expect(edit).toContain('function createTrack()');
+    expect(edit).toContain('loadModel("race_track_corner")');
+  });
+
+  it("leaves exactly one AR_EDGES block, and it still parses", () => {
+    const edit = injectAssets(echoed.replace("<body>", `<body><!--USES_THREE--><!--USES_MODELS: race_track_corner-->`)).html;
+    const blocks = [...edit.matchAll(/window\.AR_EDGES=/g)];
+    expect(blocks).toHaveLength(1);
+    // The greedy capture swallowed trailing markup and threw on JSON.parse,
+    // which fails SILENTLY into the fail-soft catch — so the table read as
+    // absent and the damage was invisible to every existing check.
+    const json = /window\.AR_EDGES=(\{[\s\S]*?\});<\/script>/.exec(edit)![1]!;
+    expect(() => JSON.parse(json)).not.toThrow();
+    expect(JSON.parse(json).race_track_corner.joins).toEqual(["+z", "+x"]);
+  });
+});

@@ -137,13 +137,20 @@ export function countAxisTables(html: string): number {
 // The injected tile-EDGE table (`<script>window.AR_EDGES={...};</script>`),
 // added 2026-08-09 for the SECOND poorly-formed-track bug (BUG-FIX-LOG).
 // AR_AXES answers "none" for every corner, which is true and useless — a model
-// placing a corner needs to know WHICH EDGES it joins. Same block-shape rules
-// as AR_SIZES/AR_AXES, with one difference that matters: these values are
-// nested objects, so the non-greedy `\}` used by the other two would truncate
-// at the first inner brace. This regex is greedy to the LAST `}` before the
-// closing tag, which is safe because the strip/re-emit contract guarantees
-// exactly one such block per document.
-const arEdgesBlockRe = () => /<script[^>]*>\s*window\.AR_EDGES\s*=\s*(\{[\s\S]*\})\s*;?\s*<\/script>/g;
+// placing a corner needs to know WHICH EDGES it joins.
+//
+// LAZY, exactly like AR_SIZES and AR_AXES. This shipped GREEDY for one day
+// (2026-08-09) on the reasoning that AR_EDGES holds NESTED objects, so a lazy
+// `\}` would truncate at the first inner brace. That reasoning was wrong, and
+// it broke 3D games in production. The match is anchored on `</script>`, NOT on
+// `}` — a lazy quantifier keeps expanding until the whole TAIL fits, so it
+// necessarily stops at the last `}` inside this block and never at an inner
+// one. Greedy, by contrast, ran past this block's own closing tag to the last
+// `}`+`</script>` anywhere in the document, deleting the loadModel helper on
+// the way ("loadModel is not defined") and capturing markup that then failed
+// JSON.parse — silently, into the fail-soft catch, so the table read as absent
+// and nothing downstream noticed.
+const arEdgesBlockRe = () => /<script[^>]*>\s*window\.AR_EDGES\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/g;
 
 /** Every parseable AR_EDGES table in the document, in document order. */
 export function parseEdgeTables(html: string): Array<Record<string, unknown>> {

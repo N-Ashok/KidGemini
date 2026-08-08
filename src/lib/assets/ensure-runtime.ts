@@ -120,10 +120,24 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
   const maps = [...out.matchAll(ANY_IMPORTMAP_RE)];
   const wanted = `<script type="importmap">${JSON.stringify({ imports })}</script>`;
   const singleOursAlready = maps.length === 1 && maps[0]![0] === wanted;
-  if (!singleOursAlready) {
+  // A map that EXISTS and is byte-perfect can still be in the WRONG PLACE, and
+  // a misplaced map is as fatal as a missing one — the browser ignores any
+  // import map that appears after module resolution has begun. Stored games
+  // that were written with the map below a module script are permanently
+  // broken until something moves it, and nothing did: every other check in
+  // this function asks "is it present and correct", never "is it early
+  // enough". That is why the 2026-08-09 outage survived a redeploy.
+  const firstModuleIdx = out.search(/<script[^>]*type=["']module["']/i);
+  const firstMapIdx = maps.length ? maps[0]!.index! : -1;
+  const mapAfterModule = firstMapIdx >= 0 && firstModuleIdx >= 0 && firstMapIdx > firstModuleIdx;
+  if (!singleOursAlready || mapAfterModule) {
     out = out.replace(ANY_IMPORTMAP_RE, "");
-    markup += wanted;
   }
+  // NOT added to `markup` here — the decision moves to the bottom of this
+  // function, because whether the map must be re-emitted depends on whether
+  // ANYTHING ELSE gets prepended. See "the import-map ordering invariant"
+  // below (BUG-FIX-LOG 2026-08-09, the production outage).
+  let mapNeedsReemit = !singleOursAlready || mapAfterModule;
 
   // (2) redundant-canvas floor — CSS only, idempotent, never hides the sole canvas.
   if (!out.includes(CANVAS_FLOOR_ID)) {
@@ -267,6 +281,36 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
   // injected when the game actually calls it (most games won't).
   if (usesLoadModel && CALLS_LOADMODELBATCH_RE.test(out) && !HAS_LOADMODELBATCH_HELPER_RE.test(out)) {
     markup += loadModelBatchHelper();
+  }
+
+  // ── the import-map ordering invariant ──────────────────────────────────
+  // insertEarly splices `markup` at the VERY TOP of <head>, and several things
+  // it can carry are `<script type="module">` that import "three" — the
+  // loadModel and loadModelBatch helpers. An import map must precede EVERY
+  // module load in the document; a browser silently ignores one that appears
+  // after resolution has begun.
+  //
+  // So it is not enough for the map to EXIST and be correct — it must sit
+  // above whatever we are about to prepend. A stored game keeps its map
+  // wherever it was written, which is typically deep in the body, far below
+  // the insertion point.
+  //
+  // This was latent until the v5→v6 helper bump (2026-08-09) made the helper
+  // stale for EVERY stored 3D game at once: each one re-injected a module
+  // script ~8.5 KB above its own perfectly valid import map, and every 3D game
+  // in production failed with `Failed to resolve module specifier "three"`
+  // followed by `loadModel is not defined`. The map was never the thing that
+  // was wrong — its POSITION was.
+  //
+  // Guarded on `markup` being non-empty, so a document that is already current
+  // is still returned byte-identical and the map is never pointlessly moved.
+  if (markup && !mapNeedsReemit && Object.keys(imports).length > 0) {
+    out = out.replace(ANY_IMPORTMAP_RE, "");
+    mapNeedsReemit = true;
+  }
+  if (mapNeedsReemit && (Object.keys(imports).length > 0 || markup)) {
+    // FIRST in markup, so it precedes every helper we are prepending.
+    markup = wanted + markup;
   }
 
   const floored = markup ? insertEarly(out, markup) : out;

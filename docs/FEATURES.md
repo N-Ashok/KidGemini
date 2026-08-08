@@ -661,7 +661,14 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   it, since these tiles are flat slabs with the road painted into the texture.
   Asset fitness (`src/lib/assets/fitness.ts`, `scripts/asset-fitness-sweep.mjs`)
   runs those measurements as rules — *can this tile tile?* — blocking in the
-  vendor pipeline and as a standing worklist over the whole library. The
+  vendor pipeline and as a standing worklist over the whole library.
+  **`scripts/verify-game-html.mjs`** (2026-08-09) loads a generated game in a
+  REAL browser via iframe `srcdoc` and reports console/page errors, failed asset
+  fetches, and whether `loadModel` and a canvas actually exist at runtime — the
+  check every string-assertion test in the repo is blind to, and the one that
+  found the import-map ordering outage. **`scripts/golden-prompts.mjs`** runs a
+  small fixed set of child-shaped prompts (`golden/prompts.json`) through the
+  real generation path and then through that verifier, on demand only. The
   prompt's model catalog is
   generated from the manifest, so names can never drift; it ends with
   per-genre hints (people/crowd, racing, platformer, space, animals,

@@ -35,3 +35,4 @@ next-env.d.ts
 # Generated first-party model sources (rebuild: scripts/author-first-party-models.mjs);
 # the dedication (assets-src/LICENSE.md) stays committed.
 /assets-src/models
+golden/runs/
