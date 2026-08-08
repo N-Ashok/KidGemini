@@ -11,6 +11,41 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-08 — Parent-PIN OTP (and the screen-time cap alert) falsely reported "no email on file" for username/password logins
+
+- **Symptom:** owner report with a screenshot — `demo` account (username/password login)
+  stuck on "Set your family's parent PIN"; requesting the code returned *"Your account has no
+  email on file — contact support."* The parent area had been working for this account until
+  this point.
+- **Full analysis (root cause, scenarios considered, decisions made) in Ariantra-Platform
+  `docs/BUG_LOG.md #52`.** Short version: the SSO session's `email` JWT claim is only ever
+  populated by Google sign-in or a fresh `register()` — a plain username/password `login()`
+  has never included it (the account's email is stored only as a one-way hash, no plaintext to
+  embed). That was harmless until 2026-07-27 made the OTP flow (and therefore `session.email`)
+  load-bearing for the parent-PIN reset gate. A second, silently-failing instance of the same
+  bug existed in the screen-time cap-exceeded parent-alert bridge (fire-and-forget, so no error
+  ever surfaced — a username/password family simply never got alerted).
+- **Fix (this repo):** `src/lib/parent-pin-otp-bridge.ts` and `src/lib/screen-time-alert-bridge.ts`
+  now send `playerId` instead of a plaintext email, and return a structured
+  `{ok:true, ...} | {ok:false, error:'no_email'|'send_failed'}` result instead of a bare
+  boolean — the platform resolves the real contact email server-side
+  (`OwnerProfileService.contactEmail`, the same flow the Sparks low-balance notice already
+  uses) and never hands the plaintext back; only a masked address returns for display.
+  `src/app/api/parent/pin-otp/request/route.ts` no longer gates on `session.email` — it calls
+  the bridge with `session.playerId` and forwards the structured result (a genuine
+  no-owner-profile-email account still gets a clear 422, now pointing at Studio account
+  settings instead of a dead "contact support"). `src/app/api/screen-time/heartbeat/route.ts`
+  now fires the alert bridge unconditionally on a `capExceeded` crossing instead of gating on
+  `session.email`.
+- **Tests (failing-first):** `parent-pin-otp-bridge.test.ts`, `screen-time-alert-bridge.test.ts`
+  (new result-shape contract, playerId not email in the payload), `pin-otp/request/route.test.ts`
+  (+2: a session with no `email` claim — exactly a username/password login — still succeeds,
+  pinning the actual bug; the genuine-no-email 422 path), `screen-time/heartbeat/route.test.ts`
+  (+2: same no-email-claim pin for the alert bridge; a `no_email` bridge result never breaks the
+  fail-open 200 contract).
+- **Verify:** full suite green (2108 tests), `tsc --noEmit` clean. The `demo` account's live
+  data was not queried to confirm — the fix is verified structurally, owner re-test pending.
+
 ## 2026-08-07 — "Worked in sandbox, dead published": generated game guessed a no-arg `Ariantra.host()` accessor the preview stub silently swallowed
 
 - **Symptom:** owner report — `cartoon-tank-battle.ariantra.com` broken though the Ari preview

@@ -5,6 +5,15 @@
 // no secret only the parent has — a live Google session or a saved password
 // clears it — so a kid locked out of guessing the PIN could just reset it;
 // the OTP is a real second factor).
+//
+// Redesigned 2026-08-08 (docs/BUG-FIX-LOG.md "parent-PIN OTP false
+// no-email"): no longer gates on `session.email`. A username/password
+// login's SSO session never carries that claim (the account's email is
+// stored only as a one-way hash for privacy) — gating on it here reported
+// "no email on file" for accounts that genuinely had a verified contact
+// email, they just weren't currently signed in via Google. The bridge now
+// resolves the real address server-side by `session.playerId`; this route
+// only forwards its structured result (`ok`, `no_email`, `send_failed`).
 // AUTH CODE — fail closed.
 
 import { NextResponse } from "next/server";
@@ -17,27 +26,10 @@ export const runtime = "nodejs";
 
 const store = new SqliteParentPinOtpStore();
 
-/** "parent@example.com" → "p****@example.com" — enough for the parent to
- *  recognize their own inbox without echoing the full address back. */
-function maskEmail(email: string): string {
-  const at = email.indexOf("@");
-  if (at <= 0) return "your email";
-  const user = email.slice(0, at);
-  const domain = email.slice(at + 1);
-  const masked = user.length <= 1 ? "*" : `${user[0]}${"*".repeat(user.length - 1)}`;
-  return `${masked}@${domain}`;
-}
-
 export async function POST() {
   const session = await getAriantraSession();
   if (!session) {
     return NextResponse.json({ error: "signed_out" }, { status: 401 });
-  }
-  if (!session.email) {
-    return NextResponse.json(
-      { error: "no_email", message: "Your account has no email on file — contact support." },
-      { status: 422 },
-    );
   }
 
   const now = Date.now();
@@ -50,8 +42,20 @@ export async function POST() {
   const code = generateOtpCode();
   const record = nextOtpRecord(session.userId, code, existing, now);
 
-  const sent = await sendParentPinOtpEmail(session.email, code);
-  if (!sent) {
+  const result = await sendParentPinOtpEmail(session.playerId, code);
+  if (!result.ok) {
+    if (result.error === "no_email") {
+      // A genuine gap, not the bug this fix closes: the account truly has no
+      // owner-profile contact email saved anywhere on the platform. Point
+      // somewhere actionable instead of a dead "contact support".
+      return NextResponse.json(
+        {
+          error: "no_email",
+          message: "No parent email is on file yet. Add one in your Studio account (studio.ariantra.com), then try again.",
+        },
+        { status: 422 },
+      );
+    }
     return NextResponse.json(
       { error: "send_failed", message: "Couldn't send the email — try again in a moment." },
       { status: 502 },
@@ -63,7 +67,7 @@ export async function POST() {
 
   return NextResponse.json({
     ok: true,
-    maskedEmail: maskEmail(session.email),
+    maskedEmail: result.maskedEmail,
     expiresInSeconds: Math.floor((record.expiresAt - now) / 1000),
   });
 }

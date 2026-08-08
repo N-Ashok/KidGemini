@@ -4,7 +4,14 @@
  *  Feature 4 (2026-07-28): response now carries nearingCap/capExceeded, and
  *  a fresh capExceeded crossing fires a fire-and-forget parent-alert-email
  *  bridge call — never awaited, so the platform being down/slow must never
- *  change this route's response or make it hang (fail-open contract). */
+ *  change this route's response or make it hang (fail-open contract).
+ *
+ *  Redesigned 2026-08-08 (docs/BUG-FIX-LOG.md "parent-PIN OTP false
+ *  no-email", same fix class): the bridge is now called by `session.playerId`
+ *  unconditionally on a capExceeded crossing — NOT gated on `session.email`,
+ *  which a username/password login never carries. The old H.7 ("no email →
+ *  never calls the bridge") was pinning the bug itself; the platform now
+ *  decides whether it can resolve a contact email, not this route. */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -29,12 +36,14 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-const bridgeCalls: Array<{ parentEmail: string; childLabel: string; activeMinutes: number; capMinutes: number }> = [];
+type BridgeResult = { ok: true } | { ok: false; error: "no_email" | "send_failed" };
+let bridgeResult: BridgeResult = { ok: true };
+const bridgeCalls: Array<{ playerId: string; childLabel: string; activeMinutes: number; capMinutes: number }> = [];
 let bridgeShouldReject = false;
 vi.mock("@/lib/screen-time-alert-bridge", () => ({
-  sendScreenTimeAlertEmail: (parentEmail: string, childLabel: string, activeMinutes: number, capMinutes: number) => {
-    bridgeCalls.push({ parentEmail, childLabel, activeMinutes, capMinutes });
-    return bridgeShouldReject ? Promise.reject(new Error("platform down")) : Promise.resolve(true);
+  sendScreenTimeAlertEmail: (playerId: string, childLabel: string, activeMinutes: number, capMinutes: number) => {
+    bridgeCalls.push({ playerId, childLabel, activeMinutes, capMinutes });
+    return bridgeShouldReject ? Promise.reject(new Error("platform down")) : Promise.resolve(bridgeResult);
   },
 }));
 
@@ -47,6 +56,7 @@ beforeEach(() => {
   bridgeCalls.length = 0;
   storeThrows = false;
   bridgeShouldReject = false;
+  bridgeResult = { ok: true };
   recomputeResult = { activeMinutes: 0, capMinutes: null, nearingCap: false, capExceeded: false };
 });
 
@@ -62,7 +72,7 @@ describe("POST /api/screen-time/heartbeat", () => {
   });
 
   it("H.2 a signed-in ping records a ping and triggers a recompute for that account", async () => {
-    authMock.mockResolvedValue({ userId: "user:kid@x.com", name: "Kid" });
+    authMock.mockResolvedValue({ userId: "user:kid@x.com", playerId: "player-1", name: "Kid" });
     const res = await POST();
     expect(res.status).toBe(200);
     expect(pingCalls).toHaveLength(1);
@@ -71,14 +81,14 @@ describe("POST /api/screen-time/heartbeat", () => {
   });
 
   it("H.3 falls back to email when no display name is on the session", async () => {
-    authMock.mockResolvedValue({ userId: "user:kid@x.com", email: "kid@x.com" });
+    authMock.mockResolvedValue({ userId: "user:kid@x.com", playerId: "player-1", email: "kid@x.com" });
     await POST();
     expect(recomputeCalls).toEqual([{ accountId: "user:kid@x.com", userLabel: "kid@x.com" }]);
   });
 
   it("H.4 a thrown error from the store fails open — still 200 with both flags false", async () => {
     storeThrows = true;
-    authMock.mockResolvedValue({ userId: "user:kid@x.com" });
+    authMock.mockResolvedValue({ userId: "user:kid@x.com", playerId: "player-1" });
     const res = await POST();
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -86,34 +96,49 @@ describe("POST /api/screen-time/heartbeat", () => {
   });
 
   it("H.5 the response echoes the store's edge-triggered nearingCap/capExceeded flags", async () => {
-    authMock.mockResolvedValue({ userId: "user:kid@x.com", name: "Kid" });
+    authMock.mockResolvedValue({ userId: "user:kid@x.com", playerId: "player-1", name: "Kid" });
     recomputeResult = { activeMinutes: 25, capMinutes: 30, nearingCap: true, capExceeded: false };
     const res = await POST();
     const body = await res.json();
     expect(body).toEqual({ ok: true, nearingCap: true, capExceeded: false });
   });
 
-  it("H.6 capExceeded with a resolvable session email fires the parent-alert bridge, fire-and-forget", async () => {
-    authMock.mockResolvedValue({ userId: "user:kid@x.com", name: "Kid", email: "parent@x.com" });
+  it("H.6 capExceeded fires the parent-alert bridge by playerId, fire-and-forget", async () => {
+    authMock.mockResolvedValue({ userId: "user:kid@x.com", playerId: "player-1", name: "Kid", email: "parent@x.com" });
     recomputeResult = { activeMinutes: 40, capMinutes: 30, nearingCap: false, capExceeded: true };
     const res = await POST();
     const body = await res.json();
     expect(body).toEqual({ ok: true, nearingCap: false, capExceeded: true });
-    expect(bridgeCalls).toEqual([{ parentEmail: "parent@x.com", childLabel: "Kid", activeMinutes: 40, capMinutes: 30 }]);
+    expect(bridgeCalls).toEqual([{ playerId: "player-1", childLabel: "Kid", activeMinutes: 40, capMinutes: 30 }]);
   });
 
-  it("H.7 capExceeded with NO resolvable session email never calls the bridge", async () => {
-    authMock.mockResolvedValue({ userId: "user:kid@x.com", name: "Kid" });
+  // THE bug (docs/BUG-FIX-LOG.md 2026-08-08): a session with NO email claim
+  // — exactly what a plain username/password login produces — used to skip
+  // the bridge call entirely, so that family NEVER got alerted, silently.
+  // Now the bridge is always called; the PLATFORM decides whether it can
+  // resolve a contact email.
+  it("H.7 capExceeded with NO session.email STILL calls the bridge by playerId — the old bug", async () => {
+    authMock.mockResolvedValue({ userId: "user:kid@x.com", playerId: "player-nopwd", name: "Kid" }); // no email claim
     recomputeResult = { activeMinutes: 40, capMinutes: 30, nearingCap: false, capExceeded: true };
     const res = await POST();
     expect(res.status).toBe(200);
-    expect(bridgeCalls).toEqual([]);
+    expect(bridgeCalls).toEqual([{ playerId: "player-nopwd", childLabel: "Kid", activeMinutes: 40, capMinutes: 30 }]);
   });
 
   it("H.8 the bridge failing (platform down) never changes the 200 response — fail-open, fire-and-forget", async () => {
-    authMock.mockResolvedValue({ userId: "user:kid@x.com", name: "Kid", email: "parent@x.com" });
+    authMock.mockResolvedValue({ userId: "user:kid@x.com", playerId: "player-1", name: "Kid" });
     recomputeResult = { activeMinutes: 40, capMinutes: 30, nearingCap: false, capExceeded: true };
     bridgeShouldReject = true;
+    const res = await POST();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ ok: true, nearingCap: false, capExceeded: true });
+  });
+
+  it("H.9 the bridge resolving no_email never changes the 200 response — a genuine no-email account is not an error state here", async () => {
+    authMock.mockResolvedValue({ userId: "user:kid@x.com", playerId: "player-1", name: "Kid" });
+    recomputeResult = { activeMinutes: 40, capMinutes: 30, nearingCap: false, capExceeded: true };
+    bridgeResult = { ok: false, error: "no_email" };
     const res = await POST();
     expect(res.status).toBe(200);
     const body = await res.json();
