@@ -11,6 +11,83 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-09 — the race track STILL didn't close: corners had no join data
+
+- **Symptom:** owner UAT, second round. *"The curves did not come properly; the starting and
+  ending point also did not come properly."* Screenshots showed curved kerb lines stopping dead
+  against the straights, grass showing through a hole in the roadway, and a tall thin white post
+  beside the track. Re-prompting could not fix it, again.
+- **Reproduction:** the owner supplied the generated game (`racetrack.html`). Run headless, its
+  **console was clean** — only WebGL performance warnings. Nothing threw, nothing failed to load,
+  so the self-healing repair loop had nothing to catch. Every fault was geometric.
+- **Root cause — three faults, all INFORMATION faults, no asset was broken:**
+  1. **Corners had nothing to reason from.** `modelAxis()` (the 2026-08-08 fix) answers `'none'`
+     for every corner and hub. That is a true answer to "which axis does it run along" and a
+     non-answer to the only question that lets a model place a corner. The game guessed rotations
+     `0, -pi/2, pi, pi/2`, and the curves met the straights at whatever angle fell out.
+  2. **finish_line was scaled independently.** `scale.set(10,10,10)` while the straights got
+     `x20`. Its own comment shows the reasoning — it multiplied the piece's LENGTH (2 m) to reach
+     the 20 m road and never looked at its width. Result: a 12.6 x **6.68 m tall** x 20 m gantry
+     with a 7 m carriageway over a 20 m road. That is the white post in the screenshot.
+  3. **It mixed kits.** A "race track" built from the CITY kit, whose `road_curve` is a 2x2
+     *sweeping* turn, used as though it were a one-cell corner.
+- **Why numbers could not find it, and pixels could:** these tiles are flat, single-material slabs
+  with the carriageway painted into the `colormap` texture. The mesh is a rectangle whichever way
+  the road runs, and two independent geometric probes (extrusion uniformity, raised-kerb runs)
+  both returned "(none)". New instrument: `scripts/render-assets.mjs` renders the PUBLISHED bytes
+  top-down through the same loader a kid's game uses and samples the carriageway where it meets
+  each edge. It answered every open question in one run.
+- **What it measured** (metres, at scale 1). Both kits turn out to be internally consistent, which
+  is why nothing needed re-vendoring:
+
+  | kit | carriageway | pieces |
+  |---|---|---|
+  | city `road_*` | 0.81 m | straight, crossing, intersection, curve, roundabout, bridge |
+  | racing `race_track_*`, `finish_line` | 0.70 m | straight, corner, corner_wide, finish_line |
+
+  `race_track_straight`, `race_track_corner` and `finish_line` are all 0.70 m, all centred, all on
+  the 1 m module — a complete tiling set the whole time.
+- **Two findings the instrument turned up on its first run:**
+  - **`road_bridge` runs Z**, alone among the city pieces (every other `road_*` runs X). It had
+    been left UNDECLARED since 2026-08-08 because the two geometric probes disagreed (TECH_DEBT
+    #93). Until now, any game mixing it with `road_straight` laid the bridge crosswise.
+  - **`race_track_curve` is a chicane, proved arithmetically.** It enters the north edge at
+    0.498 m and leaves the south edge at **1.002 m** — a cell BOUNDARY on the 1 m grid, not a cell
+    centre. Nothing on-grid can follow it, at any scale or rotation. Its `pathAxis` was corrected
+    `'none'` -> `'z'`: it is not a corner, it runs along Z and shifts sideways.
+- **Fix:** publish what was missing, rather than teach a recipe.
+  - `joins` / `joinOffsets` / `lane` / `kit` / `pathRole` on the manifest, MEASURED (a departure
+    from `pathAxis`, which is declared) by `scripts/render-assets.mjs` and written by
+    `scripts/backfill-tile-edges.mjs --write`.
+  - `window.AR_EDGES` + `modelJoins(name)` + `rotateToJoin(name, from, to)` in the runtime
+    helper, `LOAD_MODEL_HELPER_VERSION` 5 -> 6.
+  - Prompt rule 4: one kit, every piece at the SAME scale factor, and never guess a corner.
+- **Migration: none.** The v6 bump IS the migration — `ensureAssetRuntime` re-resolves AR_EDGES on
+  every preview render, so the owner's broken track picks the data up the moment it is reopened.
+- **Systemic, so it cannot recur:** `src/lib/assets/fitness.ts` (+ the `scripts/lib/fitness.mjs`
+  mirror, with a parity test pinning the two together) asks the question no earlier check asked —
+  *can this tile tile?* Wired BLOCKING into `vendor-models.mjs` stage 5b for anything being
+  published, and as a standing worklist over the whole library via
+  `scripts/asset-fitness-sweep.mjs`. Run today: 10 pass, 1 needs-eyes (`road_ramp` — the probe
+  cannot separate a ramp's sloped skirts from its tarmac, an admitted gap rather than a guess),
+  1 fail (`race_track_curve`, with all three of its defects named).
+- **Also fixed while in there:** `vendor-models.mjs` stage 5 replaces a manifest entry wholesale,
+  so a re-vendor would have silently dropped the new measurements. It now carries them over, but
+  ONLY when the sha256 is unchanged — different bytes mean the measurement is stale, and a stale
+  corner definition that looks authoritative is worse than none.
+- **Tests:** `fitness.test.ts` (18), `fitness.parity.test.ts` (2). Both suites green: Game 2,187,
+  platform 1,160.
+- **Cost note:** the prompt token ceiling went 2,450 -> 2,525 — the THIRD fault-driven raise in
+  three days, and the first that could not pay for itself by deleting wrong teaching. Recorded in
+  `prompt-catalog.test.ts` with the explicit judgement that the next step is the category-map
+  hybrid, not more prose.
+- **Still open:** `race_track_curve`'s name lies (TECH_DEBT #96) — the asset host is append-only,
+  so a rename means a re-upload under a new name, which is an owner decision. In the meantime the
+  published `joins` data means a model that consults `modelJoins()` will no longer mistake it for
+  a corner.
+
+---
+
 ## 2026-08-08 — the same-day parent-PIN fix locked 24 Google families OUT (hotfix)
 
 - **Symptom:** owner report hours after the fix below shipped — "First time here?" in the parent

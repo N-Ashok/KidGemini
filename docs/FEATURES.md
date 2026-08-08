@@ -647,7 +647,22 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   the injected `window.AR_SIZES` table (also stamped on the loaded object as
   `userData.arSize`); `null` for the 17 skinned models, which carry no
   trustworthy rest-pose bbox. This is what lets a game lay road/track tiles
-  edge-to-edge instead of guessing a spacing — see BUG-FIX-LOG 2026-08-08. The prompt's model catalog is
+  edge-to-edge instead of guessing a spacing — see BUG-FIX-LOG 2026-08-08.
+  **`modelAxis(name)`** (2026-08-08) gives a path piece's run axis, because the
+  two road kits genuinely disagree (city runs X, racing runs Z) and a 1x1 square
+  tile's footprint cannot reveal it. **`modelJoins(name)` + `rotateToJoin(name,
+  from, to)`** (2026-08-09, `window.AR_EDGES`) give which EDGES a tile's road
+  actually reaches, its carriageway width in metres, and the `rotation.y` that
+  swings one edge onto another — `modelAxis()` answers `'none'` for every
+  corner, which is true and no help at all in placing one, so before this a
+  generated track guessed corner rotations and never closed (BUG-FIX-LOG
+  2026-08-09). Unlike `pathAxis` these are MEASURED, from a top-down render of
+  the published bytes (`scripts/render-assets.mjs`) — the geometry cannot answer
+  it, since these tiles are flat slabs with the road painted into the texture.
+  Asset fitness (`src/lib/assets/fitness.ts`, `scripts/asset-fitness-sweep.mjs`)
+  runs those measurements as rules — *can this tile tile?* — blocking in the
+  vendor pipeline and as a standing worklist over the whole library. The
+  prompt's model catalog is
   generated from the manifest, so names can never drift; it ends with
   per-genre hints (people/crowd, racing, platformer, space, animals,
   castle, city, forest, water, food) filtered to what's being taught. **56 models**:
@@ -983,6 +998,12 @@ server-to-server contract as `arcade-partner.ts`).
   losers, with Ari's own `costUsd`) bills the platform ledger fire-and-forget
   from `api/chat/route.ts` (`billTurnSparks`) — guests unbilled (no account),
   safety calls never billed (our overhead, not the child's).
+- **3D pricing (2026-08-08)**: `billTurnSparks` reports `is3D: gates.three`
+  (the same `catalogGates()` predicate that gates the 3D asset catalog) on
+  every debit, billing 3D builds AND edits at the platform's 3D rate —
+  correctly re-detecting an edit on an EXISTING 3D game from its prior
+  artifact's markers, not just the turn's message text. See
+  `docs/PRD-3D-GAMES-AND-ASSETS.md`'s 3D pricing amendment.
 - **Kid wallet `/wallet`** (`WalletPanel`, nav tab "Sparks ⚡"): celebration-
   first — games built, ⚡ EARNED, friends joined, credits-only history,
   referral code, coupon entry. NO deductions/balance/rupees (owner decision

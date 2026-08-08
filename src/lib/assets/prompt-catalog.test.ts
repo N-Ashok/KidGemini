@@ -305,7 +305,30 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // rotated every city tile 90° wrong and no re-prompt could fix it. The
     // replacement teaches modelAxis() and costs +39 tokens net after rule 4
     // was compressed to pay for most of it. Measured 2437.
-    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_450);
+    //
+    // 2450 → 2525 (2026-08-09, BUG-FIX-LOG the SECOND "poorly formed race
+    // track"). THE THIRD CONSECUTIVE FAULT-DRIVEN RAISE, and the first that
+    // could not pay for itself by deleting wrong teaching — flagged to the
+    // owner rather than taken silently, because a ceiling raised whenever it
+    // binds is not a ceiling.
+    //
+    // What it buys: modelJoins() and rotateToJoin(). modelAxis() (the 2400 →
+    // 2450 raise) fixed the STRAIGHTS and answers 'none' for every corner —
+    // true, and no help at all in placing one. With nothing else to reason
+    // from, the generated track guessed corner rotations 0, -pi/2, pi, pi/2,
+    // and the curves never met the straights. It also teaches one kit at one
+    // scale factor: the same game scaled finish_line x10 while scaling its
+    // straights x20, producing a 7 m gantry over a 20 m road.
+    //
+    // Rule 4 was compressed first and absorbed ~35 of the ~112 tokens; +77
+    // net. Measured 2514.
+    //
+    // THE NEXT RAISE SHOULD NOT HAPPEN. Three raises in three days is the
+    // signal the section doc predicted: the fix is the category-map hybrid
+    // (teach the RULES, look the CATALOG up on demand), not more prose. Layer
+    // 2 golden prompts (PRD §4) is what would catch a regression here without
+    // spending another token.
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_525);
   });
 });
 

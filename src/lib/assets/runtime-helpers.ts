@@ -134,6 +134,43 @@ export function countAxisTables(html: string): number {
   return [...html.matchAll(arAxesBlockRe())].length;
 }
 
+// The injected tile-EDGE table (`<script>window.AR_EDGES={...};</script>`),
+// added 2026-08-09 for the SECOND poorly-formed-track bug (BUG-FIX-LOG).
+// AR_AXES answers "none" for every corner, which is true and useless — a model
+// placing a corner needs to know WHICH EDGES it joins. Same block-shape rules
+// as AR_SIZES/AR_AXES, with one difference that matters: these values are
+// nested objects, so the non-greedy `\}` used by the other two would truncate
+// at the first inner brace. This regex is greedy to the LAST `}` before the
+// closing tag, which is safe because the strip/re-emit contract guarantees
+// exactly one such block per document.
+const arEdgesBlockRe = () => /<script[^>]*>\s*window\.AR_EDGES\s*=\s*(\{[\s\S]*\})\s*;?\s*<\/script>/g;
+
+/** Every parseable AR_EDGES table in the document, in document order. */
+export function parseEdgeTables(html: string): Array<Record<string, unknown>> {
+  const tables: Array<Record<string, unknown>> = [];
+  for (const m of html.matchAll(arEdgesBlockRe())) {
+    try {
+      const parsed: unknown = JSON.parse(m[1]!);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        tables.push(parsed as Record<string, unknown>);
+      }
+    } catch {
+      /* not our block shape — fail soft, same floor as parseSizeTables */
+    }
+  }
+  return tables;
+}
+
+/** Removes every AR_EDGES table block. Callers re-emit exactly one. */
+export function stripEdgeTables(html: string): string {
+  return html.replace(arEdgesBlockRe(), "");
+}
+
+/** How many AR_EDGES table blocks the document carries. */
+export function countEdgeTables(html: string): number {
+  return [...html.matchAll(arEdgesBlockRe())].length;
+}
+
 /** Neutralizes a literal `</script>` inside a string about to be inlined
  *  into an HTML `<script>` block — `<\/script>` is identical to `</script>`
  *  inside a JS string (or JSON, which has no special meaning for a lone
@@ -181,8 +218,13 @@ export function countTriangles(obj: { traverse: (cb: (child: any) => void) => vo
  *  v4 (2026-08-08, BUG-FIX-LOG fragmented race tracks) adds window.modelSize()
  *  over the AR_SIZES table. The bump is what retrofits it onto games ALREADY
  *  stored: ensureAssetRuntime strips the v3 block and injects v4 on the next
- *  preview render, so no migration is needed. */
-export const LOAD_MODEL_HELPER_VERSION = 5;
+ *  preview render, so no migration is needed.
+ *  v6 (2026-08-09, BUG-FIX-LOG the second poorly-formed track) adds
+ *  window.modelJoins() + window.rotateToJoin() over the AR_EDGES table. As
+ *  with v4, the bump IS the migration: ensureAssetRuntime strips the older
+ *  block and injects v6 on the next preview render, so every stored 3D game
+ *  picks up corner data the moment a child opens it — no restamp campaign. */
+export const LOAD_MODEL_HELPER_VERSION = 6;
 
 /** The runtime helper 3D games call: resolves a catalog name via AR_ASSETS,
  *  loads the GLB with GLTFLoader + meshopt (models are meshopt-compressed),
@@ -248,6 +290,34 @@ window.AR_AXES = window.AR_AXES || {};
 window.modelAxis = function (name) {
   var a = window.AR_AXES[name];
   return (a === "x" || a === "z" || a === "none") ? a : null;
+};
+// modelJoins (2026-08-09, the SECOND poorly-formed-track fix): which edges a
+// tile's road actually reaches, measured from a top-down render of the
+// published bytes. modelAxis() answers "none" for every corner — true, and
+// useless for placing one; with nothing else to reason from, generated tracks
+// guessed corner rotations and the curves never met the straights.
+//   .joins  ["-x","+z"]  edges the carriageway reaches at rest (no rotation)
+//   .lane   0.7          drivable width in METRES at scale 1
+//   .at     {"-x":0.5}   where each join sits, in metres from the piece's own
+//                        minimum on that edge's axis (matters on 2x2 pieces)
+// Unknown answers null — then eyeball it, exactly as before.
+window.AR_EDGES = window.AR_EDGES || {};
+window.modelJoins = function (name) {
+  var e = window.AR_EDGES[name];
+  return (e && e.joins && e.joins.length) ? e : null;
+};
+// rotateToJoin: the one calculation every track needs and no game got right by
+// hand. Returns the rotation.y IN RADIANS that carries a piece's "from" edge
+// onto the "to" edge — e.g. a corner joining ["+z","+x"] that must instead join
+// west and south is rotateToJoin("race_track_corner","+x","+z"). Quarter turns
+// only, which is all a square grid can use.
+// (No backticks anywhere in this block: it is inlined into a TEMPLATE LITERAL,
+// so one would end the helper string mid-function.)
+window.rotateToJoin = function (name, from, to) {
+  var order = ["-z", "+x", "+z", "-x"]; // clockwise seen from above
+  var a = order.indexOf(from), b = order.indexOf(to);
+  if (a < 0 || b < 0) return 0;
+  return ((b - a + 4) % 4) * (Math.PI / 2);
 };
   const __arLoader = new GLTFLoader();
 __arLoader.setMeshoptDecoder(MeshoptDecoder);

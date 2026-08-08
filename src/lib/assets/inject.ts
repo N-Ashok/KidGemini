@@ -19,6 +19,7 @@ import {
   parseAssetTables,
   stripAssetTables,
   stripSizeTables,
+  stripEdgeTables,
 } from "./runtime-helpers";
 
 const CALLS_LOADMODELBATCH_RE = /\bloadModelBatch\s*\(/;
@@ -173,6 +174,12 @@ export function injectAssets(html: string, manifest: AssetManifest = manifestJso
   // edit turn accumulates AR_SIZES blocks, the same duplicate-table class the
   // strip above exists for.
   out = stripSizeTables(out);
+  // Same duplicate-table class again (see stripSizeTables above): the helper
+  // strip keys on `window.(loadModel|loadModelBatch|playSound) =` and does not
+  // catch the edges table, so without this an edit turn accumulates AR_EDGES
+  // blocks and the STALE one — running later, because insertEarly prepends —
+  // silently erases the corner data added this turn.
+  out = stripEdgeTables(out);
   out = stripInjectedHelperBlocks(out);
   if (engine || physics) {
     // A fresh import map is emitted below; an echoed one alongside it would be
@@ -211,6 +218,23 @@ export function injectAssets(html: string, manifest: AssetManifest = manifestJso
   );
   if (Object.keys(axes).length > 0) {
     markup += `<script>window.AR_AXES=${JSON.stringify(axes)};</script>`;
+  }
+  // Which EDGES each tile's road reaches (2026-08-09 — the second
+  // poorly-formed-track fix). AR_AXES answers "none" for every corner: true,
+  // and no help at all in placing one, which is why generated tracks guessed
+  // corner rotations and never closed. Same shape rules as AR_SIZES/AR_AXES —
+  // models only, absent when unmeasured, modelJoins() answers null. Emitted
+  // only for pieces that HAVE been measured, so an admitted gap (road_ramp,
+  // which the probe misreads) stays a gap rather than becoming a wrong answer.
+  const edges = Object.fromEntries(
+    models.flatMap((m) =>
+      m.joins?.length
+        ? [[m.name, { joins: m.joins, lane: m.lane, at: m.joinOffsets }] as const]
+        : [],
+    ),
+  );
+  if (Object.keys(edges).length > 0) {
+    markup += `<script>window.AR_EDGES=${JSON.stringify(edges)};</script>`;
   }
   if (modelNames.length > 0) markup += loadModelHelper();
   if (modelNames.length > 0 && CALLS_LOADMODELBATCH_RE.test(html)) markup += loadModelBatchHelper();

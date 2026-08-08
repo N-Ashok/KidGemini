@@ -42,6 +42,7 @@ import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { dedup, prune, resample, simplify, meshopt, weld } from '@gltf-transform/functions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import { assertLongAxisZ, yRotation } from './lib/orientation.mjs';
+import { assessLibrary } from './lib/fitness.mjs';
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -1209,12 +1210,73 @@ for (const p of prepared) {
     // from `p` silently dropped it on every re-vendored entry — caught by the
     // stage-5 contract gate on the 2026-08-08 race_track upload.
     ...(p.model.pathAxis ? { pathAxis: p.model.pathAxis } : {}),
+    ...(p.model.kit ? { kit: p.model.kit } : {}),
+    ...(p.model.pathRole ? { pathRole: p.model.pathRole } : {}),
   };
   const existing = manifest.assets.findIndex((a) => a.name === p.model.name);
-  if (existing >= 0) manifest.assets[existing] = entryJson;
-  else manifest.assets.push(entryJson);
+  // This assignment REPLACES the entry, so any field not rebuilt above is
+  // dropped. joins/joinOffsets/lane are measured AFTER publication by
+  // scripts/render-assets.mjs, so they exist only on the committed entry and
+  // would vanish on every re-vendor — silently, and precisely for the road
+  // pieces that need them most.
+  //
+  // Carried over ONLY when the bytes are identical. If the sha changed, the
+  // geometry changed, and a measurement of the OLD bytes is worse than no
+  // measurement: it would keep a stale corner definition that looks
+  // authoritative. Dropping it puts the piece back on the fitness worklist as
+  // "never measured", which is the truth.
+  if (existing >= 0) {
+    const prior = manifest.assets[existing];
+    if (prior.sha256 === p.sha256 && prior.joins) {
+      entryJson.joins = prior.joins;
+      entryJson.joinOffsets = prior.joinOffsets;
+      entryJson.lane = prior.lane;
+    }
+    manifest.assets[existing] = entryJson;
+  } else manifest.assets.push(entryJson);
 }
 writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+
+// ── stage 5b: asset-fitness gate (BLOCKING) ────────────────────────────────
+// docs/2026-08-08_PRD_AssetFitnessAndReview.md §4, build step 4. Everything
+// upstream of here validates a file; this asks whether the PIECE WORKS in the
+// thing a child builds. Three faults reached children in the week of
+// 2026-08-08 and every upstream check passed all three.
+//
+// Runs after the manifest write so the rules see the batch in the context of
+// the kit it joins — "is this on the same module as its neighbours" is not
+// answerable one file at a time. A `fail` verdict means arithmetically broken:
+// the piece cannot mate at ANY scale or rotation, so shipping it hands a child
+// an unwinnable loop. `needs-eyes` does NOT block — a freshly vendored piece
+// has no measurements yet by construction (they need a render), and blocking
+// on that would make the gate impossible to satisfy.
+//
+// NEVER rewrites geometry (owner decision, PRD §2.2): it refuses and reports.
+const fitness = assessLibrary(manifest.assets.filter((a) => a.type === 'model'));
+// Assessed against the WHOLE library (a kit's module is not knowable one file
+// at a time) but BLOCKING only on the batch being published. A pre-existing
+// failure elsewhere belongs on the sweep worklist
+// (scripts/asset-fitness-sweep.mjs), not in the way of an unrelated upload —
+// otherwise the first known-bad asset freezes the pipeline and the gate gets
+// commented out, which is how gates die.
+const broken = fitness.filter((f) => f.verdict === 'fail' && prepared.some((p) => p.model.name === f.name));
+const eyes = fitness.filter((f) => f.verdict === 'needs-eyes' && prepared.some((p) => p.model.name === f.name));
+if (eyes.length) {
+  console.log('\n⚠ fitness — these need a human before they can be trusted:');
+  for (const f of eyes) for (const r of f.reasons) console.log(`    ${f.name}: ${r}`);
+  console.log('  Measure them: node scripts/render-assets.mjs --json /tmp/edges.json <names>');
+}
+if (broken.length) {
+  console.error('\n✖ ASSET FITNESS FAILED — nothing further will ship.\n');
+  for (const f of broken) {
+    console.error(`  ${f.name}  [${f.kit ?? 'no kit'}]  ${f.size ? `${f.size[0]} x ${f.size[2]} m` : ''}`);
+    for (const r of f.reasons) console.error(`    - ${r}`);
+  }
+  console.error('\n  These pieces cannot meet their neighbours at any scale or rotation, so no');
+  console.error('  prompt a child writes can rescue a game built from them. Fix the SOURCE asset');
+  console.error('  or drop it from the batch. Geometry is never silently rewritten here.');
+  process.exit(1);
+}
 
 execFileSync('npx', ['vitest', 'run', 'src/lib/assets/'], { cwd: repo, stdio: 'inherit' });
 console.log(`✓ manifest entries written and contract tests green — commit src/lib/assets/manifest.json`);

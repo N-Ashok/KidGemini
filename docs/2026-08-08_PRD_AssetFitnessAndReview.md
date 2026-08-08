@@ -246,6 +246,42 @@ Not decidable from numbers. **First job for the Assets tab is to render both.**
 
 ---
 
+## 7b. RESOLVED (2026-08-09) — §7 settled by measurement, not by a render
+
+The open decision above assumed the choice was "rescale `race_track_curve` to
+2 x 2" vs "retire the racing curve for the city kit". **Both were wrong
+questions.** `scripts/render-assets.mjs` measured the published bytes and found:
+
+- The racing kit was **already a complete tiling set**: `race_track_straight`,
+  `race_track_corner` and `finish_line` all carry a **0.70 m** carriageway, all
+  centred, all on the 1 m module. Nothing needed rescaling or retiring.
+- `race_track_curve` is **not a curve**. It enters its north edge at 0.498 m and
+  leaves its south edge at 1.002 m — a lateral shift, i.e. a **chicane** — and
+  1.002 m is a cell BOUNDARY on the 1 m grid, so no on-grid piece can follow it.
+  Rescaling could never have fixed it; the defect is the offset, not the size.
+- The city kit is separately consistent at **0.81 m**, and its `road_curve` is a
+  valid 2x2 *sweeping* turn (joins at 0.50 m and 1.50 m — both cell centres).
+  The 2026-08-08 game's fault was scaling it by `gridSize/2`, halving its
+  carriageway against the straights it met.
+
+The real defect was that **none of this was published**, so the model guessed.
+Fix: measure it and ship it as data (`joins`, `joinOffsets`, `lane`, `kit`,
+`pathRole` -> `window.AR_EDGES` / `modelJoins()` / `rotateToJoin()`).
+
+Two amendments to the plan above, both learned by building it:
+
+1. **`pathRole` is required after all.** §4 proposed `'tile' | 'scenery' |
+   'actor'`; the first attempt dropped it to avoid a field nobody maintains.
+   That immediately condemned `finish_line`, which is 1.26 m wide against a 1 m
+   module and is CORRECT — the overhang is verge hanging over grass. Shipped as
+   `'tile' | 'prop'`: a prop straddles the road without tiling it, so only the
+   carriageway rule applies to it. A gate that condemns a correct piece is how a
+   gate teaches people to ignore it.
+2. **Edge NAMES are not enough — offsets are the load-bearing measurement.**
+   `road_curve` and `race_track_curve` have the same shape of `joins` and
+   near-identical `lane`. Only where the carriageway meets each edge separates
+   the valid sweeping turn from the unusable chicane.
+
 ## 8. Build order
 
 1. `fitness.ts` / `fitness.mjs` + unit tests — the rule set, test-first.
@@ -257,3 +293,27 @@ Not decidable from numbers. **First job for the Assets tab is to render both.**
 6. Layer 2 (golden prompts) — last, as it is the most expensive and least urgent.
 
 Steps 1–3 are the ones that would have caught all three of this week's faults.
+
+### Status (2026-08-09)
+
+- **Step 0 — DONE.** `scripts/render-assets.mjs` built; §7 resolved in §7b above.
+  No asset needed fixing — all three faults were information faults.
+- **Steps 1, 2 — DONE.** `src/lib/assets/fitness.ts` + `scripts/lib/fitness.mjs`
+  (with `fitness.parity.test.ts` pinning the two copies together, reason text
+  included), 20 tests. Sweep is `scripts/asset-fitness-sweep.mjs`; today it
+  reads 10 pass / 1 needs-eyes (`road_ramp`, TECH_DEBT #95) / 1 fail
+  (`race_track_curve`, TECH_DEBT #96).
+- **Step 3 — DROPPED (owner decision 2026-08-09).** The `/admin/assets` page was
+  the largest item in the plan and its whole value was "let a human look at an
+  asset" — which the CLI render harness from step 0 already does at a fraction
+  of the cost. Revisit if the sweep worklist ever grows past what a terminal
+  can carry.
+- **Step 4 — DONE.** Blocking `vendor-models.mjs` stage 5b. Assessed against the
+  whole library (a kit's module is not knowable one file at a time) but blocking
+  only on the batch being published — otherwise the first known-bad asset
+  freezes the pipeline and the gate gets commented out.
+- **Step 5 — n/a**, see §7b.
+- **Step 6 (Layer 2, golden prompts) — NOT BUILT.** Still the only thing that
+  can catch a fault where every asset is individually fine and the generated
+  output is wrong, which is the exact shape of both race-track bugs. Now also
+  the cheaper answer to TECH_DEBT #97 (prompt-token creep).

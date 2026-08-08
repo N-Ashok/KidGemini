@@ -1362,7 +1362,18 @@
         0.02,
         1
       ],
-      "pathAxis": "z"
+      "pathAxis": "z",
+      "kit": "racing",
+      "pathRole": "tile",
+      "joins": [
+        "-z",
+        "+z"
+      ],
+      "joinOffsets": {
+        "-z": 0.5,
+        "+z": 0.5
+      },
+      "lane": 0.697
     },
     {
       "name": "race_track_curve",
@@ -1377,7 +1388,18 @@
         0.02,
         2
       ],
-      "pathAxis": "none"
+      "pathAxis": "z",
+      "kit": "racing",
+      "pathRole": "tile",
+      "joins": [
+        "-z",
+        "+z"
+      ],
+      "joinOffsets": {
+        "-z": 0.498,
+        "+z": 1.002
+      },
+      "lane": 0.7
     },
     {
       "name": "finish_line",
@@ -1392,7 +1414,18 @@
         0.668,
         2
       ],
-      "pathAxis": "z"
+      "pathAxis": "z",
+      "kit": "racing",
+      "pathRole": "prop",
+      "joins": [
+        "-z",
+        "+z"
+      ],
+      "joinOffsets": {
+        "-z": 0.63,
+        "+z": 0.63
+      },
+      "lane": 0.698
     },
     {
       "name": "checkered_flag",
@@ -3668,7 +3701,18 @@
         0.02,
         1
       ],
-      "pathAxis": "x"
+      "pathAxis": "x",
+      "kit": "city",
+      "pathRole": "tile",
+      "joins": [
+        "-x",
+        "+x"
+      ],
+      "joinOffsets": {
+        "-x": 0.5,
+        "+x": 0.5
+      },
+      "lane": 0.806
     },
     {
       "name": "road_curve",
@@ -3683,7 +3727,18 @@
         0.02,
         2
       ],
-      "pathAxis": "none"
+      "pathAxis": "none",
+      "kit": "city",
+      "pathRole": "tile",
+      "joins": [
+        "+z",
+        "-x"
+      ],
+      "joinOffsets": {
+        "+z": 1.504,
+        "-x": 0.496
+      },
+      "lane": 0.81
     },
     {
       "name": "road_intersection",
@@ -3698,7 +3753,20 @@
         0.02,
         1
       ],
-      "pathAxis": "none"
+      "pathAxis": "none",
+      "kit": "city",
+      "pathRole": "tile",
+      "joins": [
+        "+z",
+        "-x",
+        "+x"
+      ],
+      "joinOffsets": {
+        "+z": 0.5,
+        "-x": 0.5,
+        "+x": 0.5
+      },
+      "lane": 0.806
     },
     {
       "name": "road_crossing",
@@ -3713,7 +3781,18 @@
         0.02,
         1
       ],
-      "pathAxis": "x"
+      "pathAxis": "x",
+      "kit": "city",
+      "pathRole": "tile",
+      "joins": [
+        "-x",
+        "+x"
+      ],
+      "joinOffsets": {
+        "-x": 0.5,
+        "+x": 0.5
+      },
+      "lane": 0.806
     },
     {
       "name": "road_roundabout",
@@ -3728,7 +3807,22 @@
         0.02,
         3
       ],
-      "pathAxis": "none"
+      "pathAxis": "none",
+      "kit": "city",
+      "pathRole": "tile",
+      "joins": [
+        "-z",
+        "+z",
+        "-x",
+        "+x"
+      ],
+      "joinOffsets": {
+        "-z": 1.5,
+        "+z": 1.5,
+        "-x": 1.5,
+        "+x": 1.5
+      },
+      "lane": 0.813
     },
     {
       "name": "road_ramp",
@@ -3743,7 +3837,9 @@
         0.27,
         1
       ],
-      "pathAxis": "x"
+      "pathAxis": "x",
+      "kit": "city",
+      "pathRole": "tile"
     },
     {
       "name": "road_bridge",
@@ -3757,7 +3853,19 @@
         1,
         0.52,
         1
-      ]
+      ],
+      "kit": "city",
+      "pathRole": "tile",
+      "pathAxis": "z",
+      "joins": [
+        "-z",
+        "+z"
+      ],
+      "joinOffsets": {
+        "-z": 0.504,
+        "+z": 0.504
+      },
+      "lane": 0.843
     },
     {
       "name": "bridge_pillar",
@@ -3948,7 +4056,18 @@
         0.02,
         1
       ],
-      "pathAxis": "none"
+      "pathAxis": "none",
+      "kit": "racing",
+      "pathRole": "tile",
+      "joins": [
+        "+z",
+        "+x"
+      ],
+      "joinOffsets": {
+        "+z": 0.5,
+        "+x": 0.5
+      },
+      "lane": 0.697
     },
     {
       "name": "race_track_corner_wide",
@@ -3963,7 +4082,18 @@
         0.02,
         2
       ],
-      "pathAxis": "none"
+      "pathAxis": "none",
+      "kit": "racing",
+      "pathRole": "tile",
+      "joins": [
+        "+z",
+        "+x"
+      ],
+      "joinOffsets": {
+        "+z": 0.496,
+        "+x": 0.496
+      },
+      "lane": 0.698
     }
   ]
 }

@@ -35,6 +35,7 @@ import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
 import { SESSION_COOKIE } from "@/lib/ariantra-session";
 import { billSparks, fetchGate } from "@/lib/sparks-bridge";
+import { catalogGates } from "@/lib/assets/catalog-gate";
 import { resolvePersona } from "@/lib/persona/persona";
 import { GUEST_ASK_LIMIT, GUEST_COOKIE, GUEST_COOKIE_LEGACY, GUEST_COOKIE_MAX_AGE_S, GUEST_WINDOW_MS, IP_GUEST_TOKEN_CAP, guestTokenLimitFor, signedInDailyTokenLimit } from "@/lib/gate.config";
 import { validateImageAttachment } from "@/lib/image-attachment";
@@ -298,6 +299,15 @@ export async function POST(req: NextRequest) {
   // never the child's. Fire-and-forget — billing must never slow a turn.
   const sparksToken = signedIn ? req.cookies.get(SESSION_COOKIE)?.value ?? "" : "";
   let sparksSeq = 0;
+  // 3D pricing (platform repo docs/PRD-SPARKS.md 3D pricing amendment): the
+  // SAME pure predicate configFor() uses internally to gate the 3D asset
+  // catalog (gemini.ts's `gates.three`, paid:false hardwired until
+  // entitlement lands — TECH_DEBT #11) — kept in lock-step by calling the
+  // same exported function here, not by threading a value through the
+  // generation pipeline. Re-detects 3D-ness on an EDIT via the prior
+  // artifact's Three.js markers, not just this turn's message text, so
+  // editing an existing 3D game bills at the 3D rate too.
+  const is3D = catalogGates({ message, history, paid: false }).three;
   function billTurnSparks(kind: string, model: string, promptTokens: number, outputTokens: number, real: TokenUsage | null | undefined, costUsd: number) {
     if (!sparksToken || kind === "safety") return;
     billSparks({
@@ -305,6 +315,7 @@ export async function POST(req: NextRequest) {
       replyId: replyId ?? "no-reply-id",
       seq: sparksSeq++,
       kind,
+      is3D,
       usage: {
         model,
         tokensIn: real?.promptTokens ?? promptTokens,

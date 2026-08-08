@@ -44,6 +44,37 @@ describe("billSparks", () => {
     ).not.toThrow();
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
   });
+
+  // docs/PRD-SPARKS.md 3D pricing amendment (platform repo): the platform
+  // bills at the 3D rate ONLY when it sees the literal boolean `is3D: true`
+  // in the debit payload — so a 3D turn must send it, and a 2D turn must omit
+  // it (not send `false`), matching the platform's fail-closed parsing.
+  it("is3D:true is included in the debit payload for a 3D turn", async () => {
+    billSparks({
+      sessionToken: "jwt-3d",
+      replyId: "reply-3d",
+      seq: 0,
+      kind: "chat",
+      is3D: true,
+      usage: { model: "gemini-3-flash-preview", tokensIn: 4000, tokensOut: 12000 },
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
+    expect(body.debit.is3D).toBe(true);
+  });
+
+  it("omits is3D entirely for an ordinary 2D turn", async () => {
+    billSparks({
+      sessionToken: "jwt-2d",
+      replyId: "reply-2d",
+      seq: 0,
+      kind: "chat",
+      usage: { model: "gemini-3-flash-preview", tokensIn: 4000, tokensOut: 12000 },
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
+    expect(body.debit).not.toHaveProperty("is3D");
+  });
 });
 
 describe("reads and parent actions", () => {

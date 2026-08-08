@@ -845,6 +845,23 @@ side; the manifest `url` field never changes.
 | M | Asset visibility | **Kid-facing gallery** (`kidgemini/assets`) rendered from the manifest; everyone sees everything, cards teach the trigger phrases (read-aloud on request, §9c); ships with Phase C | Discovery drives usage — an invisible library never gets asked for; zero backend; dogfoods the contract as the human smoke check |
 | N | Content ladder | **Inline model-generated content stays ungated on every tier** (§5); gates apply only to the engine (marker) and the library (tier/keyword) | The library is a quality upgrade, never a capability gate; gives fail-soft a floor; keeps the free product whole and the paid pitch honest |
 
+## 3D pricing amendment (owner decision 2026-08-08)
+
+3D builds AND edits now bill at 3× the Sparks rate on the platform (not a
+"tax" — that framing was explicitly rejected). This repo's `catalogGates()`
+(§I above, `src/lib/assets/catalog-gate.ts`) already computes `gates.three`
+per turn — the SAME predicate that gates the engine/model catalog now also
+drives billing: `src/app/api/chat/route.ts` calls `catalogGates()` directly
+(mirroring `configFor()`'s internal call in `gemini.ts`) and forwards
+`is3D: gates.three` to `billSparks()` (`src/lib/sparks-bridge.ts`), which
+includes it in the platform bridge's debit payload only when `true`. Because
+`gates.three` already re-detects 3D-ness on an EDIT from the prior artifact's
+`<!--USES_THREE-->`/Three.js markers (§ "Iteration insurance" above), editing
+an existing 3D game bills at the 3D rate too, even when the edit request's
+own text never says "3d". See platform repo `docs/PRD-SPARKS.md`'s 3D pricing
+amendment for the billing-side design (the `threeDMultiplier` setting,
+fail-closed parsing, ledger transparency).
+
 **Assumptions to confirm cheaply (not blockers):** MarksZen owner applies
 the prefix deny-delete policy AND the bucket CORS config (the two external
 dependencies in Phase A — or CORS moves to a CloudFront Response Headers

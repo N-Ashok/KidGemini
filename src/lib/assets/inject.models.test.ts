@@ -267,10 +267,14 @@ describe("AR_AXES — the run axis reaches the game", () => {
   });
 
   it("omits an undeclared piece entirely, so modelAxis() answers null rather than guessing", () => {
+    // Was road_bridge until 2026-08-09, when a top-down render finally settled
+    // its axis and it became declared. `car` is the stable stand-in: an actor,
+    // not a path piece, so it will never acquire a pathAxis.
     const html = injectAssets(
-      `<html><body><!--USES_THREE--><!--USES_MODELS: road_bridge--><script>loadModel("road_bridge")</script></body></html>`,
+      `<html><body><!--USES_THREE--><!--USES_MODELS: car--><script>loadModel("car")</script></body></html>`,
     ).html;
     expect(html).not.toContain("window.AR_AXES=");
+    expect(html).not.toContain("window.AR_EDGES=");
   });
 
   it("ships modelAxis() itself, reading that table and rejecting anything else", () => {
@@ -279,5 +283,42 @@ describe("AR_AXES — the run axis reaches the game", () => {
     ).html;
     expect(html).toContain("window.modelAxis = function (name)");
     expect(html).toContain('(a === "x" || a === "z" || a === "none") ? a : null');
+  });
+});
+
+describe("AR_EDGES — which edges a tile's road reaches (2026-08-09)", () => {
+  const track = (names: string) =>
+    injectAssets(
+      `<html><body><!--USES_THREE--><!--USES_MODELS: ${names}--><script>loadModel("race_track_corner")</script></body></html>`,
+    ).html;
+
+  it("ships the measured joins, carriageway and offsets for the racing tiling set", () => {
+    const html = track("race_track_straight, race_track_corner, finish_line");
+    const table = JSON.parse(/window\.AR_EDGES=(\{[\s\S]*?\});<\/script>/.exec(html)![1]!);
+    // The corner turns south-to-east at rest. This single fact is what the
+    // 2026-08-08 game had no way to know, so it guessed four rotations.
+    expect(table.race_track_corner.joins).toEqual(["+z", "+x"]);
+    // All three carry the SAME carriageway — which is why they mate, and why
+    // scaling one of them differently (finish_line x10 vs straights x20) put a
+    // 7 m gantry over a 20 m road.
+    for (const n of ["race_track_straight", "race_track_corner", "finish_line"]) {
+      expect(table[n].lane, n).toBeCloseTo(0.7, 2);
+    }
+  });
+
+  it("ships modelJoins() and rotateToJoin(), and rotateToJoin does quarter turns", () => {
+    const html = track("race_track_corner");
+    expect(html).toContain("window.modelJoins = function (name)");
+    expect(html).toContain("window.rotateToJoin = function (name, from, to)");
+  });
+
+  it("omits a piece the probe could not read, so modelJoins() answers null not a guess", () => {
+    // road_ramp: from directly above its sloped skirts read as tarmac, so it
+    // measured all four edges and a 1.00 m lane — both wrong (TECH_DEBT #95).
+    // An admitted gap must stay a gap.
+    const html = injectAssets(
+      `<html><body><!--USES_THREE--><!--USES_MODELS: road_ramp--><script>loadModel("road_ramp")</script></body></html>`,
+    ).html;
+    expect(html).not.toContain("window.AR_EDGES=");
   });
 });

@@ -75,6 +75,65 @@ export interface AssetEntry {
    *  number TECH_DEBT #93 exists to refuse. Absent = unknown; `modelAxis()`
    *  answers null and the game eyeballs it, exactly as before. */
   pathAxis?: "x" | "z" | "none";
+  /** Which of the tile's four world edges its carriageway actually reaches at
+   *  rest, e.g. `["-x", "+z"]` for a corner that turns from west to south.
+   *  Reaches a generated game as `window.AR_EDGES` / `modelJoins(name)`.
+   *
+   *  WHY THIS EXISTS (BUG-FIX-LOG 2026-08-09, the second "poorly formed race
+   *  track"). `pathAxis` fixed the STRAIGHTS but answers `'none'` for every
+   *  corner and hub — a real answer to "which axis does it run along", and a
+   *  non-answer to the only question that lets a model rotate a corner. With
+   *  nothing to reason from it guessed rotations 0, -pi/2, pi, pi/2 and the
+   *  track never closed. No amount of re-prompting could fix it, because the
+   *  information did not exist anywhere in the system.
+   *
+   *  MEASURED, not declared — the one place this contract departs from
+   *  `pathAxis`, and deliberately. It is measured from a TOP-DOWN RENDER of
+   *  the published bytes (scripts/render-assets.mjs), never from the geometry:
+   *  these tiles are flat single-material slabs with the road painted into the
+   *  colormap, so the mesh is a rectangle whichever way the road runs, and two
+   *  independent geometric probes both returned "(none)". The pixels are the
+   *  only instrument that can see a painted road. */
+  joins?: ("-x" | "+x" | "-z" | "+z")[];
+  /** Where along each joined edge the carriageway CENTRE sits, in metres from
+   *  the piece's own minimum on that edge's axis.
+   *
+   *  Edge names alone cannot separate a valid multi-cell piece from a broken
+   *  one, and the difference is the whole 2026-08-09 bug: `road_curve` joins at
+   *  0.50 m and 1.50 m on a 2 m tile — both CELL CENTRES, so straights meet it
+   *  squarely — while `race_track_curve` joins at 0.50 m and 1.00 m, and 1.00 m
+   *  is a cell BOUNDARY. Nothing on a 1 m grid can follow it. Both pieces have
+   *  identical `joins` and identical `lane`; only this field tells them apart. */
+  joinOffsets?: Record<string, number>;
+  /** How a path piece meets the grid. `tile` occupies whole grid cells and is
+   *  held to the module and cell-centre contract. `prop` straddles the road
+   *  without tiling it (a start gantry, a finish line) — its footprint may
+   *  overhang freely, so only its carriageway has to match the kit.
+   *
+   *  Introduced 2026-08-09 after trying to do without it: `finish_line` is
+   *  1.26 m wide against a 1 m module, which reads as a hard module failure
+   *  under a tile rule and is in fact correct — the extra width is verge
+   *  hanging over the grass, and the piece mates the racing straight perfectly
+   *  on its 0.70 m carriageway. Deriving this from the name or the numbers is
+   *  precisely the guessing this whole subsystem exists to stop. */
+  pathRole?: "tile" | "prop";
+  /** Carriageway width in METRES at scale 1 — the drivable width where the
+   *  road meets an edge, NOT the tile's bounding box. Measured alongside
+   *  `joins`.
+   *
+   *  This is the number that says whether two pieces mate, and the bounding
+   *  box actively lies about it: `finish_line` is 1.26 m wide and
+   *  `race_track_straight` is 1.00 m, so by footprint they look mismatched —
+   *  but both carry a 0.70 m carriageway and mate perfectly. The 2026-08-08
+   *  game reasoned from the footprint, scaled finish_line x10 while scaling
+   *  straights x20, and produced a 7 m gantry over a 20 m road. */
+  lane?: number;
+  /** Which vendored pack a piece came from (`"city"`, `"racing"`). Pieces only
+   *  have to mate WITHIN a kit — the two road kits genuinely disagree (0.81 m
+   *  vs 0.70 m carriageway, X vs Z run axis), so a cross-kit comparison would
+   *  report a fault that is really a design difference. Cannot be derived from
+   *  the name: `finish_line` is racing-kit but shares no prefix with it. */
+  kit?: string;
 }
 
 export interface AssetManifest {

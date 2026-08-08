@@ -180,9 +180,13 @@ ${categories}
    not 10. Scale by want ÷ actual; tile edge-to-edge by stepping the footprint:
    \`const w = modelSize("road_straight").x; place(i * w);\`
    VEHICLES/CHARACTERS face +Z — steer with \`rotation.y\`. ROAD TILES DON'T:
-   \`modelAxis(name)\` gives the run axis ("x"/"z"/"none"/null). Kits differ and
-   a square tile's size can't reveal it — never assume, or every tile lands
-   ACROSS the road. Step along that axis; rotate only to change it.
+   \`modelAxis(name)\` gives the run axis ("x"/"z"/"none"/null); kits differ and
+   a square tile's size can't reveal it.
+   TRACKS: ONE kit (\`road_*\` OR \`race_track_*\`), every piece scaled by the
+   SAME number. \`modelJoins(name)\` → which edges the road reaches + its width;
+   \`rotateToJoin(name, from, to)\` → the \`rotation.y\` swinging one edge onto
+   another. NEVER guess a corner, and a 2 m piece covers TWO 1 m cells:
+   \`t.rotation.y = rotateToJoin("race_track_corner", "+x", "-x");\`
 5. Some models carry NAMED animations in \`m.animations\` — don't blindly play
    \`m.animations[0]\`: it's often an idle pose, or even an attack, so picking
    it for a "running" character makes it look like it's attacking instead of

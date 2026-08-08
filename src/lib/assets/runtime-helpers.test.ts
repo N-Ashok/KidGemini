@@ -292,11 +292,15 @@ describe("loadModelHelper — modelSize(name)", () => {
 
   // 4 → 5 (2026-08-08): the version bump is what retrofits modelAxis() onto
   // ALREADY-STORED games — same mechanism the v4 modelSize bump used.
-  it("bumped the helper version so stored games get modelSize + modelAxis retrofitted", () => {
-    // Without the bump, ensureAssetRuntime leaves an existing v3 helper alone
-    // and modelSize never reaches any game that already exists.
-    expect(LOAD_MODEL_HELPER_VERSION).toBe(5);
-    expect(script).toContain("window.__arLoadModelVersion = 5");
+  // 5 → 6 (2026-08-09): same mechanism again, now carrying modelJoins() and
+  // rotateToJoin() to stored games — which IS the migration for the reported
+  // broken race track (BUG-FIX-LOG). A child re-opening it gets a model that
+  // can finally answer which way a corner turns.
+  it("bumped the helper version so stored games get modelSize + modelAxis + modelJoins retrofitted", () => {
+    // Without the bump, ensureAssetRuntime leaves an existing older helper
+    // alone and the new capability never reaches any game that already exists.
+    expect(LOAD_MODEL_HELPER_VERSION).toBe(6);
+    expect(script).toContain("window.__arLoadModelVersion = 6");
   });
 
   it("answers null rather than a made-up number for an unmeasured model", () => {

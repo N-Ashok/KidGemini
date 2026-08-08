@@ -52,6 +52,10 @@ export function billSparks(opts: {
   seq: number;
   kind: string;
   action?: string;
+  /** Bills at the platform's 3D rate (docs/PRD-SPARKS.md 3D pricing
+   *  amendment). Omitted (not sent as false) for ordinary 2D turns — matches
+   *  the platform's fail-closed `=== true` parsing. */
+  is3D?: boolean;
   usage: SparksUsageEntry;
 }): void {
   void sparksPost({
@@ -60,6 +64,7 @@ export function billSparks(opts: {
       turnId: `${opts.replyId}:${opts.kind}:${opts.usage.model}:${opts.seq}`,
       action: opts.action ?? opts.kind,
       usage: [opts.usage],
+      ...(opts.is3D === true ? { is3D: true } : {}),
     },
   }).then((r) => {
     if (r.status !== 200) console.error(`[sparks-bridge] debit rejected (${r.status})`);

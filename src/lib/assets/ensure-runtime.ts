@@ -28,6 +28,9 @@ import {
   countAxisTables,
   parseAxisTables,
   stripAxisTables,
+  countEdgeTables,
+  parseEdgeTables,
+  stripEdgeTables,
 } from "./runtime-helpers";
 import { injectPerfProbe } from "./perf-probe";
 
@@ -216,6 +219,34 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
       out = stripAxisTables(out);
       if (Object.keys(axes).length > 0) {
         markup += `<script>window.AR_AXES=${JSON.stringify(axes)};</script>`;
+      }
+    }
+
+    // (3e) the AR_EDGES table — which edges each tile's road reaches, behind
+    // modelJoins() (2026-08-09, BUG-FIX-LOG the second poorly-formed track).
+    // This block IS the migration for the reported bug: every stored 3D game
+    // picks the corner data up on its next preview render, so a child who
+    // re-opens the broken race track and asks for a fix gets a model that can
+    // finally answer "which way does this corner turn". No restamp campaign
+    // (PRD §2.4). Unmeasured pieces are absent by construction, so an admitted
+    // gap stays a gap instead of becoming a confident wrong answer.
+    const edgeByName = new Map(
+      manifest.assets.flatMap((a) =>
+        a.type === "model" && a.joins?.length
+          ? [[a.name, { joins: a.joins, lane: a.lane, at: a.joinOffsets }] as const]
+          : [],
+      ),
+    );
+    const edges: Record<string, unknown> = {};
+    for (const name of Object.keys(union)) {
+      const ed = edgeByName.get(name);
+      if (ed) edges[name] = ed;
+    }
+    const singleEdges = countEdgeTables(out) === 1 ? parseEdgeTables(out)[0] : undefined;
+    if (singleEdges === undefined || JSON.stringify(singleEdges) !== JSON.stringify(edges)) {
+      out = stripEdgeTables(out);
+      if (Object.keys(edges).length > 0) {
+        markup += `<script>window.AR_EDGES=${JSON.stringify(edges)};</script>`;
       }
     }
   }

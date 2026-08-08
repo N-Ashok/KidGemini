@@ -306,13 +306,28 @@ describe("the committed manifest.json — path-piece orientation", () => {
   });
 
   it("marks hubs and corners 'none' — a real answer, not a missing one", () => {
-    for (const n of ["road_curve", "road_intersection", "road_roundabout", "race_track_curve"]) {
+    // race_track_curve was in this list until 2026-08-09 and has been removed:
+    // it is not a corner. The top-down render measured its road entering the
+    // north edge and leaving the south — a chicane, which DOES have a run axis
+    // (z). 'none' had been declared on the belief that it was a turn. See the
+    // sibling test below.
+    for (const n of ["road_curve", "road_intersection", "road_roundabout"]) {
       expect(byName(n)?.pathAxis, n).toBe("none");
     }
   });
 
-  it("leaves road_bridge UNDECLARED — two geometric probes disagreed, and a confidently-wrong axis is worse than none", () => {
-    expect(byName("road_bridge")?.pathAxis).toBeUndefined();
+  it("declares road_bridge 'z' — the render settled what two geometric probes could not", () => {
+    // Undeclared from 2026-08-08 (TECH_DEBT #93) because extrusion-uniformity
+    // and kerb-run probes disagreed. Both were reading the MESH, and a road is
+    // painted into the colormap — the mesh is a rectangle whichever way the
+    // road runs. Rendered top-down on 2026-08-09 its centre line is plainly
+    // north-south, so it runs Z, alone among the city pieces (every other
+    // road_* runs X). Until this was published, any game mixing road_bridge
+    // with road_straight laid the bridge crosswise.
+    expect(byName("road_bridge")?.pathAxis).toBe("z");
+
+    // The declaration must keep agreeing with the measurement it came from.
+    expect(byName("road_bridge")?.joins).toEqual(["-z", "+z"]);
   });
 
   it("never declares an axis on a non-path model (a car has a facing, not a run axis)", () => {

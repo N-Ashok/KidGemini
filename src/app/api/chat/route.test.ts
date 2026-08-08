@@ -83,9 +83,9 @@ vi.mock("@/lib/safety.rules", () => ({
 // Geo — a stable IP so the IP-layer gates are exercised.
 vi.mock("@/lib/geo", () => ({ resolveGeo: () => ({ ip: "203.0.113.9", country: null, region: null, city: null }) }));
 
-const fetchGateMock = vi.fn();
+const { fetchGateMock, billSparksMock } = vi.hoisted(() => ({ fetchGateMock: vi.fn(), billSparksMock: vi.fn() }));
 vi.mock("@/lib/sparks-bridge", () => ({
-  billSparks: () => {},
+  billSparks: (...args: unknown[]) => billSparksMock(...args),
   fetchGate: (token: unknown) => fetchGateMock(token),
 }));
 
@@ -199,6 +199,7 @@ beforeEach(() => {
   chatTurnsByUser.mockReturnValue(0);
   fetchGateMock.mockReset();
   fetchGateMock.mockResolvedValue({ status: 200, data: { canStart: true, trialUsed: false } });
+  billSparksMock.mockReset();
   replyStreamMock.mockReset();
   replyMock.mockReset();
   strictEditRetryMock.mockReset();
@@ -429,6 +430,89 @@ describe("POST /api/chat — Sparks exhaustion gate (2026-08-07)", () => {
     const res = await POST(makeReq({ message: "make a game", history: [] }));
     expect(res.status).toBe(200);
     expect(fetchGateMock).not.toHaveBeenCalled();
+  });
+});
+
+// docs/PRD-SPARKS.md 3D pricing amendment: a 3D build/edit turn must report
+// is3D:true to the platform's billing bridge so it's charged at the 3D rate.
+// catalogGates() (assets/catalog-gate.ts) is the REAL, unmocked detector here
+// — these tests prove the route actually consumes its result and forwards it
+// to billSparks, both for a fresh 3D build (keyword) and an EDIT on an
+// existing 3D game (structural marker, no keyword in the edit message itself).
+describe("POST /api/chat — 3D pricing (docs/PRD-SPARKS.md)", () => {
+  const SESSION = { userId: "user:kid@example.com", email: "kid@example.com", name: "Kid" };
+  const COOKIES = { ariantra_session: "jwt-kid" };
+  const THREE_GAME =
+    '<!doctype html><html><body><!--USES_THREE--><div id="score">0</div></body></html>';
+
+  beforeEach(() => {
+    authMock.mockResolvedValue(SESSION);
+  });
+
+  it("a fresh '3d' build sends is3D:true on every billed usage row", async () => {
+    replyStreamMock.mockReturnValue(one("Here's your 3D game!"));
+    const res = await POST(makeReq({ message: "make me a 3d racing game", history: [] }, COOKIES));
+    await res.text(); // drain the stream — billing fires as the stream finishes
+    expect(res.status).toBe(200);
+    expect(billSparksMock).toHaveBeenCalled();
+    for (const call of billSparksMock.mock.calls) {
+      expect(call[0]).toMatchObject({ is3D: true });
+    }
+  });
+
+  it("a plain 2D build never sends is3D at all", async () => {
+    replyStreamMock.mockReturnValue(one("Here's your game!"));
+    const res = await POST(makeReq({ message: "make me a maze game", history: [] }, COOKIES));
+    await res.text();
+    expect(res.status).toBe(200);
+    expect(billSparksMock).toHaveBeenCalled();
+    for (const call of billSparksMock.mock.calls) {
+      // billSparks's OWN options here carry a plain boolean (route.ts always
+      // passes one); sparks-bridge.ts is what omits it from the wire payload
+      // when false — see sparks-bridge.test.ts for that contract.
+      expect((call[0] as { is3D?: boolean }).is3D).toBeFalsy();
+    }
+  });
+
+  // The requirement the user explicitly stated: editing an existing 3D game
+  // must ALSO bill at the 3D rate, even when the edit request's own text
+  // never says "3d" — catalogGates() re-detects 3D-ness from the prior
+  // artifact's <!--USES_THREE--> marker, not just the message.
+  it("an edit on an existing 3D game sends is3D:true even though the edit message doesn't mention 3D", async () => {
+    const historyWithThreeGame = [
+      { id: "1", role: "child" as const, text: "make me a 3d game", createdAt: 1 },
+      { id: "2", role: "assistant" as const, text: "Here!", artifactHtml: THREE_GAME, createdAt: 2 },
+    ];
+    replyStreamMock.mockReturnValue(one("Added a boost pad!"));
+    const res = await POST(makeReq({ message: "add a boost pad", history: historyWithThreeGame }, COOKIES));
+    await res.text();
+    expect(res.status).toBe(200);
+    expect(billSparksMock).toHaveBeenCalled();
+    for (const call of billSparksMock.mock.calls) {
+      expect(call[0]).toMatchObject({ is3D: true });
+    }
+  });
+
+  it("an edit on an existing 2D game (no 3D marker, no 3D keyword) never sends is3D", async () => {
+    const historyWith2DGame = [
+      { id: "1", role: "child" as const, text: "make me a game", createdAt: 1 },
+      {
+        id: "2", role: "assistant" as const, text: "Here!",
+        artifactHtml: '<!doctype html><html><body><div id="score">0</div></body></html>',
+        createdAt: 2,
+      },
+    ];
+    replyStreamMock.mockReturnValue(one("Added a boost pad!"));
+    const res = await POST(makeReq({ message: "add a boost pad", history: historyWith2DGame }, COOKIES));
+    await res.text();
+    expect(res.status).toBe(200);
+    expect(billSparksMock).toHaveBeenCalled();
+    for (const call of billSparksMock.mock.calls) {
+      // billSparks's OWN options here carry a plain boolean (route.ts always
+      // passes one); sparks-bridge.ts is what omits it from the wire payload
+      // when false — see sparks-bridge.test.ts for that contract.
+      expect((call[0] as { is3D?: boolean }).is3D).toBeFalsy();
+    }
   });
 });
 
