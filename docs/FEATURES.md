@@ -642,7 +642,12 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   curated CC0 models (`<!--USES_MODELS: car, dino-->`) and load them with
   the injected `loadModel(name)` helper — fail-soft (null on any failure,
   game keeps running), meshopt-compressed GLBs (≤ 100 KB each), first-load
-  transfer capped at 2 MB at inject time. The prompt's model catalog is
+  transfer capped at 2 MB at inject time. **`modelSize(name)`** (2026-08-08)
+  answers a model's real measured metres `{x, y, z}` *before* it loads, from
+  the injected `window.AR_SIZES` table (also stamped on the loaded object as
+  `userData.arSize`); `null` for the 17 skinned models, which carry no
+  trustworthy rest-pose bbox. This is what lets a game lay road/track tiles
+  edge-to-edge instead of guessing a spacing — see BUG-FIX-LOG 2026-08-08. The prompt's model catalog is
   generated from the manifest, so names can never drift; it ends with
   per-genre hints (people/crowd, racing, platformer, space, animals,
   castle, city, forest, water, food) filtered to what's being taught. **56 models**:

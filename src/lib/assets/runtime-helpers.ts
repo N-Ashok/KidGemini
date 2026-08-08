@@ -55,6 +55,51 @@ export function countAssetTables(html: string): number {
   return [...html.matchAll(arAssetsBlockRe())].length;
 }
 
+// The injected model-SIZE table (`<script>window.AR_SIZES={...};</script>`),
+// added 2026-08-08 for the fragmented-track bug (BUG-FIX-LOG): the measured
+// metres of every model the game uses, so `modelSize(name)` can answer with a
+// real footprint instead of the game guessing a spacing.
+//
+// A SEPARATE table rather than richer AR_ASSETS values, deliberately. Folding
+// sizes in as `{name: {url, size}}` looks tidier and breaks four things: this
+// family of regexes is non-greedy to the first `}`, so a nested object
+// truncates the capture and parseAssetTables silently returns [] — which is
+// precisely the duplicate-table blindness of the 2026-08-06 Sky Patrol bug;
+// loadModel/playSound index the table for a URL string; ensure-runtime's
+// idempotence check compares values with === and would re-emit on every render;
+// and already-published games are immutable, so their loadModel would hand an
+// object to loadAsync forever. Array values keep the same shape guarantee the
+// URL strings had: no `}` inside a value.
+const arSizesBlockRe = () => /<script[^>]*>\s*window\.AR_SIZES\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/g;
+
+/** Every parseable AR_SIZES table in the document, in document order.
+ *  Unparseable blocks are skipped, never thrown on — same fail-soft floor as
+ *  parseAssetTables: a kid's game must survive anything. */
+export function parseSizeTables(html: string): Array<Record<string, [number, number, number]>> {
+  const tables: Array<Record<string, [number, number, number]>> = [];
+  for (const m of html.matchAll(arSizesBlockRe())) {
+    try {
+      const parsed: unknown = JSON.parse(m[1]!);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        tables.push(parsed as Record<string, [number, number, number]>);
+      }
+    } catch {
+      /* not our block shape — leave it to the strip's own regex miss */
+    }
+  }
+  return tables;
+}
+
+/** Removes every AR_SIZES table block. Callers re-emit exactly one. */
+export function stripSizeTables(html: string): string {
+  return html.replace(arSizesBlockRe(), "");
+}
+
+/** How many AR_SIZES table blocks the document carries. */
+export function countSizeTables(html: string): number {
+  return [...html.matchAll(arSizesBlockRe())].length;
+}
+
 /** Neutralizes a literal `</script>` inside a string about to be inlined
  *  into an HTML `<script>` block — `<\/script>` is identical to `</script>`
  *  inside a JS string (or JSON, which has no special meaning for a lone
@@ -98,8 +143,12 @@ export function countTriangles(obj: { traverse: (cb: (child: any) => void) => vo
  *  compares this against the currently-injected version to decide whether an
  *  already-published game's stale helper needs replacing, not just whether
  *  `window.loadModel` merely exists. See the 2026-08-05 template-cache change:
- *  v1 had no cache; v2 caches the parsed GLTF per model name. */
-export const LOAD_MODEL_HELPER_VERSION = 3;
+ *  v1 had no cache; v2 caches the parsed GLTF per model name.
+ *  v4 (2026-08-08, BUG-FIX-LOG fragmented race tracks) adds window.modelSize()
+ *  over the AR_SIZES table. The bump is what retrofits it onto games ALREADY
+ *  stored: ensureAssetRuntime strips the v3 block and injects v4 on the next
+ *  preview render, so no migration is needed. */
+export const LOAD_MODEL_HELPER_VERSION = 4;
 
 /** The runtime helper 3D games call: resolves a catalog name via AR_ASSETS,
  *  loads the GLB with GLTFLoader + meshopt (models are meshopt-compressed),
@@ -145,6 +194,16 @@ export function loadModelHelper(): string {
   return `<script type="module">
   import { GLTFLoader, MeshoptDecoder } from "three";
   window.__arLoadModelVersion = ${LOAD_MODEL_HELPER_VERSION};
+// modelSize (2026-08-08, the fragmented-track fix): the measured metres a model
+// renders at scale 1, available BEFORE loading so a game can plan a layout. The
+// "|| {}" guard means order-of-injection never matters, and an unknown or
+// skinned model answers null rather than a made-up number — a game that checks
+// for null degrades to eyeballing, which is exactly what it did before v4.
+window.AR_SIZES = window.AR_SIZES || {};
+window.modelSize = function (name) {
+  var s = window.AR_SIZES[name];
+  return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
+};
   const __arLoader = new GLTFLoader();
 __arLoader.setMeshoptDecoder(MeshoptDecoder);
 window.__arPerf = window.__arPerf || { models: {}, rootNames: new WeakMap(), animatedRoots: new WeakSet(), renderer: null };
@@ -185,6 +244,9 @@ window.loadModel = async function (name) {
         obj.animations = [];
       }
     }
+    // Same answer as modelSize(name), riding on the object — so code that
+    // already holds the loaded root can size it without re-quoting the name.
+    obj.userData.arSize = window.modelSize(name);
     try {
       var __arEntry = window.__arPerf.models[name] || { name: name, triangles: 0, instances: [] };
       __arEntry.triangles = __arCountTriangles(obj);

@@ -63,6 +63,55 @@ const STATIC_USE_RE = /\bMathUtils\s*\./;
 const LOCAL_DECL_RE = (name: string) =>
   new RegExp(`\\b(?:class|function|const|let|var)\\s+${name}\\b`);
 
+// ── The CATEGORY defect: a runtime global imported from "three" ─────────────
+// BUG-FIX-LOG 2026-08-08. Prod log: `unknown three imports: loadModel,
+// loadModelBatch — corrective retry`. These are helpers ARI injects as window
+// globals (inject.ts's loadModelHelper/loadModelBatchHelper/audioHelper), and
+// prompt-catalog.ts tells the model to call them as built-ins — so importing
+// them from "three" is a category error, not a missing export. It killed the
+// import line (whole game dead) and cost a full corrective LLM round-trip
+// (~50s + the kid's Sparks) to re-generate.
+//
+// Deterministic heal, no model turn: drop those names from the import list.
+// Safe by construction — the identifiers still resolve at run time from
+// window, so the game's own calls are left completely untouched.
+
+/** Globals the asset runtime defines on `window` (grep: `window.X =` in
+ *  lib/assets). requestAnimationFrame is deliberately absent — it's a browser
+ *  builtin the runtime merely wraps, never something a game would import.
+ *
+ *  ONLY list helpers that actually exist. Stripping a name that is NOT a real
+ *  global trades a loud failure for a quiet one: the dead import line (game
+ *  never runs, verify catches it) becomes a play-time ReferenceError that
+ *  verify reports as "clean" — precisely the PointLight class from
+ *  BUG-FIX-LOG 2026-08-07. `modelSize` joined on 2026-08-08 only once the
+ *  model-sizing work actually shipped its `window.modelSize` helper — verify
+ *  the helper exists before adding a name here. */
+const RUNTIME_GLOBALS = new Set(["loadModel", "loadModelBatch", "modelSize", "playSound", "playMusic"]);
+
+export function stripRuntimeGlobalImports(html: string): string {
+  let out = html;
+  for (const stmt of [...html.matchAll(NAMED_IMPORT_RE)]) {
+    const inner = stmt[1]!;
+    const kept: string[] = [];
+    let stripped = false;
+    for (const raw of inner.split(",")) {
+      const spec = raw.trim();
+      if (!spec) continue;
+      // Match on the ORIGINAL name — `loadModel as lm` is still the global.
+      const original = spec.split(/\s+as\s+/)[0]!.trim();
+      if (RUNTIME_GLOBALS.has(original)) stripped = true;
+      else kept.push(spec);
+    }
+    if (!stripped) continue;
+    // Nothing real left to import: drop the statement entirely rather than
+    // leave an empty `import {} from "three"`. Safe — every name it carried
+    // was a global, and as written the statement was crashing anyway.
+    out = out.replace(stmt[0]!, kept.length === 0 ? "" : `import { ${kept.join(", ")} } from "three"`);
+  }
+  return out;
+}
+
 export function ensureThreeImports(html: string): string {
   const imports = [...html.matchAll(NAMED_IMPORT_RE)];
   if (imports.length === 0) return html;

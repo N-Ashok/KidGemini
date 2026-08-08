@@ -27,11 +27,20 @@ export const PHYSICS_MARKER = "<!--USES_PHYSICS-->";
  *  marker), so it's a plain string, not part of stripAssetMarkers/hasAssetMarker. */
 export const SUPPORTS_SAVE_MARKER = "<!--SUPPORTS_SAVE-->";
 
+// Whitespace after `<!--` and before `-->` is TOLERATED (BUG-FIX-LOG
+// 2026-08-08). The model writes these by hand and sometimes spaces them like
+// an ordinary HTML comment — `<!-- USES_MODELS: hero, orc -->`. The old
+// no-space-only patterns silently didn't match that, which meant injectAssets
+// saw no marker and injected NOTHING: the game then called loadModel("hero")
+// and got null, with no error anywhere. It also made reconcileAssetMarkers
+// bail `no-marker`, escalating the edit turn to a full regeneration (one of
+// the four escalations in the 2026-08-08 prod log).
+
 /** `<!--USES_MODELS: car, tree-->` — names resolve through the manifest. */
-export const MODELS_MARKER_RE = /<!--USES_MODELS:([a-z0-9_,\s]*)-->/gi;
+export const MODELS_MARKER_RE = /<!--\s*USES_MODELS\s*:([a-z0-9_,\s]*?)\s*-->/gi;
 
 /** `<!--USES_AUDIO: coin_pickup, bg_loop_upbeat-->` — same resolution rules. */
-export const AUDIO_MARKER_RE = /<!--USES_AUDIO:([a-z0-9_,\s]*)-->/gi;
+export const AUDIO_MARKER_RE = /<!--\s*USES_AUDIO\s*:([a-z0-9_,\s]*?)\s*-->/gi;
 
 /**
  * Removes every asset marker from `text`, byte-for-byte the same way
@@ -94,6 +103,22 @@ export function assetMarkerNames(text: string): string[] {
  *  injected import map and/or an AR_ASSETS table. Distinguishes an asset game
  *  whose markers injection stripped (safe to reconcile) from a plain 2D game
  *  where a marker in the reply is a genuine NEW request (must not be stripped). */
+/** The marker lines themselves, verbatim and de-duplicated (BUG-FIX-LOG
+ *  2026-08-08). Reconciliation strips markers out of a reply so its SEARCH
+ *  block matches the marker-stripped stored source — but a reply declaring a
+ *  genuinely NEW asset still needs those declarations to reach injectAssets,
+ *  or the patched game references an asset that was never injected. Returning
+ *  the literals (rather than rebuilding markers from parsed names) keeps the
+ *  MODELS/AUDIO split exactly as the model wrote it. */
+export function assetMarkerLiterals(text: string): string {
+  const seen: string[] = [];
+  for (const re of [MODELS_MARKER_RE, AUDIO_MARKER_RE]) {
+    re.lastIndex = 0;
+    for (const m of text.matchAll(re)) if (!seen.includes(m[0])) seen.push(m[0]);
+  }
+  return seen.join("");
+}
+
 export function looksInjected(html: string): boolean {
   return html.includes("window.AR_ASSETS") || /<script[^>]*type=["']importmap["']/i.test(html);
 }

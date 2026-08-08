@@ -90,9 +90,25 @@ triggers wired, all contract tests green.
 
 ## Scale ceilings
 
-- **Prompt catalog: AT the 2300-token ceiling.** The hybrid fallback is now
-  REQUIRED before the next sizeable batch — do not raise again.
-- Kenney road tiles are 1-unit modules by design; if kids' games consistently
-  fail to scale them, revisit with a `normalizeLongest` pass (breaks nothing —
-  new hash = new name).
+- **Prompt catalog: AT the 2400-token ceiling** (raised 2350 → 2400 on
+  2026-08-08 for the rewritten sizing rule; measured 2398). The raise bought
+  *fault-driven teaching that also deleted the wrong teaching it replaced*, not
+  catalog room. The hybrid fallback (headings static, names retrieved) is still
+  REQUIRED before the next sizeable ASSET batch.
+- ~~Kenney road tiles are 1-unit modules by design; if kids' games consistently
+  fail to scale them, revisit with a `normalizeLongest` pass.~~ **RESOLVED
+  2026-08-08 — and the diagnosis here was half wrong.** Games did consistently
+  fail to scale them (a racer laid 1 m tiles 10 m apart), but the tiles were
+  never the problem: measurement confirmed the city road kit is already
+  centre-origin and on an exact whole-metre module (1 m straight/intersection/
+  crossing/ramp/bridge, 2 m curve, 3 m roundabout). A `normalizeLongest` pass
+  would have **shrunk the curve's turn radius and made it worse**. The actual
+  gap was that the sizes reached the LLM nowhere — fixed by shipping measured
+  metres in `window.AR_SIZES` + `modelSize(name)`. See BUG-FIX-LOG 2026-08-08.
+- **The racing kit was the one with a real defect** (found while fixing the
+  above): `race_track_straight`/`race_track_curve` ship arbitrary origins —
+  a perfect 1 × 1 m tile whose origin sat 1.15 m off in Z. Fixed with a new
+  `recenterXZ` bake + a build-failing centring lint. **Reaches prod only on the
+  next `--upload` run of those two entries** (append-only; published games keep
+  their old URLs).
 - The credits chip still covers models only (TECH_DEBT #89).

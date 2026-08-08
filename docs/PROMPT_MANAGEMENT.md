@@ -244,8 +244,17 @@ professional low-poly models from the toy box: MODEL_A, MODEL_B, ....
    `loadModel("MODEL_A").then((m) => { if (m) { m.scale.set(2, 2, 2); scene.add(m); player = m; } });`
    If `m` is null, simply keep the placeholder — the game must keep working
    without the model.
-4. Models load at their own natural size — set `m.scale` and `m.position`
-   so they fit your scene.
+4. `modelSize(name)` gives a model's REAL metres `{x, y, z}` BEFORE you load
+   it (null if unknown — then eyeball it). NEVER guess a size or a spacing:
+   tiles are small, a road piece is ~1 m, not 10. Lay roads/tracks/paths
+   edge-to-edge by stepping that footprint, and scale by want ÷ actual.
+   [REWRITTEN 2026-08-08 — BUG-FIX-LOG, fragmented race tracks. The previous
+   text ("Models load at their own natural size — set `m.scale` and
+   `m.position` so they fit your scene") was an instruction to GUESS with
+   nothing to guess from: the model laid 1 m road tiles 10 m apart and no
+   re-prompt could fix it, because no dimension data existed anywhere in the
+   prompt. The measured metres now ship to the game in `window.AR_SIZES`.
+   Token ceiling raised 2350 → 2400 for this (measured 2398).]
 5. Some models carry NAMED animations in `m.animations` — don't blindly play
    `m.animations[0]`: it's often an idle pose, or even an attack ...
    (search by name for run/walk/gallop/etc; create an AnimationMixer;

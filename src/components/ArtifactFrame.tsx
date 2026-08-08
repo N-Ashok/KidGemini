@@ -18,6 +18,7 @@ import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
 import { GAME_CONSOLE_SOURCE, injectConsoleCapture } from "@/lib/game-console";
 import { DEVICE_PRESETS, deviceById, fitScale, orientedSize } from "@/lib/device-preview";
 import { injectPreviewInstrumentation } from "@/lib/preview-verify";
+import { shouldAutoFocusPreview } from "@/lib/preview-focus";
 import { injectPreviewRuntime, type PreviewTheme } from "@/lib/preview-runtime";
 import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
 import { keyToPanelAction, UPDATING_LINE } from "@/lib/preview-pane";
@@ -395,6 +396,25 @@ export function ArtifactFrame({
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [html]);
+
+  // Keyboard reaches the game only once the iframe holds focus — and nothing
+  // was ever giving it focus, so every game started unplayable by arrow
+  // keys/WASD until the kid happened to click the preview (owner ask
+  // 2026-08-08). Focus it the moment the verify cover lifts and the game is
+  // actually playable, re-running per docKey so a rebuild/reload re-arms it.
+  //
+  // Two deliberate guards: shouldAutoFocusPreview refuses to pull the cursor
+  // out of the chat box mid-word (the worse bug), and preventScroll stops the
+  // browser scrolling the panel into view under the kid. Cross-origin-safe —
+  // focusing the ELEMENT needs no reach into the sandboxed document.
+  useEffect(() => {
+    if (covered || tab !== "preview") return;
+    const el = iframeRef.current;
+    if (!el) return;
+    const active = document.activeElement as HTMLElement | null;
+    if (!shouldAutoFocusPreview(active && { tagName: active.tagName, isContentEditable: active.isContentEditable })) return;
+    el.focus({ preventScroll: true });
+  }, [covered, docKey, tab, iframeRef]);
 
   if (!html) return null;
 

@@ -195,8 +195,99 @@ describe("sniffMagicBytes — the pipeline verifies files are what they claim (P
   });
 });
 
+// Regression, 2026-08-08 (docs/BUG-FIX-LOG.md same date — fragmented race
+// tracks): `road_straight` is a 1 m tile and a generated racer laid 14 of them
+// at 10 m intervals, so 99% of the "track" was grass. The cause was that NO
+// dimension data existed anywhere the model could reach it — the manifest had
+// no size field, the prompt catalog rendered bare names, and loadModel exposed
+// no bounding box. `size` is the storage half of the fix: measured metres of
+// the PUBLISHED bytes, shipped to the game as window.AR_SIZES.
+describe("validateEntry — size is measured metres, never a guess", () => {
+  it("accepts a model carrying its measured [x, y, z] metres", () => {
+    expect(() => validateEntry(entry({ size: [1, 0.02, 1] }))).not.toThrow();
+  });
+
+  it("accepts a model with no size (skinned models are deliberately omitted)", () => {
+    expect(() => validateEntry(entry())).not.toThrow();
+  });
+
+  it("rejects a size on anything that is not a model", () => {
+    // Only models are placed in a 3D scene; a size on a sound is a pipeline bug.
+    expect(() =>
+      validateEntry(
+        entry({
+          name: "coin_pickup",
+          type: "sfx",
+          url: `${ASSET_HOST_ORIGIN}/coin_pickup.a3f8c2.mp3`,
+          bytes: 9_000,
+          size: [1, 1, 1],
+        }),
+      ),
+    ).toThrow(/only models carry a size/);
+  });
+
+  it("rejects a size that is not a 3-tuple", () => {
+    expect(() => validateEntry(entry({ size: [1, 1] as never }))).toThrow(/\[x, y, z\]/);
+    expect(() => validateEntry(entry({ size: [1, 1, 1, 1] as never }))).toThrow(/\[x, y, z\]/);
+    expect(() => validateEntry(entry({ size: 1 as never }))).toThrow(/\[x, y, z\]/);
+  });
+
+  it("rejects a non-positive or non-finite axis", () => {
+    // A zero axis would make `i * modelSize(n).z` stack every tile on the
+    // origin — silently, which is worse than the bug being fixed.
+    expect(() => validateEntry(entry({ size: [0, 1, 1] }))).toThrow(/positive finite metres/);
+    expect(() => validateEntry(entry({ size: [1, -1, 1] }))).toThrow(/positive finite metres/);
+    expect(() => validateEntry(entry({ size: [1, NaN, 1] }))).toThrow(/positive finite metres/);
+    expect(() => validateEntry(entry({ size: [1, 1, Infinity] }))).toThrow(/positive finite metres/);
+  });
+
+  it("rejects an absurd axis — the un-normalized author-scale typo guard", () => {
+    // The largest real entry is suspension_bridge at 50 m. A 1e7 value means a
+    // poly.pizza source slipped through without normalizeLongest.
+    expect(() => validateEntry(entry({ size: [1, 1, 1e7] }))).toThrow(/under 1000/);
+  });
+});
+
 describe("the committed manifest.json", () => {
   it("passes full validation (this is the standing gate on every commit)", () => {
     expect(() => validateManifest(manifest as never)).not.toThrow();
+  });
+
+  // THE headline regression for the 2026-08-08 fragmented-track bug: a tile a
+  // game cannot measure is a tile it will scatter. Every road/track piece must
+  // ship its footprint, or `modelSize()` returns null and the model is back to
+  // guessing 10 m for a 1 m tile.
+  it("ships a measured size for every road/track tile", () => {
+    const tiles = (manifest as AssetManifest).assets.filter(
+      (a) => a.type === "model" && /^(road|race_track)_/.test(a.name),
+    );
+    expect(tiles.length).toBeGreaterThan(0);
+    expect(tiles.filter((t) => !t.size).map((t) => t.name)).toEqual([]);
+  });
+
+  // The city road kit is the MODULAR one — measured 2026-08-08: 1 m straight/
+  // intersection/crossing/ramp/bridge, 2 m curve, 3 m roundabout, all exact
+  // multiples of a 1 m module and all centre-origin. That is what makes a
+  // stepped layout close into a loop, so it is pinned.
+  //
+  // Deliberately NOT asserted for race_track_*: Kenney's racing kit is a
+  // place-by-eye pair, and race_track_curve is a genuinely non-modular
+  // 1.5 × 2.0 m sweep. No uniform scale puts both of its axes on whole metres
+  // (×2 gives 3 × 4), and forcing one would distort the turn against the 1 × 1
+  // straight. Its real size ships instead, and the prompt rule tells games to
+  // step the measured footprint rather than assume a grid.
+  it("keeps the city road kit on a whole-metre module", () => {
+    const roads = (manifest as AssetManifest).assets.filter(
+      (a) => a.type === "model" && /^road_(straight|curve|intersection|crossing|roundabout|ramp|bridge)$/.test(a.name),
+    );
+    expect(roads.length).toBe(7);
+    const offGrid = roads.flatMap((t) => {
+      const [x, , z] = t.size!;
+      // X and Z only: a tile's HEIGHT (kerb, guardrail) never lands on the grid.
+      return ([["x", x], ["z", z]] as const)
+        .filter(([, v]) => Math.abs(v - Math.round(v)) > 0.01)
+        .map(([axis, v]) => `${t.name}: ${axis} = ${v} m is not a whole-metre module`);
+    });
+    expect(offGrid).toEqual([]);
   });
 });

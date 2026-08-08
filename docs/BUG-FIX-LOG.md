@@ -11,6 +11,169 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-08 — 3D tracks came out fragmented, and no amount of re-prompting fixed it
+
+- **Symptom:** owner report — a kid asked for "3D race track, green car, 3 laps". The game
+  rendered disconnected road patches scattered over grass. Re-prompting never corrected it,
+  which is what makes this different from an ordinary bad generation.
+- **Root cause (measured, not inferred):** `road_straight` is a **1.00 × 0.02 × 1.00 m** tile.
+  The generated game laid 14 of them at **10-metre intervals** across a 40 × 50 m plane — 14 m²
+  of road in 2000 m² of field, i.e. ~99% grass. That is the fragmentation exactly.
+  **Why it was unfixable by prompting: no dimension data existed anywhere the model could
+  reach it.** `AssetEntry` had no size field; `prompt-catalog.ts` rendered the catalog as bare
+  names; `loadModel` exposed no bounding box; and rule 4 of the models section said *"models
+  load at their own natural size — set `m.scale` and `m.position` so they fit your scene"* —
+  an instruction to **guess**, with nothing to guess from. Every regeneration re-guessed and
+  re-guessed wrong. `docs/2026-08-06_PRD_RoadsBridgesJets.md` §Scale ceilings predicted this
+  ("if kids' games consistently fail to scale them, revisit"); this is that trigger firing.
+- **Second, independent cause found while fixing it:** Kenney's *racing* kit ships **arbitrary
+  origins**. `race_track_straight` is a perfect 1 × 1 m tile whose origin sat **1.15 m off in
+  Z** (`race_track_curve`, 1.65 m). Its size was never wrong, so no scale normalization would
+  have helped — a game stepping the correct 1 m still scattered the geometry. The *city road*
+  kit, by contrast, was already correct on both counts: centre-origin and exact whole-metre
+  modules (1 m straight/intersection/crossing/ramp/bridge, 2 m curve, 3 m roundabout). The
+  original plan to "normalize the road tiles" would have **shrunk the curve's turn radius and
+  made things worse**; measurement is what caught that.
+- **Fix (four layers, measure → store → ship → teach):**
+  1. `AssetEntry.size?: [x, y, z]` — measured metres of the **published** bytes (`manifest.ts`).
+  2. `vendor-models.mjs` measures the world-space bbox after every transform and writes it;
+     new `normalizeFootprint` (XZ-only, because `normalizeLongest` would scale a tile by its
+     kerb height) and `recenterXZ` (+ a post-transform lint that fails the build if a tile is
+     still off-centre) options.
+  3. `window.AR_SIZES` — a **separate** table from `AR_ASSETS`, with **array** values. Folding
+     sizes into `AR_ASSETS` as `{name: {url, size}}` would have re-broken four things: the
+     block regexes are non-greedy to the first `}` so a nested object truncates the capture and
+     `parseAssetTables` silently returns `[]` (the 2026-08-06 Sky Patrol duplicate-table
+     blindness, reintroduced); `loadModel`/`playSound` index the table for a URL string;
+     `ensure-runtime`'s idempotence check compares values with `===`; and already-published
+     games are immutable and would break permanently.
+  4. `window.modelSize(name)` in the loadModel helper (also stamped as `obj.userData.arSize`),
+     and prompt rule 4 **rewritten** — the guess instruction is deleted, not merely extended.
+- **Existing games:** `LOAD_MODEL_HELPER_VERSION` 3 → 4 plus the new `AR_SIZES` healing branch
+  in `ensure-runtime.ts` retrofit both onto every **stored** 3D game on its next preview render
+  — no migration. Already-**published** games keep their old immutable URLs and are untouched.
+- **Skinned models ship no size, deliberately:** `getBounds()` has no skin handling — it reads
+  the bind-space POSITION accessor and multiplies by a node matrix a skinned mesh must ignore
+  per spec. 17 models (`dino`, `dragon`, `soldier`, …) are omitted rather than given a
+  confident wrong number; `modelSize()` answers `null` and the game eyeballs it exactly as
+  before. Every *tile* model is unskinned, so the bug is fully fixed without them.
+- **Backfill without a production write:** `scripts/backfill-model-sizes.mjs` measures the
+  published artifacts already in `.assets-out/`, touching only entries whose local bytes
+  re-hash to the manifest's `sha256`. 245/262 models sized, 17 skinned skipped, 0 unverifiable.
+- **Tests:** 464 green in `src/lib/assets/` (full suite 2145). New: `manifest.test.ts` size
+  validation + the two headline regressions (every road/track tile ships a size; the city road
+  kit stays on a whole-metre module); `runtime-helpers.test.ts` AR_SIZES parse/strip/count +
+  an executable `modelSize` check; `inject.models.test.ts` sizes-block emission, fail-soft
+  omission and the duplicate-block guard; `ensure-runtime.test.ts` F.16–F.19 (v3→v4 retrofit,
+  idempotence, stale-table replacement, 2D untouched); `prompt-catalog.test.ts` pins the new
+  teaching and that the old guess sentence never returns.
+- **Related:** 2026-08-06 "the sideways black bike" and the rotor no-op — same class, an asset
+  property invisible to the LLM.
+- **Still owed (needs an owner command — a production write):** `race_track_straight` /
+  `race_track_curve` recentring only reaches prod via
+  `node --env-file=../Ariantra-Platform/.env scripts/vendor-models.mjs --only=race_track_straight,race_track_curve --upload`.
+  Append-only, so published games keep working. Until then those two keep their off-centre
+  origins; the seven `road_*` pieces (the modular kit) are correct today. Owner UAT owed:
+  regenerate the racer and confirm a continuous track.
+
+## 2026-08-08 — Edit turns threw away a working patch and ran a full regeneration (`reconcileBailed=new-asset`, plus a marker-whitespace gap)
+
+- **Symptom:** prod log, four escalations in one window —
+  `inSource=false … reconcileBailed=new-asset` ×3 and `reconcileBailed=no-marker` ×1, each
+  followed by `patch failed (search_not_found) — falling back to full regeneration`. Nothing
+  visibly broke: the kid still got a game. The cost was invisible — a whole extra full-game
+  generation per occurrence, and full regeneration is the destructive path that can silently
+  regress parts of a working game the child never asked to change (penguin-maze class,
+  2026-07-18).
+- **Root cause A — the `new-asset` bail was over-conservative against our own injector.**
+  `injectAssets` strips `<!--USES_MODELS: …-->` from the delivered game; the model, told to
+  always emit markers, re-writes them into its SEARCH block, so SEARCH can't be found in the
+  stored source. `reconcileAssetMarkers` exists to rescue exactly that — but it gave up
+  whenever a marker named an asset the game didn't already have, reasoning that "a real add
+  needs full re-injection." It doesn't: `injectAssets` **already re-injects incrementally**,
+  reclaiming the names in the previous `AR_ASSETS` table and unioning them with any markers
+  it finds, emitting one merged table (the Sky Patrol bikes fix, 2026-08-06). The add only
+  ever needed its marker declarations carried onto the patched HTML.
+- **Root cause B — the marker regexes rejected ordinary comment spacing.**
+  `MODELS_MARKER_RE`/`AUDIO_MARKER_RE` required `<!--USES_MODELS:` with no space. The model
+  sometimes writes `<!-- USES_MODELS: hero, orc -->` like a normal HTML comment; that matched
+  nothing. Two consequences, the second worse than the reconcile miss: `hasAssetMarker` said
+  "no marker" (the fourth escalation above), **and `injectAssets` injected nothing at all** —
+  the game then called `loadModel("hero")` and got `null`, with no error anywhere. A silent
+  asset-loss bug, not just a wasted turn.
+- **Fix:** `reconcileAssetMarkersWithReason` now returns `{ html, markers }` — the
+  marker-stripped reply plus the verbatim marker literals for anything genuinely new (empty
+  string when the edit adds nothing, so the common case is byte-identical). `route.ts`
+  appends those literals to the PATCHED html before delivery, where `injectAssets` merges
+  them with the reclaimed table. `'new-asset'` stays in `ReconcileBailReason` so older log
+  lines remain readable, but is never returned. Both marker regexes now tolerate whitespace
+  after `<!--`, around the name, and before `-->`.
+- **Tests:** `game-edit.reconcile.test.ts` — A.4 and its bail-reason twin rewritten to pin the
+  new contract (both explicitly marked SUPERSEDED, with the reasoning, rather than deleted);
+  +A.4b (an edit adding nothing returns no markers); **+an end-to-end test against the REAL
+  injector** proving old + new land in ONE merged table and exactly one `AR_ASSETS` block
+  survives — so if `injectAssets` ever stops reclaiming, this fails loudly instead of shipping
+  games whose older models vanished.
+- **Note on sequencing:** this fix was deliberately HELD earlier in the day while the
+  model-sizing work was mid-flight in `inject.ts`, because its correctness rests entirely on
+  that file's merge semantics. Implemented only once that work landed green.
+
+## 2026-08-08 — Keyboard didn't reach the game until the kid clicked the preview
+
+- **Symptom:** owner report — a game loads in the preview, the kid presses the arrow keys or
+  WASD, nothing happens. They have to click the preview panel first. Every keyboard game
+  therefore started out feeling broken.
+- **Root cause:** an iframe receives key events only while it holds focus, and nothing ever
+  gave the preview iframe focus. Not a regression — it had simply never been done.
+- **Fix:** `ArtifactFrame` focuses the iframe the moment the verify cover lifts (`covered`
+  → false) and the Preview tab is showing, re-armed per `docKey` so a rebuild/reload
+  re-focuses. Cross-origin-safe: focusing the *element* needs no reach into the
+  `sandbox="allow-scripts"` document.
+- **The guard that matters more than the fix:** never pull the cursor out of the chat box
+  mid-word — that would be a worse bug than the one being fixed. The judgement lives in a
+  pure, tested module (`src/lib/preview-focus.ts`, `shouldAutoFocusPreview`) rather than
+  inline in the component: focus is taken over BODY/BUTTON/DIV, never over
+  INPUT/TEXTAREA/SELECT or a contenteditable. `preventScroll: true` also stops the browser
+  scrolling the panel into view under the kid.
+- **Tests:** `preview-focus.test.ts` (5, incl. the explicit "never steals from a text field"
+  regression and case-insensitive tagName).
+- **Not covered:** the effect wiring itself is untested (no component-test harness in this
+  repo) — the decision logic is. Owner UAT owed: load a game, press an arrow key without
+  clicking first.
+
+## 2026-08-08 — `unknown three imports: loadModel, loadModelBatch` cost a full ~50s corrective LLM retry
+
+- **Symptom:** prod log — `[api/chat] ⛔ unknown three imports: loadModel, loadModelBatch —
+  corrective retry @50300ms`. The retry worked, so no kid saw a dead game, but every
+  occurrence burned a whole extra model round-trip (~50s and the kid's Sparks).
+- **Root cause:** a *category* error, not a missing export. `loadModel`/`loadModelBatch`/
+  `modelSize`/`playSound`/`playMusic` are helpers Ari itself injects as `window` globals
+  (`inject.ts`'s `loadModelHelper` etc.), and `prompt-catalog.ts` tells the model to call
+  them as built-ins — so importing them *from `"three"`* names something the vendored bundle
+  will never export. That kills the import line, the whole game script never runs, and the
+  existing lint's only cure was a full regeneration.
+- **Fix:** `stripRuntimeGlobalImports()` in `three-import-lint.ts` — the third member of that
+  file's family (`unknownThreeImports` detects, `ensureThreeImports` adds missing,
+  this removes impossible). Drops those names from any `from "three"` list at delivery, and
+  drops the whole statement when nothing real is left. Safe by construction: the identifiers
+  still resolve at run time from `window`, so the game's own calls are untouched. Wired into
+  `toDeliverable`, ahead of `ensureThreeImports`, so it covers every delivery path (fresh
+  build, patch, repair fallback) through one choke point.
+- **Tests (failing-first, `three-import-lint.test.ts` +8):** strips alongside real three
+  names; strips the audio globals; removes the statement when all names were globals;
+  handles aliases by ORIGINAL name; leaves a clean import byte-identical; idempotent and
+  2D-safe; and — the one that ties it to prod — `unknownThreeImports` goes from
+  `["loadModel","loadModelBatch"]` to `[]` after the strip, i.e. the corrective retry can no
+  longer fire on this cause.
+- **The list must never run ahead of the runtime.** `RUNTIME_GLOBALS` was first drafted by
+  grepping `window.X =` across `lib/assets` in a working tree that contained *uncommitted*
+  model-sizing work, which picked up `modelSize` — a helper that does not exist on HEAD.
+  Stripping a name that isn't really a global trades a loud failure for a quiet one: the dead
+  import line (game never runs, verify catches it) becomes a play-time ReferenceError verify
+  reports as "clean" — exactly the PointLight class above. `modelSize` was removed and is
+  pinned by a test asserting it's left alone; it joins the list when the sizing work ships
+  its `window.modelSize` helper.
+
 ## 2026-08-08 — Error reports read "undefined (undefined:undefined:undefined)": subresource failures misclassified as script errors
 
 - **Symptom:** owner report — a kid's game ("Super Hero Teleport Battle!") failed its start-up

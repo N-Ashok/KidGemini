@@ -196,3 +196,25 @@ Statuses: `ACCEPTED` (known limit, deliberately deferred) · `OPEN` (needs actio
 - **Ready plan:** a nightly GC sweep for `game_saves` rows whose parent conversation no longer
   exists (same idiom as `SqliteHelpStore.pruneClosedText`'s sweep-on-write) — additive, no
   migration risk. **Effort:** ~30 min; low priority since the cascade already prevents new orphans.
+
+---
+
+## 9. `manifest.json` is client-bundled, and now carries a `size` per model — **ACCEPTED (capped by shape)**
+
+- **Decided:** 2026-08-08, with the dimension fix (`docs/BUG-FIX-LOG.md`, fragmented race tracks).
+- **What:** `src/lib/assets/ensure-runtime.ts` statically imports `manifest.json`, and it runs in
+  the browser preview — so every byte added to the manifest lands in the client bundle. The new
+  `size` field adds one entry per model, forever, growing linearly with the library (262 models
+  today, 245 of them sized).
+- **Why accepted:** the shape was chosen to make the growth small and predictable. `size` is a
+  **tuple** `[1.3,0.733,2.56]` (~22 bytes/entry), not `{x,y,z}` (~46) — roughly 5–6 KB at today's
+  size versus 12–13 KB — and every axis is rounded to 3 dp, which also keeps re-runs producing
+  byte-identical diffs. The injected `window.AR_SIZES` table is separately bounded: it ships only
+  the models a given game actually uses, not the library.
+- **Scale ceiling:** ~1000 models is roughly 22 KB of size data in the bundle. That is still small
+  next to the engine, but it is dead weight for the ~95% of models any one game never names.
+- **Trigger to revisit:** the library roughly doubling (~500+ models), or the first bundle-size
+  budget failure that names `manifest.json`. **Ready plan:** stop importing the whole manifest
+  client-side — serve the size lookup from the server at inject time only (the injector already
+  runs server-side; it is `ensure-runtime`'s preview-render floor that needs the client copy), or
+  split a `manifest.sizes.json` fetched on demand.

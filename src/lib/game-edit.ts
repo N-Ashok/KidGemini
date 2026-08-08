@@ -8,7 +8,7 @@
 // instead of bug fixes.
 
 import { isGameBuildTurn } from "./builder-mode";
-import { arAssetsKeys, assetMarkerNames, hasAssetMarker, looksInjected, stripAssetMarkers, stripAssetMarkersForDisplay, THREE_MARKER } from "./assets/markers";
+import { arAssetsKeys, assetMarkerLiterals, assetMarkerNames, hasAssetMarker, looksInjected, stripAssetMarkers, stripAssetMarkersForDisplay, THREE_MARKER } from "./assets/markers";
 import { hidePartialNextAskLine } from "./next-ask-sentinel";
 import type { ChatMessage } from "@/types/chat.types";
 
@@ -184,15 +184,35 @@ export function looksTruncatedDocument(html: string): boolean {
  *  reconcile" from "this needed real re-injection" from "never injected at all". */
 export type ReconcileBailReason = "not-injected" | "new-asset" | "no-marker";
 
+/** A reconciled reply: the marker-stripped text to re-apply, plus the verbatim
+ *  marker literals for any asset the game doesn't have yet (empty when the
+ *  edit adds none) — the caller appends them to the PATCHED html so
+ *  injectAssets injects the addition. */
+export interface Reconciled {
+  html: string;
+  markers: string;
+}
+
 export function reconcileAssetMarkersWithReason(
   currentHtml: string,
   reply: string,
-): { html: string } | { bailed: ReconcileBailReason } {
+): Reconciled | { bailed: ReconcileBailReason } {
   if (!hasAssetMarker(reply)) return { bailed: "no-marker" };
   if (!looksInjected(currentHtml)) return { bailed: "not-injected" };
+  // A marker naming an asset the game doesn't have YET used to bail here as
+  // "a real add that needs full re-injection". That was over-conservative
+  // against our own injector (BUG-FIX-LOG 2026-08-08): injectAssets already
+  // re-injects incrementally — it reclaims the names in the previous
+  // AR_ASSETS table and unions them with whatever markers it finds, emitting
+  // ONE merged table (the Sky Patrol bikes fix, 2026-08-06). So a genuine add
+  // does NOT need the whole game regenerated; it only needs its markers
+  // carried onto the patched HTML, which `markers` below hands back for the
+  // caller to append. Bailing instead threw away a surgical patch and ran a
+  // destructive full regeneration that can silently regress unrelated parts
+  // of a working game (the penguin-maze class, 2026-07-18).
   const present = new Set(arAssetsKeys(currentHtml));
-  if (assetMarkerNames(reply).some((name) => !present.has(name))) return { bailed: "new-asset" };
-  return { html: stripAssetMarkers(reply) };
+  const adds = assetMarkerNames(reply).filter((name) => !present.has(name));
+  return { html: stripAssetMarkers(reply), markers: adds.length ? assetMarkerLiterals(reply) : "" };
 }
 
 export function reconcileAssetMarkers(currentHtml: string, reply: string): string | null {

@@ -58,11 +58,27 @@ describe("asset-marker reconciliation (inSource=false rescue)", () => {
     expect(retry.ok && retry.html).toContain("window.AR_ASSETS");
   });
 
-  it("A.4 refuses to reconcile a NEW asset — that needs real re-injection (regeneration path)", () => {
+  // SUPERSEDED 2026-08-08 (BUG-FIX-LOG). This used to assert a bail: a marker
+  // naming a new asset was treated as "needs real re-injection", which threw
+  // away a working patch and ran a destructive full regeneration. injectAssets
+  // already re-injects incrementally (it reclaims the previous AR_ASSETS table
+  // and unions it with any markers), so the add only needs its marker literals
+  // carried onto the patched html — which is what `markers` now returns.
+  it("A.4 reconciles a NEW asset and hands back its marker literals instead of bailing", () => {
     const addsDragon = REPLY.replace(/USES_MODELS: car/g, "USES_MODELS: car, dragon");
-    // "dragon" is not in the stored game's AR_ASSETS, so stripping the marker
-    // would silently drop the child's newly requested model.
-    expect(reconcileAssetMarkers(STORED, addsDragon)).toBeNull();
+    const out = reconcileAssetMarkers(STORED, addsDragon);
+    expect(out).not.toBeNull();
+    expect(out).not.toMatch(/USES_MODELS/); // stripped, so SEARCH matches the stored source
+    const detailed = reconcileAssetMarkersWithReason(STORED, addsDragon);
+    expect("html" in detailed).toBe(true);
+    // The declaration survives — without it injectAssets would never inject
+    // "dragon" and the patched game would loadModel() a name that isn't there.
+    expect("html" in detailed && detailed.markers).toMatch(/dragon/);
+  });
+
+  it("A.4b an edit that adds NOTHING new returns no markers — the common case stays byte-identical", () => {
+    const detailed = reconcileAssetMarkersWithReason(STORED, REPLY);
+    expect("html" in detailed && detailed.markers).toBe("");
   });
 
   it("A.5 refuses on a plain 2D game — a marker there is a genuine new request", () => {
@@ -104,9 +120,13 @@ neither is this
 // from the log alone, WHY reconciliation bailed on a given miss — these
 // mirror A.4/A.5/A.6 above but assert the specific reason, not just null.
 describe("reconcileAssetMarkersWithReason — bail-reason detail (KNOWN_BUGS #5 Step 0)", () => {
-  it("bails 'new-asset' when the reply's marker names something the stored game doesn't already reference", () => {
+  // SUPERSEDED 2026-08-08: 'new-asset' is no longer a bail reason — see A.4.
+  // The type keeps the member so older log lines stay readable.
+  it("no longer bails on a new asset — it reconciles and reports the markers to carry", () => {
     const addsDragon = REPLY.replace(/USES_MODELS: car/g, "USES_MODELS: car, dragon");
-    expect(reconcileAssetMarkersWithReason(STORED, addsDragon)).toEqual({ bailed: "new-asset" });
+    const out = reconcileAssetMarkersWithReason(STORED, addsDragon);
+    expect(out).not.toHaveProperty("bailed");
+    expect("html" in out && out.markers).toMatch(/USES_MODELS/);
   });
 
   it("bails 'not-injected' when the current game was never run through injectAssets", () => {
@@ -134,5 +154,30 @@ let carSpeed = 9;
     expect(reconcileAssetMarkers(STORED, REPLY)).toBe(
       (reconcileAssetMarkersWithReason(STORED, REPLY) as { html: string }).html,
     );
+  });
+});
+
+// The end-to-end guarantee behind A.4 (BUG-FIX-LOG 2026-08-08): reconciling a
+// new asset is only safe because injectAssets merges incrementally. This pins
+// that contract against the REAL injector — if injectAssets ever stops
+// reclaiming the previous AR_ASSETS table, this fails loudly instead of
+// silently shipping games whose older models vanished (Sky Patrol bikes class).
+describe("new-asset reconciliation survives real injection (end-to-end)", () => {
+  const tableOf = (html: string): Record<string, string> => {
+    const m = html.match(/window\.AR_ASSETS=(\{.*?\});/);
+    return m ? (JSON.parse(m[1]!) as Record<string, string>) : {};
+  };
+
+  it("keeps the OLD asset and gains the NEW one in a single merged table", () => {
+    // STORED already carries "car". Append the marker route.ts now appends.
+    expect(Object.keys(tableOf(STORED))).toContain("car");
+
+    const patched = `${STORED}<!--USES_MODELS: dino-->`;
+    const merged = injectAssets(patched).html;
+
+    expect(Object.keys(tableOf(merged)).sort()).toEqual(["car", "dino"]);
+    // Exactly ONE table survives — a stale second one would win by document
+    // order and erase the model added this turn.
+    expect(merged.match(/window\.AR_ASSETS=/g)!.length).toBe(1);
   });
 });

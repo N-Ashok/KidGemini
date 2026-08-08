@@ -421,8 +421,14 @@ const MODELS = [
   })),
 
   // Race track pieces (new kit this batch — racing-kit, CC0 confirmed on the kenney.nl page).
-  { name: 'race_track_straight', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadStraight.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
-  { name: 'race_track_curve', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadCurved.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
+  // recenterXZ (2026-08-08, BUG-FIX-LOG fragmented race tracks): the racing kit
+  // ships arbitrary origins — race_track_straight is a perfect 1 × 1 m tile
+  // whose origin sat 1.15 m off in Z, and the curve 1.65 m off. Its SIZE was
+  // never wrong, so no amount of scale normalization would have helped: a game
+  // stepping the correct 1 m still scattered the geometry. Bake the offset out
+  // so origin == footprint centre and `i * modelSize(n).z` tiles edge-to-edge.
+  { name: 'race_track_straight', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadStraight.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit', recenterXZ: true },
+  { name: 'race_track_curve', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadCurved.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit', recenterXZ: true },
   { name: 'finish_line', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/roadStart.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
   { name: 'checkered_flag', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/flagCheckers.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
   { name: 'grandstand', source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip', innerPath: 'Models/GLTF format/grandStand.glb' }, sourceUrl: 'https://kenney.nl/assets/racing-kit' },
@@ -787,10 +793,15 @@ const MODELS = [
     ['road_roundabout', 'road-roundabout'], ['road_ramp', 'road-slant'],
     ['road_bridge', 'road-bridge'], ['bridge_pillar', 'bridge-pillar'],
     ['highway_sign', 'sign-highway'],
+  // recenterXZ: these tiles ARE already centre-origin (verified 2026-08-08 —
+  // road_straight measures -0.5..0.5 on both axes), so the bake is a no-op; it
+  // is declared to make the tiling contract explicit and to catch a future
+  // kit swap that quietly breaks it. See the race_track_* pair, which was NOT.
   ].map(([name, file]) => ({
     name,
     source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/city-kit-roads/74288c9459-1741864740/kenney_city-kit-roads.zip', innerPath: `Models/GLB format/${file}.glb` },
     sourceUrl: 'https://kenney.nl/assets/city-kit-roads',
+    recenterXZ: true,
   })),
   // Bridges. The two CC0 finds ride as-is; the two CC-BY ones carry authors
   // for the credits chip. normalizeLongest: the suspension bridge is a whole
@@ -977,6 +988,46 @@ async function prepare(model) {
       console.log(`  normalized: longest axis ${longest.toFixed(2)} → ${model.normalizeLongest} m`);
     }
   }
+  // normalizeFootprint (2026-08-08, BUG-FIX-LOG fragmented race tracks): for
+  // MODULAR tiles (roads, race-track pieces) what must land on the grid is the
+  // XZ FOOTPRINT. normalizeLongest is the wrong primitive here because it
+  // includes Y — a tile with a kerb or a guardrail would get scaled by its
+  // HEIGHT and land off-grid. Same node-level bake, XZ-only measure.
+  if (model.normalizeFootprint) {
+    const scene = doc.getRoot().getDefaultScene() ?? doc.getRoot().listScenes()[0];
+    const { min, max } = getBounds(scene);
+    const foot = Math.max(max[0] - min[0], max[2] - min[2]);
+    if (foot > 0) {
+      const f = model.normalizeFootprint / foot;
+      for (const node of scene.listChildren()) {
+        node.setScale(node.getScale().map((s) => s * f));
+        node.setTranslation(node.getTranslation().map((t) => t * f));
+      }
+      console.log(`  footprint: ${foot.toFixed(2)} → ${model.normalizeFootprint} m`);
+    }
+  }
+  // recenterXZ (2026-08-08, BUG-FIX-LOG fragmented race tracks): a tile is only
+  // layable by `pos = i * modelSize(n).z` if its ORIGIN is the centre of its own
+  // footprint. Kenney's city road kit already satisfies this (road_straight
+  // measured -0.5..0.5 on both axes); the racing kit does NOT —
+  // race_track_straight is a perfect 1 × 1 m tile whose origin sits 1.15 m away
+  // in Z, so correct spacing still scatters the geometry. Size alone cannot
+  // express that, so we bake the offset out instead of shipping an origin field.
+  // XZ only: Y is left alone so tiles keep sitting ON the ground plane, not
+  // half-sunk through it.
+  if (model.recenterXZ) {
+    const scene = doc.getRoot().getDefaultScene() ?? doc.getRoot().listScenes()[0];
+    const { min, max } = getBounds(scene);
+    const dx = (min[0] + max[0]) / 2;
+    const dz = (min[2] + max[2]) / 2;
+    if (Math.abs(dx) > 1e-6 || Math.abs(dz) > 1e-6) {
+      for (const node of scene.listChildren()) {
+        const t = node.getTranslation();
+        node.setTranslation([t[0] - dx, t[1], t[2] - dz]);
+      }
+      console.log(`  recentered: origin moved by (${dx.toFixed(3)}, ${dz.toFixed(3)}) in XZ`);
+    }
+  }
   const steps = [dedup(), prune(), resample(), weld({ tolerance: 1e-4 })];
   if (model.simplifyRatio) {
     steps.push(simplify({ simplifier: MeshoptSimplifier, ratio: model.simplifyRatio, error: 0.001 }));
@@ -993,6 +1044,49 @@ async function prepare(model) {
     const scene = doc.getRoot().getDefaultScene() ?? doc.getRoot().listScenes()[0];
     assertLongAxisZ(model.name, getBounds(scene));
   }
+  // Published size (2026-08-08, BUG-FIX-LOG fragmented race tracks): the
+  // world-space bbox of the model as it will actually render at scale 1.
+  // Measured HERE — after every transform, so it describes the bytes we are
+  // about to hash, not the source file. getBounds() de-normalizes accessors and
+  // applies getWorldMatrix(), so the KHR_mesh_quantization scale meshopt() bakes
+  // into the node TRS is handled; it is the same call assertLongAxisZ trusts.
+  //
+  // SKINNED models are deliberately left without a size rather than given a
+  // wrong one: getBounds() has no skin handling, so it reads the BIND-space
+  // POSITION accessor and then multiplies by a node matrix that a skinned mesh
+  // must ignore per the glTF spec. modelSize() returns null for those and the
+  // game eyeballs the scale exactly as it did before this change. A rest-pose
+  // skinning pass is TECH_DEBT (cross-repo register).
+  //
+  // Caveat that must not be lost: for an ANIMATED model this would be a
+  // rest-pose snapshot, not a bound swept over the animation — a scale and
+  // placement hint, never a collision box.
+  const finalScene = doc.getRoot().getDefaultScene() ?? doc.getRoot().listScenes()[0];
+  // Centring lint: recenterXZ runs BEFORE the transform steps, so re-measure
+  // after them and fail the build if the origin is still off its footprint
+  // centre. Without this the bake is silent-on-failure, which is the exact
+  // class of bug being fixed.
+  if (model.recenterXZ) {
+    const { min, max } = getBounds(finalScene);
+    const dx = (min[0] + max[0]) / 2;
+    const dz = (min[2] + max[2]) / 2;
+    if (Math.abs(dx) > 0.005 || Math.abs(dz) > 0.005) {
+      throw new Error(
+        `${model.name}: tile origin is still off-centre after recenterXZ ` +
+          `(${dx.toFixed(3)}, ${dz.toFixed(3)}) — games tile by stepping modelSize(), which assumes a centred origin`,
+      );
+    }
+  }
+  let size;
+  if (doc.getRoot().listSkins().length > 0) {
+    console.log(`  size: omitted — skinned mesh (a bind-pose bbox is not the rendered size)`);
+  } else {
+    const b = getBounds(finalScene);
+    // 3 dp so a re-run produces byte-identical manifest diffs and the JSON that
+    // ships to the client stays small.
+    size = [0, 1, 2].map((i) => Math.round((b.max[i] - b.min[i]) * 1000) / 1000);
+    console.log(`  size: ${size.join(' × ')} m`);
+  }
   const bytes = Buffer.from(await io.writeBinary(doc));
   if (bytes.length < 12 || bytes.subarray(0, 4).toString('ascii') !== 'glTF') {
     throw new Error(`${model.name}: compressed output is not a GLB (magic bytes)`);
@@ -1004,7 +1098,7 @@ async function prepare(model) {
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   const fileName = `${model.name}.${sha256.slice(0, 6)}.glb`;
   await writeFile(join(outDir, fileName), bytes);
-  return { bytes, sha256, fileName, url: `${ASSET_HOST_ORIGIN}/${fileName}` };
+  return { bytes, sha256, fileName, url: `${ASSET_HOST_ORIGIN}/${fileName}`, size };
 }
 
 const prepared = [];
@@ -1079,6 +1173,8 @@ for (const p of prepared) {
     ...(p.model.author ? { author: p.model.author } : {}),
     sourceUrl: p.model.sourceUrl,
     sha256: p.sha256,
+    // Omitted for skinned models — see the measurement block in prepare().
+    ...(p.size ? { size: p.size } : {}),
   };
   const existing = manifest.assets.findIndex((a) => a.name === p.model.name);
   if (existing >= 0) manifest.assets[existing] = entryJson;

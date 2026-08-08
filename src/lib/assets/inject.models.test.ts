@@ -10,6 +10,7 @@ vi.mock("server-only", () => ({}));
 
 import { THREE_MARKER, injectAssets } from "./inject";
 import { ASSET_HOST_ORIGIN, type AssetManifest, type AssetEntry } from "./manifest";
+import { countSizeTables } from "./runtime-helpers";
 
 const sha = (c: string) => c.repeat(64);
 function entry(name: string, type: AssetEntry["type"], bytes: number, shaChar: string): AssetEntry {
@@ -193,5 +194,60 @@ describe("injectAssets — edit turns strip and reclaim the previous injection",
     const again = injectAssets(editTurn(firstTurn.html, "car, tree"), manifest);
     expect(assetsTable(again.html)).toEqual(assetsTable(firstTurn.html));
     expect(again.html.match(/window\.AR_ASSETS\s*=/g)?.length).toBe(1);
+  });
+});
+
+// 2026-08-08, BUG-FIX-LOG fragmented race tracks: the injector ships the
+// measured metres alongside the URL table so modelSize() has something to read.
+describe("injectAssets — the AR_SIZES table", () => {
+  const sized: AssetManifest = {
+    assets: [
+      entry("three", "engine", 580_000, "a"),
+      { ...entry("car", "model", 14_000, "b"), size: [1.3, 0.733, 2.56] },
+      { ...entry("road_straight", "model", 11_000, "e"), size: [1, 0.02, 1] },
+      entry("dino", "model", 83_000, "c"), // skinned upstream — ships no size
+    ],
+  };
+  const sizesTable = (html: string) => {
+    const m = html.match(/window\.AR_SIZES\s*=\s*(\{[^<]*?\});/);
+    if (!m) throw new Error("no AR_SIZES table in output");
+    return JSON.parse(m[1]!) as Record<string, [number, number, number]>;
+  };
+  const game = (models: string) =>
+    `<!doctype html><html><head></head><body>${THREE_MARKER}<!--USES_MODELS: ${models}--><script type="module">go()</script></body></html>`;
+
+  it("ships the measured metres for each model the game uses", () => {
+    const out = injectAssets(game("car, road_straight"), sized).html;
+    expect(sizesTable(out)).toEqual({ car: [1.3, 0.733, 2.56], road_straight: [1, 0.02, 1] });
+  });
+
+  it("omits an unmeasured model from sizes while keeping it loadable", () => {
+    // A skinned model has no trustworthy bbox. It must still LOAD — only its
+    // size is unknown, and modelSize() says so by answering null.
+    const out = injectAssets(game("car, dino"), sized).html;
+    expect(sizesTable(out)).toEqual({ car: [1.3, 0.733, 2.56] });
+    expect(assetsTable(out).dino).toBe(sized.assets.find((a) => a.name === "dino")!.url);
+  });
+
+  it("emits no sizes block at all when nothing in play is measured", () => {
+    const out = injectAssets(game("dino"), sized).html;
+    expect(out).not.toContain("window.AR_SIZES=");
+  });
+
+  it("leaves exactly ONE sizes block when an edit turn echoes the previous injection", () => {
+    // The 2026-08-06 duplicate-table class, now for the second table:
+    // stripInjectedHelperBlocks does not match AR_SIZES, so the injector needs
+    // its own strip or a stale block survives and runs LAST.
+    const first = injectAssets(game("car, road_straight"), sized).html;
+    const again = injectAssets(
+      first.replace("<body>", `<body>${THREE_MARKER}<!--USES_MODELS: car, road_straight-->`),
+      sized,
+    ).html;
+    // countSizeTables, not a bare /window\.AR_SIZES =/ count: the loadModel
+    // helper carries its own `window.AR_SIZES = window.AR_SIZES || {}` guard,
+    // which is not a table block and must not be counted as one (nor stripped —
+    // the block regex requires the assignment to open the script tag).
+    expect(countSizeTables(again)).toBe(1);
+    expect(sizesTable(again)).toEqual(sizesTable(first));
   });
 });

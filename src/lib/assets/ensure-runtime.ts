@@ -22,6 +22,9 @@ import {
   parseAssetTables,
   stripAssetTables,
   countAssetTables,
+  parseSizeTables,
+  stripSizeTables,
+  countSizeTables,
 } from "./runtime-helpers";
 import { injectPerfProbe } from "./perf-probe";
 
@@ -161,6 +164,35 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
     if (!alreadyHealthy) {
       out = stripAssetTables(out);
       markup += `<script>window.AR_ASSETS=${JSON.stringify(union)};</script>`;
+    }
+
+    // (3c) the AR_SIZES table — the measured metres behind modelSize()
+    // (2026-08-08, BUG-FIX-LOG fragmented race tracks). Without this branch the
+    // v4 helper below retrofits onto a stored game with an EMPTY table and
+    // modelSize() answers null for everything, which is the bug again.
+    //
+    // Fully DERIVED from the manifest plus the union names resolved above, so
+    // there is nothing to recover from the document — unlike AR_ASSETS, a stale
+    // table here is simply replaced. Skinned models carry no size and are
+    // absent by construction.
+    const sizeByName = new Map(
+      manifest.assets.flatMap((a) => (a.type === "model" && a.size ? [[a.name, a.size] as const] : [])),
+    );
+    const sizes: Record<string, [number, number, number]> = {};
+    for (const name of Object.keys(union)) {
+      const s = sizeByName.get(name);
+      if (s) sizes[name] = s;
+    }
+    // A stringify compare is exact here (where AR_ASSETS needs a key-by-key
+    // one): both sides are built by iterating Object.keys(union) in the same
+    // order, so a healthy game re-serializes byte-identically and is left
+    // alone — which is what keeps ensureAssetRuntime idempotent.
+    const singleSizes = countSizeTables(out) === 1 ? parseSizeTables(out)[0] : undefined;
+    if (singleSizes === undefined || JSON.stringify(singleSizes) !== JSON.stringify(sizes)) {
+      out = stripSizeTables(out);
+      if (Object.keys(sizes).length > 0) {
+        markup += `<script>window.AR_SIZES=${JSON.stringify(sizes)};</script>`;
+      }
     }
   }
 

@@ -3,7 +3,7 @@
 // its import line — the whole game script never runs. The lint catches the
 // violation server-side, BEFORE the kid ever sees a dead game.
 import { describe, it, expect } from "vitest";
-import { ensureThreeImports, newUnknownThreeImports, unknownThreeImports } from "./three-import-lint";
+import { ensureThreeImports, newUnknownThreeImports, unknownThreeImports, stripRuntimeGlobalImports } from "./three-import-lint";
 
 const game = (imports: string) =>
   `<html><body><script type="module">import { ${imports} } from "three";\nconst x = 1;</script></body></html>`;
@@ -129,5 +129,66 @@ const l = new HemisphereLight(1);
   it("adds MathUtils on static usage (MathUtils.clamp) — the one non-constructor name games reach for", () => {
     const html = playable("Scene", "const v = MathUtils.clamp(x, 0, 1);");
     expect(ensureThreeImports(html)).toContain('import { Scene, MathUtils } from "three"');
+  });
+});
+
+// ── Runtime globals wrongly imported from "three" (BUG-FIX-LOG 2026-08-08) ──
+// Prod: `unknown three imports: loadModel, loadModelBatch — corrective retry`.
+// These are helpers Ari itself injects as window globals (loadModelHelper etc.),
+// and the prompt says to call them as built-ins — so importing them from "three"
+// is a category error that kills the import line, and cost a full ~50s corrective
+// LLM retry. Stripping them is deterministic and safe: they resolve at runtime.
+describe("stripRuntimeGlobalImports — runtime helpers are globals, never three exports", () => {
+  it("strips loadModel/loadModelBatch while keeping the real three names", () => {
+    const html = `<script type="module">import { Scene, loadModel, WebGLRenderer, loadModelBatch } from "three";</script>`;
+    const out = stripRuntimeGlobalImports(html);
+    expect(out).toContain('import { Scene, WebGLRenderer } from "three"');
+    expect(out).not.toContain("loadModel");
+  });
+
+  it("strips every audio/model helper global that actually exists", () => {
+    const html = `<script type="module">import { Scene, playSound, playMusic } from "three";</script>`;
+    expect(stripRuntimeGlobalImports(html)).toContain('import { Scene } from "three"');
+  });
+
+  // The list must never run ahead of the runtime: stripping a name that ISN'T
+  // a real global turns a dead import line (loud, verify catches it) into a
+  // play-time ReferenceError verify reports as "clean" — the PointLight class,
+  // BUG-FIX-LOG 2026-08-07. modelSize was held out until the model-sizing work
+  // shipped window.modelSize (2026-08-08); it is a real global now.
+  it("strips modelSize now that its window.modelSize helper actually ships", () => {
+    const html = `<script type="module">import { Scene, modelSize } from "three";</script>`;
+    expect(stripRuntimeGlobalImports(html)).toContain('import { Scene } from "three"');
+  });
+
+  it("removes the whole statement when EVERY imported name was a global", () => {
+    const html = `<script type="module">import { loadModel, playSound } from "three";\nloadModel("car");</script>`;
+    const out = stripRuntimeGlobalImports(html);
+    expect(out).not.toMatch(/import\s*\{[^}]*\}\s*from\s*["']three["']/);
+    expect(out).toContain('loadModel("car")'); // the CALL is untouched — it's a global
+  });
+
+  it("strips an aliased global by its ORIGINAL name", () => {
+    const html = `<script type="module">import { Scene, loadModel as lm } from "three";</script>`;
+    expect(stripRuntimeGlobalImports(html)).toContain('import { Scene } from "three"');
+  });
+
+  it("leaves a clean three import byte-identical", () => {
+    const html = `<script type="module">import { Scene, WebGLRenderer } from "three";</script>`;
+    expect(stripRuntimeGlobalImports(html)).toBe(html);
+  });
+
+  it("is idempotent and 2D-safe (no three import at all)", () => {
+    const html = `<script type="module">import { Scene, loadModel } from "three";</script>`;
+    const once = stripRuntimeGlobalImports(html);
+    expect(stripRuntimeGlobalImports(once)).toBe(once);
+    const twoD = `<script>const s = 1;</script>`;
+    expect(stripRuntimeGlobalImports(twoD)).toBe(twoD);
+  });
+
+  it("clears the very violation the corrective retry fired on — unknownThreeImports goes empty", () => {
+    const html = `<script type="module">import { Scene, loadModel, loadModelBatch } from "three";</script>`;
+    expect(unknownThreeImports(html)).toEqual(["loadModel", "loadModelBatch"]);
+    expect(unknownThreeImports(stripRuntimeGlobalImports(html))).toEqual([]);
   });
 });

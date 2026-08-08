@@ -219,6 +219,24 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     }
   });
 
+  // Regression, 2026-08-08 (BUG-FIX-LOG fragmented race tracks): the section
+  // used to say "models load at their own natural size — set m.scale and
+  // m.position so they fit your scene", which is an instruction to guess with
+  // nothing to guess from. The model laid 1 m road tiles 10 m apart, and no
+  // amount of re-prompting could fix it because the sizes existed nowhere in
+  // the prompt. These pin the teaching that replaced it.
+  it("teaches modelSize() instead of telling the model to guess a size", () => {
+    expect(section).toMatch(/modelSize\(name\)/);
+    expect(section).toMatch(/NEVER guess a size or a spacing/);
+    // The exact sentence that caused the bug must not come back.
+    expect(section).not.toMatch(/load at their own natural size/);
+  });
+
+  it("shows tiles being stepped by their measured footprint, not by a made-up number", () => {
+    expect(section).toMatch(/edge-to-edge/);
+    expect(section).toMatch(/modelSize\("road_straight"\)\.z/);
+  });
+
   it("does not depend on the child's message — this is what makes the prefix cacheable", () => {
     // COST_TOKEN_BUDGET.md waste-ledger #4: a system prompt that varies per
     // message breaks Gemini implicit caching on the ~10-15k of game code behind
@@ -262,7 +280,20 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // re-implemented by the model), not catalog creep. Measured ~2179 during
     // implementation. The category-map hybrid fallback the section doc
     // promises is the next step if a batch pushes past this line.
-    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_350);
+    // Raised 2350 → 2400 (2026-08-08, BUG-FIX-LOG fragmented race tracks):
+    // rule 4 was REWRITTEN, not extended. Its old first sentence ("models load
+    // at their own natural size — set m.scale and m.position so they fit your
+    // scene") was an instruction to GUESS, and the model duly guessed 10 m for
+    // a 1 m road tile, scattering the track across a field of grass. It now
+    // teaches modelSize(name) — measured metres, shipped in window.AR_SIZES —
+    // and to step tiles by that exact footprint. ~50 tokens of fault-driven
+    // teaching that also DELETES the wrong teaching it replaces, the same
+    // category as the 2300 → 2350 rotor raise. Measured 2398 — deliberately
+    // close to the line, because the next raise should have to justify itself.
+    // The category-map hybrid the section doc promises is still the next step
+    // if an ASSET BATCH pushes past this line — it is not a licence to keep
+    // raising it for prose.
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_400);
   });
 });
 

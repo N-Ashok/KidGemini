@@ -34,6 +34,25 @@ export interface AssetEntry {
   sourceUrl: string;
   /** Full sha256 (hex) of the exact published bytes. */
   sha256: string;
+  /** World-space bounding-box size of the PUBLISHED glb, in METRES, as
+   *  [x, y, z] — measured by scripts/vendor-models.mjs after every transform
+   *  (rotateYDeg, normalizeLongest/normalizeFootprint, simplify, meshopt), so
+   *  it is the size the game actually renders at scale 1. This is what reaches
+   *  a generated game as `window.AR_SIZES` / `modelSize(name)`: before
+   *  2026-08-08 NO dimension data existed anywhere the model could see it, and
+   *  it laid 1 m road tiles 10 m apart (BUG-FIX-LOG 2026-08-08).
+   *
+   *  OPTIONAL, deliberately: entries minted before 2026-08-08 have none, and
+   *  SKINNED models are omitted — their POSITION accessor is in bind space and
+   *  a skinned mesh ignores its node transform per spec, so the measurement
+   *  would be wrong rather than missing. `modelSize()` returns null for those
+   *  and the game falls back to eyeballing, exactly as it does today.
+   *
+   *  A tuple, not {x, y, z}: manifest.json is bundled into the CLIENT (see the
+   *  static import in ensure-runtime.ts), and this is the exact value shape
+   *  shipped in AR_SIZES — so the injector is a pass-through and the table's
+   *  values contain no `}` for the block regexes to trip over. */
+  size?: [number, number, number];
 }
 
 export interface AssetManifest {
@@ -126,6 +145,25 @@ export function validateEntry(e: AssetEntry): void {
     throw new Error(
       `"${e.name}" is over the ${e.type} byte budget: ${e.bytes} > ${BUDGET_BYTES[e.type]}`,
     );
+  }
+  if (e.size !== undefined) {
+    if (e.type !== "model") {
+      throw new Error(`only models carry a size — "${e.name}" is a ${e.type}`);
+    }
+    if (!Array.isArray(e.size) || e.size.length !== 3) {
+      throw new Error(`size for "${e.name}" must be [x, y, z] metres`);
+    }
+    for (const v of e.size) {
+      // A zero/negative axis silently stacks every tile on the origin once a
+      // game steps by it. The upper bound is a typo guard, not a design limit:
+      // the largest real entry is suspension_bridge at 50 m, so a 1e7 means an
+      // un-normalized author scale slipped past normalizeLongest.
+      if (!Number.isFinite(v) || v <= 0 || v > 1_000) {
+        throw new Error(
+          `size for "${e.name}" must be positive finite metres under 1000 (got ${v})`,
+        );
+      }
+    }
   }
   if (!/^https:\/\//.test(e.sourceUrl)) throw new Error(`sourceUrl must be https for "${e.name}" — it is the license proof`);
 

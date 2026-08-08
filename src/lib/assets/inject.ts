@@ -18,6 +18,7 @@ import {
   creditsHelper,
   parseAssetTables,
   stripAssetTables,
+  stripSizeTables,
 } from "./runtime-helpers";
 
 const CALLS_LOADMODELBATCH_RE = /\bloadModelBatch\s*\(/;
@@ -167,6 +168,11 @@ export function injectAssets(html: string, manifest: AssetManifest = manifestJso
   // block left behind would execute LATER and win — a stale AR_ASSETS
   // assignment silently erases every model added this turn.
   out = stripAssetTables(out);
+  // stripInjectedHelperBlocks keys on `window.(loadModel|loadModelBatch|
+  // playSound) =`, so it does NOT catch the sizes table — without this line an
+  // edit turn accumulates AR_SIZES blocks, the same duplicate-table class the
+  // strip above exists for.
+  out = stripSizeTables(out);
   out = stripInjectedHelperBlocks(out);
   if (engine || physics) {
     // A fresh import map is emitted below; an echoed one alongside it would be
@@ -184,6 +190,17 @@ export function injectAssets(html: string, manifest: AssetManifest = manifestJso
   const table = Object.fromEntries([...models, ...audio].map((a) => [a.name, a.url]));
   if (modelNames.length > 0 || audioNames.length > 0) {
     markup += `<script>window.AR_ASSETS=${JSON.stringify(table)};</script>`;
+  }
+  // The measured metres for the models in play (2026-08-08 — the
+  // fragmented-track fix). Models only: sounds have no footprint. Emitted
+  // BEFORE the helper purely for readability — the helper's `|| {}` guard means
+  // document order is not load-bearing. Models the pipeline could not measure
+  // (skinned) are simply absent, and modelSize() answers null for them.
+  const sizes = Object.fromEntries(
+    models.flatMap((m) => (m.size ? [[m.name, m.size] as const] : [])),
+  );
+  if (Object.keys(sizes).length > 0) {
+    markup += `<script>window.AR_SIZES=${JSON.stringify(sizes)};</script>`;
   }
   if (modelNames.length > 0) markup += loadModelHelper();
   if (modelNames.length > 0 && CALLS_LOADMODELBATCH_RE.test(html)) markup += loadModelBatchHelper();

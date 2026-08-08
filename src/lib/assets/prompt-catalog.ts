@@ -175,9 +175,12 @@ ${categories}
    \`loadModel("${models[0]!.name}").then((m) => { if (m) { m.scale.set(2, 2, 2); scene.add(m); player = m; } });\`
    If \`m\` is null, simply keep the placeholder — the game must keep working
    without the model.
-4. Models load at their own natural size — set \`m.scale\` and \`m.position\`
-   so they fit your scene. Every model faces +Z at rest — steer with
-   \`rotation.y\` alone; +Z is forward.
+4. \`modelSize(name)\` gives a model's REAL metres \`{x, y, z}\` BEFORE you load
+   it (null if unknown — then eyeball it). NEVER guess a size or a spacing:
+   tiles are small, a road piece is ~1 m, not 10. Lay roads/tracks/paths
+   edge-to-edge by stepping that footprint, and scale by want ÷ actual:
+   \`const w = modelSize("road_straight").z; place(i * w);\`
+   Every model faces +Z at rest — steer with \`rotation.y\` alone; +Z is forward.
 5. Some models carry NAMED animations in \`m.animations\` — don't blindly play
    \`m.animations[0]\`: it's often an idle pose, or even an attack, so picking
    it for a "running" character makes it look like it's attacking instead of

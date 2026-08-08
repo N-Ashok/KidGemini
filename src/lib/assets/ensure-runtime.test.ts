@@ -14,6 +14,7 @@ import { ensureAssetRuntime } from "./ensure-runtime";
 import { PERF_PROBE_MARKER, buildPerfProbeScript } from "./perf-probe";
 import manifestJson from "./manifest.json";
 import type { AssetManifest } from "./manifest";
+import { countSizeTables, parseSizeTables } from "./runtime-helpers";
 
 const manifest = manifestJson as AssetManifest;
 const ENGINE = manifest.assets.find((a) => a.type === "engine")!.url;
@@ -220,6 +221,62 @@ window.loadModel = async function (name) {
     const raw = page(`<script type="module">import { Scene } from "three"; loadModel("car");</script>`);
     const out = ensureAssetRuntime(raw);
     expect(out).not.toContain("window.loadModelBatch");
+  });
+
+  // F.16-F.18 — 2026-08-08, BUG-FIX-LOG fragmented race tracks. A generated
+  // racer laid 1 m road tiles at 10 m intervals because no dimension data
+  // existed anywhere it could reach. modelSize() is the fix, and THIS is the
+  // path that carries it to games that already exist: every stored 3D game
+  // re-floors on its next preview render, so the v3→v4 helper bump plus the
+  // AR_SIZES table retrofits the capability with no migration.
+  it("F.16 a stored game with a v3 helper and no sizes table gains BOTH modelSize and the metres it reads", () => {
+    const v3Helper = `<script type="module">
+  import { GLTFLoader, MeshoptDecoder } from "three";
+  window.__arLoadModelVersion = 3;
+window.loadModel = async function (name) { return null; };
+</script>`;
+    const stored = page(
+      `<script type="importmap">${JSON.stringify({ imports: { three: ENGINE } })}</script>` +
+        `<script>window.AR_ASSETS=${JSON.stringify({ car: CAR })};</script>` +
+        v3Helper +
+        `<script type="module">import { Scene } from "three"; loadModel("car");</script>`,
+    );
+    const out = ensureAssetRuntime(stored);
+    expect(out).toContain("window.__arLoadModelVersion = 4");
+    expect(out).toContain("window.modelSize");
+    // The helper alone would be useless — it must find real metres to read.
+    const carSize = manifest.assets.find((a) => a.name === "car")!.size;
+    expect(countSizeTables(out)).toBe(1);
+    expect(parseSizeTables(out)[0]).toEqual(carSize ? { car: carSize } : {});
+    // The stale v3 block was stripped, not left alongside the fresh one.
+    expect(out.match(/window\.loadModel\s*=/g)?.length).toBe(1);
+    expect(ensureAssetRuntime(out)).toBe(out); // and settles immediately
+  });
+
+  it("F.17 stays idempotent on a game that already carries a correct sizes table", () => {
+    const once = ensureAssetRuntime(
+      page(`<canvas></canvas><script type="module">import { Scene } from "three"; loadModel("car");</script>`),
+    );
+    expect(ensureAssetRuntime(once)).toBe(once);
+    expect(countSizeTables(once)).toBeLessThanOrEqual(1);
+  });
+
+  it("F.18 replaces a STALE sizes table rather than leaving it to win by document order", () => {
+    // A wrong footprint is worse than none — a game stepping it tiles into the
+    // wrong place with full confidence.
+    const stale = page(
+      `<script>window.AR_ASSETS=${JSON.stringify({ car: CAR })};</script>` +
+        `<script>window.AR_SIZES=${JSON.stringify({ car: [99, 99, 99] })};</script>` +
+        `<script type="module">import { Scene } from "three"; loadModel("car");</script>`,
+    );
+    const out = ensureAssetRuntime(stale);
+    expect(countSizeTables(out)).toBe(1);
+    expect(parseSizeTables(out)[0]).not.toEqual({ car: [99, 99, 99] });
+  });
+
+  it("F.19 leaves a plain 2D game byte-identical — no sizes table for a game with no models", () => {
+    const flat = page(`<canvas></canvas><script>document.querySelector("canvas").getContext("2d");</script>`);
+    expect(ensureAssetRuntime(flat)).not.toContain("window.AR_SIZES=");
   });
 });
 

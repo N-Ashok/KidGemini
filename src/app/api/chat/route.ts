@@ -20,7 +20,7 @@ import { stripAssetMarkers } from "@/lib/assets/markers";
 import { applyPatch } from "@/lib/repair-prompt";
 import { injectAssets } from "@/lib/assets/inject";
 import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
-import { ensureThreeImports, newUnknownThreeImports, unknownThreeImports } from "@/lib/assets/three-import-lint";
+import { ensureThreeImports, newUnknownThreeImports, unknownThreeImports, stripRuntimeGlobalImports } from "@/lib/assets/three-import-lint";
 import { CURATED_IMPORT_NAMES } from "@/lib/assets/prompt-catalog";
 import { ensureMultiplayerMarker } from "@/lib/multiplayer-gate";
 import { parseNextAskLine } from "@/lib/next-ask-sentinel";
@@ -530,10 +530,14 @@ export async function POST(req: NextRequest) {
         // three name (`new PointLight(...)` missing from the import list) is a
         // play-time ReferenceError the verify pass can't see — heal it
         // deterministically; byte-identical when nothing is missing.
-        return ensureMultiplayerMarker(ensureAssetRuntime(ensureThreeImports(injected.html)));
+        // stripRuntimeGlobalImports (BUG-FIX-LOG 2026-08-08) runs FIRST: a
+        // runtime helper wrongly imported from "three" (loadModel…) is a dead
+        // import line, and dropping it here retires the ~50s corrective retry
+        // that used to be the only cure.
+        return ensureMultiplayerMarker(ensureAssetRuntime(ensureThreeImports(stripRuntimeGlobalImports(injected.html))));
       } catch (err) {
         console.error(`[api/chat] ✖ asset injection failed @${ms()}ms (serving raw artifact): ${(err as Error).message}`);
-        return ensureMultiplayerMarker(ensureAssetRuntime(ensureThreeImports(rawHtml)));
+        return ensureMultiplayerMarker(ensureAssetRuntime(ensureThreeImports(stripRuntimeGlobalImports(rawHtml))));
       }
     }
 
@@ -715,12 +719,19 @@ export async function POST(req: NextRequest) {
       // found. Reconcile them out (guarded — only when it can't regress a new
       // asset) and re-apply BEFORE escalating to a full regeneration.
       if (!applied.ok && applied.reason === "search_not_found") {
-        const reconciled = reconcileAssetMarkers(currentHtml, full);
-        if (reconciled) {
-          const retry = applyPatch(currentHtml, reconciled);
+        const reconciled = reconcileAssetMarkersWithReason(currentHtml, full);
+        if ("html" in reconciled) {
+          const retry = applyPatch(currentHtml, reconciled.html);
           if (retry.ok) {
-            applied = retry;
-            console.log(`[api/chat] ✓ edit patch after asset-marker reconciliation @${ms()}ms`);
+            // An edit that ADDS an asset keeps its marker literals — appended
+            // to the PATCHED html so injectAssets injects the addition and
+            // merges it with the names it reclaims from the previous
+            // AR_ASSETS table (BUG-FIX-LOG 2026-08-08). Empty for an edit that
+            // adds nothing, so the common case stays byte-identical.
+            applied = reconciled.markers ? { ...retry, html: retry.html + reconciled.markers } : retry;
+            console.log(
+              `[api/chat] ✓ edit patch after asset-marker reconciliation${reconciled.markers ? " (+new assets)" : ""} @${ms()}ms`,
+            );
           }
         }
       }

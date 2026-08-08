@@ -16,6 +16,9 @@ import {
   loadModelBatchHelper,
   LOAD_MODEL_HELPER_VERSION,
   MAX_TRACKED_INSTANCES,
+  parseSizeTables,
+  stripSizeTables,
+  countSizeTables,
 } from "./runtime-helpers";
 
 // ── countTriangles — pure, executable against fake mesh fixtures ───────────
@@ -224,5 +227,85 @@ describe("insertEarly", () => {
 
   it("prepends when there is neither <head> nor <html>", () => {
     expect(insertEarly("<div>bare</div>", "MARK")).toBe("MARK<div>bare</div>");
+  });
+});
+
+// 2026-08-08, BUG-FIX-LOG fragmented race tracks. The generated racer laid 1 m
+// road tiles at 10 m intervals because NOTHING in the runtime could tell it how
+// big a tile is. AR_SIZES + modelSize() are that missing channel.
+describe("AR_SIZES — the measured-metres table behind modelSize()", () => {
+  const block = (t: unknown) => `<script>window.AR_SIZES=${JSON.stringify(t)};</script>`;
+
+  it("parses, counts and strips its own block", () => {
+    const html = `<head>${block({ road_straight: [1, 0.02, 1] })}</head><body>go</body>`;
+    expect(countSizeTables(html)).toBe(1);
+    expect(parseSizeTables(html)).toEqual([{ road_straight: [1, 0.02, 1] }]);
+    expect(stripSizeTables(html)).toBe("<head></head><body>go</body>");
+  });
+
+  it("returns every table in document order — the duplicate-block case", () => {
+    // The 2026-08-06 Sky Patrol failure was a SECOND, stale table winning
+    // because it ran later. Detection is what lets the caller collapse them.
+    const html = block({ car: [1.3, 0.73, 2.56] }) + "<p>x</p>" + block({ car: [9, 9, 9] });
+    expect(countSizeTables(html)).toBe(2);
+    expect(parseSizeTables(html)).toEqual([{ car: [1.3, 0.73, 2.56] }, { car: [9, 9, 9] }]);
+    expect(stripSizeTables(html)).toBe("<p>x</p>");
+  });
+
+  it("skips an unparseable block instead of throwing — a kid's game must survive anything", () => {
+    const html = `<script>window.AR_SIZES={not json};</script>${block({ tree: [1.9, 1.9, 1.9] })}`;
+    expect(() => parseSizeTables(html)).not.toThrow();
+    expect(parseSizeTables(html)).toEqual([{ tree: [1.9, 1.9, 1.9] }]);
+  });
+
+  it("does not confuse itself with the AR_ASSETS table", () => {
+    const html = `<script>window.AR_ASSETS={"car":"https://x/car.glb"};</script>${block({ car: [1, 1, 1] })}`;
+    expect(countSizeTables(html)).toBe(1);
+    // Stripping sizes must leave the URL table completely untouched.
+    expect(stripSizeTables(html)).toBe(`<script>window.AR_ASSETS={"car":"https://x/car.glb"};</script>`);
+  });
+
+  it("keeps array values so the non-greedy block regex still terminates correctly", () => {
+    // THE reason sizes ship as a separate table with ARRAY values: the regex
+    // family is non-greedy to the first `}`. An object-valued table would
+    // truncate the capture and parse to nothing, silently.
+    const html = block({ a: [1, 2, 3], b: [4, 5, 6] });
+    expect(parseSizeTables(html)).toEqual([{ a: [1, 2, 3], b: [4, 5, 6] }]);
+  });
+});
+
+describe("loadModelHelper — modelSize(name)", () => {
+  const script = loadModelHelper();
+
+  it("defines modelSize exactly once, reading the AR_SIZES table", () => {
+    expect(script.match(/window\.modelSize\s*=/g)?.length).toBe(1);
+    expect(script).toContain("window.AR_SIZES[name]");
+  });
+
+  it("tolerates the table being absent so injection order is never load-bearing", () => {
+    expect(script).toContain("window.AR_SIZES = window.AR_SIZES || {}");
+  });
+
+  it("stamps the size onto the loaded object as well as answering by name", () => {
+    expect(script).toContain("obj.userData.arSize = window.modelSize(name)");
+  });
+
+  it("bumped the helper version so stored games get modelSize retrofitted", () => {
+    // Without the bump, ensureAssetRuntime leaves an existing v3 helper alone
+    // and modelSize never reaches any game that already exists.
+    expect(LOAD_MODEL_HELPER_VERSION).toBe(4);
+    expect(script).toContain("window.__arLoadModelVersion = 4");
+  });
+
+  it("answers null rather than a made-up number for an unmeasured model", () => {
+    // Executable check of the emitted body: skinned models ship no size, and a
+    // game that gets null degrades to eyeballing — never to a wrong footprint.
+    const body = script.match(/window\.modelSize = function \(name\) \{[\s\S]*?\n\};/)![0];
+    const win: Record<string, unknown> = { AR_SIZES: { road_straight: [1, 0.02, 1] } };
+    new Function("window", body)(win);
+    const modelSize = win.modelSize as (n: string) => unknown;
+    expect(modelSize("road_straight")).toEqual({ x: 1, y: 0.02, z: 1 });
+    expect(modelSize("dino")).toBeNull();
+    expect(modelSize("not_a_model")).toBeNull();
   });
 });
