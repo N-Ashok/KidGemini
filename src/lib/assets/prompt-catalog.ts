@@ -183,10 +183,11 @@ ${categories}
    \`modelAxis(name)\` gives the run axis ("x"/"z"/"none"/null); kits differ and
    a square tile's size can't reveal it.
    TRACKS: ONE kit (\`road_*\` OR \`race_track_*\`), every piece scaled by the
-   SAME number. \`modelJoins(name)\` → which edges the road reaches + its width;
-   \`rotateToJoin(name, from, to)\` → the \`rotation.y\` swinging one edge onto
-   another. NEVER guess a corner, and a 2 m piece covers TWO 1 m cells:
-   \`t.rotation.y = rotateToJoin("race_track_corner", "+x", "-x");\`
+   SAME number. NEVER guess a rotation — name the directions the road LEAVES
+   each cell and \`fitTile\` does it (a 2 m piece covers TWO 1 m cells):
+   \`// corner with track to the north and east:
+    t.rotation.y = fitTile("race_track_corner", ["-z", "+x"]);\`
+   null = wrong PIECE there. \`modelJoins(n)\` = edges + lane width.
 5. Some models carry NAMED animations in \`m.animations\` — don't blindly play
    \`m.animations[0]\`: it's often an idle pose, or even an attack, so picking
    it for a "running" character makes it look like it's attacking instead of

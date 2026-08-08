@@ -230,8 +230,12 @@ export function countTriangles(obj: { traverse: (cb: (child: any) => void) => vo
  *  window.modelJoins() + window.rotateToJoin() over the AR_EDGES table. As
  *  with v4, the bump IS the migration: ensureAssetRuntime strips the older
  *  block and injects v6 on the next preview render, so every stored 3D game
- *  picks up corner data the moment a child opens it — no restamp campaign. */
-export const LOAD_MODEL_HELPER_VERSION = 6;
+ *  picks up corner data the moment a child opens it — no restamp campaign.
+ *  v7 (2026-08-09) adds window.fitTile(): the rotation for a grid cell given
+ *  the directions it must connect. Three rounds of PROMPT teaching failed to
+ *  make a generated track rotate its corners correctly (TECH_DEBT #97 — the
+ *  fix is not more prose), so the calculation moved into the runtime. */
+export const LOAD_MODEL_HELPER_VERSION = 7;
 
 /** The runtime helper 3D games call: resolves a catalog name via AR_ASSETS,
  *  loads the GLB with GLTFLoader + meshopt (models are meshopt-compressed),
@@ -325,6 +329,31 @@ window.rotateToJoin = function (name, from, to) {
   var a = order.indexOf(from), b = order.indexOf(to);
   if (a < 0 || b < 0) return 0;
   return ((b - a + 4) % 4) * (Math.PI / 2);
+};
+// fitTile (2026-08-09): say WHICH DIRECTIONS a grid cell must connect and get
+// the rotation.y that makes the piece do it. Added after three rounds of
+// teaching failed to land: a generated track chose the right kit and one scale
+// factor, then hardcoded all four corner rotations and got all four wrong,
+// because working out "this cell needs north and east, the piece joins +z and
+// +x at rest, so rotate 3pi/2" is four steps of reasoning under a token budget.
+// This is one call. Directions are where the ROAD LEAVES the cell:
+//   fitTile("race_track_corner", ["-z", "+x"])   // track to the north and east
+// Returns 0 for an unknown piece, and null when no quarter turn can satisfy the
+// request — which means the wrong PIECE was chosen (asking a corner to join two
+// opposite edges), so a game can detect that instead of silently drawing a gap.
+window.fitTile = function (name, need) {
+  var e = window.AR_EDGES[name];
+  if (!e || !e.joins || !need || !need.length) return 0;
+  var order = ["-z", "+x", "+z", "-x"];
+  var want = need.slice().sort().join(",");
+  for (var q = 0; q < 4; q++) {
+    var got = e.joins
+      .map(function (j) { return order[(order.indexOf(j) + q) % 4]; })
+      .sort()
+      .join(",");
+    if (got === want) return q * (Math.PI / 2);
+  }
+  return null;
 };
   const __arLoader = new GLTFLoader();
 __arLoader.setMeshoptDecoder(MeshoptDecoder);

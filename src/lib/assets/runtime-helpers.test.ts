@@ -296,11 +296,11 @@ describe("loadModelHelper — modelSize(name)", () => {
   // rotateToJoin() to stored games — which IS the migration for the reported
   // broken race track (BUG-FIX-LOG). A child re-opening it gets a model that
   // can finally answer which way a corner turns.
-  it("bumped the helper version so stored games get modelSize + modelAxis + modelJoins retrofitted", () => {
+  it("bumped the helper version so stored games get modelSize + modelAxis + modelJoins + fitTile retrofitted", () => {
     // Without the bump, ensureAssetRuntime leaves an existing older helper
     // alone and the new capability never reaches any game that already exists.
-    expect(LOAD_MODEL_HELPER_VERSION).toBe(6);
-    expect(script).toContain("window.__arLoadModelVersion = 6");
+    expect(LOAD_MODEL_HELPER_VERSION).toBe(7);
+    expect(script).toContain("window.__arLoadModelVersion = 7");
   });
 
   it("answers null rather than a made-up number for an unmeasured model", () => {
@@ -313,5 +313,74 @@ describe("loadModelHelper — modelSize(name)", () => {
     expect(modelSize("road_straight")).toEqual({ x: 1, y: 0.02, z: 1 });
     expect(modelSize("dino")).toBeNull();
     expect(modelSize("not_a_model")).toBeNull();
+  });
+});
+
+// fitTile (v7, 2026-08-09). Added after a generated track picked the RIGHT kit
+// and ONE scale factor — both taught successfully — and then hardcoded all four
+// corner rotations and got all four wrong. Deriving "this cell needs north and
+// east; the piece joins +z/+x at rest; therefore 3pi/2" is four reasoning steps
+// under a token budget, and three rounds of prompt teaching failed to land it.
+// The calculation belongs in the runtime (TECH_DEBT #97: the fix is not prose).
+describe("fitTile — the rotation for a cell, from the directions it connects", () => {
+  // Evaluate the shipped helper source the way a browser would, so these test
+  // the STRING that actually reaches a game, not a re-implementation.
+  function runtime(edges: Record<string, unknown>) {
+    // Balanced-brace scan from the assignment to its matching close, so the
+    // extraction survives anything else being added to the helper later.
+    const helper = loadModelHelper();
+    const start = helper.indexOf("window.fitTile = function");
+    expect(start, "fitTile must be in the shipped helper").toBeGreaterThan(-1);
+    const from = helper.indexOf("{", start);
+    let depth = 0;
+    let end = from;
+    for (let i = from; i < helper.length; i++) {
+      if (helper[i] === "{") depth++;
+      else if (helper[i] === "}") {
+        depth--;
+        if (depth === 0) { end = i + 1; break; }
+      }
+    }
+    const body = helper.slice(from, end);
+    const w: Record<string, unknown> = { AR_EDGES: edges };
+    return new Function("window", `return function (name, need) ${body};`)(w) as (
+      n: string,
+      need: string[],
+    ) => number | null;
+  }
+  const CORNER = { joins: ["+z", "+x"], lane: 0.697 };
+  const fit = runtime({ race_track_corner: CORNER, race_track_straight: { joins: ["-z", "+z"] } });
+  const Q = Math.PI / 2;
+
+  // The four corners of the 2026-08-09 production track, with the rotation each
+  // one actually needed. Every one of these was hardcoded wrong.
+  it.each([
+    { cell: "top-left     (track N and E)", need: ["-z", "+x"], expected: 3 * Q, wasUsed: 0 },
+    { cell: "top-right    (track W and N)", need: ["-x", "-z"], expected: 2 * Q, wasUsed: -Q },
+    { cell: "bottom-right (track S and W)", need: ["+z", "-x"], expected: 1 * Q, wasUsed: 2 * Q },
+    { cell: "bottom-left  (track E and S)", need: ["+x", "+z"], expected: 0, wasUsed: Q },
+  ])("$cell → $expected rad", ({ need, expected, wasUsed }) => {
+    expect(fit("race_track_corner", need)).toBeCloseTo(expected, 6);
+    expect(fit("race_track_corner", need)).not.toBeCloseTo(wasUsed, 6); // what shipped
+  });
+
+  it("is order-insensitive — ['+x','-z'] is the same cell as ['-z','+x']", () => {
+    expect(fit("race_track_corner", ["+x", "-z"])).toBeCloseTo(fit("race_track_corner", ["-z", "+x"])!, 6);
+  });
+
+  it("returns NULL when no quarter turn works — the wrong PIECE, not a bad angle", () => {
+    // A corner can never join two OPPOSITE edges. Answering 0 there would draw
+    // a silent gap; null lets a game notice and pick a straight instead.
+    expect(fit("race_track_corner", ["-z", "+z"])).toBeNull();
+  });
+
+  it("fits a straight too, so one call handles every tile on the grid", () => {
+    expect(fit("race_track_straight", ["-z", "+z"])).toBeCloseTo(0, 6);
+    expect(fit("race_track_straight", ["-x", "+x"])).toBeCloseTo(Q, 6);
+  });
+
+  it("answers 0 for an unmeasured piece rather than throwing — fail-soft floor", () => {
+    expect(fit("no_such_tile", ["-z", "+x"])).toBe(0);
+    expect(fit("race_track_corner", [])).toBe(0);
   });
 });

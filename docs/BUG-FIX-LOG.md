@@ -11,6 +11,50 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-09 — a fresh track picked the right kit, then rotated all four corners wrong
+
+- **Symptom:** owner UAT on a FRESH build (new chat, `3D - make a race track with 4 corners and a
+  start line`). No crash — the game ran clean. The track was still unusable: roads meeting at odd
+  angles, a gap where two pieces should join, the gantry across the road at a slant.
+- **What HAD landed** (measured on the generated code, not guessed):
+  - right kit — `race_track_corner` ×4, `race_track_straight` ×5, city kit **0**
+  - one scale factor — every piece placed through one `addTrackPiece(name,x,z,rotY)` using a single
+    `TRACK_SCALE`. The `finish_line` ×10-vs-×20 bug is gone.
+- **What had NOT:** `modelJoins` **0**, `rotateToJoin` **0**, `modelAxis` **0**, `modelSize` **0**.
+  Every corner rotation was a hardcoded literal, and all four were wrong:
+
+  | cell | neighbours | needed | hardcoded |
+  |---|---|---|---|
+  | top-left | N, E | 3π/2 | 0 |
+  | top-right | W, N | π | −π/2 |
+  | bottom-right | S, W | π/2 | π |
+  | bottom-left | E, S | 0 | π/2 |
+
+- **Root cause — the teaching, and a bug in my own example.** The prompt shipped this:
+  `rotateToJoin("race_track_corner", "+x", "-x")`. `+x`→`−x` is a **180° turn**, which for a corner
+  is not a turn at all. It was compressed to that form to fit the token ceiling, and it is actively
+  misleading. Worse, `rotateToJoin` asks the model to first work out WHICH two edges the cell needs
+  and then map one onto another — four reasoning steps ("this cell has track north and east; the
+  piece joins +z and +x at rest; therefore 3π/2"), under a token budget, on every corner.
+- **Fix — move the calculation into the RUNTIME, not more prose.** New `window.fitTile(name, need)`
+  (helper v6 → v7): name the directions the road LEAVES a cell, get the `rotation.y`. One call, no
+  edge-mapping reasoning. Returns `null` when no quarter turn can satisfy the request — meaning the
+  wrong PIECE was chosen for that cell — so a game can react instead of silently drawing a gap.
+  Prompt rule 4 now shows the correct, concrete idiom and the misleading example is deleted.
+- **This is TECH_DEBT #97's principle applied rather than argued:** three consecutive rounds of
+  prompt prose failed to land this, and the token ceiling was already at its limit. The fix costs
+  ZERO extra prompt tokens (rule 4 was rewritten in place, and re-trimmed when it came in 3 over).
+- **Tests:** `runtime-helpers.test.ts` — `fitTile` is evaluated from the SHIPPED helper string (a
+  balanced-brace extraction, not a re-implementation) and asserted against all four real corners
+  from this incident, each checked to differ from the value that actually shipped. Plus
+  order-insensitivity, the `null` wrong-piece case, straights, and the fail-soft floor.
+  Suite 2,227 → 2,235.
+- **Migration: none.** The v7 bump retrofits `fitTile` onto stored games on the next preview render
+  — and this is the first version bump since the import-map ordering fix, which is what makes a bump
+  safe again (the previous one, v5 → v6, is what triggered the outage below).
+
+---
+
 ## 2026-08-09 — EVERY stored 3D game broke in production: the import map was correct, and in the wrong place
 
 - **Symptom:** owner UAT on production after deploying the fix below. Five errors, repeated:
