@@ -21,7 +21,7 @@ import { injectPreviewInstrumentation } from "@/lib/preview-verify";
 import { shouldAutoFocusPreview } from "@/lib/preview-focus";
 import { injectPreviewRuntime, type PreviewTheme } from "@/lib/preview-runtime";
 import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
-import { keyToPanelAction, UPDATING_LINE } from "@/lib/preview-pane";
+import { keyToPanelAction, previewDisplay, UPDATING_LINE } from "@/lib/preview-pane";
 import { buildErrorReport, hasExtremeError } from "@/lib/error-report";
 import { usePreviewVerify } from "./usePreviewVerify";
 import { usePerfProbe } from "./usePerfProbe";
@@ -324,7 +324,24 @@ export function ArtifactFrame({
   // chat whose stored HTML predates the fix — a 3D game that imports "three" is
   // guaranteed a resolvable import map here, so the preview iframe can never throw
   // "Failed to resolve module specifier three". Idempotent + 2D-safe.
-  const covered = state.phase !== "done";
+  // The last version that finished verifying — the game the child can actually
+  // play. Kept so an EDIT never takes their working game away while the new
+  // version is probed (owner report 2026-08-09; see previewDisplay's note).
+  const [lastGoodHtml, setLastGoodHtml] = useState<string | null>(null);
+  useEffect(() => {
+    if (state.phase === "done" && state.currentHtml) setLastGoodHtml(state.currentHtml);
+  }, [state.phase, state.currentHtml]);
+
+  const display = previewDisplay({
+    verifyingHtml: state.currentHtml,
+    phase: state.phase,
+    lastGoodHtml,
+  });
+  // `covered` now means "there is nothing better to show" — NOT merely
+  // "verifying". Mid-verify with a playable game in hand, the child keeps it.
+  const covered = display.covered;
+  /** True while a new version is being probed behind the game on screen. */
+  const shadowing = display.shadowHtml !== null;
   // Save & continue building (docs/2026-08-01_PRD_SaveContinueBuilding.md):
   // active only once the game is up and playable (never mid-verify-cover),
   // so the existing-save lookup and autosave never race the verify loop.
@@ -346,6 +363,18 @@ export function ArtifactFrame({
     // restored world injected before the game's own script runs (§3f).
     return gameSave.injectedState ? injectInitialGameState(withRuntime, gameSave.injectedState) : withRuntime;
   }, [docKey, gameSave.injectedState]);
+
+  // The playable fallback shown OVER the document under test while shadowing.
+  // Never instrumented: probes belong to the version being verified, and a
+  // second set reporting into the same controller would corrupt its verdict.
+  // Memoised on the html itself so the game the child is playing is not
+  // reloaded by an unrelated re-render.
+  const fallbackSrcDoc = useMemo(
+    () => (shadowing && lastGoodHtml
+      ? injectConsoleCapture(injectPreviewRuntime(ensureAssetRuntime(lastGoodHtml), { theme: previewTheme }))
+      : null),
+    [shadowing, lastGoodHtml, previewTheme],
+  );
 
   // Device frame's actual ON-SCREEN box (2026-07-16 fix): shared by the
   // iframe wrapper AND the Idea Button/Bag overlays below. The overlays
@@ -842,15 +871,40 @@ export function ArtifactFrame({
                 : undefined
             }
           >
-            <iframe
-              key={docKey} // bumps per game generation AND per verify round (incl. the pristine reload after a probe-click clean)
-              ref={iframeRef}
-              title="AI-generated game"
-              sandbox="allow-scripts"
-              srcDoc={srcDoc}
-              onLoad={onIframeLoad}
-              className="h-full w-full border-0"
-            />
+            {/* Two iframes, one job each (owner report 2026-08-09).
+                UNDER TEST: always mounted and ALWAYS PAINTING — opacity, never
+                display:none, because rAF stops in a hidden frame and the probes
+                would "repair" a healthy game. It carries iframeRef, so the
+                controller talks to it whether it is on screen or behind the
+                fallback. Promotion is just the fallback unmounting, so the new
+                game never reloads at the swap.
+                PLAYABLE: the last verified version, layered on top while a new
+                one is probed, so an edit never costs the child their game. */}
+            <div className="relative h-full w-full">
+              <iframe
+                key={docKey} // bumps per game generation AND per verify round (incl. the pristine reload after a probe-click clean)
+                ref={iframeRef}
+                title={shadowing ? "Testing the updated game" : "AI-generated game"}
+                sandbox="allow-scripts"
+                srcDoc={srcDoc}
+                onLoad={onIframeLoad}
+                aria-hidden={shadowing}
+                className={`absolute inset-0 h-full w-full border-0 ${
+                  shadowing ? "pointer-events-none opacity-0" : ""
+                }`}
+              />
+              {fallbackSrcDoc && (
+                <iframe
+                  // Keyed on the game itself: re-renders while the child plays
+                  // must not reload it, but a NEW fallback must be a new document.
+                  key={`play:${lastGoodHtml?.length ?? 0}`}
+                  title="AI-generated game"
+                  sandbox="allow-scripts"
+                  srcDoc={fallbackSrcDoc}
+                  className="absolute inset-0 h-full w-full border-0"
+                />
+              )}
+            </div>
           </div>
           {/* Idea Button overlays (docs/PRD-IDEA-BUTTON.md): the mic tab docks
               on the preview edge — the ONLY capture path while the composer is

@@ -53,6 +53,7 @@ export function Composer({ disabled, busy, queueing, queueFull, onSend, onStop }
     tryAgain: micTryAgain,
     toggle,
     discardAndStop,
+    commitPending,
   } = useSpeechInput((text) => setValue((v) => (v ? `${v} ${text}` : text)));
 
   // Live dictation: words appear AS the kid speaks (interim), then firm up
@@ -214,7 +215,17 @@ export function Composer({ disabled, busy, queueing, queueFull, onSend, onStop }
         <textarea
           ref={textareaRef}
           value={displayValue}
-          onChange={(e) => setValue(e.target.value)}
+          // Typing while the mic is on FOLDS the live interim into `value`
+          // (displayValue already contains it), so tell the recognizer those
+          // words have been delivered — otherwise the browser finalizes the
+          // same phrase a moment later and it appears twice. That doubling is
+          // exactly why this box used to be read-only; commitPending() removes
+          // the reason, so a child can fix a misheard word without pausing
+          // (owner report 2026-08-09).
+          onChange={(e) => {
+            if (isListening || interim) commitPending();
+            setValue(e.target.value);
+          }}
           onKeyDown={handleKeyDown}
           rows={1}
           // Kept short on purpose: at 390px a longer queueing placeholder wrapped
@@ -222,11 +233,6 @@ export function Composer({ disabled, busy, queueing, queueFull, onSend, onStop }
           // "Next up" card above carries the fuller explanation.
           placeholder={queueing ? "Add your next idea…" : "Ask me anything…"}
           disabled={disabled}
-          // While dictating the box shows value + live interim; a keyboard
-          // edit would commit the interim into `value` and it would then
-          // ALSO arrive via the recognizer (doubled words). Read-only while
-          // the mic is on — Enter-to-send still works; ⏸ Pause to edit.
-          readOnly={isListening}
           // Thin, minimal scrollbar (2026-07-28: a full-width OS scrollbar
           // ate a visible chunk of the box once the kid's text hit max-h-40,
           // reading as wasted space rather than "the box is full"). Firefox

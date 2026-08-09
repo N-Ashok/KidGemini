@@ -11,6 +11,85 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-09 — an edit took the child's working game away for up to a minute
+
+- **Report (owner UAT):** "when we give an idea or edit patch, the preview should
+  let the kid play the already made game. now it is not doing so"; "there is a
+  blue screen"; and "in the ari chat, when mic is on, the editing of the already
+  said words are not allowed".
+- **The cover never regressed.** `const covered = state.phase !== "done"` has
+  exactly ONE commit in its entire history — `d419e78`, which introduced the
+  self-healing preview. `git log -S` confirms nobody has touched the definition
+  since. The earlier fix the owner remembered (`d34e0a7`, "old game stays
+  playable during updates") changed the verify effect's deps from
+  `[html, originalRequest]` to `[html]`, which keeps the game playable while Ari
+  is WRITING. It never covered the verify window.
+- **What actually changed is DURATION, measured in production, not guessed:**
+
+  | | |
+  |---|---|
+  | repair requests | 398 |
+  | chat turns shown | 1,861 |
+  | → repairs per turn | **~21%, about one edit in five** |
+  | recent repair timings | `✖ gemini failed @60424ms`, `@60402ms` |
+
+  A cover that used to blink past now parks over the preview for up to a minute
+  on every fifth edit — with the child's working game behind it. Same code,
+  different world.
+- **Structural cause:** ONE iframe was both the thing the child plays and the
+  thing the probes drive, so verifying a new version necessarily took the old
+  one away.
+- **The "blue screen" is not chrome.** Every 3D game sets its own sky:
+  `scene.background = new Color(0x87ceeb)` in 3d-perfect-hotel and
+  cartoon-tank-battle, `0xa2d2ff` in amala-3d-super-bakery; the one 2D game
+  (multiple-mania) has none. A blue screen is a 3D game whose renderer came up
+  and whose content never drew. Removing the blue would only make failure black
+  — it is fixed by never stranding the child on a broken version.
+
+### Fix — shadow verify
+
+`previewDisplay()` (`lib/preview-pane.ts`, pure) decides what the child sees:
+
+- mid-verify **with** a previously-verified game → they keep playing it,
+  UNCOVERED, while the new version is probed off-screen
+- the very first game → nothing to fall back to, so the cover earns its keep
+- settled → the verified version plays
+
+`ArtifactFrame` now renders two iframes. The one under test is **always mounted
+and always painting** — `opacity-0`, never `display:none`, because rAF does not
+tick in a hidden frame and the probes would "repair" a healthy game (§8.1). It
+keeps `iframeRef`, so the controller reaches it either way, and promotion is
+just the fallback unmounting — the new game never reloads at the swap. The
+fallback is never instrumented: a second probe set reporting into the same
+controller would corrupt its verdict.
+
+### Fix — the mic no longer locks the chat box
+
+`Composer.tsx` was `readOnly={isListening}`. Its comment gave the real reason: a
+keyboard edit folds the live interim into `value`, and the recognizer would then
+deliver the same words again (doubled). `commitPending()` — added earlier the
+same day for the Idea Bag's "Next idea" bleed — marks the pending interim as
+delivered through the existing replay guard, which removes the reason for the
+lock. A child can now fix a misheard word without pausing.
+
+**Tests:** `preview-pane.test.ts` +6 on `previewDisplay` — including that the
+visible document is never the one under test while a fallback exists, and that
+an empty `lastGoodHtml` is not mistaken for a playable game. Suite 2,276 → 2,282.
+
+**NOT covered by tests, stated plainly:** the two-iframe wiring itself and the
+composer change. This repo has no component harness (no testing-library, no
+jsdom, `environment: 'node'`), so only the promotion RULE is pinned. The
+rendering needs a human.
+
+### Still open, and bigger than this
+
+**~21% of edits trigger an automated repair, and many of those repairs then time
+out at 60s.** Shadow verify hides that from the child; it does not fix it. One
+in five edits producing a game that needs machine repair is a generation-quality
+problem and deserves its own investigation.
+
+---
+
 ## 2026-08-09 — every animated model shipped carrying EVERY clip it ever had (dropped ones included)
 
 - **Found while** probing candidates for the animals/snow batch

@@ -12,6 +12,7 @@ import {
   PANEL_DEFAULT_W,
   PANEL_MIN_W,
   panelShellClass,
+  previewDisplay,
   previewDocKey,
   savePanelWidth,
   UPDATING_LINE,
@@ -172,5 +173,59 @@ describe("UPDATING_LINE", () => {
   it("is a kid-friendly non-empty line", () => {
     expect(UPDATING_LINE.length).toBeGreaterThan(10);
     expect(UPDATING_LINE).not.toMatch(/error|fail/i);
+  });
+});
+
+// Shadow verify (owner report 2026-08-09: "for every edit, it is not allowing
+// the kid to play the earlier version"). The cover never regressed — what grew
+// is its duration, because ~1 edit in 5 now triggers a repair and repairs run
+// to 60s timeouts. These pin the rule that keeps a working game reachable.
+describe("previewDisplay — an edit must never take away a working game", () => {
+  const OLD = "<html>old playable game</html>";
+  const NEW = "<html>new version being tested</html>";
+
+  it("mid-verify with a previous game: the CHILD KEEPS PLAYING IT, uncovered", () => {
+    for (const phase of ["testing", "repairing"] as const) {
+      const d = previewDisplay({ verifyingHtml: NEW, phase, lastGoodHtml: OLD });
+      expect(d.visibleHtml, phase).toBe(OLD);   // the working game
+      expect(d.shadowHtml, phase).toBe(NEW);    // probed out of sight
+      expect(d.covered, phase).toBe(false);     // and NOT hidden behind a card
+    }
+  });
+
+  it("the very first game has nothing to fall back to — cover it, no shadow", () => {
+    const d = previewDisplay({ verifyingHtml: NEW, phase: "testing", lastGoodHtml: null });
+    expect(d.visibleHtml).toBe(NEW);
+    expect(d.shadowHtml).toBeNull();
+    expect(d.covered).toBe(true);
+  });
+
+  it("treats an empty previous game as no previous game", () => {
+    // "" is what usePreviewVerify passes before any html exists; it must not be
+    // mistaken for a playable fallback, or the child would be shown a blank.
+    const d = previewDisplay({ verifyingHtml: NEW, phase: "testing", lastGoodHtml: "" });
+    expect(d.covered).toBe(true);
+    expect(d.shadowHtml).toBeNull();
+  });
+
+  it("once settled, the verified version is what plays — no shadow, no cover", () => {
+    const d = previewDisplay({ verifyingHtml: NEW, phase: "done", lastGoodHtml: OLD });
+    expect(d.visibleHtml).toBe(NEW);
+    expect(d.shadowHtml).toBeNull();
+    expect(d.covered).toBe(false);
+  });
+
+  it("a settled FIRST game also plays uncovered", () => {
+    const d = previewDisplay({ verifyingHtml: NEW, phase: "done", lastGoodHtml: null });
+    expect(d.visibleHtml).toBe(NEW);
+    expect(d.covered).toBe(false);
+  });
+
+  it("the visible document is never the one under test while a fallback exists", () => {
+    // The property that matters: probes must never poke the game being played.
+    for (const phase of ["testing", "repairing"] as const) {
+      const d = previewDisplay({ verifyingHtml: NEW, phase, lastGoodHtml: OLD });
+      expect(d.visibleHtml).not.toBe(d.shadowHtml);
+    }
   });
 });
