@@ -416,7 +416,6 @@ export function ArtifactFrame({
     el.focus({ preventScroll: true });
   }, [covered, docKey, tab, iframeRef]);
 
-  if (!html) return null;
 
   const errorCount = consoleMessages.filter((m) => m.level === "error").length;
   // "Something unexpected happened" — the game threw, or verify gave up.
@@ -472,6 +471,15 @@ export function ArtifactFrame({
     // the loop settled shouldn't re-report the same generation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.phase, state.outcome, state.repairAttempts, docKey]);
+
+  // Rules of Hooks: this early return used to sit ~30 lines UP, above the
+  // onDiagnostics ref+effect below it — so a caller honouring the declared
+  // `html: string | null` contract would render a different number of hooks
+  // between renders and crash with "Rendered more hooks than during the
+  // previous render". It is latent only because the single call site guards
+  // with `{artifact && ...}` (code review 2026-08-09). Every hook now runs
+  // unconditionally; the lines between are pure computation.
+  if (!html) return null;
 
   const tabBtn = (t: Tab) =>
     `rounded-full px-3 py-1 text-sm font-medium ${

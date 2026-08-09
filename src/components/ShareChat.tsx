@@ -6,6 +6,7 @@
 // read-only link. Revoking never needs a PIN.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useModalA11y } from "./useModalA11y";
 import { signIn } from "@/lib/useAriantraSession";
 
 interface Props {
@@ -22,6 +23,11 @@ export function ShareChat({ chatId, title, onClose }: Props) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [revoking, setRevoking] = useState(false);
+  // Focus trap + Escape + scroll lock + focus restore. The roles above were
+  // declared without any of it, so a keyboard user could never reach this
+  // sheet (code review 2026-08-09).
+  const dialogRef = useModalA11y({ onClose });
   const started = useRef(false);
 
   const create = useCallback(async () => {
@@ -79,18 +85,35 @@ export function ShareChat({ chatId, title, onClose }: Props) {
     }
   }
 
+  // Turning the link OFF is a privacy control on a child's chat transcript, so
+  // it must never *look* like it worked when it didn't. This used to ignore
+  // res.ok, swallow every error, and close unconditionally — on a 401, a 500 or
+  // an offline phone the sheet closed as if revoked while the public
+  // /share/chat/[token] page stayed live (code review 2026-08-09).
   async function revoke() {
-    await fetch(`/api/chats/${encodeURIComponent(chatId)}/share`, { method: "DELETE" }).catch(() => {});
-    onClose();
+    setRevoking(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}/share`, { method: "DELETE" });
+      if (!res.ok) throw new Error(String(res.status));
+      onClose();
+    } catch {
+      // Stay open, say what is still true, and offer the retry.
+      setError("We couldn't turn the link off just yet — it's still on. Check your connection and tap again.");
+    } finally {
+      setRevoking(false);
+    }
   }
 
   return (
     <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/50" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-7 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
+        aria-label="Share this chat"
       >
         <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-neutral-200" />
 
@@ -175,10 +198,16 @@ export function ShareChat({ chatId, title, onClose }: Props) {
             </button>
             <button
               onClick={() => void revoke()}
-              className="mb-2 block w-full rounded-2xl border-2 border-red-200 py-3 text-base font-bold text-red-600"
+              disabled={revoking}
+              className="mb-2 block w-full rounded-2xl border-2 border-red-200 py-3 text-base font-bold text-red-600 disabled:opacity-60"
             >
-              🔒 Turn off the link
+              {revoking ? "Turning it off…" : "🔒 Turn off the link"}
             </button>
+            {error && (
+              <p className="mb-2 text-center text-sm font-semibold text-red-600" role="alert">
+                {error}
+              </p>
+            )}
             <button onClick={onClose} className="block w-full rounded-2xl border-2 border-neutral-200 py-3 text-base font-bold text-neutral-800">
               Done
             </button>

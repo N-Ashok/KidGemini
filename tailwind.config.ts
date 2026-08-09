@@ -24,6 +24,12 @@ const config: Config = {
         warn: { 50: "#fffbeb", 500: "#f59e0b", 600: "#d97706" },
         danger: { 500: "#ef4444", 600: "#dc2626" },
         ink: { 900: "#0f172a", 700: "#334155", 500: "#64748b" },
+        // Third-party BRAND colors. Not ours to theme — WhatsApp fixes this
+        // value and a share button that isn't their green stops reading as
+        // "share on WhatsApp". Declared here anyway so it is stated ONCE
+        // rather than typed as `bg-[#25d366]` at each call site
+        // (DESIGN_SYSTEM §9: never a raw hex in a component).
+        whatsapp: "#25d366",
       },
       borderRadius: {
         kid: "1.25rem",

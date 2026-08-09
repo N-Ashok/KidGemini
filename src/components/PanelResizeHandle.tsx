@@ -42,6 +42,12 @@ export function PanelResizeHandle({ width, onResize, onCommit }: PanelResizeHand
   function endDrag(event: "up" | "cancel", clientX: number) {
     if (!dragging) return;
     setDragging(nextDragState(event, dragging));
+    // `lostpointercapture` can fire WITHOUT a preceding pointerup (window
+    // blur, OS-cancelled touch), and it reports clientX 0 — which used to be
+    // committed and PERSISTED as a real drag to the far edge, silently
+    // resizing the panel to its maximum (code review 2026-08-09). A cancel
+    // that carries no meaningful position should end the drag, not move it.
+    if (event === "cancel" && clientX === 0) return;
     onCommit(widthFromPointer(clientX));
   }
   function onPointerUp(e: React.PointerEvent<HTMLDivElement>) {

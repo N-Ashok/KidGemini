@@ -102,6 +102,7 @@ export function IdeaMicTab({
     tryAgain,
     start,
     discardAndStop,
+    commitPending,
   } = useSpeechInput((text) => setDraft((v) => (v ? `${v} ${text}` : text)));
 
   const display = composeDictation(draft, interim);
@@ -213,7 +214,13 @@ export function IdeaMicTab({
     const fromCoach = coachActive;
     if (fromCoach) dismissCoach();
     const next = fromCoach ? "listening" : nextMicTabState(tab, "tabClick");
-    if (next === "listening" && tab !== "listening") {
+    // Also (re)start when the tab ALREADY reads "listening" but nothing is
+    // actually listening. beginListening can fail silently, and
+    // MicRecoveryCard.onPrimary sets the tab to "listening" directly — so the
+    // tab could sit in the listening state with a dead recognizer and no way
+    // back except reloading (code review 2026-08-09). Making this the recovery
+    // affordance costs nothing when the mic is already healthy.
+    if (next === "listening" && (tab !== "listening" || !isListening)) {
       clearError();
       setDraft("");
       start();
@@ -237,6 +244,12 @@ export function IdeaMicTab({
         return;
       }
       setLineFull(false);
+      // The committed text included the live interim, but that interim is
+      // still pending INSIDE the recognizer — the browser finalizes it a
+      // moment later and delivers it into the now-empty draft, so a phrase the
+      // child already sent opens their next idea. Mark it delivered (the mic
+      // keeps running, which is the whole point of "Next idea").
+      commitPending();
       setDraft("");
       setTab(nextMicTabState(tab, "got"));
       return;

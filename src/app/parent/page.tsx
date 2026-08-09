@@ -775,7 +775,7 @@ export default function ParentPage() {
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     onClick={() => setShareConfirmedSlug(g.slug)}
-                                    className="rounded-full bg-[#25d366] px-3.5 py-1.5 text-xs font-bold text-white no-underline"
+                                    className="rounded-full bg-whatsapp px-3.5 py-1.5 text-xs font-bold text-white no-underline"
                                   >
                                     💬 WhatsApp
                                   </a>

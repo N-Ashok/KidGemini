@@ -65,6 +65,9 @@ type SpeechRecognition = {
         results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal?: boolean }>;
       }) => void)
     | null;
+  /** Fires when recognition actually begins — the only trustworthy signal that
+   *  the mic is live. `start()` throwing does NOT mean it isn't. */
+  onstart: (() => void) | null;
   onend: (() => void) | null;
   onerror: ((e: { error?: string }) => void) | null;
 };
@@ -141,6 +144,17 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
       interimRef.current = interimText;
       setInterim(interimText);
     };
+    // `isListening` must OBSERVE the recognizer, not predict it. It used to be
+    // set only from beginListening's `if (started)`, so two paths left the mic
+    // genuinely running while the flag read false — and a false flag means the
+    // UI shows the idle tab, the review bar never renders, and a child's speech
+    // is being transcribed with nothing on screen saying so (code review
+    // 2026-08-09):
+    //   1. rec.start() throwing because an OLD session is still alive — that
+    //      throw means recognition IS running, and `started` was set false.
+    //   2. onend's silent restart below, which never set it back true.
+    // onstart is the browser telling us the truth; take it.
+    rec.onstart = () => setIsListening(true);
     rec.onend = () => {
       // The session is over — whatever never finalized would be discarded by
       // the browser. Commit it so a hard-capped monologue keeps every word.
@@ -163,6 +177,10 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
         let started = true;
         try { rec.start(); } catch { started = false; /* old session still alive */ }
         committedFinalsRef.current = committedCountAfterRestart(started, committedFinalsRef.current);
+        // If the restart neither started nor left an old session running, the
+        // mic really is off — say so rather than leaving a stale `true`.
+        // (The started case is covered by onstart above.)
+        if (!started && !recRef.current) setIsListening(false);
       }, RESTART_DELAY_MS);
     };
     rec.onerror = (e) => {
@@ -268,6 +286,26 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
     setIsListening(false);
   }, []);
 
+  /**
+   * Mark everything spoken so far as ALREADY DELIVERED, without stopping.
+   *
+   * For a caller that commits `draft + interim` and then keeps the mic running
+   * — the Idea Bag's "Next idea" — the pending interim is still inside the
+   * recognizer. The browser finalizes it moments later and delivers it through
+   * onTranscript into the now-empty draft, so a phrase the child already sent
+   * reappears as the opening words of their NEXT idea (code review
+   * 2026-08-09: "make the dino purple" → ➡️ → "purple" starts the next one).
+   *
+   * Pushing it onto the replay guard makes the late final a duplicate, which
+   * dedup already drops. Every other caller stops the session instead
+   * (`discardAndStop`), which is why only this path needed it.
+   */
+  const commitPending = useCallback(() => {
+    if (interimRef.current) committedTextsRef.current.push(interimRef.current);
+    interimRef.current = "";
+    setInterim("");
+  }, []);
+
   return {
     isListening,
     isSupported,
@@ -279,5 +317,6 @@ export function useSpeechInput(onTranscript: (text: string) => void) {
     start,
     stop,
     discardAndStop,
+    commitPending,
   };
 }

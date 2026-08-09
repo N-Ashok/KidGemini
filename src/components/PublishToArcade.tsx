@@ -5,6 +5,7 @@
 // gates; this component only renders states.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useModalA11y } from "./useModalA11y";
 import { nameToSlug } from "@/lib/arcade";
 import { whatsappShareUrl } from "@/lib/share-links";
 import { GAME_CATEGORIES } from "@/lib/game-categories";
@@ -51,6 +52,9 @@ const NAME_IDEAS = [
 // (BUG-FIX-LOG 2026-07-18: it silently opened nothing without the app).
 
 export function PublishToArcade({ html, suggestedName, onClose, bibleGame = false, editTarget, chatId }: Props) {
+  // Focus trap + Escape + scroll lock + focus restore — the dialog roles
+  // below were declared without any of it (code review 2026-08-09).
+  const dialogRef = useModalA11y({ onClose });
   // Opens on `loading`, NOT a guess (BUG-FIX-LOG 2026-07-24): starting on
   // "name" meant a kid with existing games saw the naming screen, lost it to
   // "What are we doing?" when the list arrived, then got it back after
@@ -182,6 +186,14 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
     if (!slug) return;
     clearTimeout(checkTimer.current);
     setCheck({ state: "checking", suggestions: [] });
+    // In-flight guard. The cleanup only cleared the pending TIMEOUT, so a
+    // request already in flight still landed and overwrote a newer answer:
+    // type "Dragon" (slow), keep typing "Dragon Flyer" (fast -> "free!"), then
+    // the stale "dragon" reply flipped it to "someone got that one first" and
+    // Next stayed DISABLED for a name that was actually available. The two
+    // sibling effects in this file already guard exactly this way
+    // (code review 2026-08-09).
+    let alive = true;
     checkTimer.current = setTimeout(async () => {
       try {
         const res = await fetch("/api/arcade/publish", {
@@ -193,16 +205,21 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
         // "taken"/"copyright" ONLY on a confirmed answer — a failed check
         // (network, server) must not claim the name is gone; publish
         // re-validates server-side either way.
+        if (!alive) return; // a newer keystroke already superseded this answer
         if (res.ok && data.free === true) setCheck({ state: "free", suggestions: [] });
         else if (res.ok && data.free === false && data.mine === true) setCheck({ state: "mine", suggestions: [] });
         else if (res.ok && data.free === false && data.matched) setCheck({ state: "copyright", suggestions: data.suggestions ?? [], matched: data.matched });
         else if (res.ok && data.free === false) setCheck({ state: "taken", suggestions: data.suggestions ?? [] });
         else setCheck({ state: "unknown", suggestions: [] });
       } catch {
+        if (!alive) return;
         setCheck({ state: "unknown", suggestions: [] });
       }
     }, 450);
-    return () => clearTimeout(checkTimer.current);
+    return () => {
+      alive = false;
+      clearTimeout(checkTimer.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
@@ -328,9 +345,11 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
   return (
     <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/50" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-7 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
+        aria-label="Publish your game"
         aria-modal="true"
       >
         <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-neutral-200" />
@@ -652,7 +671,7 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={() => setShareConfirmed(true)}
-                      className="rounded-full bg-[#25d366] px-3.5 py-2 text-xs font-extrabold text-white no-underline"
+                      className="rounded-full bg-whatsapp px-3.5 py-2 text-xs font-extrabold text-white no-underline"
                     >
                       💬 WhatsApp
                     </a>

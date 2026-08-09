@@ -507,25 +507,32 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         return;
       }
       console.log("[chat] ↻ recovered a finished reply from a previous visit");
+      // The PUT used to live INSIDE this updater. A state updater must be
+      // pure — React may call it more than once for a single update (StrictMode
+      // double-invokes it in development, and it re-runs on a concurrent
+      // re-render), which fired duplicate writes for one recovered turn. Do the
+      // pure state transition here, then perform the side effect once with the
+      // result (code review 2026-08-09).
+      let persistConvo: Conversation | undefined;
       setConvos((list) => {
         const { convos: next, patched } = applyRecoveredReply(list, pending, outcome);
         if (!patched) return list; // bubble gone (deleted/rewound chat) — nothing to fill
-        const convo = next.find((c) => c.id === pending.convoId);
-        // Fire-and-forget: the recovered turn is now part of durable history too.
-        if (convo) {
-          void fetch(`/api/chats/${encodeURIComponent(convo.id)}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ convo }),
-          }).catch((err) => {
-            // Breadcrumb only (2026-07-17) — client-side, no user-facing
-            // change. This exact failure class ("I lose chat across
-            // browsers") is what this recovery path exists to prevent.
-            console.warn("[chat] recovered-turn persist failed", err);
-          });
-        }
+        persistConvo = next.find((c) => c.id === pending.convoId);
         return next;
       });
+      // Fire-and-forget: the recovered turn is now part of durable history too.
+      if (persistConvo) {
+        void fetch(`/api/chats/${encodeURIComponent(persistConvo.id)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ convo: persistConvo }),
+        }).catch((err) => {
+          // Breadcrumb only (2026-07-17) — client-side, no user-facing
+          // change. This exact failure class ("I lose chat across
+          // browsers") is what this recovery path exists to prevent.
+          console.warn("[chat] recovered-turn persist failed", err);
+        });
+      }
     } catch {
       /* recovery is best-effort — never break the app load */
     }
@@ -1355,7 +1362,14 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         onSuccess?.();
         return;
       }
-      await runStream(text, history, replyId, attempt + 1, image, onSuccess, activeGameMessageId, undefined, undefined, attachmentText, attachmentName);
+      // Forward forceRebuild/differentVersion. They used to be passed as
+      // `undefined`, which defaults both to false — so a silent auto-retry
+      // (phone screen locked mid-stream, connection hiccup) DROPPED the
+      // child's explicit choice: "Change this one ✏️" came back as a fresh
+      // new-game prompt instead of the rebuild they had just picked, and
+      // "🔄 Different one" quietly stopped using the alternate model. Every
+      // other turn parameter was already forwarded (code review 2026-08-09).
+      await runStream(text, history, replyId, attempt + 1, image, onSuccess, activeGameMessageId, forceRebuild, differentVersion, attachmentText, attachmentName);
     }
   }
 

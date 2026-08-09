@@ -7,6 +7,7 @@
 // creates the link.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useModalA11y } from "./useModalA11y";
 import { signIn, useSession } from "@/lib/useAriantraSession";
 
 interface Props {
@@ -18,6 +19,9 @@ interface Props {
 type Step = "signin" | "creating" | "ready" | "error";
 
 export function InviteToTest({ html, suggestedName, onClose }: Props) {
+  // Focus trap + Escape + scroll lock + focus restore — the dialog roles
+  // below were declared without any of it (code review 2026-08-09).
+  const dialogRef = useModalA11y({ onClose });
   const { status: authStatus } = useSession();
   const [step, setStep] = useState<Step>("creating");
   const [url, setUrl] = useState("");
@@ -63,9 +67,11 @@ export function InviteToTest({ html, suggestedName, onClose }: Props) {
   return (
     <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/50" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-7 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
+        aria-label="Invite a friend to test"
         aria-modal="true"
       >
         <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-neutral-200" />

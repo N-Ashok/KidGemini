@@ -107,6 +107,13 @@ export function UpgradePlans() {
   }, [authStatus, autoStarted]);
 
   async function handleSelect(planKey: string) {
+    // One purchase at a time. PlanCard only disables the card matching
+    // `pending`, so during the "Opening…" window — script load plus the
+    // /api/billing/order round trip, seconds on a phone — every OTHER pack
+    // stayed clickable, creating a second Razorpay order and opening a second
+    // checkout. PayAnyAmount already gates on !pending; this didn't
+    // (code review 2026-08-09).
+    if (pending) return;
     setStatus("idle");
     setMessage("");
     setPending(planKey);

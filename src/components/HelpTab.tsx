@@ -19,6 +19,7 @@ import { useEffect, useState } from "react";
 import { HELP_CAPTURE_NOTICE, HELP_NUDGE } from "@/lib/chat-copy";
 import { composeDictation } from "@/lib/speech-transcript";
 import type { HelpReasonCode } from "@/types/help.types";
+import { MicRecoveryCard } from "./MicRecoveryCard";
 import { useSpeechInput } from "./useSpeechInput";
 import { useTextToSpeech } from "./useTextToSpeech";
 
@@ -62,9 +63,17 @@ export function HelpTab({ onFile, nudge, onNudgeShown, onBrowseHelp, waiting }: 
   const [draft, setDraft] = useState("");
   const tts = useTextToSpeech();
 
-  const { isListening, isSupported, interim, clearError, start, discardAndStop } = useSpeechInput((text) =>
-    setDraft((v) => (v ? `${v} ${text}` : text)),
-  );
+  // `error`/`tryAgain` were omitted here, so this surface rendered no
+  // MicRecoveryCard at all — and start() intercepts the FIRST call per mount
+  // when permission is "prompt", setting the coach card and returning WITHOUT
+  // starting. A child tapping 🆘 → "Something else" on a device that hasn't
+  // granted the mic saw "Tap send when you're done", nothing listened, nothing
+  // explained, and ✅ filed a wordless help ticket. Every fatal mic error
+  // (denied, no hardware) was equally invisible (code review 2026-08-09).
+  const {
+    isListening, isSupported, interim, clearError, start, discardAndStop,
+    error: micError, tryAgain: micTryAgain,
+  } = useSpeechInput((text) => setDraft((v) => (v ? `${v} ${text}` : text)));
   const said = composeDictation(draft, interim);
 
   // The nudge is spent the moment it's rendered — one per generation, whether
@@ -229,6 +238,16 @@ export function HelpTab({ onFile, nudge, onNudgeShown, onBrowseHelp, waiting }: 
                   Say it out loud — I&apos;ll write it down.
                 </p>
                 <div className="rounded-kid bg-brand-50 p-3">
+                  {micError && !isListening && (
+                    <div className="mb-2">
+                      <MicRecoveryCard
+                        card={micError}
+                        onPrimary={micTryAgain}
+                        onDismiss={clearError}
+                        onTypeInstead={clearError}
+                      />
+                    </div>
+                  )}
                   <p className="flex items-center gap-2 text-sm font-extrabold text-neutral-900">
                     <span
                       className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-danger-500 text-sm text-white ${
@@ -238,7 +257,13 @@ export function HelpTab({ onFile, nudge, onNudgeShown, onBrowseHelp, waiting }: 
                     >
                       🎤
                     </span>
-                    {isListening ? "I'm listening…" : "Tap send when you're done"}
+                    {/* Don't claim "tap send when you're done" when nothing is
+                        listening and there's no error to explain why. */}
+                    {isListening
+                      ? "I'm listening…"
+                      : micError
+                        ? "The mic didn't start"
+                        : "Getting the mic ready…"}
                   </p>
                   <p className="mt-2 min-h-[2.5rem] rounded-xl bg-white px-3 py-2 text-sm text-neutral-700">
                     {said || <span className="text-neutral-400">…</span>}
