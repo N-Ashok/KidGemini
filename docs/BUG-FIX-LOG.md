@@ -11,6 +11,162 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-09 — a child's 3D game loaded three.js r128 off cdnjs and died on `CapsuleGeometry`
+
+- **Report:** owner, "Calvin asked for a game, it didn't produce — there was an error." A game
+  appeared; it was blank. 12:16 IST, ~9 hours AFTER the import-map fix below had been deployed,
+  so that outage was not the cause.
+- **ROOT CAUSE (found second, and it is the real one): the child asked for 3D and we didn't hear
+  him.** His message ends `"Can you make the game Make it 3-D"`. The catalog gate's trigger was
+  `/\b3d\b/i`, which does not match the **hyphenated** spelling — so `catalogGates` returned
+  `three: false` and the production log confirms it: `[gemini] builder mode — … catalogs: 3d=false`.
+  The 3D prompt section was withheld from a turn that was literally a 3D request. The model built
+  in 3D anyway, having been told none of the house rules — no `<!--USES_THREE-->`, no import map,
+  no curated import list — and fell back on what the open internet teaches, where essentially every
+  three.js tutorial opens with a cdnjs `<script>` tag. **It wasn't ignoring the contract; it was
+  never sent it.** Everything below is the consequence.
+  - Fixed in `builder-mode.ts` as a single shared `THREE_ASK_RE` covering `3-d`, `3 d`,
+    `three dimensional`, `3-dimensional`. The same narrow `/\b3d\b/i` existed in **two** places
+    (`builder-mode.ts` build-turn gate and `catalog-gate.ts` catalog trigger) and could drift —
+    they had. One definition now; `catalog-gate.ts` imports it.
+  - False-positive guard: the trailing `\b` keeps `"3-day trip"` out, and requiring the digit form
+    to end at `d` keeps `"3ds max"` out. Both pinned by test.
+  - **Verified on the real input:** `catalogGates` on Calvin's exact message now returns
+    `{three: true, audio: false, save: true}`, against the `3d=false` production actually logged.
+- **Consequence — the game never joined the pipeline at all.** Dumped the child's actual stored
+  artifact (`conversations` row `d08c0776…`, 21,162 bytes) and ran it through the browser
+  verifier built earlier the same day:
+
+  ```
+  ✖ calvin-d08c0776….html
+      loadModel:undefined helper:vnull assets:0 canvas:1
+      - pageerror: THREE.CapsuleGeometry is not a constructor
+  ```
+
+  Line 138 of the artifact:
+
+  ```html
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  ```
+
+  No `<!--USES_THREE-->` marker, no import map, no `import { … } from "three"` — a legacy global
+  `<script src>` pulling **three r128** (2021) from a public CDN, then `THREE.*` calls against it.
+  `CapsuleGeometry` landed in r142. Measured directly against the file the browser fetched:
+  `CapsuleGeometry` occurs **0** times in r128 (`BoxGeometry` and `PlaneGeometry` occur once each).
+  So `new THREE.CapsuleGeometry(...)` threw on line 236 — the line building Calvin's own character —
+  `init()` died there, and nothing rendered.
+- **What the child actually experienced:** primary model stubbed the build first (6,365 chars,
+  cut mid-expression, well under the 24,576 cap), the truncation ladder's rung 1 recovered a
+  "whole" game on the alternate model at ~66s — and *that* was the CDN game. Then the preview
+  self-heal ran and returned `no_patch_in_reply`. Roughly 70 seconds, then a blank screen and a
+  dead end. His earlier 2D game the same session (`3bdb05bf…`) runs clean — this hit only the 3D ask.
+
+### Why every existing guard passed
+
+| Guard | Why it missed |
+|---|---|
+| `three-import-lint.ts` | Matches `import {…} from "three"`. There was no ES import to match — `unknownThreeImports()` returned `[]` on the real artifact |
+| Asset injection | Keys off `<!--USES_THREE-->`, absent — `injectAssets` never looked at the game (`assets:0 helper:vnull`) |
+| The import-map ordering fix (same day) | Irrelevant — there is no import map to misorder |
+| 2,235 green tests | All assert on strings in *pipeline-generated* HTML. Nothing asserted that a game didn't **bypass the pipeline entirely** |
+
+The lint's own comment had explicitly waved this class through as benign — *"games with no
+`from "three"` import at all (2D, or legacy unpkg URLs) pass through byte-identical."* Legacy CDN
+URLs are not benign: they are a silent bypass of the vendored engine, and they make a published
+game depend on a third party staying up.
+
+### Fix
+
+New lint in `three-import-lint.ts`, wired into both gates in `api/chat/route.ts`:
+
+- `externalScriptSrcs(html)` — every off-origin `<script src>`. Relative srcs, inline scripts, and
+  `assets.ariantra.com` pass; absolute and protocol-relative foreign URLs are violations.
+- `newExternalScriptSrcs(before, after)` — the patch gate, judged only on what the patch **added**,
+  mirroring `newUnknownThreeImports` so stored CDN games stay editable.
+- Fresh-build gate: folded into the **same** corrective retry as the import lint rather than a
+  second sequential one — Calvin had already waited ~70s, and another round would have added a
+  full regeneration on top. The retry names the offending URL and forbids the tag class outright.
+- **Fails soft**, unchanged from the import-lint contract: if the retry isn't clean, the original
+  is still served. Visible + repairable beats dropped. Worst case is one extra regeneration.
+
+**Scope decision (owner, 2026-08-09):** the guard covers **any** off-origin script, not just
+three.js — the defect is the bypass, not the library. Rewriting global-namespace `THREE.*` code
+onto the ESM contract was considered and rejected: it is not a safe string transform, and would
+trade one broken game for a differently broken one.
+
+### Blast radius, measured (not estimated)
+
+Ran **all 312 stored conversations** through the lint, then every extracted artifact through the
+browser harness:
+
+| | Count | |
+|---|---|---|
+| Conversations total | 312 | |
+| Matched a CDN text search | 8 (2.6%) | upper bound — a URL in chat text also matches |
+| **Actually ship an external script** | **2** | this game; a Chess game on jQuery + chess.js + chessboard-js |
+| **Broken in a real browser** | **2** | this game, and a car-racing game — *different cause, below* |
+
+So this class broke exactly ONE stored game. The Chess game runs today but is a liveness
+dependency on three third-party CDNs; the new lint stops that shape at generation time.
+
+### A THIRD bypass shape, found by that measurement
+
+A stored car-racing game (`5cc4090c…`, 2026-07-07) fails with `Failed to resolve module
+specifier "./three.module.js"`. Its source imports `./three.module.js`,
+`./jsm/loaders/GLTFLoader.js` and `./main.js` — the model invented a **multi-file three.js
+checkout**, a layout that has never existed for a single-document game. Same family (never joined
+the contract), different mechanism, and invisible to both lints: a relative src is not an external
+script, and `NAMED_IMPORT_RE` only inspects `from "three"`.
+
+Covered by `danglingModuleSpecifiers` / `newDanglingModuleSpecifiers` (owner decision to extend
+now rather than defer, 2026-08-09): any ES-module specifier — static, side-effect, or dynamic —
+that is neither the bare `three` nor the asset host. Folded into the same corrective retry.
+
+### Two layers, deliberately
+
+The gate fix removes the **cause** — a 3D ask now reliably carries the 3D rules. The lint is the
+**safety net** for when the model goes 3D on a turn the gate didn't predict (it decides from the
+child's words; the model decides independently, and they can disagree). Neither alone is enough:
+without the gate fix the model keeps getting no rules, and without the lint a mis-predicted turn
+still ships a CDN game.
+
+### Tests
+
+`catalog-gate.test.ts` +2, `three-import-lint.test.ts` +12, `route.test.ts` +4 (XS.1–XS.4).
+Suite 2,235 → 2,253.
+Confirmed to fail before the fix and pass after: with `route.ts` reverted, XS.1 and XS.4 both fail
+— the bypassing game reaches the kid unchallenged.
+
+**Verified on the REAL bytes, not a fixture** — both lints run against every stored artifact that
+mentioned a CDN, with the browser verdict alongside:
+
+```
+pass  08f75dc8  ext=0 dangling=[]                                        ✓ runs
+pass  0a615397  ext=0 dangling=[]                                        ✓ (no artifact)
+FLAG  21d0aac3  ext=3 dangling=[]                                        ✓ runs (jQuery/chess.js — liveness risk)
+FLAG  5cc4090c  ext=0 dangling=["./three.module.js", "./jsm/…", "./main.js"]  ✖ dead
+pass  6a14c96d  ext=0 dangling=[]                                        ✓ runs (full pipeline: map + AR_ASSETS + helper v6)
+pass  6f609a0d  ext=0 dangling=[]                                        ✓ runs
+pass  90e114ed  ext=0 dangling=[]                                        ✓ (no artifact)
+FLAG  d08c0776  ext=1 dangling=[]                                        ✖ dead — CapsuleGeometry
+```
+
+Both dead games are flagged, and there are **zero false positives** on the five working games —
+including `6a14c96d`, which carries a full import map, so the specifier regex correctly does not
+trip on the `"imports"` key inside importmap JSON. `unknownImports=[]` on every one of them is the
+proof that the pre-existing lint was blind to this whole family.
+
+### Still open (not fixed here)
+
+- **The stub costs 22s every time.** `completeTruncatedBuild` already retries on the alternate
+  model because a stubbing model won't do better on a second ask — but nothing detects the stub
+  early, so the wasted first attempt is paid in full on every occurrence.
+- **`no_patch_in_reply` is a terminal self-heal state.** The repair model returned prose instead
+  of a patch and the child was left holding a broken game with "tell me one thing to change".
+  One re-ask on that branch is cheap next to what the recovery ladder already spent.
+
+---
+
 ## 2026-08-09 — RESOLVED, and not by any of the four fixes: the model fixed its own spacing
 
 - **Outcome:** owner has a working closed loop. Verified on the real artifact — runs clean in a

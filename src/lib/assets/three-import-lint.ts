@@ -39,6 +39,103 @@ export function newUnknownThreeImports(beforeHtml: string, afterHtml: string): s
   return unknownThreeImports(afterHtml).filter((n) => !before.has(n));
 }
 
+// ── The BYPASS defect: the game never joins the pipeline at all ──────────────
+// BUG_LOG 2026-08-09 (Calvin). The lint above only sees games that ALREADY
+// speak the vendored contract — it matches `import {...} from "three"`. A game
+// that skips the contract entirely is invisible to it, and that is exactly
+// what shipped: no `<!--USES_THREE-->` marker, no import map, no ES import,
+// just `<script src="https://cdnjs.cloudflare.com/.../r128/three.min.js">`
+// and global `THREE.*` calls. r128 predates CapsuleGeometry, so the game threw
+// "THREE.CapsuleGeometry is not a constructor" on the line building the
+// child's own character and rendered nothing.
+//
+// Why this is a lint and not a heal: rewriting global-namespace `THREE.*` code
+// into the ESM contract is not a safe string transform (owner decision,
+// 2026-08-09) — we'd trade one broken game for a differently broken one. One
+// corrective retry naming the violation is the same shape the import lint
+// already uses, and it fails soft: if the retry isn't clean, the original is
+// still served (visible + repairable beats dropped).
+//
+// Scope is ANY off-origin script, not just three (owner decision, 2026-08-09):
+// the defect is the bypass, not the library. A generated game must be
+// self-contained apart from the asset host — a third-party CDN in a PUBLISHED
+// game is a liveness dependency on someone else's uptime.
+
+/** Matches `<script ... src="URL" ...>` — any attribute order, either quote. */
+const SCRIPT_SRC_RE = /<script\b[^>]*?\bsrc\s*=\s*(['"])(.*?)\1[^>]*>/gi;
+
+/** The one origin a generated game is allowed to load from: our immutable
+ *  asset host (manifest.ts's ASSET_HOST_ORIGIN — the vendored engine and
+ *  models). Kept as a literal rather than an import so this module stays pure
+ *  string logic with no I/O-adjacent dependency. */
+const ALLOWED_SCRIPT_ORIGIN = "https://assets.ariantra.com";
+
+/** Every off-origin `<script src>` URL in the document, deduped, in order of
+ *  appearance. Relative srcs (`/sdk.js`) and inline scripts are fine — only an
+ *  absolute or protocol-relative URL to a foreign origin is a bypass. */
+export function externalScriptSrcs(html: string): string[] {
+  const found: string[] = [];
+  for (const m of html.matchAll(SCRIPT_SRC_RE)) {
+    const src = m[2]!.trim();
+    if (!src) continue;
+    const isAbsolute = /^(https?:)?\/\//i.test(src);
+    if (!isAbsolute) continue; // relative/same-document — not a bypass
+    if (src.startsWith(ALLOWED_SCRIPT_ORIGIN)) continue;
+    if (!found.includes(src)) found.push(src);
+  }
+  return found;
+}
+
+/** Bypasses a patched version INTRODUCED relative to its source. Mirrors
+ *  newUnknownThreeImports: a game that ALREADY loads a CDN (there are stored
+ *  ones) must stay editable, or every future patch on it would fail for a
+ *  violation the child didn't just make. */
+export function newExternalScriptSrcs(beforeHtml: string, afterHtml: string): string[] {
+  const before = new Set(externalScriptSrcs(beforeHtml));
+  return externalScriptSrcs(afterHtml).filter((s) => !before.has(s));
+}
+
+// ── The bypass's RELATIVE form: an invented local file layout ────────────────
+// BUG_LOG 2026-08-09, found by running all 312 stored conversations through the
+// browser harness while measuring Calvin's blast radius. A stored car-racing
+// game imported `./three.module.js`, `./jsm/loaders/GLTFLoader.js` and
+// `./main.js` — a multi-file three.js checkout that has never existed for a
+// single-document game — and died on `Failed to resolve module specifier`.
+//
+// Neither lint above sees it: a relative src is not an external script, and
+// NAMED_IMPORT_RE only inspects `from "three"`. A generated game is ONE
+// self-contained document, so the only legal module specifier is the bare
+// `three` the import map resolves (plus the asset host, belt and braces).
+// Everything else is a file that will never exist at play time.
+
+/** Every ES-module import specifier in the document: `import … from "X"`,
+ *  bare side-effect `import "X"`, and dynamic `import("X")`. */
+const MODULE_SPECIFIER_RE =
+  /\bimport\s*(?:\(\s*(['"])(.*?)\1\s*\)|(?:[^'"()]*?\bfrom\s*)?(['"])(.*?)\3)/g;
+
+/** Import specifiers that cannot resolve in a single-document game, deduped,
+ *  in order of appearance. `three` is the contract; the asset host is the only
+ *  other legal origin. */
+export function danglingModuleSpecifiers(html: string): string[] {
+  const bad: string[] = [];
+  for (const m of html.matchAll(MODULE_SPECIFIER_RE)) {
+    const spec = (m[2] ?? m[4] ?? "").trim();
+    if (!spec) continue;
+    if (spec === "three") continue; // the vendored contract
+    if (spec.startsWith(ALLOWED_SCRIPT_ORIGIN)) continue;
+    if (!bad.includes(spec)) bad.push(spec);
+  }
+  return bad;
+}
+
+/** Patch gate — judged only on what the patch ADDED, same reasoning as
+ *  newExternalScriptSrcs: a stored game already carrying one of these must
+ *  stay editable rather than failing every future edit. */
+export function newDanglingModuleSpecifiers(beforeHtml: string, afterHtml: string): string[] {
+  const before = new Set(danglingModuleSpecifiers(beforeHtml));
+  return danglingModuleSpecifiers(afterHtml).filter((s) => !before.has(s));
+}
+
 // ── The MIRROR defect: used but not imported ─────────────────────────────────
 // BUG-FIX-LOG 2026-08-07 (PointLight addendum): a delivered game called
 // `new PointLight(...)` with PointLight missing from its import list —

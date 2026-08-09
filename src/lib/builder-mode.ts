@@ -19,9 +19,20 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 24576; // full games run 10-20K tokens; 8K squ
  *  phrase also counts: the Game Stuff gallery teaches exactly "3d cars" as
  *  the magic words (owner decision 2026-07-12), and on a game-builder product
  *  that phrase IS a game ask. */
+/** The ways a child actually writes "3D". SHARED with the catalog gate
+ *  (assets/catalog-gate.ts) — it used to be a second, separately-drifting copy
+ *  of `/\b3d\b/i`, and BUG_LOG 2026-08-09 ("Calvin") turned on exactly that
+ *  pattern being too narrow: "Make it 3-D" matched neither copy, so a literal
+ *  3D request was built with none of the 3D house rules. One definition now,
+ *  so the build-turn gate and the catalog gate can never disagree again.
+ *
+ *  The trailing `\b` after `d` keeps "3-day" out; requiring the digit form to
+ *  end at `d` keeps "3ds max" out. */
+export const THREE_ASK_RE = /\b3\s*-?\s*d\b|\b3\s*-?\s*dimensional\b|\bthree[\s-]?dimensional\b/i;
+
 export function isGameBuildTurn(message: string, history: ChatMessage[]): boolean {
   if (/\bgame\b/i.test(message)) return true;
-  if (/\b3d\b/i.test(message)) return true;
+  if (THREE_ASK_RE.test(message)) return true;
   return history.some((m) => Boolean(m.artifactHtml));
 }
 

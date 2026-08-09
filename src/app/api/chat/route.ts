@@ -20,7 +20,7 @@ import { stripAssetMarkers } from "@/lib/assets/markers";
 import { applyPatch } from "@/lib/repair-prompt";
 import { injectAssets } from "@/lib/assets/inject";
 import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
-import { ensureThreeImports, newUnknownThreeImports, unknownThreeImports, stripRuntimeGlobalImports } from "@/lib/assets/three-import-lint";
+import { danglingModuleSpecifiers, ensureThreeImports, externalScriptSrcs, newDanglingModuleSpecifiers, newExternalScriptSrcs, newUnknownThreeImports, unknownThreeImports, stripRuntimeGlobalImports } from "@/lib/assets/three-import-lint";
 import { CURATED_IMPORT_NAMES } from "@/lib/assets/prompt-catalog";
 import { ensureMultiplayerMarker } from "@/lib/multiplayer-gate";
 import { parseNextAskLine } from "@/lib/next-ask-sentinel";
@@ -755,6 +755,23 @@ export async function POST(req: NextRequest) {
       if (patchBadImports.length) {
         console.warn(`[api/chat] ⛔ patch introduces unknown three imports: ${patchBadImports.join(", ")} @${ms()}ms`);
       }
+      // Pipeline-bypass lint (BUG_LOG 2026-08-09 "Calvin"): same reasoning one
+      // step out — a patch that INTRODUCES an off-origin <script src> pulls the
+      // game off the vendored engine onto someone else's CDN, which is how a
+      // three r128 build reached a kid and died on CapsuleGeometry. Judged on
+      // what the patch ADDED, so a stored CDN game stays editable.
+      const patchBadScripts =
+        applied.ok && applied.mode === "patch" ? newExternalScriptSrcs(currentHtml, applied.html) : [];
+      if (patchBadScripts.length) {
+        console.warn(`[api/chat] ⛔ patch introduces external scripts: ${patchBadScripts.join(", ")} @${ms()}ms`);
+      }
+      // Same class, relative form: a patch that imports a file which will never
+      // exist at play time (`./main.js`) kills the module the same way.
+      const patchBadModules =
+        applied.ok && applied.mode === "patch" ? newDanglingModuleSpecifiers(currentHtml, applied.html) : [];
+      if (patchBadModules.length) {
+        console.warn(`[api/chat] ⛔ patch introduces dangling module imports: ${patchBadModules.join(", ")} @${ms()}ms`);
+      }
       if (detectsNewGame(full)) {
         // The model self-declared this is a whole NEW game, not an edit (PRD §11).
         // Ask before any destructive rebuild — nothing is touched: the current
@@ -764,7 +781,13 @@ export async function POST(req: NextRequest) {
         displayText = NEW_GAME_PROMPT_LINE;
         deliverableHtml = null;
         newGamePrompt = true;
-      } else if (applied.ok && applied.mode === "patch" && patchBadImports.length === 0) {
+      } else if (
+        applied.ok &&
+        applied.mode === "patch" &&
+        patchBadImports.length === 0 &&
+        patchBadScripts.length === 0 &&
+        patchBadModules.length === 0
+      ) {
         console.log(`[api/chat] ✓ edit patch @${ms()}ms`);
         displayText = editReplyProse(full); // the kid-facing sentence only — never the raw hunks
         deliverableHtml = toDeliverable(applied.html);
@@ -821,9 +844,13 @@ export async function POST(req: NextRequest) {
         // existed."
         const reason = patchBadImports.length
           ? `bad_three_imports:${patchBadImports.join("+")}`
-          : applied.ok
-            ? `incomplete ${applied.mode} output`
-            : applied.reason;
+          : patchBadScripts.length
+            ? `external_scripts:${patchBadScripts.join("+")}`
+            : patchBadModules.length
+            ? `dangling_modules:${patchBadModules.join("+")}`
+            : applied.ok
+              ? `incomplete ${applied.mode} output`
+              : applied.reason;
         logSearchMiss(full);
 
         // Option 6 (PRD-RESILIENT-GENERATION §6): try ONE cheap strict-edit rung
@@ -959,22 +986,61 @@ export async function POST(req: NextRequest) {
       // dead on arrival, unrepairable by patching. ONE corrective retry
       // naming the exact violation; if it can't produce a clean game, the
       // original is still served (visible + repairable beats dropped).
+      //
+      // Pipeline-bypass lint (BUG_LOG 2026-08-09 "Calvin"): the mirror case —
+      // a game that never joined the contract AT ALL, so the lint above has no
+      // import statement to inspect and passes it. Calvin's did exactly that:
+      // `<script src=".../three.js/r128/three.min.js">` off cdnjs plus global
+      // `THREE.*` calls. r128 predates CapsuleGeometry, so it threw on the line
+      // building his own character and rendered nothing.
+      //
+      // Folded into the SAME retry rather than a second sequential one on
+      // purpose: Calvin had already waited ~70s through a model stub and a
+      // truncation recovery before this point, and a second corrective round
+      // would have added another full regeneration to that.
       const badImports = artifactHtml ? unknownThreeImports(artifactHtml) : [];
-      if (badImports.length && artifactHtml) {
-        console.warn(`[api/chat] ⛔ unknown three imports: ${badImports.join(", ")} — corrective retry @${ms()}ms`);
+      const badScripts = artifactHtml ? externalScriptSrcs(artifactHtml) : [];
+      const badModules = artifactHtml ? danglingModuleSpecifiers(artifactHtml) : [];
+      if ((badImports.length || badScripts.length || badModules.length) && artifactHtml) {
+        if (badImports.length) {
+          console.warn(`[api/chat] ⛔ unknown three imports: ${badImports.join(", ")} — corrective retry @${ms()}ms`);
+        }
+        if (badScripts.length) {
+          console.warn(`[api/chat] ⛔ external scripts (pipeline bypass): ${badScripts.join(", ")} — corrective retry @${ms()}ms`);
+        }
+        if (badModules.length) {
+          console.warn(`[api/chat] ⛔ dangling module imports (pipeline bypass): ${badModules.join(", ")} — corrective retry @${ms()}ms`);
+        }
+        const faults = [
+          badImports.length
+            ? `it imported ${badImports.join(", ")} from "three" — those exports do not exist in this platform's three bundle`
+            : "",
+          badScripts.length
+            ? `it loaded a third-party library with a <script src> tag (${badScripts.join(", ")}) — this platform serves its OWN three.js build, and that external copy is an OLD version missing things your code called`
+            : "",
+          badModules.length
+            ? `it imported ${badModules.join(", ")} — those files do not exist; a game is ONE self-contained HTML document, and the ONLY module specifier that resolves is the bare "three"`
+            : "",
+        ].filter(Boolean);
         try {
           const corrective = await chatModel.reply({
             history,
             message:
-              `${message}\n\n(IMPORTANT: your previous version crashed because it imported ` +
-              `${badImports.join(", ")} from "three" — those exports do not exist in this platform's ` +
-              `three bundle. Rebuild the game importing ONLY these names from "three": ${CURATED_IMPORT_NAMES.join(", ")}.)`,
+              `${message}\n\n(IMPORTANT: your previous version crashed because ${faults.join(", and ")}. ` +
+              `Rebuild the game with NO \`<script src="...">\` tags of any kind — put \`<!--USES_THREE-->\` as ` +
+              `the first thing inside \`<body>\`, write the game inside \`<script type="module">\`, and import ` +
+              `ONLY these names from "three": ${CURATED_IMPORT_NAMES.join(", ")}.)`,
             image,
             forceFullRegen: true,
             onLedger: mkLedger("regen"),
           });
           trackTurn(() => recordUsage("chat", servedModel, message, corrective.text, false, corrective.usage));
-          if (corrective.artifactHtml && unknownThreeImports(corrective.artifactHtml).length === 0) {
+          if (
+            corrective.artifactHtml &&
+            unknownThreeImports(corrective.artifactHtml).length === 0 &&
+            externalScriptSrcs(corrective.artifactHtml).length === 0 &&
+            danglingModuleSpecifiers(corrective.artifactHtml).length === 0
+          ) {
             console.log(`[api/chat] ✓ import-lint corrective retry @${ms()}ms`);
             displayText = !corrective.wasFenced
               ? `${corrective.text}\n\n\`\`\`html\n${corrective.artifactHtml}\n\`\`\``.trim()

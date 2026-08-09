@@ -597,6 +597,90 @@ describe("POST /api/chat — asset injection can never cost the child the game (
   });
 });
 
+// Pipeline-bypass guard (BUG_LOG 2026-08-09 "Calvin"). A generated 3D game
+// skipped the vendored contract entirely — no <!--USES_THREE--> marker, no
+// import map, no `from "three"` — and loaded three r128 off cdnjs with a
+// legacy global <script src>. r128 predates CapsuleGeometry, so
+// `new THREE.CapsuleGeometry(...)` threw "is not a constructor" on the line
+// building the child's own character and the kid got a blank screen after a
+// ~70s wait (a model stub + a truncation recovery came first).
+//
+// The existing three-import lint could not see it: it matches
+// `import {...} from "three"` and there was no ES import in the document.
+describe("POST /api/chat — a game must never load a library from an external CDN", () => {
+  // Calvin's real shape, reduced: the cdnjs tag + a global THREE.* call.
+  const CDN_GAME =
+    `<!doctype html><html><body><canvas id="gameCanvas"></canvas>\n` +
+    `<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>\n` +
+    `<script>const g = new THREE.CapsuleGeometry(1.5, 3, 4, 8);</script></body></html>`;
+  const CLEAN_GAME =
+    `<!doctype html><html><body><!--USES_THREE--><canvas id="scene"></canvas>\n` +
+    `<script type="module">import { Scene, CapsuleGeometry } from "three";\nCLEAN GAME</script></body></html>`;
+
+  const doneOf = (text: string) => JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
+
+  beforeEach(() => {
+    authMock.mockResolvedValue(null);
+    replyStreamMock.mockReturnValue(one("Here's your game!\n```html" + CDN_GAME + "```"));
+    extractArtifactMock.mockImplementation(() => ({ text: "Here's your game!", artifactHtml: CDN_GAME, wasFenced: false }));
+  });
+
+  it("XS.1 a CDN-loading build triggers ONE corrective retry, and the clean rebuild ships", async () => {
+    replyMock.mockResolvedValue({ text: "Rebuilt properly!", artifactHtml: CLEAN_GAME, wasFenced: false });
+
+    const res = await POST(makeReq({ message: "make a 3D game where Calvin walks around", history: [] }));
+    const done = doneOf(await res.text());
+
+    expect(replyMock).toHaveBeenCalledTimes(1); // exactly one corrective retry
+    expect(done.artifactHtml).toContain("CLEAN GAME");
+    expect(done.artifactHtml).not.toContain("cdnjs.cloudflare.com"); // the bypass never reaches a kid
+    // The retry must NAME the offending URL and forbid the whole tag class.
+    expect(replyMock.mock.calls[0]![0].message).toContain("cdnjs.cloudflare.com");
+    expect(replyMock.mock.calls[0]![0].message).toMatch(/NO `?<script src/i);
+  });
+
+  it("XS.2 fails SOFT — if the retry is still a bypass, the original is served, not dropped", async () => {
+    replyMock.mockResolvedValue({ text: "same again", artifactHtml: CDN_GAME, wasFenced: false });
+
+    const res = await POST(makeReq({ message: "make a 3D game where Calvin walks around", history: [] }));
+    const done = doneOf(await res.text());
+
+    // Visible + repairable beats dropped — the existing import-lint contract.
+    expect(done.artifactHtml).toContain("cdnjs.cloudflare.com");
+  });
+
+  // The relative form of the same bypass, found by running all 312 stored
+  // conversations through the browser harness: a game that invented a local
+  // multi-file three.js layout and died on "Failed to resolve module specifier".
+  it("XS.4 a build importing files that don't exist gets the same corrective retry", async () => {
+    const DANGLING =
+      `<!doctype html><html><body><canvas id="c"></canvas>\n` +
+      `<script type="module">import * as THREE from './three.module.js';\nimport './main.js';</script></body></html>`;
+    replyStreamMock.mockReturnValue(one("Here!\n```html" + DANGLING + "```"));
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: DANGLING, wasFenced: false }));
+    replyMock.mockResolvedValue({ text: "Rebuilt!", artifactHtml: CLEAN_GAME, wasFenced: false });
+
+    const res = await POST(makeReq({ message: "make a 3D car racing game", history: [] }));
+    const done = doneOf(await res.text());
+
+    expect(replyMock).toHaveBeenCalledTimes(1);
+    expect(done.artifactHtml).toContain("CLEAN GAME");
+    expect(done.artifactHtml).not.toContain("./three.module.js");
+    expect(replyMock.mock.calls[0]![0].message).toContain("./three.module.js");
+  });
+
+  it("XS.3 a correct pipeline game ships untouched, with NO corrective retry (guard never misfires)", async () => {
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: CLEAN_GAME, wasFenced: false }));
+    replyStreamMock.mockReturnValue(one("Here!\n```html" + CLEAN_GAME + "```"));
+
+    const res = await POST(makeReq({ message: "make a 3D game", history: [] }));
+    const done = doneOf(await res.text());
+
+    expect(replyMock).not.toHaveBeenCalled();
+    expect(done.artifactHtml).toContain("CLEAN GAME");
+  });
+});
+
 // Completeness guard (BUG-FIX-LOG 2026-07-22): the model can end a build with
 // finishReason STOP ("done") on a TRUNCATED game — it wrote the intro + CSS and
 // quit mid-file (owner's "30 New Testament characters" prompt stopped ~5K chars

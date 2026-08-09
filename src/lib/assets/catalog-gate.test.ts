@@ -45,6 +45,38 @@ describe("catalogGates — free tier: keyword-invoked, 3D and audio gate indepen
     expect(catalogGates({ message: "3d cars", history: [], paid: false })).toEqual({ three: true, audio: false, save: false });
   });
 
+  // BUG_LOG 2026-08-09 ("Calvin"). A child ended his ask with "Make it 3-D" —
+  // the hyphenated spelling, which `\b3d\b` does not match. The 3D catalog was
+  // withheld from a turn that was LITERALLY a 3D request, so the model built in
+  // 3D with none of the house rules (no USES_THREE marker, no import map, no
+  // curated import list) and fell back on the open internet's default: a cdnjs
+  // <script> tag pulling three r128. r128 predates CapsuleGeometry, so the game
+  // threw on the first shape it drew and the child got a blank screen.
+  // The lint in three-import-lint.ts is the safety net; THIS is the cause.
+  it("the ways a child actually writes it all unlock the 3D catalog", () => {
+    for (const ask of [
+      "Can you make the game Make it 3-D", // Calvin's real words
+      "make it 3d",
+      "make it 3 d",
+      "a 3-d racing game",
+      "I want a three dimensional game",
+      "make a 3-dimensional maze",
+    ]) {
+      expect(catalogGates({ message: ask, history: [], paid: false }).three, ask).toBe(true);
+    }
+  });
+
+  it("still does not fire on look-alikes that are not a 3D ask", () => {
+    for (const ask of [
+      "make a game about a 3-day trip",
+      "a game with 3 dogs",
+      "a grade3d game",
+      "3ds max is my favourite",
+    ]) {
+      expect(catalogGates({ message: ask, history: [], paid: false }).three, ask).toBe(false);
+    }
+  });
+
   it("\"sound\"/\"music\"/\"sound effects\" unlock the audio catalog only", () => {
     for (const ask of ["make me a game with sound", "a jumping game with music", "platformer game with sound effects"]) {
       expect(catalogGates({ message: ask, history: [], paid: false }), ask).toEqual({ three: false, audio: true, save: false });

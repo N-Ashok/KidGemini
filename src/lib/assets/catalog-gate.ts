@@ -5,7 +5,7 @@
 // regexes only — no LLM call, no I/O. Pure logic, no React/Next.
 
 import type { ChatMessage } from "@/types/chat.types";
-import { isGameBuildTurn } from "../builder-mode";
+import { isGameBuildTurn, THREE_ASK_RE } from "../builder-mode";
 
 export interface CatalogGates {
   three: boolean; // engine + model catalog (they travel together: models need the engine)
@@ -21,7 +21,19 @@ export interface CatalogGates {
 // Free-tier triggers (§9): err toward unlocking — a false unlock costs a few
 // catalog tokens; an under-unlock is a kid asking for sound and getting
 // silence. Word-bounded so "grade3d" / "musical" don't fire.
-const THREE_TRIGGER = /\b3d\b/i;
+//
+// BUG_LOG 2026-08-09 ("Calvin"): this was `/\b3d\b/i`, which does not match
+// "3-D". A child ended his ask with "Make it 3-D" and the 3D catalog was
+// withheld from a turn that was literally a 3D request — so the model built in
+// 3D having been told NONE of the house rules and used the open internet's
+// default, a cdnjs <script> tag pulling three r128. That version predates
+// CapsuleGeometry, so his game threw on the first shape it drew.
+//
+// The §9 principle ("err toward unlocking") was already the right call; the
+// pattern just didn't implement it. It now lives in ONE place — builder-mode's
+// THREE_ASK_RE — because this was a second copy of the same rule and the two
+// could drift apart (they had).
+const THREE_TRIGGER = THREE_ASK_RE;
 const AUDIO_TRIGGER = /\b(sounds?|music|songs?|sfx)\b/i;
 // Build/world/inventory mechanics (docs/2026-08-01_PRD_SaveContinueBuilding.md):
 // a kid naming placement/persistence mechanics, not just "make me a game".
