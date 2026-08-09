@@ -106,6 +106,26 @@ describe("externalScriptSrcs (pipeline-bypass lint)", () => {
     expect(externalScriptSrcs("<html><body>plain 2d game</body></html>")).toEqual([]);
   });
 
+  // REGRESSION (review of the commit that added this lint): the pattern required
+  // a quote after `src=`, so an UNQUOTED src — valid HTML the browser loads
+  // identically — sailed straight through. Fail-open in the one lint whose
+  // entire job is catching the shape that killed Calvin's game.
+  it("catches an UNQUOTED src", () => {
+    const html = `<script src=https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js></script>`;
+    expect(externalScriptSrcs(html)).toEqual(["https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"]);
+  });
+
+  // REGRESSION (same review): `startsWith("https://assets.ariantra.com")` has no
+  // boundary, so a look-alike host was waved through as our own asset host.
+  it("does not mistake a look-alike host for the asset host", () => {
+    expect(externalScriptSrcs(cdnGame("https://assets.ariantra.com.cdn-mirror.example/three.js"))).toHaveLength(1);
+    expect(externalScriptSrcs(cdnGame("https://assets.ariantra.com-evil.test/three.js"))).toHaveLength(1);
+    // ...while the real host, including protocol-relative, still passes.
+    expect(externalScriptSrcs(cdnGame("https://assets.ariantra.com/three.098b4c.js"))).toEqual([]);
+    expect(externalScriptSrcs(cdnGame("//assets.ariantra.com/three.098b4c.js"))).toEqual([]);
+    expect(danglingModuleSpecifiers(relImportGame("//assets.ariantra.com/three.098b4c.js"))).toEqual([]);
+  });
+
   it("handles single quotes, extra attributes, and reports each URL once", () => {
     const html =
       `<script defer src='https://cdnjs.cloudflare.com/a.js' crossorigin></script>` +
@@ -140,9 +160,38 @@ describe("danglingModuleSpecifiers (pipeline-bypass lint, relative form)", () =>
     ]);
   });
 
-  it("passes the ONLY specifier a generated game may import", () => {
+  it("passes the specifiers a generated game may import", () => {
     expect(danglingModuleSpecifiers(relImportGame("three"))).toEqual([]);
     expect(danglingModuleSpecifiers(`<script type="module">import { Scene } from "three";</script>`)).toEqual([]);
+  });
+
+  // REGRESSION, found in review of the commit that added this lint and live in
+  // production for one deploy. `cannon-es` is the OTHER legal bare specifier:
+  // inject.ts writes `imports["cannon-es"]` into the import map, and
+  // physics-playbook.ts teaches `import { World, Body, ... } from "cannon-es"`
+  // on EVERY gates.three turn. Allowing only "three" meant every 3D physics
+  // game tripped a full corrective regeneration (~50s + the child's Sparks) —
+  // and because the corrective prompt says the only legal specifier is "three",
+  // a "clean" retry was one that had DROPPED the physics engine.
+  it("passes cannon-es — the physics engine is in the import map too", () => {
+    expect(danglingModuleSpecifiers(relImportGame("cannon-es"))).toEqual([]);
+    const physicsGame =
+      `<html><body><!--USES_THREE--><!--USES_PHYSICS-->\n` +
+      `<script type="module">import { Scene, Mesh } from "three";\n` +
+      `import { World, Body, Vec3, Quaternion } from "cannon-es";</script></body></html>`;
+    expect(danglingModuleSpecifiers(physicsGame)).toEqual([]);
+    expect(externalScriptSrcs(physicsGame)).toEqual([]);
+  });
+
+  // Lockstep: whatever the playbook TEACHES must be what the lint ALLOWS.
+  // These drifting apart is the whole defect above, so pin them together.
+  it("every specifier the physics playbook teaches is allowed", async () => {
+    const { physicsEnginePromptSection } = await import("./physics-playbook");
+    const taught = [...physicsEnginePromptSection().matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]!);
+    expect(taught.length).toBeGreaterThan(0); // the section really does teach an import
+    for (const spec of taught) {
+      expect(danglingModuleSpecifiers(relImportGame(spec)), spec).toEqual([]);
+    }
   });
 
   it("passes the asset host, and flags any other absolute URL", () => {

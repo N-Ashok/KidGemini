@@ -5,6 +5,7 @@
 // finds those violations server-side so /api/chat can retry or reject
 // BEFORE a dead game reaches a kid. Pure string logic, no I/O.
 
+import { ASSET_HOST_ORIGIN } from "./manifest";
 import { CURATED_IMPORT_NAMES } from "./prompt-catalog";
 
 /** The loader helper Ari itself injects imports these from "three" too —
@@ -61,14 +62,27 @@ export function newUnknownThreeImports(beforeHtml: string, afterHtml: string): s
 // self-contained apart from the asset host — a third-party CDN in a PUBLISHED
 // game is a liveness dependency on someone else's uptime.
 
-/** Matches `<script ... src="URL" ...>` — any attribute order, either quote. */
-const SCRIPT_SRC_RE = /<script\b[^>]*?\bsrc\s*=\s*(['"])(.*?)\1[^>]*>/gi;
+/** Matches `<script ... src=URL ...>` — any attribute order, quoted with
+ *  either quote or UNQUOTED. The unquoted alternative is not pedantry: it is
+ *  valid HTML the browser loads identically, and without it this lint was
+ *  fail-open on exactly the shape it exists to catch (review regression). */
+const SCRIPT_SRC_RE = /<script\b[^>]*?\bsrc\s*=\s*(?:(['"])(.*?)\1|([^\s>]+))[^>]*>/gi;
 
 /** The one origin a generated game is allowed to load from: our immutable
- *  asset host (manifest.ts's ASSET_HOST_ORIGIN — the vendored engine and
- *  models). Kept as a literal rather than an import so this module stays pure
- *  string logic with no I/O-adjacent dependency. */
-const ALLOWED_SCRIPT_ORIGIN = "https://assets.ariantra.com";
+ *  asset host (`ASSET_HOST_ORIGIN` — the vendored engine and models). Imported
+ *  rather than re-typed: it was duplicated here as a literal "to stay pure",
+ *  but manifest.ts exports it as a plain const with no I/O, so the copy bought
+ *  nothing and risked drift. */
+const ALLOWED_SCRIPT_HOST = ASSET_HOST_ORIGIN.replace(/^https?:/, "");
+
+/** True for a URL served by our asset host — matched on the ORIGIN with a
+ *  boundary, so `assets.ariantra.com.cdn-mirror.example` is not mistaken for
+ *  `assets.ariantra.com` (review regression), and protocol-relative
+ *  `//assets.ariantra.com/...` is correctly recognised as ours. */
+function isAssetHost(url: string): boolean {
+  const bare = url.replace(/^https?:/, "");
+  return bare === ALLOWED_SCRIPT_HOST || bare.startsWith(`${ALLOWED_SCRIPT_HOST}/`);
+}
 
 /** Every off-origin `<script src>` URL in the document, deduped, in order of
  *  appearance. Relative srcs (`/sdk.js`) and inline scripts are fine — only an
@@ -76,11 +90,11 @@ const ALLOWED_SCRIPT_ORIGIN = "https://assets.ariantra.com";
 export function externalScriptSrcs(html: string): string[] {
   const found: string[] = [];
   for (const m of html.matchAll(SCRIPT_SRC_RE)) {
-    const src = m[2]!.trim();
+    const src = (m[2] ?? m[3] ?? "").trim();
     if (!src) continue;
     const isAbsolute = /^(https?:)?\/\//i.test(src);
     if (!isAbsolute) continue; // relative/same-document — not a bypass
-    if (src.startsWith(ALLOWED_SCRIPT_ORIGIN)) continue;
+    if (isAssetHost(src)) continue;
     if (!found.includes(src)) found.push(src);
   }
   return found;
@@ -113,16 +127,30 @@ export function newExternalScriptSrcs(beforeHtml: string, afterHtml: string): st
 const MODULE_SPECIFIER_RE =
   /\bimport\s*(?:\(\s*(['"])(.*?)\1\s*\)|(?:[^'"()]*?\bfrom\s*)?(['"])(.*?)\3)/g;
 
+/** The bare specifiers the injected import map actually resolves. BOTH are
+ *  real: `inject.ts` writes `imports["three"]` and, for a physics game,
+ *  `imports["cannon-es"]` — and `physics-playbook.ts` teaches
+ *  `import { World, Body, … } from "cannon-es"` on every gates.three turn.
+ *
+ *  This list shipped as just `["three"]` for one deploy, which made EVERY 3D
+ *  physics game trip a full corrective regeneration (~50s + the child's
+ *  Sparks) — and since the corrective prompt named `three` as the only legal
+ *  specifier, a "clean" retry was one that had dropped the physics engine.
+ *  Pinned by a lockstep test: whatever the playbook teaches must be allowed
+ *  here. If a third engine is ever added to the import map, add it here in the
+ *  same change. */
+const ALLOWED_BARE_SPECIFIERS = new Set(["three", "cannon-es"]);
+
 /** Import specifiers that cannot resolve in a single-document game, deduped,
- *  in order of appearance. `three` is the contract; the asset host is the only
- *  other legal origin. */
+ *  in order of appearance. The import map's bare specifiers are the contract;
+ *  the asset host is the only other legal origin. */
 export function danglingModuleSpecifiers(html: string): string[] {
   const bad: string[] = [];
   for (const m of html.matchAll(MODULE_SPECIFIER_RE)) {
     const spec = (m[2] ?? m[4] ?? "").trim();
     if (!spec) continue;
-    if (spec === "three") continue; // the vendored contract
-    if (spec.startsWith(ALLOWED_SCRIPT_ORIGIN)) continue;
+    if (ALLOWED_BARE_SPECIFIERS.has(spec)) continue; // resolved by the import map
+    if (isAssetHost(spec)) continue;
     if (!bad.includes(spec)) bad.push(spec);
   }
   return bad;

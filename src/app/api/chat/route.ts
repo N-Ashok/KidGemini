@@ -866,7 +866,20 @@ export async function POST(req: NextRequest) {
           const rungApplied = applyPatch(currentHtml, rung.text);
           const rungBadImports =
             rungApplied.ok && rungApplied.mode === "patch" ? newUnknownThreeImports(currentHtml, rungApplied.html) : [];
-          if (rungApplied.ok && rungApplied.mode === "patch" && rungBadImports.length === 0) {
+          // The cheap rung must close the SAME gates the patch path just closed
+          // — without these it can re-introduce the exact bypass rejected one
+          // branch earlier and ship it (review finding, 2026-08-09).
+          const rungBadBypass =
+            rungApplied.ok && rungApplied.mode === "patch"
+              ? [
+                  ...newExternalScriptSrcs(currentHtml, rungApplied.html),
+                  ...newDanglingModuleSpecifiers(currentHtml, rungApplied.html),
+                ]
+              : [];
+          if (rungBadBypass.length) {
+            console.warn(`[api/chat] ⛔ strict rung introduces a pipeline bypass: ${rungBadBypass.join(", ")} @${ms()}ms`);
+          }
+          if (rungApplied.ok && rungApplied.mode === "patch" && rungBadImports.length === 0 && rungBadBypass.length === 0) {
             console.log(`[api/chat] ✓ edit patch (cheap strict rung, before rebuild) @${ms()}ms`);
             displayText = editReplyProse(rung.text);
             deliverableHtml = toDeliverable(rungApplied.html);
@@ -875,7 +888,9 @@ export async function POST(req: NextRequest) {
             const why = rungApplied.ok
               ? rungBadImports.length
                 ? `bad_imports:${rungBadImports.join("+")}`
-                : `mode=${rungApplied.mode}`
+                : rungBadBypass.length
+                  ? `pipeline_bypass:${rungBadBypass.join("+")}`
+                  : `mode=${rungApplied.mode}`
               : rungApplied.reason;
             console.log(`[api/chat] cheap strict rung declined (${why}) — full regeneration @${ms()}ms`);
           }
@@ -1011,6 +1026,11 @@ export async function POST(req: NextRequest) {
         if (badModules.length) {
           console.warn(`[api/chat] ⛔ dangling module imports (pipeline bypass): ${badModules.join(", ")} — corrective retry @${ms()}ms`);
         }
+        // Is this actually a 3D game? A bad three-import proves it; otherwise
+        // look for the marker or a three usage in the artifact. A 2D game that
+        // merely loaded some other library off a CDN must NOT be rebuilt in 3D.
+        const isThreeGame =
+          badImports.length > 0 || /USES_THREE|from\s*['"]three['"]|\bTHREE\s*\./.test(artifactHtml);
         const faults = [
           badImports.length
             ? `it imported ${badImports.join(", ")} from "three" — those exports do not exist in this platform's three bundle`
@@ -1025,11 +1045,23 @@ export async function POST(req: NextRequest) {
         try {
           const corrective = await chatModel.reply({
             history,
+            // The remedy must match the violation. `badScripts` fires for ANY
+            // off-origin script — a 2D game that pulled Tone.js off a CDN is a
+            // real hit — and the 3D half of this instruction would tell that
+            // game to rebuild itself as a three.js game, injecting a 635 KB
+            // engine it doesn't need and marking it 3D for every later turn
+            // (review finding, 2026-08-09). Only add the 3D contract when this
+            // game is actually 3D.
             message:
               `${message}\n\n(IMPORTANT: your previous version crashed because ${faults.join(", and ")}. ` +
-              `Rebuild the game with NO \`<script src="...">\` tags of any kind — put \`<!--USES_THREE-->\` as ` +
-              `the first thing inside \`<body>\`, write the game inside \`<script type="module">\`, and import ` +
-              `ONLY these names from "three": ${CURATED_IMPORT_NAMES.join(", ")}.)`,
+              `Rebuild the game as ONE self-contained HTML document with NO \`<script src="...">\` tags of ` +
+              `any kind — put the game's own code inline.` +
+              (isThreeGame
+                ? ` Because this is a 3D game: put \`<!--USES_THREE-->\` as the first thing inside \`<body>\`, ` +
+                  `write the game inside \`<script type="module">\`, and import ONLY these names from "three": ` +
+                  `${CURATED_IMPORT_NAMES.join(", ")}.`
+                : "") +
+              `)`,
             image,
             forceFullRegen: true,
             onLedger: mkLedger("regen"),
