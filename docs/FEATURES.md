@@ -1079,6 +1079,13 @@ server-to-server contract as `arcade-partner.ts`).
   balance, ₹ value, full statement incl. spends (tokens + ₹ each), and the
   parent-only social-share reward submit (Twitter/Instagram, once per
   game+platform; kids never touch social surfaces).
+- **Used since last recharge (2026-08-09)**: above the statement, one line
+  answering the question the list never did — added, used (in ⚡ and ₹), how
+  many builds it bought, and what's left, measured from the most recent CREDIT
+  of any kind (`src/lib/sparks-statement.ts`, pure + tested). "Recharge" is not
+  purchase-only on purpose: every balance to date arrived as `admin_grant`. With
+  no credit in the statement it says "since this account started" rather than
+  showing a total without its window.
 - **Low balance**: the PLATFORM emails the parent (throttled 1/3 days) —
   kids are never dunned.
 - **Publish celebration card** (closure §4, 2026-07-26): first publish's done
@@ -1088,6 +1095,14 @@ server-to-server contract as `arcade-partner.ts`).
   the feed is unavailable — Sparks never wobble the publish flow.
 
 ## Billing (`/upgrade`, `/pay`) — Sparks packs (Phase 5, 2026-07-27)
+
+- **Parent PIN gate on purchase (owner ask 2026-08-09)**: `POST /api/billing/order`
+  refuses with 403 `parent_pin_required` when the family has a PIN and the
+  request carries no valid `ari_parent` proof for THAT account; `/upgrade` shows
+  a PIN step and resumes the same pack. Enforced server-side — the endpoint is
+  callable directly, so a browser-only prompt would guard nothing. A family with
+  **no** PIN set keeps buying as before (rule in `src/lib/parent-purchase-gate.ts`,
+  reasoning in `docs/BUG-FIX-LOG.md` 2026-08-09).
 - Razorpay one-time payments: pack cards, order creation, checkout — same
   rails as before, now selling `SPARK_PACKS` instead of yearly-access plans
 - Webhook with signature verification + idempotency (each event processed once)

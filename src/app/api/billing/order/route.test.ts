@@ -23,12 +23,24 @@ vi.mock("@/lib/razorpay", () => ({
 }));
 
 const createPaymentMock = vi.fn();
+const parentPinGetMock = vi.fn();
 vi.mock("@/lib/db", () => ({
   SqlitePaymentStore: class {
     create(...args: unknown[]) {
       return createPaymentMock(...args);
     }
   },
+  SqliteParentAuthStore: class {
+    get(...args: unknown[]) {
+      return parentPinGetMock(...args);
+    }
+  },
+}));
+
+const verifyParentSessionMock = vi.fn();
+vi.mock("@/lib/parent-session", async (orig) => ({
+  ...(await orig<typeof import("@/lib/parent-session")>()),
+  verifyParentSession: (...args: unknown[]) => verifyParentSessionMock(...args),
 }));
 
 const fetchGateMock = vi.fn();
@@ -39,10 +51,16 @@ vi.mock("@/lib/sparks-bridge", () => ({
 import { POST } from "./route";
 import type { NextRequest } from "next/server";
 
-function makeReq(body: unknown, sessionToken = "jwt-abc"): NextRequest {
+function makeReq(body: unknown, sessionToken = "jwt-abc", parentToken?: string): NextRequest {
   return {
     json: async () => body,
-    cookies: { get: (name: string) => (name === "ariantra_session" && sessionToken ? { value: sessionToken } : undefined) },
+    cookies: {
+      get: (name: string) => {
+        if (name === "ariantra_session" && sessionToken) return { value: sessionToken };
+        if (name === "ari_parent" && parentToken) return { value: parentToken };
+        return undefined;
+      },
+    },
   } as unknown as NextRequest;
 }
 
@@ -54,6 +72,12 @@ describe("POST /api/billing/order", () => {
     createOrderMock.mockReset();
     createPaymentMock.mockReset();
     fetchGateMock.mockReset();
+    parentPinGetMock.mockReset();
+    // Default: no parent PIN configured — today's behaviour for most families,
+    // so the pre-existing tests keep exercising the unchanged happy path.
+    parentPinGetMock.mockReturnValue(null);
+    verifyParentSessionMock.mockReset();
+    verifyParentSessionMock.mockResolvedValue(null);
   });
 
   it("returns 401 and never calls Razorpay when unauthenticated", async () => {
@@ -167,5 +191,81 @@ describe("POST /api/billing/order", () => {
       expect(res.status).toBe(200);
       expect(fetchGateMock).not.toHaveBeenCalled();
     });
+  });
+});
+
+// ── Parent PIN gate (owner ask 2026-08-09) ─────────────────────────────────
+// "we need to enable the buy button but parents pin is needed to buy there."
+// The gate is enforced HERE, on the server, because a client-side prompt in
+// front of Razorpay protects nothing — the order endpoint is callable directly.
+describe("parent PIN gate on the order route", () => {
+  beforeEach(() => {
+    // This describe is top-level, so the suite-wide beforeEach above does not
+    // reach it — reset explicitly or call counts leak between these tests.
+    resolveUserIdMock.mockReset();
+    resolvePlayerIdMock.mockReset();
+    createOrderMock.mockReset();
+    createPaymentMock.mockReset();
+    fetchGateMock.mockReset();
+    parentPinGetMock.mockReset();
+    verifyParentSessionMock.mockReset();
+
+    resolveUserIdMock.mockResolvedValue("user:kid@example.com");
+    resolvePlayerIdMock.mockResolvedValue("player-1");
+    verifyParentSessionMock.mockResolvedValue(null);
+    createOrderMock.mockResolvedValue({ id: "order_pin", amount: 50_000, currency: "INR" });
+  });
+
+  it("refuses with 403 when the family HAS a PIN and no parent session is presented", async () => {
+    parentPinGetMock.mockReturnValue({ accountId: "user:kid@example.com", pinHash: "h", setAt: 1, attempts: 0 });
+
+    const res = await POST(makeReq({ planKey: "pack500" }));
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("parent_pin_required");
+    // Nothing was charged and nothing was recorded.
+    expect(createOrderMock).not.toHaveBeenCalled();
+    expect(createPaymentMock).not.toHaveBeenCalled();
+  });
+
+  it("creates the order when the parent session proves the PIN for THIS account", async () => {
+    parentPinGetMock.mockReturnValue({ accountId: "user:kid@example.com", pinHash: "h", setAt: 1, attempts: 0 });
+    verifyParentSessionMock.mockResolvedValue("user:kid@example.com");
+
+    const res = await POST(makeReq({ planKey: "pack500" }, "jwt-abc", "parent-jwt"));
+
+    expect(res.status).toBe(200);
+    expect(createOrderMock).toHaveBeenCalled();
+  });
+
+  it("refuses a parent session belonging to a DIFFERENT account", async () => {
+    parentPinGetMock.mockReturnValue({ accountId: "user:kid@example.com", pinHash: "h", setAt: 1, attempts: 0 });
+    verifyParentSessionMock.mockResolvedValue("user:someone-else@example.com");
+
+    const res = await POST(makeReq({ planKey: "pack500" }, "jwt-abc", "parent-jwt"));
+
+    expect(res.status).toBe(403);
+    expect(createOrderMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT block a family that has no PIN set — buying keeps working", async () => {
+    // The absent-PIN fixture. Failing closed here would have repeated
+    // BUG_LOG #52/#53 on the revenue path: PIN setup needs a contact address
+    // the platform holds for a minority of accounts.
+    parentPinGetMock.mockReturnValue(null);
+
+    const res = await POST(makeReq({ planKey: "pack500" }));
+
+    expect(res.status).toBe(200);
+    expect(createOrderMock).toHaveBeenCalled();
+  });
+
+  it("gates the pay-any-amount shape too, not just fixed packs", async () => {
+    parentPinGetMock.mockReturnValue({ accountId: "user:kid@example.com", pinHash: "h", setAt: 1, attempts: 0 });
+
+    const res = await POST(makeReq({ amountPaise: 20_000 }));
+
+    expect(res.status).toBe(403);
+    expect(createOrderMock).not.toHaveBeenCalled();
   });
 });

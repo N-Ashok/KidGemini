@@ -75,6 +75,13 @@ export function UpgradePlans() {
   // 2026-08-07: the ₹120 trial pack is once-only. null = unknown (show the
   // card optimistically — the order route is the enforcer); true = hide it.
   const [trialUsed, setTrialUsed] = useState<boolean | null>(null);
+  // Parent PIN gate (owner ask 2026-08-09). The SERVER decides — /api/billing/order
+  // answers 403 parent_pin_required — and this prompt is how a parent satisfies
+  // it without leaving the page and losing the pack they picked.
+  const [pinFor, setPinFor] = useState<string | null>(null); // pack key awaiting a PIN
+  const [pin, setPin] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [pinBusy, setPinBusy] = useState(false);
 
   useEffect(() => {
     if (authStatus !== "authenticated") return;
@@ -126,6 +133,15 @@ export function UpgradePlans() {
       });
       if (!res.ok) {
         const detail = (await res.json().catch(() => ({}))) as { error?: string };
+        if (detail.error === "parent_pin_required") {
+          // Not an error to apologise for — it's the gate doing its job. Keep
+          // the chosen pack so the purchase resumes on the same tap.
+          setPinFor(planKey);
+          setPin("");
+          setPinError("");
+          setPending(null);
+          return;
+        }
         if (detail.error === "trial_used") {
           setTrialUsed(true);
           throw new Error("You've already used your one-time trial pack — the Starter pack is the next step! ⚡");
@@ -182,6 +198,49 @@ export function UpgradePlans() {
     }
   }
 
+  /** Exchange the PIN for the short-lived parent-session cookie, then resume
+   *  the purchase the parent already chose. Every failure says what to do
+   *  next — no dead ends (CLAUDE.md §6). */
+  async function submitPin(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pinFor || pinBusy) return;
+    setPinBusy(true);
+    setPinError("");
+    try {
+      const res = await fetch("/api/parent/verify-pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      if (res.ok) {
+        const resume = pinFor;
+        setPinFor(null);
+        setPin("");
+        await handleSelect(resume);
+        return;
+      }
+      const detail = (await res.json().catch(() => ({}))) as { error?: string; attemptsLeft?: number; unlockAt?: number };
+      if (detail.error === "locked") {
+        const mins = detail.unlockAt ? Math.max(1, Math.ceil((detail.unlockAt - Date.now()) / 60_000)) : 15;
+        setPinError(`Too many tries — the PIN is locked for about ${mins} minute${mins === 1 ? "" : "s"}. You can come back and buy after that.`);
+      } else if (detail.error === "wrong_pin") {
+        setPinError(
+          detail.attemptsLeft !== undefined
+            ? `That PIN didn't match — ${detail.attemptsLeft} ${detail.attemptsLeft === 1 ? "try" : "tries"} left.`
+            : "That PIN didn't match. Try again?",
+        );
+      } else if (detail.error === "not_set") {
+        setPinError("No parent PIN is set on this account yet — set one in the Parent area, then come back.");
+      } else {
+        setPinError("Couldn't check that PIN just now. Try again in a moment.");
+      }
+    } catch {
+      setPinError("Couldn't reach the server. Check your connection and try again.");
+    } finally {
+      setPinBusy(false);
+    }
+  }
+
   if (authStatus === "loading") {
     return <div className="h-full w-full bg-white" aria-busy="true" />;
   }
@@ -223,6 +282,56 @@ export function UpgradePlans() {
           />
         ))}
       </div>
+
+      {/* Parent PIN step. Shown only when the server asked for it, so a family
+          without a PIN never meets this screen. */}
+      {pinFor && (
+        <form
+          onSubmit={submitPin}
+          className="mt-8 w-full max-w-sm rounded-kid border border-neutral-300 bg-white p-5 text-left"
+        >
+          <h2 className="text-base font-semibold text-neutral-800">🔒 Grown-up check</h2>
+          <p className="mt-1 text-sm text-neutral-600">
+            Enter your parent PIN to buy {findPack(pinFor)?.label ?? "this pack"}. This keeps Sparks
+            purchases in a grown-up&rsquo;s hands.
+          </p>
+          <input
+            type="password"
+            inputMode="numeric"
+            autoComplete="off"
+            autoFocus
+            value={pin}
+            onChange={(e) => setPin(e.target.value)}
+            aria-label="Parent PIN"
+            placeholder="PIN"
+            className="mt-3 w-full rounded-full border border-neutral-300 px-4 py-3 text-base tracking-[0.4em]"
+          />
+          {pinError && <p className="mt-2 text-sm font-medium text-red-600">{pinError}</p>}
+          <div className="mt-4 flex gap-2">
+            <button
+              type="submit"
+              disabled={pinBusy || !pin}
+              className="flex-1 rounded-full bg-neutral-800 px-4 py-3 text-base font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+            >
+              {pinBusy ? "Checking…" : "Continue to payment"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPinFor(null);
+                setPin("");
+                setPinError("");
+              }}
+              className="rounded-full border border-neutral-300 px-4 py-3 text-base font-medium text-neutral-700 hover:bg-neutral-50"
+            >
+              Cancel
+            </button>
+          </div>
+          <p className="mt-3 text-xs text-neutral-500">
+            Forgotten it? You can reset the PIN from the Parent area.
+          </p>
+        </form>
+      )}
 
       {message && (
         <p

@@ -5,7 +5,8 @@
 // including spends (with the tokens + ₹ cost behind each). Also the
 // parent-only social-share submission — kids never touch social surfaces.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { summarizeSinceLastRecharge } from "@/lib/sparks-statement";
 
 interface Txn {
   id: string;
@@ -80,6 +81,16 @@ export function SparksParentCard() {
   }
 
   const rows = expanded ? txns : txns.slice(0, 6);
+  // The statement listed every line but never totalled them, so "where did my
+  // Sparks go?" had to be done by hand (owner report 2026-08-09).
+  const since = useMemo(() => summarizeSinceLastRecharge(txns), [txns]);
+  const RECHARGE_LABEL: Record<string, string> = {
+    purchase: "your last top-up",
+    admin_grant: "your last Sparks from Ariantra",
+    coupon: "your last coupon",
+    signup_grant: "the welcome Sparks",
+    refund: "the last refund",
+  };
 
   return (
     <article className="card space-y-4">
@@ -99,6 +110,45 @@ export function SparksParentCard() {
           </div>
         )}
       </div>
+
+      {/* Since-last-recharge summary (owner ask 2026-08-09). The statement
+          below is the append-only truth; this is the one line that answers
+          "how much of what I put in is gone?" without arithmetic. */}
+      {since && (
+        <div className="rounded-kid border border-gray-200 bg-gray-50 p-3 text-sm">
+          <div className="font-semibold">
+            {since.sinceStart ? "Since this account started" : `Since ${RECHARGE_LABEL[since.kind ?? ""] ?? "your last recharge"}`}
+            {since.at && (
+              <span className="font-normal text-ink-700"> · {new Date(since.at).toLocaleDateString()}</span>
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-5 gap-y-1 text-ink-700">
+            {!since.sinceStart && (
+              <span>
+                Added <strong className="text-emerald-700">+{since.added.toLocaleString()} ⚡</strong>
+              </span>
+            )}
+            <span>
+              Used <strong>{since.spent.toLocaleString()} ⚡</strong> (₹{(since.spent / 100).toFixed(2)})
+            </span>
+            <span>
+              across <strong>{since.builds.toLocaleString()}</strong> {since.builds === 1 ? "build" : "builds"}
+            </span>
+            {balance !== null && (
+              <span>
+                Left <strong>{balance.toLocaleString()} ⚡</strong>
+              </span>
+            )}
+          </div>
+          {since.sinceStart && (
+            /* Never let a number stand without its window — that ambiguity is
+               the bug, not the absence of a total. */
+            <p className="mt-1 text-xs text-ink-700">
+              No top-up appears in this statement yet, so this covers everything on record.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Buy path (owner ask 2026-08-06): checkout shipped 2026-07-27 but was
           reachable by direct link only — the parent tab is its home. The kid

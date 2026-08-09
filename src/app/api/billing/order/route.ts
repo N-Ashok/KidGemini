@@ -5,7 +5,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveUserId, resolvePlayerId } from "@/lib/auth-identity";
 import { RazorpayGateway } from "@/lib/razorpay";
-import { SqlitePaymentStore } from "@/lib/db";
+import { SqlitePaymentStore, SqliteParentAuthStore } from "@/lib/db";
+import { verifyParentSession, PARENT_SESSION_COOKIE } from "@/lib/parent-session";
+import { decidePurchaseGate } from "@/lib/parent-purchase-gate";
 import { findPack, CURRENCY, CUSTOM_PLAN_KEY, validateCustomAmountPaise } from "@/lib/billing.config";
 import { SESSION_COOKIE } from "@/lib/ariantra-session";
 import { fetchGate } from "@/lib/sparks-bridge";
@@ -14,6 +16,7 @@ export const runtime = "nodejs";
 
 const gateway = new RazorpayGateway();
 const payments = new SqlitePaymentStore();
+const parentAuth = new SqliteParentAuthStore();
 
 export async function POST(req: NextRequest) {
   const userId = await resolveUserId();
@@ -22,6 +25,25 @@ export async function POST(req: NextRequest) {
   // credit the Sparks purchase later without needing a live session cookie —
   // see PaymentRecord.playerId.
   const playerId = await resolvePlayerId();
+
+  // Parent PIN gate (owner ask 2026-08-09). Enforced HERE rather than in the
+  // browser: /upgrade's button is a convenience, this endpoint is the
+  // authority — a client-only prompt guards nothing, since the order can be
+  // POSTed directly. Applies to BOTH request shapes (fixed pack and
+  // pay-any-amount) because it sits above the branch.
+  const parentToken = req.cookies.get(PARENT_SESSION_COOKIE)?.value ?? "";
+  const parentAccountId = parentToken
+    ? await verifyParentSession(parentToken, process.env.AUTH_JWT_SECRET ?? "")
+    : null;
+  const gate = decidePurchaseGate({
+    pinIsSet: parentAuth.get(userId) !== null,
+    parentAccountId,
+    accountId: userId,
+  });
+  if (!gate.allow) {
+    console.log(`[api/billing/order] ✖ parent PIN required user=${userId}`);
+    return NextResponse.json({ error: gate.reason }, { status: 403 });
+  }
 
   let body: { planKey?: string; amountPaise?: number | string };
   try {

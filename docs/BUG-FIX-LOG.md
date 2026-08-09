@@ -11,6 +11,90 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-09 — Sparks: an unreadable ledger, a Razorpay popup that re-asked for login, and no PIN on the way to the card
+
+- **Report (owner):** three things in one message — *"nothing provided the details of total
+  sparks used in the sparks management from the last recharge. ledger is not clear"*; *"when the
+  modal popped up, the buy button there was not enabled and it was already logged in but there it
+  was asking again to login"*; and *"we need to enable the buy button but parents pin is needed to
+  buy there"*. The admin-console half is logged in the platform repo as `BUG_LOG #54`.
+
+### 1. The modal that re-asked for login — the Razorpay popup, not our page
+
+Root cause is one line in the PLATFORM, and it documented itself:
+`identity-service.ts` `login()` returned `issueTokens(rec.id, { name: username })` with the
+comment *"Emails are stored hashed (privacy) so the plaintext isn't recoverable here."* True —
+`players` held `emailHash` only. So the SSO session for a password-login user carried **no email
+claim**, and `UpgradePlans.container.tsx` does `prefill: { email: session?.user?.email ?? undefined }`.
+Razorpay Checkout with an empty prefill opens its own contact/email step and keeps **Pay
+disabled** until it is filled — which reads exactly as "asking me to log in again". Google users
+never saw it, because `loginWithGoogle` did pass `{ email }`.
+
+**Fix (platform):** `players.emailSealed` — the address kept AES-GCM sealed, written at register
+and Google sign-in and backfilled on next Google login; `login()` now unseals it into the claim,
+fail-open (a corrupt value drops the claim, never the login). Full detail and the production
+coverage counts are in `../Ariantra-Platform/docs/BUG_LOG.md` #54.
+
+### 2. "Ledger is not clear"
+
+The parent card fetched the whole append-only statement and rendered every line — but never
+totalled them, so "how much of what I put in is gone?" required arithmetic by hand. No schema
+change was needed: `sparkwallets` holds only `{ playerId, balance }`, but every credit and debit
+already carries an amount and a timestamp.
+
+**Fix:** `src/lib/sparks-statement.ts` — a pure `summarizeSinceLastRecharge()` (added, used,
+builds, balance left, and the date it counts from), rendered above the statement.
+**Deliberate definition:** "recharge" is the most recent CREDIT of any kind, not a hardcoded
+`purchase`. When this shipped production held **zero** purchase rows and every balance had
+arrived as `admin_grant`, so a purchase-only rule would have summarised nothing for every single
+user. When no credit exists at all the summary says "since this account started" rather than
+showing a number without its window — an unlabelled total is the same unclear ledger, relabelled.
+
+### 3. Parent PIN before the card
+
+**Fix:** the gate is on the SERVER, in `POST /api/billing/order`, above the pack/custom-amount
+branch — a prompt in the browser guards nothing, because the endpoint is callable directly.
+`src/lib/parent-purchase-gate.ts` holds the rule; `/upgrade` shows a PIN step on 403 and resumes
+the same pack, so the parent never loses their place.
+
+**The judgement call, stated:** a family with **no PIN set** is still allowed to buy. Failing
+closed there would have made purchases depend on a PIN whose setup needs a contact address the
+platform holds for a minority of accounts — the precise assumption that locked 32 of 50 users out
+of the parent PIN in production (platform BUG_LOG #52/#53). Repeating it on the revenue path was
+not worth the strictness; buying already needs a signed-in account and Razorpay's own card
+authorisation. Once a PIN exists the gate is strict, and the proof must belong to *that* account.
+
+### Verified on real data, not just on green tests
+
+Read-only queries against the production database, running the same query shapes and the same
+arithmetic as the shipped code:
+
+| check | result |
+|---|---|
+| granted accounts visible in the admin view | **39 of 39** (was 0 of 39) |
+| all registered users returned | 51 of 51 |
+| users reachable by email search | 46 of 51 |
+| regex escaping — a `.` search | 0 hits, not "everything" |
+| statement summary vs. wallet balance, 3 real ledgers | exact agreement |
+| statement summary computed over real granted ledgers | 39 (11 have spent since their recharge) |
+
+Not yet verified end-to-end in a browser: the Razorpay prefill and the PIN prompt need a real
+signed-in session, so those remain **argued from the code path plus unit tests** — the word for
+that is hypothesis, and it is the owner's UAT step below.
+
+- **Tests:** `src/lib/sparks-statement.test.ts` (8 — ordering, no-credit fallback, revoke vs.
+  build, unparseable dates); `src/lib/parent-purchase-gate.test.ts` (5 — including the
+  cross-account parent session and the no-PIN family); `src/app/api/billing/order/route.test.ts`
+  (5 new — 403 with no parent session, success with one, cross-account refusal, no-PIN family
+  still buys, custom-amount shape gated too). Platform: `identity-service.test.ts` S.1–S.8 and
+  `admin.integration.test.ts` AU.4–AU.7.
+- **UAT for the owner:** (1) Parent → Sparks Management shows "Since your last Sparks from
+  Ariantra … used N ⚡ across M builds". (2) With a parent PIN set, tapping Buy asks for the PIN
+  and then opens Razorpay. (3) Razorpay opens with the email already filled — **after** a fresh
+  sign-in, since the claim is minted at login.
+
+---
+
 ## 2026-08-09 — an edit took the child's working game away for up to a minute
 
 - **Report (owner UAT):** "when we give an idea or edit patch, the preview should
