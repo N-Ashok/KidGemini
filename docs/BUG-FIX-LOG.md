@@ -11,6 +11,127 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-10 — an edit destroyed the game the child was playing, and the preview went blank for the whole edit
+
+- **Report (owner, production):** three symptoms within an hour of the shadow-verify deploy —
+  *"when a patch is done, the preview pane always let the kid play the earlier game, now it is
+  completely blue and not work"*; *"when the game is running on the preview, i am not able to
+  input anything on ari chat … neither using the mic nor typing"*; and *"when i play the game on
+  preview and come back to chat window to type … if i click on the preview nothing happens, the
+  game is frozen"*. Plus: *"when the edit is happening, i am still not able to play the earlier
+  developed game"* — the very thing shadow verify was built to deliver.
+- **Confirmed live first, not assumed:** production's bundle contains `"Testing the updated
+  game"`, the iframe title unique to `df9bd61`, so the two-iframe code was the code in the
+  owner's hands.
+
+### Root cause 1 (THE BLANK PREVIEW) — the child's running game was handed to the probes, and they got a fresh copy
+
+Found from the owner's screen recording, not from reading: frame 1 shows the game healthy at
+**Strength 1800** with a full 3D scene; mid-edit the scene is gone and the HUD still reads 1800;
+later it reads **Strength 0**; when the edit settles, the scene returns. A HUD that keeps its
+numbers while the canvas empties, then resets, is a game being *restarted*, not one failing to
+load.
+
+The two iframes were wired to the wrong roles:
+
+| | `df9bd61` | now |
+|---|---|---|
+| the frame the child plays | a **brand-new** iframe replaying the same HTML from zero | the SAME element, never remounted |
+| the frame the probes drive | the child's **live** game (it carried `iframeRef` + `key={docKey}`) | a hidden frame mounted for the new version |
+
+So every edit destroyed the child's document — losing their score — and started two iframes
+fetching the same GLBs at once. Until those landed, the pane showed the HUD (plain DOM, paints
+instantly) on the sky background with no scene: the blue screen. It cleared when the edit ended
+and one frame remained.
+
+**Fix.** The frames are ROLES now. `key="preview-play"` is stable, so an edit cannot remount it,
+and the document it holds is *frozen in state* (`playDoc`) rather than re-derived — re-injecting
+the same html yields a different string depending on whether probes are enabled, and any change
+to `srcDoc` navigates the iframe. The version under test mounts in a separate `{shadowing && …}`
+frame keyed on `docKey`, and `iframeRef` follows the role: shadow while verifying, play
+otherwise. Promotion reloads the played frame once with the new game — which is exactly what
+happened before shadow verify existed, and costs nothing since the child has not started
+playing it yet.
+
+### Root cause 2 — a shared flag's MEANING changed, and every consumer inherited it
+
+`df9bd61` redefined `covered`:
+
+| | before | after |
+|---|---|---|
+| definition | `state.phase !== "done"` | `display.covered` |
+| meaning | "the verify loop is running" | "there is nothing better to show" |
+| value during an edit **with** a playable fallback | `true` | **`false`** |
+
+The rename was correct for the cover card. But `covered` had **four other consumers**, and
+`!covered` had silently meant "the verify loop is quiet" everywhere else:
+
+1. `useGameSaveChannel({ active: !covered })` — whose own comment, directly above it, stated the
+   invariant it had just lost: *"active only once the game is up and playable (never
+   mid-verify-cover), so the existing-save lookup and autosave never race the verify loop."* It
+   now ran throughout every edit, posting into `iframeRef` — the HIDDEN document under test, not
+   the game in the child's hands — and its `injectedState` is a dependency of the `srcDoc` memo,
+   so it could reload that iframe mid-verify.
+2. The auto-focus effect (`if (covered || tab !== "preview") return`) — now fired during edits,
+   moving focus to the hidden iframe, away from both the playable fallback and the chat box.
+3. `{!covered && onCaptureIdea && <IdeaMicTab/>}` — the Idea mic tab now mounted during every
+   edit. It calls `useSpeechInput` too, so the page carried a SECOND `SpeechRecognition`
+   alongside the composer's. One recognizer per page is the limit.
+4. `{!covered && helpTab}` and the slowdown banner — same inheritance.
+
+- **Class:** *a shared value re-sourced without enumerating its readers.* Identical in shape to
+  global non-negotiable #11 and platform BUG_LOG #52/#53, but applied to a FLAG rather than a
+  data source. One `grep -n "covered"` — ten seconds — lists all four call sites.
+
+### Fix — split the two questions that had been collapsed into one name
+
+- `covered` keeps the new meaning and answers the RENDERING question: is the cover card up?
+- `settled = state.phase === "done"` answers the LIFECYCLE question: has this version finished
+  verifying? Everything that talks to the game, owns the microphone, or moves focus uses this —
+  because mid-edit `iframeRef` points at the shadow document, not the played one.
+- The toolbar's `disabled={covered}` states deliberately KEEP the new meaning: the cover is not
+  up, so the child playing the fallback should have a live toolbar. That was the intended half
+  of the change and it stays.
+
+### The instrument that should have existed first
+
+`df9bd61`'s own message said the two-iframe wiring and the composer change were untested and
+*"the rendering needs a human"* — and it shipped anyway, because this repo had no component
+harness (no Playwright, no testing-library, `environment: 'node'`). Built now, per CLAUDE.md §9.6:
+
+- `src/app/dev/preview-harness/` — dev-only route (`notFound()` in production) mounting the REAL
+  `ArtifactFrame` and REAL `Composer` in the real split layout, with the props production passes.
+- `scripts/harness-preview.mjs` — drives it in a real browser (reuses `playwright-core` via
+  `PLAYWRIGHT_CORE_DIR`, same convention as `verify-game-html.mjs`). Reaches genuine shadow
+  verify by letting game A settle then swapping to B, and checks which frame the child can touch,
+  that each animation loop still ticks, that focus stays in the composer, and that nothing
+  overlays it. 13/13 headless and headed.
+
+The harness reproduced root cause 1 once it was taught to ask the right question. Marking the
+running game (`window.__harnessMark`) and re-reading it after an edit returned `[null, null]` —
+the child's document destroyed and two fresh ones in its place, which is the owner's
+1800 -> 0. After the fix it reads `[4242, null]`: the same running document, still theirs.
+**20/20 checks**, covering the full lifecycle — the played frame is the touchable one, both
+loops tick, typing and focus survive the edit, the shadow unmounts on settle, and the promoted
+game renders and animates.
+
+Two honest limits. The "Idea mic tab is not mounted" check passes VACUOUSLY headless, because
+headless Chrome has no `SpeechRecognition` so that tab renders nothing either way — use
+`--headed` for anything mic-related. And the earlier version of this harness ran green against
+broken code, because it mounted `ArtifactFrame` without `conversationId`/`messageId`/
+`onCaptureIdea` and asserted `iframe#1` was the playable one — encoding the broken wiring as the
+expectation. Both are fixed; the lesson is that an instrument agreeing with you proves nothing
+until it has failed on the bug at least once.
+
+- **Tests:** `src/components/preview-verify-gating.test.ts` (6) — source-level contract, the same
+  technique as `sparks-parent-buy-cta.test.ts`, because this class is invisible to both a
+  node-environment unit test and a headless browser. **Verified failing first: 5 of 6 red against
+  the pre-fix `ArtifactFrame.tsx`, 6 of 6 green after.** Plus the browser harness above.
+- **Related:** `df9bd61` (introduced it), 2026-08-09 "an edit took the child's working game away"
+  (the fix it was making), platform BUG_LOG #52/#53 (same class, data instead of a flag).
+
+---
+
 ## 2026-08-09 — Sparks: an unreadable ledger, a Razorpay popup that re-asked for login, and no PIN on the way to the card
 
 - **Report (owner):** three things in one message — *"nothing provided the details of total

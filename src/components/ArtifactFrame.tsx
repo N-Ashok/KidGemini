@@ -332,6 +332,14 @@ export function ArtifactFrame({
     if (state.phase === "done" && state.currentHtml) setLastGoodHtml(state.currentHtml);
   }, [state.phase, state.currentHtml]);
 
+  // The two iframes are now fixed ROLES, not fixed documents: `play` is the
+  // one the child touches and is never remounted mid-edit; `shadow` is the
+  // version being probed. iframeRef must always address the document under
+  // test, which is the shadow element while an edit is in flight and the play
+  // element otherwise.
+  const playElRef = useRef<HTMLIFrameElement | null>(null);
+  const shadowElRef = useRef<HTMLIFrameElement | null>(null);
+
   const display = previewDisplay({
     verifyingHtml: state.currentHtml,
     phase: state.phase,
@@ -342,15 +350,34 @@ export function ArtifactFrame({
   const covered = display.covered;
   /** True while a new version is being probed behind the game on screen. */
   const shadowing = display.shadowHtml !== null;
+  /**
+   * The verify loop is QUIET — no probes running, no repair in flight.
+   *
+   * This used to be spelled `!covered`, because `covered` WAS `phase !== "done"`.
+   * Shadow verify (2026-08-09) redefined `covered` to mean "there is nothing
+   * better to show", which is false throughout an edit whenever a playable
+   * fallback exists. Four unrelated consumers read that flag and silently
+   * inherited the new meaning, including the save channel below — whose own
+   * contract is "never race the verify loop".
+   *
+   * So the two ideas are now separate names. `covered` answers "is the cover
+   * up?" (a rendering question). `settled` answers "has this version finished
+   * verifying?" (a lifecycle question). Anything that talks to the game, owns
+   * the microphone, or moves focus wants THIS one — during an edit `iframeRef`
+   * points at the hidden document under test, not the game in the child's
+   * hands.
+   */
+  const settled = state.phase === "done";
   // Save & continue building (docs/2026-08-01_PRD_SaveContinueBuilding.md):
-  // active only once the game is up and playable (never mid-verify-cover),
-  // so the existing-save lookup and autosave never race the verify loop.
+  // active only once the game is up and playable (never while verifying), so
+  // the existing-save lookup and autosave never race the verify loop — and
+  // never post into the shadow iframe instead of the one being played.
   const gameSave = useGameSaveChannel({
     iframeRef,
     html: state.currentHtml,
     conversationId,
     messageId,
-    active: !covered,
+    active: settled,
   });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const srcDoc = useMemo(() => {
@@ -364,17 +391,35 @@ export function ArtifactFrame({
     return gameSave.injectedState ? injectInitialGameState(withRuntime, gameSave.injectedState) : withRuntime;
   }, [docKey, gameSave.injectedState]);
 
-  // The playable fallback shown OVER the document under test while shadowing.
-  // Never instrumented: probes belong to the version being verified, and a
-  // second set reporting into the same controller would corrupt its verdict.
-  // Memoised on the html itself so the game the child is playing is not
-  // reloaded by an unrelated re-render.
-  const fallbackSrcDoc = useMemo(
-    () => (shadowing && lastGoodHtml
-      ? injectConsoleCapture(injectPreviewRuntime(ensureAssetRuntime(lastGoodHtml), { theme: previewTheme }))
-      : null),
-    [shadowing, lastGoodHtml, previewTheme],
-  );
+  /**
+   * The EXACT document the child is playing right now, frozen.
+   *
+   * This is the whole fix for 2026-08-10. The first attempt kept the child's
+   * game "playable" by mounting a SECOND iframe that replayed the same HTML
+   * from scratch, and handed their live frame to the probes. That restarted
+   * their game (the owner's recording shows Strength 1800 -> 0) and left two
+   * iframes fetching the same models, so nothing drew until the edit ended —
+   * the blue screen.
+   *
+   * Keeping a re-derived string here would not be enough: re-injecting the
+   * same html produces a DIFFERENT string depending on whether probes were
+   * enabled, and any change to `srcDoc` navigates the iframe. So we freeze the
+   * literal string that is already loaded, and only refresh it once the new
+   * version has verified. While an edit is in flight this does not change, so
+   * React never touches the attribute and the child's game simply keeps
+   * running, with its state and its already-downloaded models.
+   */
+  const [playDoc, setPlayDoc] = useState<string | null>(null);
+  useEffect(() => {
+    if (settled) setPlayDoc(srcDoc);
+  }, [settled, srcDoc]);
+
+  useEffect(() => {
+    // Re-point on every role change, not only on load: the shadow unmounts at
+    // promotion, and a stale ref would leave the controller (and the save
+    // channel) addressing a detached document.
+    iframeRef.current = shadowing ? shadowElRef.current : playElRef.current;
+  }, [shadowing, docKey, iframeRef]);
 
   // Device frame's actual ON-SCREEN box (2026-07-16 fix): shared by the
   // iframe wrapper AND the Idea Button/Bag overlays below. The overlays
@@ -437,13 +482,16 @@ export function ArtifactFrame({
   // browser scrolling the panel into view under the kid. Cross-origin-safe —
   // focusing the ELEMENT needs no reach into the sandboxed document.
   useEffect(() => {
-    if (covered || tab !== "preview") return;
+    // `settled`, not `!covered`: mid-edit the ref points at the HIDDEN document
+    // under test, so focusing it would take the keyboard away from the game the
+    // child is actually playing — and from the chat box.
+    if (!settled || tab !== "preview") return;
     const el = iframeRef.current;
     if (!el) return;
     const active = document.activeElement as HTMLElement | null;
     if (!shouldAutoFocusPreview(active && { tagName: active.tagName, isContentEditable: active.isContentEditable })) return;
     el.focus({ preventScroll: true });
-  }, [covered, docKey, tab, iframeRef]);
+  }, [settled, docKey, tab, iframeRef]);
 
 
   const errorCount = consoleMessages.filter((m) => m.level === "error").length;
@@ -808,8 +856,8 @@ export function ArtifactFrame({
           resuming (a kid reopening to unexpectedly-full build state is a
           surprise, never silently resumed). Never covers a busy/streaming
           update or the verify cover (gameSave.isActive already excludes
-          those via the `active: !covered` gate above). */}
-      {gameSave.decisionPhase === "pending" && tab === "preview" && !covered && (
+          those via the `active: settled` gate above). */}
+      {gameSave.decisionPhase === "pending" && tab === "preview" && settled && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-brand-100 bg-brand-50 px-4 py-2 text-sm text-brand-600">
           <span>🧱 Continue your build from where you left off?</span>
           <div className="flex shrink-0 gap-2">
@@ -881,27 +929,48 @@ export function ArtifactFrame({
                 PLAYABLE: the last verified version, layered on top while a new
                 one is probed, so an edit never costs the child their game. */}
             <div className="relative h-full w-full">
+              {/* THE GAME THE CHILD IS PLAYING. One stable element with a
+                  stable key, so an edit never remounts it — that remount is
+                  what threw away their progress and forced every model to be
+                  re-fetched, leaving the pane blank for the whole edit
+                  (docs/BUG-FIX-LOG.md 2026-08-10). Its document only changes
+                  when a new version has finished verifying. */}
               <iframe
-                key={docKey} // bumps per game generation AND per verify round (incl. the pristine reload after a probe-click clean)
-                ref={iframeRef}
-                title={shadowing ? "Testing the updated game" : "AI-generated game"}
+                key="preview-play"
+                ref={playElRef}
+                title="AI-generated game"
                 sandbox="allow-scripts"
-                srcDoc={srcDoc}
-                onLoad={onIframeLoad}
-                aria-hidden={shadowing}
-                className={`absolute inset-0 h-full w-full border-0 ${
-                  shadowing ? "pointer-events-none opacity-0" : ""
-                }`}
+                srcDoc={playDoc ?? srcDoc}
+                onLoad={() => {
+                  // Only claim the handshake when this frame IS the one under
+                  // test; mid-edit that is the shadow, and sending `ready` to
+                  // the wrong document would arm the probes on the child's game.
+                  if (!shadowing) {
+                    iframeRef.current = playElRef.current;
+                    onIframeLoad();
+                  }
+                }}
+                className="absolute inset-0 h-full w-full border-0"
               />
-              {fallbackSrcDoc && (
+              {/* THE VERSION UNDER TEST. Mounted only during an edit, and
+                  ALWAYS PAINTING — opacity, never display:none, because rAF
+                  does not tick in a hidden frame and the probes would
+                  "repair" a healthy game (§8.1). Keyed on docKey so each
+                  verify round (and the pristine reload after a probe-click
+                  clean) gets a fresh document. */}
+              {shadowing && (
                 <iframe
-                  // Keyed on the game itself: re-renders while the child plays
-                  // must not reload it, but a NEW fallback must be a new document.
-                  key={`play:${lastGoodHtml?.length ?? 0}`}
-                  title="AI-generated game"
+                  key={docKey}
+                  ref={shadowElRef}
+                  title="Testing the updated game"
                   sandbox="allow-scripts"
-                  srcDoc={fallbackSrcDoc}
-                  className="absolute inset-0 h-full w-full border-0"
+                  srcDoc={srcDoc}
+                  onLoad={() => {
+                    iframeRef.current = shadowElRef.current;
+                    onIframeLoad();
+                  }}
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 h-full w-full border-0 opacity-0"
                 />
               )}
             </div>
@@ -942,7 +1011,7 @@ export function ArtifactFrame({
                   the mic/help tabs, docked top-center so it doesn't collide
                   with either (both dock at the right edge). Hidden during the
                   verify cover, same as every other overlay here. */}
-              {!covered && onFixSlowdown && slowdownState.visible && (
+              {settled && onFixSlowdown && slowdownState.visible && (
                 <div
                   role="status"
                   className="absolute left-1/2 top-3 z-20 flex w-[min(320px,88%)] -translate-x-1/2 items-center gap-2 rounded-kid border-2 border-amber-200 bg-amber-50 px-3 py-2 shadow-md"
@@ -962,7 +1031,7 @@ export function ArtifactFrame({
                   </button>
                 </div>
               )}
-              {!covered && onCaptureIdea && (
+              {settled && onCaptureIdea && (
                 <IdeaMicTab
                   onIdea={onCaptureIdea}
                   queued={queuedIdeas}
@@ -976,7 +1045,7 @@ export function ArtifactFrame({
                 />
               )}
               {/* Same gate as the mic tab: never over the verify/repair cover. */}
-              {!covered && helpTab}
+              {settled && helpTab}
             </div>
           </div>
           {/* Sign-in lock (owner funnel 2026-08-08): the guest's one free
