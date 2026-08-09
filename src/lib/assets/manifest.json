@@ -4389,71 +4389,76 @@
     {
       "name": "elephant",
       "type": "model",
-      "url": "https://assets.ariantra.com/elephant.b19a33.glb",
-      "bytes": 6704,
-      "license": "CC0",
-      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
-      "sha256": "b19a332d12657e1b4a8d51dfd5e9afcf64f49d5fe142ace1695f12da12315bd6",
+      "url": "https://assets.ariantra.com/elephant.959578.glb",
+      "bytes": 21048,
+      "license": "CC-BY-3.0",
+      "author": "jeremy",
+      "sourceUrl": "https://poly.pizza/m/9J-cG39KYFC",
+      "sha256": "959578c72ec1821a4395788bb2f782e99ded26fa1540c8705fdd497c21410d64",
       "size": [
-        1.696,
-        3.277,
-        6.073
+        6,
+        4.357,
+        4.112
       ]
     },
     {
       "name": "lion",
       "type": "model",
-      "url": "https://assets.ariantra.com/lion.62f2b4.glb",
-      "bytes": 7692,
-      "license": "CC0",
-      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
-      "sha256": "62f2b4e8ade176ebdf9d4da507c2f4db47bc7bf5b77698fec8ffcd938f765dfe",
+      "url": "https://assets.ariantra.com/lion.c4fa43.glb",
+      "bytes": 16636,
+      "license": "CC-BY-3.0",
+      "author": "Poly by Google",
+      "sourceUrl": "https://poly.pizza/m/daMBBUnd9c9",
+      "sha256": "c4fa436199c399388a6c92c356ac146a66d25356ee4bc3cb518473be600c0820",
       "size": [
-        0.86,
-        1.514,
-        2.766
+        0.737,
+        1.629,
+        2.4
       ]
     },
     {
       "name": "tiger",
       "type": "model",
-      "url": "https://assets.ariantra.com/tiger.5d0fa0.glb",
-      "bytes": 6976,
-      "license": "CC0",
-      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
-      "sha256": "5d0fa059067d617ea77eb0ea31e437fb60505c09fc48c4d9cabe1e2f51900ee9",
+      "url": "https://assets.ariantra.com/tiger.2cb869.glb",
+      "bytes": 19076,
+      "license": "CC-BY-3.0",
+      "author": "jeremy",
+      "sourceUrl": "https://poly.pizza/m/54KLm0HdFWy",
+      "sha256": "2cb86944f8aac0b59fe01cd71f48226020e07f4a5b5ea5f0bfdccb5609a27327",
       "size": [
-        0.466,
-        1.212,
-        2.953
+        0.655,
+        1.898,
+        2.9
       ]
     },
     {
       "name": "crocodile",
       "type": "model",
-      "url": "https://assets.ariantra.com/crocodile.339eca.glb",
-      "bytes": 8780,
-      "license": "CC0",
-      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
-      "sha256": "339eca2166ea5f239ec995469fde6622656910f4f8f2f471b8589922541fb08b",
+      "url": "https://assets.ariantra.com/crocodile.455d50.glb",
+      "bytes": 13424,
+      "license": "CC-BY-3.0",
+      "author": "Poly by Google",
+      "sourceUrl": "https://poly.pizza/m/2an6E2WjW3z",
+      "sha256": "455d507edaf7aa6fe8a405004ec2d894569f103028a13b95d78e22aaae9e0ea6",
       "size": [
-        0.636,
-        0.619,
-        4.482
+        1.243,
+        0.652,
+        4.5
       ]
     },
     {
       "name": "monkey",
       "type": "model",
-      "url": "https://assets.ariantra.com/monkey.ead141.glb",
-      "bytes": 6256,
-      "license": "CC0",
-      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
-      "sha256": "ead141dd138f880b646e21202dcd5ce4bb45a7ff597e9f6a277b2126c26005b8",
+      "url": "https://assets.ariantra.com/monkey.bc2739.glb",
+      "bytes": 17276,
+      "license": "CC-BY-3.0",
+      "author": "Poly by Google",
+      "sourceUrl": "https://poly.pizza/m/6m3diqGPysx",
+      "sha256": "bc27396643f5f2cb6597b7135bafe8edb775f806834431e7f2a2ee39a66a6bee",
       "size": [
-        0.47,
-        0.93,
-        0.605
+        0.904,
+        1.3,
+        0.465
       ]
     },
     {
@@ -4580,6 +4585,293 @@
         33.674,
         28.001,
         34.17
+      ]
+    },
+    {
+      "name": "river_straight",
+      "type": "model",
+      "url": "https://assets.ariantra.com/river_straight.a26a62.glb",
+      "bytes": 5496,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "a26a624e3b4cd239370855dddcec393b987f78e025ca8dfc95ad0ac6084810e1",
+      "size": [
+        1,
+        0.05,
+        1
+      ],
+      "pathAxis": "z"
+    },
+    {
+      "name": "river_bend",
+      "type": "model",
+      "url": "https://assets.ariantra.com/river_bend.5790d5.glb",
+      "bytes": 5528,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "5790d56df09989d4dbf395bcd31e691b9858cb50d048fa73961b8f707298b72b",
+      "size": [
+        1,
+        0.05,
+        1
+      ],
+      "pathAxis": "none"
+    },
+    {
+      "name": "river_corner",
+      "type": "model",
+      "url": "https://assets.ariantra.com/river_corner.293f6a.glb",
+      "bytes": 5008,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "293f6a89d229b98e00e9a1fe0eb4b186c3699bbb2ff06e2e7f9a887f58d98061",
+      "size": [
+        1,
+        0.05,
+        1
+      ],
+      "pathAxis": "none"
+    },
+    {
+      "name": "river_cross",
+      "type": "model",
+      "url": "https://assets.ariantra.com/river_cross.0689e5.glb",
+      "bytes": 5764,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "0689e58243e2fdedc6abd4663f9f18416a20e0952ebacfe38d0f3aa663afd4fe",
+      "size": [
+        1,
+        0.05,
+        1
+      ],
+      "pathAxis": "none"
+    },
+    {
+      "name": "river_split",
+      "type": "model",
+      "url": "https://assets.ariantra.com/river_split.1d9c2a.glb",
+      "bytes": 5280,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "1d9c2a6e6ce4bc8a3bf166f64f241893a43833088765f5885c286d061f775e05",
+      "size": [
+        1,
+        0.05,
+        1
+      ],
+      "pathAxis": "none"
+    },
+    {
+      "name": "river_end",
+      "type": "model",
+      "url": "https://assets.ariantra.com/river_end.3c9bc9.glb",
+      "bytes": 5424,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "3c9bc99d51cb1e5764dd1aa0d8decd9631f6e36dc5eb197ee27f68a9945af9ab",
+      "size": [
+        1,
+        0.05,
+        1
+      ],
+      "pathAxis": "z"
+    },
+    {
+      "name": "river_rocks",
+      "type": "model",
+      "url": "https://assets.ariantra.com/river_rocks.3dc695.glb",
+      "bytes": 7000,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "3dc695f217608b3b0df9d04c29e162894abe51c4378c33dd18cf3faaaa651300",
+      "size": [
+        1,
+        0.05,
+        1
+      ],
+      "pathAxis": "z"
+    },
+    {
+      "name": "waterfall",
+      "type": "model",
+      "url": "https://assets.ariantra.com/waterfall.697aa4.glb",
+      "bytes": 4280,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "697aa44ec0bf84a52446761feb0695309bcd2d9d7a548cbf07b96be0d152c466",
+      "size": [
+        1,
+        1,
+        0.168
+      ]
+    },
+    {
+      "name": "waterfall_top",
+      "type": "model",
+      "url": "https://assets.ariantra.com/waterfall_top.aa75a8.glb",
+      "bytes": 6680,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "aa75a87f3c7c189f02c5cda39a4d3e297e23d91fbdf0dabd7b919723e1614431",
+      "size": [
+        1,
+        1,
+        0.268
+      ]
+    },
+    {
+      "name": "lily_pad",
+      "type": "model",
+      "url": "https://assets.ariantra.com/lily_pad.44d587.glb",
+      "bytes": 5024,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "44d587d93f7869afa02bc8a144c5df74ea3b68cbcbef5080171a83028f003c5f",
+      "size": [
+        0.272,
+        0.098,
+        0.314
+      ]
+    },
+    {
+      "name": "log",
+      "type": "model",
+      "url": "https://assets.ariantra.com/log.a80d2e.glb",
+      "bytes": 5200,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "a80d2ebfa825b04ba561973528648e6a9c75831934f6a4a9927bd1361095c8d6",
+      "size": [
+        0.234,
+        0.173,
+        0.71
+      ]
+    },
+    {
+      "name": "tree_stump",
+      "type": "model",
+      "url": "https://assets.ariantra.com/tree_stump.d4cbcb.glb",
+      "bytes": 3656,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "d4cbcba5f1ce6a965f79140c5ff5b6d89b8c5dd08d53129d844d3b1ab3c7ba33",
+      "size": [
+        0.321,
+        0.206,
+        0.371
+      ]
+    },
+    {
+      "name": "vines",
+      "type": "model",
+      "url": "https://assets.ariantra.com/vines.8aa40b.glb",
+      "bytes": 39744,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/EVS4viM9BL",
+      "sha256": "8aa40bd4c9583bf8ee9102c8fc2e604ecb189b7a78e2c684fdea027abcd19be5",
+      "size": [
+        2.5,
+        1.565,
+        1.032
+      ]
+    },
+    {
+      "name": "bamboo",
+      "type": "model",
+      "url": "https://assets.ariantra.com/bamboo.8b0543.glb",
+      "bytes": 16508,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/xBPj13w3JQ",
+      "sha256": "8b05431f68a303dbe67cfc796fe158113f64a89788143765f82e93a97597efb7",
+      "size": [
+        1.639,
+        5,
+        1.743
+      ]
+    },
+    {
+      "name": "bamboo_short",
+      "type": "model",
+      "url": "https://assets.ariantra.com/bamboo_short.63bea4.glb",
+      "bytes": 12472,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/z0d6CbNtrz",
+      "sha256": "63bea43ee25743efa747570c6ad2d37d31b553de13361d69befd69d704a1677f",
+      "size": [
+        1.561,
+        2.8,
+        1.659
+      ]
+    },
+    {
+      "name": "big_leaf_plant",
+      "type": "model",
+      "url": "https://assets.ariantra.com/big_leaf_plant.83012b.glb",
+      "bytes": 29400,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/aKIm5k6l5F",
+      "sha256": "83012bdc0f8c30d3c36f0a5f624c6e7e40dd1397dfbc6b5cc5d9865e348c3fc5",
+      "size": [
+        1.472,
+        1.6,
+        1.151
+      ]
+    },
+    {
+      "name": "jungle_tree",
+      "type": "model",
+      "url": "https://assets.ariantra.com/jungle_tree.d10ec3.glb",
+      "bytes": 14908,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/i4QMw4L64D",
+      "sha256": "d10ec35ec7ec6d9d3b9921bb1516056732a41949f50730786cec952bc9943f37",
+      "size": [
+        6.87,
+        9,
+        4.251
+      ]
+    },
+    {
+      "name": "savanna_tree",
+      "type": "model",
+      "url": "https://assets.ariantra.com/savanna_tree.bc5d52.glb",
+      "bytes": 20288,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/uLxXsCfYb7",
+      "sha256": "bc5d52e3fbc35a14a248bd3f6c26c2b681597d10b0a3961dc32a9bb078dffd46",
+      "size": [
+        2.71,
+        6,
+        5.722
+      ]
+    },
+    {
+      "name": "jungle_grass",
+      "type": "model",
+      "url": "https://assets.ariantra.com/jungle_grass.bb5387.glb",
+      "bytes": 12932,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/iw6l7gqcdQ",
+      "sha256": "bb538723dcf1e735ec04a4564894c68263ae09db09e07fc121b99e40d714c326",
+      "size": [
+        0.654,
+        0.7,
+        0.439
+      ]
+    },
+    {
+      "name": "palm_tree_tall",
+      "type": "model",
+      "url": "https://assets.ariantra.com/palm_tree_tall.3068b4.glb",
+      "bytes": 33320,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/P0tgwyXBgr",
+      "sha256": "3068b4d9aeee936019c9cb5dafaf57590aa141ac774611db03a32fc121a1d10f",
+      "size": [
+        7.854,
+        8,
+        7.68
       ]
     }
   ]

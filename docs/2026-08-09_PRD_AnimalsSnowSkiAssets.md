@@ -14,9 +14,76 @@ environment, etc"
 3. **Full batch (~30 models)**, covering jungle/safari animals AND the snow,
    hills and ski environment in one pass.
 
-**Shipped:** 38 models, all CC0 — 24 vendored downloads, 14 authored first-party —
+**Shipped:** 58 models — 44 vendored downloads, 14 authored first-party —
 plus one pipeline **bug fix** that this batch's measurements uncovered and that
 reaches back across the whole library (§ Tech Feasibility).
+
+---
+
+## AMENDMENT (same day, after the first deploy)
+
+**1. The five animals were REVERSED to CC-BY downloads.** Owner, on seeing them
+live: *"the animals that we authored are pathetic, why don't we download."*
+
+They were right, and the comparison was one I should have shown BEFORE building
+rather than after shipping. Put side by side in the render harness, the authored
+box-quadrupeds lost outright to the CC-BY downloads: an authored mesh can carry
+a silhouette (mane, stripes, trunk) but not an animal's actual anatomy, and the
+downloads are 13-21 KB of properly modelled geometry.
+
+| model | now | source | licence |
+|---|---|---|---|
+| elephant (6.0 m) | 20.6 KB | poly.pizza /m/9J-cG39KYFC | CC-BY 3.0, jeremy |
+| tiger (2.9 m) | 18.6 KB | /m/54KLm0HdFWy | CC-BY 3.0, jeremy |
+| lion (2.4 m) | 16.2 KB | /m/daMBBUnd9c9 | CC-BY 3.0, Poly by Google |
+| crocodile (4.5 m) | 13.1 KB | /m/2an6E2WjW3z | CC-BY 3.0, Poly by Google |
+| monkey (1.3 m) | 16.9 KB | /m/6m3diqGPysx | CC-BY 3.0, Poly by Google |
+
+**The cost, stated plainly:** every game using one now carries the small
+"art" credit chip. That is the licence obligation, discharged mechanically by
+the 2026-08-06 mechanism - **verified RENDERING** in a real generated game
+(bottom-left, screenshotted), not merely present in the markup.
+
+`normalizeLongest` on all five: the archive ships at author scale (this
+crocodile measured **253 m** nose-to-tail).
+
+The authored meshes stay in `assets-src/models/` and in
+`author-first-party-models.mjs`, unreferenced - deleting them would throw away
+the CC0 fallback if the chip ever becomes unacceptable. The ski gear, igloo,
+snowman and snow_mountain remain first-party CC0: they render well and no CC0
+download exists for them either.
+
+**The lesson worth keeping:** "no CC0 source exists" was true, but I let it
+decide the QUALITY question too. The right move was to render both options and
+put the picture in front of the owner before authoring anything.
+
+**2. Rivers and rain forest** (owner, same session: *"Also i need rivers and
+rain forest"*) - 20 more models, all CC0, no new attribution:
+
+- **Rivers (Kenney nature-kit, the same kit as the hills on purpose - one
+  scale, one visual language):** river_straight / _bend / _corner / _cross /
+  _split / _end / _rocks, waterfall, waterfall_top, lily_pad, log, tree_stump.
+  `pathAxis` declared per tile and **verified by eye** in the top-down render:
+  this kit's channel runs along **Z**, while the city-roads kit runs along X -
+  exactly the invisible difference that made the model rotate every road tile
+  90 degrees wrong before `modelAxis()` existed. These tiles are 1 x 0.05 x 1 m,
+  so unlike `ground_grass` they have real thickness and pass the validator.
+- **Rain forest (Quaternius/reyshapes/hat_my_guy):** jungle_tree, palm_tree_tall,
+  savanna_tree, bamboo, bamboo_short, vines, big_leaf_plant, jungle_grass - all
+  `normalizeLongest`-scaled, because the pool ships wildly inconsistent scales
+  (the "tall" palm arrived 2.6 m, shorter than the bamboo beside it) and a
+  jungle only reads as a jungle if the canopy is above the undergrowth.
+- **Rejected over budget:** the Quaternius Fern (684 KB) and its big Tree
+  (2.2 MB) - both are low-poly meshes carrying a heavy texture atlas, so
+  `simplify()` cannot touch the bytes. The 46 KB Tree replaces the latter;
+  undergrowth is covered without the fern.
+- Verified on the real path: *"3D - make a rain forest game with a river and a
+  crocodile"* -> a working Frogger-style river crossing using crocodile, log,
+  tree, hero, coin, with the credit chip visible.
+
+**3. The library-size tripwire went 320 -> 400.** Safe for the first time
+because the hybrid landed in the same change: model names no longer enter the
+system prompt, so library size and prompt size are finally decoupled.
 
 ---
 

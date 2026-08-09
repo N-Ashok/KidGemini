@@ -172,13 +172,21 @@ const shots = await page.evaluate(
           cam.up.set(0, 0, -1); // screen-up = -Z, screen-right = +X
           cam.lookAt(0, 0, 0);
         } else {
-          cam = new T.PerspectiveCamera(35, 1, 0.01, 200);
+          // Far plane scaled to the camera distance, not a fixed 200 m: the
+          // poly.pizza archive ships models at wild author scales (an elephant
+          // measuring 264 m), and a fixed far plane clipped them away entirely
+          // — the render came back BLANK and looked like a broken model rather
+          // than a framing bug (2026-08-09).
+          cam = new T.PerspectiveCamera(35, 1, 0.01, 1);
           // The 3/4 view must include HEIGHT in its framing: `span` is the XZ
           // footprint, which is the right frame for a flat road tile and the
           // wrong one for a 7.5 m lift tower or an upright monkey — those were
           // cropped to an unreadable close-up (2026-08-09). Top view keeps the
           // footprint framing: it is a map and height is not in it.
           const d = Math.max(span, size.y * 1.15) * 1.9;
+          cam.near = Math.max(0.01, d / 1000);
+          cam.far = d * 10;
+          cam.updateProjectionMatrix();
           cam.position.set(d * 0.6, d * 0.75, d * 0.6);
           cam.lookAt(0, size.y / 2, 0);
         }

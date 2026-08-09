@@ -395,6 +395,32 @@ export const TAXONOMY: Record<string, TaxonomyEntry> = {
   hill_corner: { genres: ["nature", "platformer"], tags: ["terrain", "ground", "bend"] },
   cliff: { genres: ["nature", "platformer"], tags: ["rockface", "crag", "terrain", "ledge"] },
 
+  // Rivers + rain forest (2026-08-09, owner ask: "i need rivers and rain
+  // forest"). Rivers ride the `water` genre AND `nature` — a kid saying
+  // "river" wants the tiles, the lily pads and the log to cross on.
+  river_straight: { genres: ["water", "nature"], tags: ["stream", "creek", "water", "tile", "canal"] },
+  river_bend: { genres: ["water", "nature"], tags: ["stream", "creek", "water", "tile", "curve"] },
+  river_corner: { genres: ["water", "nature"], tags: ["stream", "creek", "water", "tile", "turn"] },
+  river_cross: { genres: ["water", "nature"], tags: ["stream", "water", "tile", "junction", "crossing"] },
+  river_split: { genres: ["water", "nature"], tags: ["stream", "water", "tile", "fork", "delta"] },
+  river_end: { genres: ["water", "nature"], tags: ["stream", "water", "tile", "source", "spring"] },
+  river_rocks: { genres: ["water", "nature"], tags: ["stream", "water", "tile", "rapids", "stones"] },
+  waterfall: { genres: ["water", "nature"], tags: ["falls", "cascade", "cliff", "rapids"] },
+  waterfall_top: { genres: ["water", "nature"], tags: ["falls", "cascade", "cliff", "edge"] },
+  lily_pad: { genres: ["water", "nature"], tags: ["lilypad", "pond", "frog", "leaf"] },
+  log: { genres: ["nature", "platformer"], tags: ["timber", "trunk", "wood", "bridge"] },
+  tree_stump: { genres: ["nature", "platformer"], tags: ["stump", "trunk", "wood", "seat"] },
+
+  // Rain forest / jungle foliage.
+  jungle_tree: { genres: ["nature"], tags: ["jungle", "rainforest", "canopy", "broadleaf", "tree", "forest"] },
+  palm_tree_tall: { genres: ["nature", "water"], tags: ["jungle", "rainforest", "coconut", "beach", "tropical", "palm"] },
+  savanna_tree: { genres: ["nature"], tags: ["acacia", "safari", "africa", "tree", "plains"] },
+  bamboo: { genres: ["nature"], tags: ["jungle", "rainforest", "cane", "panda", "stalks"] },
+  bamboo_short: { genres: ["nature"], tags: ["jungle", "rainforest", "cane", "panda", "stalks"] },
+  vines: { genres: ["nature"], tags: ["jungle", "rainforest", "creeper", "swing", "liana"] },
+  big_leaf_plant: { genres: ["nature"], tags: ["jungle", "rainforest", "leaves", "undergrowth", "tropical"] },
+  jungle_grass: { genres: ["nature"], tags: ["jungle", "rainforest", "undergrowth", "tuft", "grass"] },
+
   // Snow / mountains.
   // snow_mountain is FIRST-PARTY: Quaternius' `mountain` is a 1.9 m grey rock
   // peak with a white fleck, which is not what "snow mountain" means to a kid.

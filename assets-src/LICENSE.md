@@ -23,15 +23,23 @@ The `footballer`/`footballer_blue`/`cricketer`/`kabaddi_player`/
 `kho_kho_player` re-skins follow the same pattern (Kenney mesh + our CC0
 atlas).
 
-**Animals, hills & snow/ski batch (2026-08-09).** The zoo animals
-`crocodile`, `elephant`, `lion`, `tiger`, `monkey` and the snow/ski props
+**Animals, hills & snow/ski batch (2026-08-09).** The snow/ski props
 `skis`, `ski_poles`, `sled`, `chairlift`, `ski_lift_tower`, `slalom_gate`,
-`igloo`, `snowman` are likewise original works dedicated CC0 1.0 under the
-paragraph above. They exist because the licence sweep found **zero** CC0
-sources for any of them — poly.pizza's entire big-cat / jungle / ski shelf is
-the CC-BY Google-Poly archive, and Kenney's animal packs are 2D sprites with no
-GLB. The owner's decision that session was to author them rather than take the
-CC-BY unlock, so this batch adds no attribution surface at all.
+`igloo`, `snowman`, `snow_mountain` are likewise original works dedicated CC0
+1.0 under the paragraph above. The zoo animals `crocodile`, `elephant`, `lion`,
+`tiger`, `monkey` were ALSO authored here and are **no longer used**: they were
+replaced the same day by CC-BY 3.0 downloads (owner decision - the authored
+meshes could not match real modelled anatomy). Their sources remain in this
+directory and stay CC0-dedicated; nothing in the manifest points at them.
+
+All of these were authored because the licence sweep found **zero** CC0 sources
+for them — poly.pizza's entire big-cat / jungle / ski shelf is the CC-BY
+Google-Poly archive, and Kenney's animal packs are 2D sprites with no GLB. The
+props above are still the answer to that gap. For the five animals the answer
+changed within the day: the owner judged the authored meshes not good enough
+("pathetic"), and the CC-BY downloads that replaced them carry their attribution
+through the credits chip. So this batch DOES add attribution surface — five
+models' worth, listed in the manifest with their authors.
 
 Rationale and sourcing history: `docs/2026-07-26_PRD_SportsAssets.md`,
 `docs/2026-07-29_PRD_CricketAssets.md`,

@@ -105,12 +105,15 @@ export const GENRES: readonly GenreDef[] = [
   {
     id: "nature",
     label: "forest / nature",
-    trigger: /\b(forests?|jungle|nature|trees?|camping|mushrooms?|woods|desert)\b/i,
+    // Rain-forest words added 2026-08-09 (owner ask).
+    trigger: /\b(forests?|jungles?|rain\s?forests?|nature|trees?|camping|mushrooms?|woods|desert|bamboo|vines?|ferns?|canopy|savann?ah?|tropical)\b/i,
   },
   {
     id: "water",
     label: "water / sailing",
-    trigger: /\b(water|ocean|seas?|boats?|ships?|sail(ing)?|sharks?|swim(ming)?|under\s?water|pirates?|fish(ing)?|dolphins?|canoes?)\b/i,
+    // River words added 2026-08-09 (owner ask): a kid saying "river" gets the
+    // channel tiles, the waterfall, the lily pads and the log to cross on.
+    trigger: /\b(water|ocean|seas?|boats?|ships?|sail(ing)?|sharks?|swim(ming)?|under\s?water|pirates?|fish(ing)?|dolphins?|canoes?|rivers?|streams?|creeks?|rapids?|waterfalls?|ponds?|lakes?|lily\s?pads?)\b/i,
   },
   {
     id: "food",

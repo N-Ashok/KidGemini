@@ -568,8 +568,19 @@ describe("catalog scale ceilings (PRD §14, amended 2026-07-24: teach-everything
     // That is now pinned directly by the token-ceiling test above (≤1,500),
     // which is a tighter and more honest guard than a model count. This
     // number stays only as a tripwire against an accidental bulk import.
+    //
+    // Bumped 320 → 400 (2026-08-09, the animals/rivers/snow batch took the
+    // library to 322). Deliberate, and the honest reason it is now SAFE to
+    // raise: the category-map hybrid landed in the same change, so model
+    // NAMES no longer enter the system prompt at all. Library size and prompt
+    // size are decoupled for the first time — the growth this tripwire was
+    // guarding no longer costs a byte of cached prefix. What still needs
+    // watching is per-turn retrieval breadth, and that is pinned directly by
+    // "a no-trigger ask still sees every category". 400 keeps the
+    // accidental-bulk-import tripwire meaningful without re-tripping on every
+    // curated batch.
     const models = realManifest.assets.filter((a) => a.type === "model");
-    expect(models.length).toBeLessThanOrEqual(320);
+    expect(models.length).toBeLessThanOrEqual(400);
   });
 });
 

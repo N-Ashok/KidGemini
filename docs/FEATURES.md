@@ -792,7 +792,7 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 - **Animals, hills & snow/ski set** (2026-08-09,
   `docs/2026-08-09_PRD_AnimalsSnowSkiAssets.md`; owner ask: "more CC0 3D meshes
   … on animals like crocodile, elephats, deer, monkey, lion, tiger and also
-  hills and snow mountains, sking environment"): **38 models, all CC0**.
+  hills and snow mountains, sking environment"): **58 models** (53 CC0 + 5 CC-BY animals with the automatic credit chip).
   Vendored (Quaternius/Kenney): deer, stag, wolf, fox, horse, donkey, zebra,
   panda, snake, frog — all with real Idle/Walk/Gallop clips — plus mountain,
   mountain_small, mountain_range, snow_pine, snow_birch, snow_dead_tree,
@@ -807,6 +807,14 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   **snow / skiing** genre (its own, not a corner of `nature` — a ski game must
   not drag in cactus and palm trees). Animals are authored at real scale, so
   the elephant is 6.1 m and towers over the 2 m cars.
+  **Rivers + rain forest** (same session): Kenney river tiles (straight/bend/
+  corner/cross/split/end/rocks, `pathAxis` declared - this kit runs along Z,
+  the roads kit along X), waterfall, waterfall_top, lily_pad, log, tree_stump;
+  plus jungle_tree, palm_tree_tall, savanna_tree, bamboo, bamboo_short, vines,
+  big_leaf_plant, jungle_grass. **The five headline animals are CC-BY
+  downloads, not the authored meshes** - the authored ones were reversed the
+  same day ("pathetic" was the owner's word, and the render comparison agreed);
+  games using them carry the automatic credit chip.
   **The batch also fixed a year-old pipeline bug** (`docs/BUG-FIX-LOG.md`):
   dropped animation clips were never actually dropped — `Animation.dispose()`
   leaves its samplers' accessors alive, so every animated model shipped

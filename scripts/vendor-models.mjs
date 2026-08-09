@@ -918,13 +918,34 @@ const MODELS = [
   // assertLongAxis: 'z' on the animals — they are authored nose-at-+Z and the
   // catalog tells the model "characters face +Z", so the lint is what keeps
   // that promise true.
+  // The five animals, REVERSED to CC-BY downloads (2026-08-09, owner: "the
+  // animals that we authored are pathetic, why don't we download"). They were
+  // authored first-party under the morning's CC0-only decision; put beside the
+  // real modelled downloads in the render pass, the box-built versions lost
+  // outright — an authored quadruped can carry a silhouette but not an
+  // animal's actual anatomy. Attribution is discharged mechanically by the
+  // credits chip (the 2026-08-06 mechanism), so the cost is a small "🎨 art"
+  // chip on games that use them. The authored meshes stay in
+  // assets-src/models/ and in git history; nothing points at them.
+  //
+  // normalizeLongest: the poly.pizza archive ships at author scale — this
+  // crocodile measured 253 m nose-to-tail — so each is baked to its real
+  // length/height. Sizes are the animals' actual ones, which is what makes
+  // them sit correctly beside the 2 m Kenney cars.
   ...[
-    'elephant', 'lion', 'tiger', 'crocodile', 'monkey',
-  ].map((name) => ({
+    ['elephant', '9J-cG39KYFC', 'ec45df33-974c-4725-bebc-d9949ccb4220', 'jeremy', 6.0],
+    ['tiger', '54KLm0HdFWy', '94bf5c9a-ac2a-4ff3-97c4-fb0034fc6853', 'jeremy', 2.9],
+    ['lion', 'daMBBUnd9c9', '06179493-230c-43e4-b67a-420e7871fbbf', 'Poly by Google', 2.4],
+    ['crocodile', '2an6E2WjW3z', '4b11bdab-4e99-42a6-9919-3a27e1f3b44a', 'Poly by Google', 4.5],
+    ['monkey', '6m3diqGPysx', 'b2f66628-a646-48e5-9063-803ffbde0360', 'Poly by Google', 1.3],
+  ].map(([name, slug, uuid, author, normalizeLongest]) => ({
     name,
-    source: { kind: 'local', dir: `assets-src/models/${name}` },
-    sourceUrl: 'https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md',
-    assertLongAxis: 'z',
+    source: { kind: 'url', url: `https://static.poly.pizza/${uuid}.glb` },
+    sourceUrl: `https://poly.pizza/m/${slug}`,
+    license: 'CC-BY-3.0',
+    author,
+    normalizeLongest,
+    keepAnimations: [],
   })),
   ...[
     'skis', 'ski_poles', 'sled', 'chairlift', 'ski_lift_tower', 'slalom_gate',
@@ -933,6 +954,34 @@ const MODELS = [
     name,
     source: { kind: 'local', dir: `assets-src/models/${name}` },
     sourceUrl: 'https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md',
+  })),
+
+  // Rain forest (2026-08-09, same owner ask). All CC0 per each model page —
+  // unlike the animals, the jungle FOLIAGE pool is well covered by Quaternius,
+  // so no CC-BY and no credit chip here. `palm_tree` already exists (Kenney).
+  // normalizeLongest throughout: this foliage ships at wildly inconsistent
+  // author scales (the "tall" palm measured 2.6 m, shorter than the bamboo
+  // beside it), and a jungle only reads as a jungle if the canopy is above the
+  // undergrowth. Rejected as over-budget: the Quaternius Fern (684 KB) and its
+  // big Tree (2.2 MB) — both are ~300–3,500 tris carrying a heavy texture
+  // atlas, so simplify() cannot touch the bytes; the 46 KB Tree below is the
+  // same look at a usable size. Undergrowth is covered by jungle_grass +
+  // big_leaf_plant + vines without the fern.
+  ...[
+    ['vines', 'EVS4viM9BL', '92825e3a-bd92-4617-8c05-8bf99e55069a', 2.5],
+    ['bamboo', 'xBPj13w3JQ', 'f7195512-33f0-4383-ac1f-eeb6b3824b75', 5.0],
+    ['bamboo_short', 'z0d6CbNtrz', '140de180-733f-49ad-a7e3-cdaab84ca0b8', 2.8],
+    ['big_leaf_plant', 'aKIm5k6l5F', '35967c9d-fdb2-4aba-99d2-12b2d2b305bc', 1.6],
+    ['jungle_tree', 'i4QMw4L64D', 'a2102cc2-cbe7-4bd0-8bc5-c0d4ee6e9e0d', 9.0],
+    ['savanna_tree', 'uLxXsCfYb7', 'bae48a47-b895-4183-b1cc-ecdf621fa501', 6.0],
+    ['jungle_grass', 'iw6l7gqcdQ', '75a19389-fb56-4884-851b-b011bf25a56a', 0.7],
+    ['palm_tree_tall', 'P0tgwyXBgr', '66cd7d94-abba-471e-8d8b-c8ad30aa5c70', 8.0],
+  ].map(([name, slug, uuid, normalizeLongest]) => ({
+    name,
+    source: { kind: 'url', url: `https://static.poly.pizza/${uuid}.glb` },
+    sourceUrl: `https://poly.pizza/m/${slug}`,
+    normalizeLongest,
+    keepAnimations: [],
   })),
 
   // Snowboard — "Snowboard" by Geldvillager, CC0 per the model page. The one
@@ -952,10 +1001,34 @@ const MODELS = [
     ['hill_block', 'cliff_block_rock'],
     ['hill_corner', 'cliff_cornerLarge_rock'],
     ['cliff', 'cliff_large_rock'],
-  ].map(([name, file]) => ({
+    // Rivers (2026-08-09, owner ask: "i need rivers and rain forest"). Same
+    // kit as the hills above ON PURPOSE — a kid building a river through a
+    // hillside gets one scale and one visual language, which is the rule both
+    // race-track bugs taught. These are carved channel tiles, not the flat
+    // `ground_grass` plane that this batch had to drop.
+    // pathAxis, verified by EYE in the top-down render pass (2026-08-09), not
+    // assumed: this kit's channel runs along **Z**, while the city-roads kit
+    // runs along X. That difference is invisible in a 1x1 m square tile's
+    // size and is precisely what made the model rotate every road tile 90°
+    // wrong before modelAxis() existed (BUG-FIX-LOG 2026-08-08). 'none' for
+    // the bends/hubs is a real answer, not a missing one.
+    ['river_straight', 'ground_riverStraight', 'z'],
+    ['river_bend', 'ground_riverBend', 'none'],
+    ['river_corner', 'ground_riverCorner', 'none'],
+    ['river_cross', 'ground_riverCross', 'none'],
+    ['river_split', 'ground_riverSplit', 'none'],
+    ['river_end', 'ground_riverEnd', 'z'],
+    ['river_rocks', 'ground_riverRocks', 'z'],
+    ['waterfall', 'cliff_waterfall_rock'],
+    ['waterfall_top', 'cliff_waterfallTop_rock'],
+    ['lily_pad', 'lily_large'],
+    ['log', 'log'],
+    ['tree_stump', 'stump_round'],
+  ].map(([name, file, pathAxis]) => ({
     name,
     source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip', innerPath: `Models/GLTF format/${file}.glb` },
     sourceUrl: 'https://kenney.nl/assets/nature-kit',
+    ...(pathAxis ? { pathAxis, recenterXZ: true } : {}),
   })),
 ];
 
