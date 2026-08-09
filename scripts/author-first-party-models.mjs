@@ -963,6 +963,474 @@ async function buildReskin(name, kit) {
   console.log(`✓ ${name}: character-b + ${kit} kit atlas → assets-src/models/${name}/`);
 }
 
+// ── zoo animals + snow/ski gear (2026-08-09) ────────────────────────────────
+// docs/2026-08-09_PRD_AnimalsSnowSkiAssets.md. The licence sweep found CC0 for
+// deer/stag/wolf/fox/horse and the whole snow-nature set, and NOTHING for the
+// animals the owner actually named first — crocodile, elephant, lion, tiger,
+// monkey — nor for any ski gear: poly.pizza's entire big-cat/jungle/ski shelf
+// is the CC-BY Google-Poly archive and Kenney's animal packs are 2D sprites.
+// Owner decision 2026-08-09: author them first-party as CC0 rather than take
+// the CC-BY unlock, so this batch adds NO new attribution surface.
+//
+// Convention (same as the motorcycles): nose/front = +Z, up = +Y, symmetric
+// about x = 0, feet at y = 0, real-world metres — an elephant really is 6 m
+// long, so it towers over the 2 m Kenney cars exactly as a kid expects.
+
+const ELEPHANT_GREY = [0.58, 0.57, 0.60];
+const ELEPHANT_DARK = [0.46, 0.45, 0.49];
+const TUSK_IVORY = [0.94, 0.92, 0.84];
+const LION_TAN = [0.83, 0.65, 0.34];
+const LION_MANE = [0.55, 0.33, 0.13];
+const LION_CREAM = [0.92, 0.83, 0.62];
+const TIGER_ORANGE = [0.90, 0.51, 0.13];
+const TIGER_STRIPE = [0.14, 0.11, 0.10];
+const TIGER_CREAM = [0.95, 0.92, 0.86];
+const CROC_GREEN = [0.32, 0.44, 0.24];
+const CROC_DARK = [0.22, 0.32, 0.17];
+const CROC_BELLY = [0.72, 0.74, 0.52];
+const MONKEY_BROWN = [0.45, 0.31, 0.20];
+const MONKEY_FACE = [0.83, 0.66, 0.50];
+const EYE_BLACK = [0.08, 0.08, 0.09];
+const HOOF_DARK = [0.20, 0.18, 0.16];
+const SNOW_WHITE = [0.95, 0.96, 0.98];
+const SNOW_SHADE = [0.82, 0.87, 0.93];
+const ICE_BLUE = [0.62, 0.80, 0.90];
+const SKI_RED = [0.85, 0.18, 0.16];
+const SKI_BLUE = [0.16, 0.36, 0.78];
+const SKI_YELLOW = [0.95, 0.80, 0.15];
+const POLE_STEEL = [0.72, 0.74, 0.78];
+const SLED_WOOD = [0.68, 0.48, 0.26];
+const LIFT_STEEL = [0.55, 0.57, 0.62];
+const LIFT_CABLE = [0.28, 0.29, 0.32];
+const CARROT_ORANGE = [0.94, 0.55, 0.12];
+const COAL_BLACK = [0.12, 0.12, 0.14];
+const SCARF_RED = [0.80, 0.16, 0.18];
+
+/** One leg: a plain box column with a darker foot/hoof cap. */
+function leg(b, x, z, top, thick, color, footColor) {
+  b.box(x, top / 2, z, thick, top, thick, color);
+  b.box(x, 0.045, z, thick * 1.15, 0.09, thick * 1.15, footColor);
+}
+
+/** A pair of eyes on the head front face, at (±dx, y, z). */
+function eyes(b, dx, y, z, size = 0.05) {
+  for (const s of [-1, 1]) b.box(s * dx, y, z, size, size, size * 0.6, EYE_BLACK);
+}
+
+/**
+ * The shared four-legged skeleton every zoo animal below is a read of: barrel
+ * body, neck, head with a snout, four legs, a tail. Every dimension a variant
+ * needs is a named option and `extras(b, o)` adds its signature parts (the
+ * trunk, the mane, the stripes) — the same shape the motorcycle generator
+ * takes, for the same reason: ten near-identical builders drift, one skeleton
+ * with ten option sets does not.
+ */
+function quadrupedBase(opts) {
+  const o = {
+    bodyLen: 1.4, bodyH: 0.55, bodyW: 0.5, bodyY: 0.85,
+    legH: 0.62, legThick: 0.13, legSpread: 0.62,
+    neckLen: 0.35, neckThick: 0.24, neckLean: 0.5,   // lean: 0 = level, 1 = upright
+    headLen: 0.42, headH: 0.30, headW: 0.28,
+    snoutLen: 0.22, snoutH: 0.16, snoutW: 0.18, snoutDrop: 0.06,
+    tailLen: 0.5, tailThick: 0.07, tailUp: 0.25,
+    earSize: 0.12, earOut: 0.0,
+    main: [0.6, 0.5, 0.4], dark: [0.45, 0.37, 0.30], belly: null, tail: null,
+    foot: HOOF_DARK, eyeAt: 0.5,
+    extras: null,
+    ...opts,
+  };
+  const b = meshBuilder();
+  const halfLen = o.bodyLen / 2;
+
+  // Body barrel, plus a slightly deeper chest so the silhouette isn't a slab.
+  b.box(0, o.bodyY, 0, o.bodyW, o.bodyH, o.bodyLen, o.main);
+  b.box(0, o.bodyY - 0.02, halfLen * 0.55, o.bodyW * 1.06, o.bodyH * 1.05, o.bodyLen * 0.32, o.main);
+  if (o.belly) b.box(0, o.bodyY - o.bodyH * 0.42, 0, o.bodyW * 0.92, o.bodyH * 0.22, o.bodyLen * 0.9, o.belly);
+
+  // Legs: front pair under the chest, rear pair under the haunches.
+  const legZ = halfLen * o.legSpread;
+  const legX = o.bodyW * 0.34;
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    leg(b, sx * legX, sz * legZ, o.legH, o.legThick, o.main, o.foot);
+  }
+
+  // Neck + head. The neck leans from the chest top toward +Z; `neckLean`
+  // slides it from a crocodile's level snout to a giraffe-ish upright.
+  const neckZ0 = halfLen * 0.9;
+  const neckY0 = o.bodyY + o.bodyH * 0.2;
+  const neckZ1 = neckZ0 + o.neckLen * (1 - o.neckLean * 0.6);
+  const neckY1 = neckY0 + o.neckLen * o.neckLean;
+  strut(b, 0, [neckY0, neckZ0], [neckY1, neckZ1], o.neckThick, o.neckThick, o.main);
+
+  const headZ = neckZ1 + o.headLen * 0.35;
+  const headY = neckY1 + o.headH * 0.25;
+  b.box(0, headY, headZ, o.headW, o.headH, o.headLen, o.main);
+  const snoutZ = headZ + o.headLen / 2 + o.snoutLen / 2 - 0.01;
+  b.box(0, headY - o.snoutDrop, snoutZ, o.snoutW, o.snoutH, o.snoutLen, o.dark);
+  eyes(b, o.headW * 0.34, headY + o.headH * 0.12, headZ + o.headLen * o.eyeAt, o.headW * 0.16);
+  if (o.earSize > 0) {
+    for (const s of [-1, 1]) {
+      b.box(s * (o.headW * 0.42 + o.earOut), headY + o.headH * 0.55, headZ - o.headLen * 0.1,
+        o.earSize * 0.5, o.earSize, o.earSize * 0.8, o.dark);
+    }
+  }
+
+  // Tail, leaning back and up from the rump.
+  if (o.tailLen > 0) {
+    const ty = o.bodyY + o.bodyH * 0.25;
+    strut(b, 0, [ty, -halfLen], [ty + o.tailLen * o.tailUp, -halfLen - o.tailLen], o.tailThick, o.tailThick, o.tail ?? o.dark);
+  }
+
+  if (o.extras) o.extras(b, o, { halfLen, headY, headZ, snoutZ, neckY1, neckZ1 });
+  return b.build();
+}
+
+function elephant() {
+  return quadrupedBase({
+    bodyLen: 3.4, bodyH: 1.7, bodyW: 1.6, bodyY: 2.0,
+    legH: 1.5, legThick: 0.46, legSpread: 0.6,
+    neckLen: 0.5, neckThick: 0.9, neckLean: 0.35,
+    headLen: 0.9, headH: 0.85, headW: 0.85,
+    snoutLen: 0.3, snoutH: 0.35, snoutW: 0.35, snoutDrop: 0.1,
+    tailLen: 0.7, tailThick: 0.09, tailUp: -0.6,
+    earSize: 0, foot: ELEPHANT_DARK,
+    main: ELEPHANT_GREY, dark: ELEPHANT_DARK,
+    extras: (b, o, m) => {
+      // Ears: big flat slabs swept back from the sides of the head.
+      for (const s of [-1, 1]) {
+        b.box(s * (o.headW * 0.62), m.headY + 0.05, m.headZ - 0.12, 0.1, 1.0, 0.85, ELEPHANT_DARK);
+      }
+      // Trunk: a tapered stack curving down and forward to the ground.
+      const segs = 6;
+      for (let i = 0; i < segs; i++) {
+        const t = i / (segs - 1);
+        const w = 0.30 - t * 0.15;
+        b.box(0, m.headY - 0.35 - t * 1.05, m.snoutZ + 0.12 + Math.sin(t * 1.5) * 0.22,
+          w, 0.28, w, i % 2 ? ELEPHANT_DARK : ELEPHANT_GREY);
+      }
+      // Tusks.
+      for (const s of [-1, 1]) {
+        strut(b, s * 0.26, [m.headY - 0.30, m.snoutZ], [m.headY - 0.55, m.snoutZ + 0.75], 0.1, 0.1, TUSK_IVORY);
+      }
+    },
+  });
+}
+
+function lion() {
+  return quadrupedBase({
+    bodyLen: 1.35, bodyH: 0.52, bodyW: 0.46, bodyY: 0.80,
+    legH: 0.56, legThick: 0.15, legSpread: 0.6,
+    neckLen: 0.3, neckThick: 0.3, neckLean: 0.35,
+    headLen: 0.36, headH: 0.30, headW: 0.32,
+    snoutLen: 0.16, snoutH: 0.15, snoutW: 0.18, snoutDrop: 0.05,
+    tailLen: 0.7, tailThick: 0.06, tailUp: 0.15,
+    earSize: 0.10, foot: [0.62, 0.48, 0.24],
+    main: LION_TAN, dark: LION_CREAM, belly: LION_CREAM,
+    extras: (b, o, m) => {
+      // Mane: a ring of blocks around the neck/head join — the one feature
+      // that makes a big cat read "lion" and not "cougar".
+      const n = 12, r = 0.34;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2;
+        b.box(Math.cos(a) * r, m.headY + Math.sin(a) * r, m.headZ - 0.20,
+          0.18, 0.18, 0.22, i % 2 ? LION_MANE : [0.62, 0.38, 0.16]);
+      }
+      // Tail tuft.
+      b.box(0, o.bodyY + o.bodyH * 0.25 + 0.7 * 0.15, -(o.bodyLen / 2) - 0.72, 0.11, 0.11, 0.14, LION_MANE);
+    },
+  });
+}
+
+function tiger() {
+  return quadrupedBase({
+    bodyLen: 1.5, bodyH: 0.50, bodyW: 0.44, bodyY: 0.76,
+    legH: 0.54, legThick: 0.14, legSpread: 0.62,
+    neckLen: 0.26, neckThick: 0.28, neckLean: 0.3,
+    headLen: 0.34, headH: 0.28, headW: 0.32,
+    snoutLen: 0.15, snoutH: 0.14, snoutW: 0.18, snoutDrop: 0.04,
+    tailLen: 0.85, tailThick: 0.06, tailUp: 0.2,
+    earSize: 0.10, foot: [0.72, 0.42, 0.10],
+    // tail: the flanks are cream (`dark` doubles as the muzzle/belly colour
+    // here), but a cream tail read as a grey rope in the render pass.
+    main: TIGER_ORANGE, dark: TIGER_CREAM, belly: TIGER_CREAM, tail: TIGER_ORANGE,
+    extras: (b, o) => {
+      // Stripes: thin dark bands wrapped over the back and down both flanks.
+      const n = 7;
+      for (let i = 0; i < n; i++) {
+        const z = -o.bodyLen / 2 + 0.12 + (i / (n - 1)) * (o.bodyLen - 0.28);
+        b.box(0, o.bodyY, z, o.bodyW * 1.03, o.bodyH * 1.02, 0.055, TIGER_STRIPE);
+      }
+      // Tail rings.
+      for (let i = 0; i < 3; i++) {
+        b.box(0, o.bodyY + o.bodyH * 0.25 + 0.2 * (0.2 + i * 0.18),
+          -(o.bodyLen / 2) - 0.2 - i * 0.24, 0.075, 0.075, 0.07, TIGER_STRIPE);
+      }
+    },
+  });
+}
+
+function crocodile() {
+  return quadrupedBase({
+    bodyLen: 1.9, bodyH: 0.34, bodyW: 0.6, bodyY: 0.30,
+    legH: 0.16, legThick: 0.13, legSpread: 0.62,
+    neckLen: 0.18, neckThick: 0.42, neckLean: 0.0,
+    headLen: 0.5, headH: 0.22, headW: 0.44,
+    snoutLen: 0.55, snoutH: 0.16, snoutW: 0.30, snoutDrop: 0.02,
+    tailLen: 1.5, tailThick: 0.22, tailUp: 0.02,
+    earSize: 0, eyeAt: 0.30, foot: CROC_DARK,
+    main: CROC_GREEN, dark: CROC_DARK, belly: CROC_BELLY,
+    extras: (b, o, m) => {
+      // Eyes ride ON TOP of a croc's head, not on its front face.
+      for (const s of [-1, 1]) b.box(s * 0.13, m.headY + o.headH * 0.6, m.headZ + 0.06, 0.09, 0.09, 0.11, CROC_DARK);
+      for (const s of [-1, 1]) b.box(s * 0.13, m.headY + o.headH * 0.78, m.headZ + 0.06, 0.05, 0.05, 0.06, EYE_BLACK);
+      // Teeth along the snout.
+      for (let i = 0; i < 6; i++) {
+        const z = m.snoutZ - 0.22 + i * 0.09;
+        for (const s of [-1, 1]) b.box(s * 0.13, m.headY - 0.11, z, 0.035, 0.06, 0.035, TUSK_IVORY);
+      }
+      // Back + tail ridge — the scutes that make it read reptile.
+      for (let i = 0; i < 12; i++) {
+        const t = i / 11;
+        const z = o.bodyLen / 2 - t * (o.bodyLen + o.tailLen * 0.95);
+        const s = 0.13 - t * 0.07;
+        b.box(0, o.bodyY + o.bodyH * 0.5 + s * 0.4, z, s, s, s * 0.8, CROC_DARK);
+      }
+    },
+  });
+}
+
+/** The monkey is the one that is NOT a quadruped read: an upright little ape
+ *  with long arms and a curled tail, built directly. */
+function monkey() {
+  const b = meshBuilder();
+  const hipY = 0.34, bodyH = 0.34, bodyY = hipY + bodyH / 2;
+  // Legs, body, head.
+  for (const s of [-1, 1]) leg(b, s * 0.09, 0.02, hipY, 0.11, MONKEY_BROWN, MONKEY_BROWN);
+  b.box(0, bodyY, 0, 0.30, bodyH, 0.22, MONKEY_BROWN);
+  b.box(0, bodyY - 0.02, 0.09, 0.20, bodyH * 0.7, 0.08, MONKEY_FACE);
+  const headY = bodyY + bodyH / 2 + 0.13;
+  b.box(0, headY, 0.01, 0.26, 0.24, 0.24, MONKEY_BROWN);
+  b.box(0, headY - 0.02, 0.13, 0.17, 0.17, 0.05, MONKEY_FACE);
+  b.box(0, headY - 0.05, 0.16, 0.08, 0.06, 0.04, MONKEY_BROWN);
+  eyes(b, 0.05, headY + 0.03, 0.15, 0.04);
+  for (const s of [-1, 1]) b.box(s * 0.15, headY + 0.02, 0.0, 0.05, 0.10, 0.10, MONKEY_FACE);
+  // Long arms hanging past the knees — the ape silhouette.
+  for (const s of [-1, 1]) {
+    strut(b, s * 0.19, [bodyY + bodyH * 0.35, 0.02], [hipY * 0.55, 0.10], 0.09, 0.09, MONKEY_BROWN);
+    b.box(s * 0.19, hipY * 0.5, 0.12, 0.09, 0.09, 0.11, MONKEY_FACE);
+  }
+  // Tail: a curl of shrinking blocks sweeping back and up.
+  for (let i = 0; i < 7; i++) {
+    const t = i / 6;
+    b.box(0, bodyY - 0.10 + Math.sin(t * 2.2) * 0.26, -0.12 - t * 0.26,
+      0.06, 0.06, 0.09, MONKEY_BROWN);
+  }
+  return b.build();
+}
+
+// ── snow & ski gear ─────────────────────────────────────────────────────────
+
+/** One ski: a long thin plank with an upturned tip. */
+function skiPlank(b, x, color) {
+  b.box(x, 0.03, 0, 0.11, 0.035, 1.55, color);
+  strut(b, x, [0.03, 0.72], [0.13, 0.86], 0.11, 0.035, color);
+  b.box(x, 0.075, -0.1, 0.13, 0.05, 0.26, [0.20, 0.20, 0.24]);  // binding
+}
+
+function skis() {
+  const b = meshBuilder();
+  skiPlank(b, -0.12, SKI_RED);
+  skiPlank(b, 0.12, SKI_RED);
+  return b.build();
+}
+
+function skiPoles() {
+  const b = meshBuilder();
+  for (const s of [-1, 1]) {
+    b.box(s * 0.16, 0.62, 0, 0.028, 1.24, 0.028, POLE_STEEL);
+    b.box(s * 0.16, 1.20, 0, 0.05, 0.10, 0.05, [0.16, 0.16, 0.18]);   // grip
+    b.box(s * 0.16, 0.12, 0, 0.13, 0.02, 0.13, [0.16, 0.16, 0.18]);   // basket
+  }
+  return b.build();
+}
+
+// (no first-party snowboard: "Snowboard" by Geldvillager is CC0 and already
+// vendored — the one piece of snow-sport gear that exists under CC0 anywhere.)
+
+function sled() {
+  const b = meshBuilder();
+  // Two runners with upswept fronts, slatted deck, pull rope anchor.
+  for (const s of [-1, 1]) {
+    b.box(s * 0.22, 0.06, 0, 0.06, 0.06, 1.05, SLED_WOOD);
+    strut(b, s * 0.22, [0.06, 0.50], [0.30, 0.62], 0.06, 0.06, SLED_WOOD);
+    b.box(s * 0.22, 0.15, -0.3, 0.05, 0.14, 0.05, SLED_WOOD);
+    b.box(s * 0.22, 0.15, 0.25, 0.05, 0.14, 0.05, SLED_WOOD);
+  }
+  for (let i = 0; i < 6; i++) {
+    b.box(0, 0.23, -0.38 + i * 0.15, 0.50, 0.035, 0.10, [0.78, 0.58, 0.32]);
+  }
+  b.box(0, 0.30, 0.60, 0.16, 0.03, 0.10, [0.85, 0.72, 0.30]);
+  return b.build();
+}
+
+/** Chairlift chair — a 4-seat bench under a hanger arm, the way it hangs on
+ *  the cable. A game moves it along the cable itself; the grip is at the top. */
+function chairlift() {
+  const b = meshBuilder();
+  const seatY = 1.05;
+  b.box(0, seatY, 0, 1.60, 0.10, 0.55, SKI_RED);                       // seat
+  b.box(0, seatY + 0.42, -0.24, 1.60, 0.75, 0.10, SKI_RED);            // back
+  b.box(0, seatY + 0.32, 0.30, 1.55, 0.08, 0.10, LIFT_STEEL);          // safety bar
+  for (const s of [-1, 1]) {
+    b.box(s * 0.76, seatY + 0.16, 0.05, 0.06, 0.40, 0.50, LIFT_STEEL); // arm rests
+    b.box(s * 0.55, seatY - 0.30, 0.10, 0.05, 0.50, 0.05, LIFT_STEEL); // foot rest legs
+  }
+  b.box(0, seatY - 0.55, 0.12, 1.20, 0.06, 0.16, LIFT_STEEL);          // foot rest
+  b.box(0, seatY + 1.30, -0.12, 0.09, 1.10, 0.09, LIFT_STEEL);         // hanger
+  b.box(0, seatY + 1.88, -0.12, 0.22, 0.16, 0.22, LIFT_CABLE);         // cable grip
+  return b.build();
+}
+
+/** Ski-lift tower: the pylon a game repeats up the mountain, with the cable
+ *  arm and sheave wheels on top. */
+function skiLiftTower() {
+  const b = meshBuilder();
+  b.box(0, 0.15, 0, 1.0, 0.30, 1.0, [0.72, 0.73, 0.76]);   // concrete footing
+  b.box(0, 3.6, 0, 0.42, 7.0, 0.42, LIFT_STEEL);           // pylon
+  b.box(0, 7.2, 0, 2.6, 0.18, 0.18, LIFT_STEEL);           // cross arm
+  for (const s of [-1, 1]) {
+    for (let i = 0; i < 3; i++) {
+      b.box(s * (0.85 + i * 0.22), 7.05, 0, 0.16, 0.16, 0.16, LIFT_CABLE);  // sheaves
+    }
+    b.box(s * 1.28, 7.35, 0, 0.10, 0.34, 0.10, LIFT_STEEL);
+  }
+  return b.build();
+}
+
+/** Slalom gate — the pair of flagged poles a downhill run is made of. */
+function slalomGate() {
+  const b = meshBuilder();
+  for (const s of [-1, 1]) {
+    b.box(s * 0.55, 0.85, 0, 0.05, 1.70, 0.05, s < 0 ? SKI_RED : SKI_BLUE);
+    b.box(s * 0.55, 0.10, 0, 0.16, 0.20, 0.16, SNOW_WHITE);
+  }
+  // Banner between the poles.
+  b.box(0, 1.52, 0, 1.05, 0.30, 0.03, SKI_YELLOW);
+  return b.build();
+}
+
+function igloo() {
+  const b = meshBuilder();
+  const R = 1.30, rings = 5, seg = 14;
+  const p = (lat, lon) => {
+    const th = (lat / rings) * (Math.PI / 2), ph = (lon / seg) * Math.PI * 2;
+    return [R * Math.cos(th) * Math.cos(ph), R * Math.sin(th), R * Math.cos(th) * Math.sin(ph)];
+  };
+  // Dome in banded blocks (alternating shade reads as ice bricks).
+  for (let lat = 0; lat < rings; lat++) {
+    for (let lon = 0; lon < seg; lon++) {
+      const [a, c, d, e] = [p(lat, lon), p(lat, lon + 1), p(lat + 1, lon + 1), p(lat + 1, lon)];
+      const color = (lat + lon) % 2 ? SNOW_WHITE : SNOW_SHADE;
+      b.tri(a, d, c, color);
+      if (lat !== rings - 1) b.tri(a, e, d, color);
+    }
+  }
+  // Entrance tunnel, poking out at +Z.
+  b.box(0, 0.40, R * 0.78, 0.90, 0.80, 0.95, SNOW_SHADE);
+  b.box(0, 0.34, R * 0.78 + 0.49, 0.58, 0.68, 0.06, ICE_BLUE);
+  return b.build();
+}
+
+/**
+ * snow_mountain — the owner asked for "snow mountains" and the CC0 pool has no
+ * such thing: Quaternius' `mountain` is a 1.9 m grey rock peak with a single
+ * white fleck, which rendered as a brown wedge in the first golden ski run.
+ * So: a real snow-capped peak, at real mountain scale (28 m), rock below a
+ * jagged snowline and snow above it.
+ *
+ * Deterministic by construction — the ridge offsets come from a fixed integer
+ * hash, never Math.random, because a re-run must produce byte-identical output
+ * or the content-hash name changes and the append-only host gains a duplicate.
+ */
+function snowMountain() {
+  const b = meshBuilder();
+  const SEG = 16, RINGS = 6;
+  const HEIGHT = 28, BASE_R = 17;
+  const ROCK = [0.44, 0.41, 0.40];
+  const ROCK_DARK = [0.33, 0.31, 0.32];
+  const SNOW = [0.96, 0.97, 0.99];
+  const SNOW_SHADE2 = [0.86, 0.90, 0.95];
+  // Stable pseudo-random in [-1, 1] from two integers.
+  const jitter = (i, j) => {
+    const n = Math.sin(i * 12.9898 + j * 78.233) * 43758.5453;
+    return (n - Math.floor(n)) * 2 - 1;
+  };
+  // Per-segment snowline height, so the snow edge is ragged rather than a belt.
+  // Low (0.34) on purpose: at 0.52 the peak read as a grey rock with a white
+  // fleck — the exact thing this model exists to replace (render pass).
+  const snowline = (i) => 0.34 + jitter(i % SEG, 99) * 0.07;
+
+  const point = (ring, seg) => {
+    const t = ring / RINGS;                       // 0 at base, 1 at summit
+    const y = HEIGHT * t;
+    // seg % SEG: the jitter MUST be periodic or the last column does not meet
+    // the first, and the mesh opens a seam with a spur flapping out of it
+    // (caught in the render pass, invisible to every byte check).
+    const r = BASE_R * (1 - t) ** 1.35 * (1 + jitter(seg % SEG, ring) * 0.13);
+    const a = (seg / SEG) * Math.PI * 2;
+    return [Math.cos(a) * r, y, Math.sin(a) * r];
+  };
+
+  for (let ring = 0; ring < RINGS; ring++) {
+    for (let seg = 0; seg < SEG; seg++) {
+      const t = (ring + 0.5) / RINGS;
+      const snowy = t > snowline(seg);
+      const color = snowy
+        ? ((ring + seg) % 2 ? SNOW : SNOW_SHADE2)
+        : ((ring + seg) % 2 ? ROCK : ROCK_DARK);
+      const [a, c, d, e] = [point(ring, seg), point(ring, seg + 1), point(ring + 1, seg + 1), point(ring + 1, seg)];
+      b.tri(a, d, c, color);
+      b.tri(a, e, d, color);
+    }
+  }
+  // Cap the summit so the top ring is not an open hole.
+  const apex = [0, HEIGHT, 0];
+  for (let seg = 0; seg < SEG; seg++) b.tri(point(RINGS, seg), apex, point(RINGS, seg + 1), SNOW);
+  return b.build();
+}
+
+function snowman() {
+  const b = meshBuilder();
+  const stack = [[0.42, 0.42], [0.99, 0.31], [1.46, 0.22]];
+  for (const [y, r] of stack) {
+    const s = uvSphere(r, SNOW_WHITE, 8, 10);
+    for (let i = 0; i < s.positions.length; i += 3) {
+      b.tri(
+        [s.positions[i], s.positions[i + 1] + y, s.positions[i + 2]],
+        [s.positions[i + 3], s.positions[i + 4] + y, s.positions[i + 5]],
+        [s.positions[i + 6], s.positions[i + 7] + y, s.positions[i + 8]],
+        SNOW_WHITE,
+      );
+      i += 6;
+    }
+  }
+  eyes(b, 0.08, 1.53, 0.19, 0.05);
+  b.box(0, 1.46, 0.26, 0.07, 0.07, 0.18, CARROT_ORANGE);                 // carrot nose
+  for (let i = 0; i < 3; i++) b.box(0, 0.95 - i * 0.16, 0.30, 0.07, 0.07, 0.05, COAL_BLACK);
+  b.box(0, 1.24, 0, 0.46, 0.09, 0.46, SCARF_RED);                        // scarf
+  b.box(0.10, 1.08, 0.22, 0.11, 0.28, 0.05, SCARF_RED);                  // its hanging end
+  b.box(0, 1.66, 0.0, 0.44, 0.05, 0.44, COAL_BLACK);                     // hat brim
+  b.box(0, 1.79, 0.0, 0.30, 0.26, 0.30, COAL_BLACK);                     // hat crown
+  // Stick arms reach SIDEWAYS (±X). strut() draws in the YZ plane at a fixed
+  // x, so using it here sent both arms up-and-back instead (caught in the
+  // 2026-08-09 render pass, not by any number).
+  for (const s of [-1, 1]) {
+    b.box(s * 0.42, 1.06, 0, 0.44, 0.05, 0.05, SLED_WOOD);
+    b.box(s * 0.60, 1.18, 0, 0.05, 0.22, 0.05, SLED_WOOD);
+  }
+  return b.build();
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 await mkdir(outRoot, { recursive: true });
@@ -1002,5 +1470,21 @@ await buildReskin('kabaddi_player', 'kabaddi');
 await buildReskin('kho_kho_player', 'kabaddi');
 
 for (const [name, build] of Object.entries(MOTORCYCLES)) await writeGlb(name, build());
+
+// Zoo animals + snow/ski gear (2026-08-09) — the subjects with no CC0 source.
+await writeGlb('elephant', elephant());
+await writeGlb('lion', lion());
+await writeGlb('tiger', tiger());
+await writeGlb('crocodile', crocodile());
+await writeGlb('monkey', monkey());
+await writeGlb('skis', skis());
+await writeGlb('ski_poles', skiPoles());
+await writeGlb('sled', sled());
+await writeGlb('chairlift', chairlift());
+await writeGlb('ski_lift_tower', skiLiftTower());
+await writeGlb('slalom_gate', slalomGate());
+await writeGlb('igloo', igloo());
+await writeGlb('snowman', snowman());
+await writeGlb('snow_mountain', snowMountain());
 
 console.log('✓ all first-party sources written — run scripts/vendor-models.mjs next');

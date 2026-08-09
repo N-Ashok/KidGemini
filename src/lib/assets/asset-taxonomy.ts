@@ -20,6 +20,12 @@
 export const GENRE_IDS = [
   "people", "racing", "platformer", "space", "animals",
   "castle", "city", "nature", "water", "food", "sports", "military", "indian_games",
+  // Snow / winter (2026-08-09, docs/2026-08-09_PRD_AnimalsSnowSkiAssets.md).
+  // Its OWN genre rather than a corner of `nature`: a ski or snowball game
+  // wants snow pines, mountains and lift gear, and folding it into nature
+  // would drag cactus and palm trees into every snow scene — the same
+  // over-triggering the cricket and indian_games triggers exist to avoid.
+  "snow",
 ] as const;
 export type GenreId = (typeof GENRE_IDS)[number];
 
@@ -362,6 +368,57 @@ export const TAXONOMY: Record<string, TaxonomyEntry> = {
   scientist: { genres: ["people"], tags: ["doctor", "professor", "lab", "inventor"], rig: "kenney_blocky" },
   police_officer: { genres: ["people", "city"], tags: ["cop", "policeman", "policewoman", "sheriff"], rig: "kenney_blocky" },
   pirate: { genres: ["people", "castle", "water"], tags: ["captain", "buccaneer", "sailor"], rig: "kenney_blocky" },
+
+  // ── Animals, hills & snow/ski batch (2026-08-09,
+  // docs/2026-08-09_PRD_AnimalsSnowSkiAssets.md).
+  // The five the owner named first are first-party CC0 (no CC0 source exists
+  // for any of them); the rest are vendored Quaternius/Kenney CC0.
+  crocodile: { genres: ["animals", "water"], tags: ["croc", "alligator", "gator", "reptile", "swamp", "jungle"] },
+  elephant: { genres: ["animals", "nature"], tags: ["tusks", "trunk", "jumbo", "safari", "jungle", "zoo"] },
+  lion: { genres: ["animals", "nature"], tags: ["mane", "cub", "safari", "jungle", "zoo", "king"] },
+  tiger: { genres: ["animals", "nature"], tags: ["stripes", "cub", "jungle", "zoo", "bigcat"] },
+  monkey: { genres: ["animals", "nature"], tags: ["ape", "chimp", "gorilla", "jungle", "zoo", "banana"] },
+  deer: { genres: ["animals", "nature"], tags: ["doe", "fawn", "forest", "antlers"] },
+  stag: { genres: ["animals", "nature"], tags: ["buck", "antlers", "reindeer", "forest"] },
+  wolf: { genres: ["animals", "nature"], tags: ["howl", "pack", "forest", "wild"] },
+  fox: { genres: ["animals", "nature"], tags: ["cub", "forest", "wild"] },
+  horse: { genres: ["animals", "nature"], tags: ["pony", "stallion", "mare", "riding", "gallop", "farm"] },
+  donkey: { genres: ["animals", "nature"], tags: ["mule", "farm", "cart"] },
+  zebra: { genres: ["animals", "nature"], tags: ["stripes", "safari", "zoo"] },
+  panda: { genres: ["animals", "nature"], tags: ["bear", "bamboo", "zoo"] },
+  snake: { genres: ["animals", "nature"], tags: ["serpent", "cobra", "python", "slither", "jungle"] },
+  frog: { genres: ["animals", "water"], tags: ["toad", "hop", "pond", "lily"] },
+
+  // Hills & ground — one kit, so a game tiles them at one scale.
+  hill_slope: { genres: ["nature", "platformer"], tags: ["ramp", "climb", "incline", "terrain", "ground"] },
+  hill_block: { genres: ["nature", "platformer"], tags: ["plateau", "terrain", "ground", "cube"] },
+  hill_corner: { genres: ["nature", "platformer"], tags: ["terrain", "ground", "bend"] },
+  cliff: { genres: ["nature", "platformer"], tags: ["rockface", "crag", "terrain", "ledge"] },
+
+  // Snow / mountains.
+  // snow_mountain is FIRST-PARTY: Quaternius' `mountain` is a 1.9 m grey rock
+  // peak with a white fleck, which is not what "snow mountain" means to a kid.
+  snow_mountain: { genres: ["snow", "nature"], tags: ["peak", "summit", "alps", "himalaya", "snowy", "everest", "slope"] },
+  mountain: { genres: ["snow", "nature"], tags: ["peak", "summit", "rocky", "crag"] },
+  mountain_small: { genres: ["snow", "nature"], tags: ["peak", "hill", "knoll"] },
+  mountain_range: { genres: ["snow", "nature"], tags: ["peaks", "alps", "backdrop", "skyline"] },
+  snow_pine: { genres: ["snow", "nature"], tags: ["fir", "spruce", "christmas", "winter", "tree"] },
+  snow_birch: { genres: ["snow", "nature"], tags: ["winter", "tree", "frost"] },
+  snow_dead_tree: { genres: ["snow", "nature"], tags: ["winter", "bare", "spooky", "tree"] },
+  snow_bush: { genres: ["snow", "nature"], tags: ["shrub", "winter", "frost"] },
+  snow_rock: { genres: ["snow", "nature"], tags: ["boulder", "winter", "frost", "stone"] },
+  ice_block: { genres: ["snow", "platformer"], tags: ["frozen", "cube", "iceberg", "slippery"] },
+  igloo: { genres: ["snow"], tags: ["iglu", "shelter", "dome", "eskimo", "arctic", "hut"] },
+  snowman: { genres: ["snow"], tags: ["frosty", "carrot", "christmas", "winter"] },
+
+  // Ski / snow sport.
+  skis: { genres: ["snow", "sports"], tags: ["ski", "skiing", "downhill", "slalom"] },
+  ski_poles: { genres: ["snow", "sports"], tags: ["ski", "sticks", "skiing"] },
+  snowboard: { genres: ["snow", "sports"], tags: ["board", "snowboarding", "shred"] },
+  sled: { genres: ["snow", "sports"], tags: ["sledge", "sleigh", "toboggan", "slide"] },
+  chairlift: { genres: ["snow", "sports"], tags: ["skilift", "gondola", "cablecar", "resort"] },
+  ski_lift_tower: { genres: ["snow", "sports"], tags: ["pylon", "skilift", "mast", "cable"] },
+  slalom_gate: { genres: ["snow", "sports"], tags: ["gate", "flag", "course", "race", "downhill"] },
 };
 
 export function genresOf(name: string): readonly GenreId[] {

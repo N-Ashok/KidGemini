@@ -68,8 +68,25 @@ for (const p of selected) {
     throw new Error(`could not reach ${BASE} — is \`npm run dev\` running? (${e.message})`);
   });
   if (!res.ok) throw new Error(`${p.id}: /api/chat returned ${res.status} ${await res.text()}`);
-  const body = await res.json();
-  const html = body.artifactHtml ?? body.html ?? '';
+  // /api/chat streams NDJSON ({"type":"delta"} … {"type":"done"}), it does not
+  // return one JSON object — res.json() threw on the very first delta, so this
+  // harness had never actually completed a run (fixed 2026-08-09, while using
+  // it to verify the category-map hybrid). Reassemble the stream the way the
+  // browser client does: accumulate deltas, prefer whatever final frame
+  // carries the artifact.
+  const raw = await res.text();
+  let streamed = '';
+  let body = {};
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let frame;
+    try { frame = JSON.parse(trimmed); } catch { continue; }
+    if (typeof frame.text === 'string' && frame.type === 'delta') streamed += frame.text;
+    if (frame.artifactHtml || frame.html) body = frame;
+  }
+  const fenced = streamed.match(/```html\s*([\s\S]*?)(?:```|$)/i)?.[1];
+  const html = body.artifactHtml ?? body.html ?? fenced ?? (/<!doctype html|<html/i.test(streamed) ? streamed : '');
   if (!html) {
     console.log('NO GAME RETURNED');
     console.log(`    the model replied without an artifact: ${(body.text ?? '').slice(0, 160)}`);

@@ -25,7 +25,7 @@
 //   node scripts/render-assets.mjs road_curve race_track_corner
 //   node scripts/render-assets.mjs --out /tmp/shots road_curve
 //   node scripts/render-assets.mjs --side road_curve      # 3/4 view as well
-import { readdirSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, mkdirSync, writeFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -51,7 +51,37 @@ if (names.length === 0) {
 const engine = manifest.assets.find((a) => a.type === "engine" && a.name === "three");
 if (!engine) throw new Error("manifest has no three engine entry — run scripts/vendor-three.mjs --upload");
 
+// --staged: render the compressed bytes sitting in .assets-out/models instead
+// of the published ones (2026-08-09). A new batch cannot be eyeballed any
+// other way — it has no manifest entry and no URL until it is uploaded, and
+// uploading to the append-only host is exactly the step that must NOT happen
+// before a human has looked (PRD §10: published bytes are permanent). Same
+// loader, same decoder, same bytes that will be uploaded — only the origin
+// differs.
+const staged = argv.includes("--staged");
+const stagedFiles = staged
+  ? readdirSync(join(repo, ".assets-out/models")).filter((f) => f.endsWith(".glb"))
+  : [];
+
 const targets = names.map((name) => {
+  if (staged) {
+    // Hash-named at birth: "elephant.b19a33.glb" for "elephant".
+    // NEWEST match, not the first: staging is hash-named and append-only on
+    // disk, so re-running the pipeline after an edit leaves BOTH builds there.
+    // Taking the first silently rendered the pre-edit mesh and reported it as
+    // the fix — a lying instrument is worse than none (caught 2026-08-09 when
+    // a re-rendered snow_mountain came back byte-identical to its own bug).
+    const file = stagedFiles
+      .filter((f) => f.slice(0, f.indexOf(".")) === name)
+      .map((f) => ({ f, mtime: statSync(join(repo, ".assets-out/models", f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime)[0]?.f;
+    if (!file) throw new Error(`no staged build for "${name}" — run scripts/vendor-models.mjs --only=${name} first`);
+    // Handed to the page as base64, not as a file:// URL: the render page is
+    // an about:blank setContent document, and fetching file:// from it is
+    // blocked. The page rebuilds a blob: URL, so the loader still fetches a
+    // real URL exactly as it does in a kid's game.
+    return { name, url: null, b64: readFileSync(join(repo, ".assets-out/models", file)).toString("base64"), size: null };
+  }
   const entry = manifest.assets.find((a) => a.name === name && a.type === "model");
   if (!entry) throw new Error(`no model named "${name}" in the manifest — check the spelling, do not guess`);
   return { name, url: entry.url, size: entry.size ?? null };
@@ -95,7 +125,14 @@ const shots = await page.evaluate(
     const results = [];
 
     for (const t of targets) {
-      const gltf = await loader.loadAsync(t.url);
+      let url = t.url;
+      if (t.b64) {
+        const bin = atob(t.b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        url = URL.createObjectURL(new Blob([bytes], { type: "model/gltf-binary" }));
+      }
+      const gltf = await loader.loadAsync(url);
       const obj = gltf.scene;
       const box = new T.Box3().setFromObject(obj);
       const size = box.getSize(new T.Vector3());
@@ -136,7 +173,12 @@ const shots = await page.evaluate(
           cam.lookAt(0, 0, 0);
         } else {
           cam = new T.PerspectiveCamera(35, 1, 0.01, 200);
-          const d = span * 1.9;
+          // The 3/4 view must include HEIGHT in its framing: `span` is the XZ
+          // footprint, which is the right frame for a flat road tile and the
+          // wrong one for a 7.5 m lift tower or an upright monkey — those were
+          // cropped to an unreadable close-up (2026-08-09). Top view keeps the
+          // footprint framing: it is a map and height is not in it.
+          const d = Math.max(span, size.y * 1.15) * 1.9;
           cam.position.set(d * 0.6, d * 0.75, d * 0.6);
           cam.lookAt(0, size.y / 2, 0);
         }

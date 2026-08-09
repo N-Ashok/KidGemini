@@ -23,10 +23,21 @@ The `footballer`/`footballer_blue`/`cricketer`/`kabaddi_player`/
 `kho_kho_player` re-skins follow the same pattern (Kenney mesh + our CC0
 atlas).
 
+**Animals, hills & snow/ski batch (2026-08-09).** The zoo animals
+`crocodile`, `elephant`, `lion`, `tiger`, `monkey` and the snow/ski props
+`skis`, `ski_poles`, `sled`, `chairlift`, `ski_lift_tower`, `slalom_gate`,
+`igloo`, `snowman` are likewise original works dedicated CC0 1.0 under the
+paragraph above. They exist because the licence sweep found **zero** CC0
+sources for any of them — poly.pizza's entire big-cat / jungle / ski shelf is
+the CC-BY Google-Poly archive, and Kenney's animal packs are 2D sprites with no
+GLB. The owner's decision that session was to author them rather than take the
+CC-BY unlock, so this batch adds no attribution surface at all.
+
 Rationale and sourcing history: `docs/2026-07-26_PRD_SportsAssets.md`,
 `docs/2026-07-29_PRD_CricketAssets.md`,
 `docs/2026-07-30_PRD_IndianGamesAssets.md`, and
-`docs/2026-08-06_PRD_MotorcycleAssets.md` (each batch documents why the CC0
+`docs/2026-08-06_PRD_MotorcycleAssets.md`, and
+`docs/2026-08-09_PRD_AnimalsSnowSkiAssets.md` (each batch documents why the CC0
 pool couldn't supply it; branded meshes are deliberately avoided —
 PRD-3D-GAMES-AND-ASSETS §4.2 "nothing branded").
 

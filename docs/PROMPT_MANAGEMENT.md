@@ -223,18 +223,29 @@ Three.js instead of a flat 2D canvas. To do that:
    phones, tablets and Chromebooks.
 ````
 
-### 2.3 `modelsPromptSection()` — if `gates.three` and manifest has models (`prompt-catalog.ts:85`)
+### 2.3 `modelsPromptSection()` — if `gates.three` and manifest has models (`prompt-catalog.ts`)
 
-Dynamic: only the models selected for this message (retrieval-lite, ≤ cap) are
-taught; genre hints and the people-models clause render only for names actually
-taught. Shape (with placeholder names `MODEL_A`, `MODEL_B`):
+**The category-map hybrid (2026-08-09,
+`docs/2026-08-09_PRD_AnimalsSnowSkiAssets.md` §3).** This section is BYTE-STABLE
+per manifest — it does not vary with the child's message — and carries the
+category map (headings + COUNTS) and the usage rules. It does **not** carry the
+model names any more: those ride per-turn at the very end of the contents
+(see §3a). Before the hybrid the section was 2,522 tokens (1,802 prose + 720
+names, growing with every batch) against a 2,525 ceiling; it is now 1,882.
+
+Shape (with placeholder counts):
 
 ````text
-**Ready-made 3D models**: for a 3D game you may ALSO use these
-professional low-poly models from the toy box: MODEL_A, MODEL_B, ....
+**Ready-made 3D models**: for a 3D game you may ALSO use professional
+low-poly models from the toy box. Here is what the toy box HOLDS, by category:
+   - racing / driving: 34
+   - animals / pets: 24
+   - ...
+The exact model NAMES you may use appear in a "Toy box —" line at the very end
+of this conversation. ...
 1. Add a second marker line right after `<!--USES_THREE-->` naming ONLY the
    models you use, e.g. `<!--USES_MODELS: MODEL_A-->` (comma-separated;
-   only names from the list above — anything else is ignored).
+   only names from that "Toy box —" line).
 2. Load them with the built-in `loadModel(name)` helper — do NOT import a
    loader yourself. It returns a Promise of a ready-to-add object, or null
    if loading failed.
@@ -428,6 +439,35 @@ message as the final `user` turn (image inlined first if present).
 
 "Current" = the newest game, unless a version pin (`activeGameMessageId`) names an
 earlier one — see [§7](#7-scenario-f--version-pin-continue-from-here).
+
+---
+
+### 3a. The per-turn model-name block (the hybrid's retrieval half)
+
+When `gates.three` is on, `buildContents()` appends ONE extra text part to the
+final `user` turn, after the child's message:
+
+```text
+(Toy box — the model names you may use on THIS turn: bunker, car, chairlift, ….
+Only these; never invent a name.)
+```
+
+- **Chosen by** `retrievedModelNames()` (`prompt-catalog.ts`): models the
+  current game already uses, every genre the child's words trigger, names the
+  child said outright, a spread of 8 per otherwise-unrepresented category, and
+  the core basics. Typically 54–90 names / ~170–250 tokens.
+- **Why it sits LAST, not in the system prompt.** Gemini implicit caching
+  matches the longest common prefix. Request N is
+  `[system][history][message N][names N]`; request N+1 is
+  `[system][history + reply N][message N+1][names N+1]`. The common prefix runs
+  through message N — so the whole system instruction AND the 10–15k tokens of
+  repeated game code in the history stay cached, and only this small block ever
+  misses. Putting per-message names in the system prompt would have broken the
+  cache on everything behind it (COST_TOKEN_BUDGET.md waste-ledger #4) — which
+  is exactly why the 2026-07-24 rework made the catalog static in the first
+  place.
+- **Not reproduced onto history turns**, deliberately: it is a per-turn aid, and
+  re-rendering it into every past message would spend the cache it protects.
 
 ---
 

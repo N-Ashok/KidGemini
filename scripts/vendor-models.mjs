@@ -859,6 +859,104 @@ const MODELS = [
     ...(normalizeLongest ? { normalizeLongest } : {}),
     keepAnimations: [],
   })),
+
+  // ── Animals, hills & snow/ski batch (2026-08-09,
+  // docs/2026-08-09_PRD_AnimalsSnowSkiAssets.md). Owner ask: "more CC0 3D
+  // meshes and wired. on animals like crocodile, elephats, deer, monkey,
+  // lion, tiger and also hills and snow mountains, sking environment".
+  //
+  // The sourcing sweep (licence-filtered scan of poly.pizza + Kenney kit
+  // inspection) found the pool splits cleanly in two:
+  //   - CC0 EXISTS for deer/stag and the whole snow-nature set (Quaternius),
+  //     plus Kenney's nature-kit cliff pieces for hills. Those are below.
+  //   - CC0 DOES NOT EXIST for crocodile, elephant, lion, tiger, monkey or
+  //     ANY ski gear — poly.pizza's entire big-cat/jungle shelf and every
+  //     chairlift/ski/sled is the CC-BY Google-Poly archive, and Kenney's
+  //     animal packs are 2D sprites only. Owner decision (2026-08-09): author
+  //     them first-party as CC0 rather than take the CC-BY unlock, so this
+  //     batch adds NO new attribution surface. They ride the `local` source
+  //     kind from scripts/author-first-party-models.mjs.
+  ...[
+    ['deer', 'T6Cs7tmMHJ', '4b6c2a41-43c7-404c-ae37-e8c4645ff93b', ['Idle', 'Walk', 'Gallop']],
+    ['stag', 'tQdzbZ1Cmw', 'a9c69fbc-bf7c-4585-9a49-a82e0be1ac6b', ['Idle', 'Walk', 'Run']],
+    ['wolf', 'P1gU3Qkr9r', 'f1d12388-e39b-4157-b32a-646a1d089fc4', ['Idle', 'Walk', 'Run']],
+    ['fox', 'Bc97C66HKi', 'e18e86df-1692-48d8-ac6e-1e25ab4ad574', ['Idle', 'Walk', 'Run']],
+    ['horse', 'qvTrSG9pZF', 'd37dbc87-ca61-4b2c-a2da-d2f0c4240bef', ['Idle', 'Walk', 'Gallop']],
+    ['donkey', 'qmX6nhnvp7', 'ca29f94e-0874-41b6-8334-66642af56a61', ['Idle', 'Walk', 'Gallop']],
+    ['zebra', 'iclPBR6SBZ', 'ff99ce31-85dd-4863-b145-24a6646a2b20', []],
+    ['snake', 'x9x0viZs8V', '0f3a551e-743e-48f5-936f-804c6c3b88bd', ['Idle', 'Crawl', 'Attack']],
+    ['frog', '37wofOCOzG', '9018566d-c4e9-4f20-9c99-964622a6e674', ['Idle', 'Jump']],
+    ['panda', 'q1uJ28Hs8T', 'fb175c69-6c26-452a-87fe-16a1a9aa99a7', ['Idle', 'Walk', 'Run']],
+  ].map(([name, slug, uuid, keepAnimations]) => ({
+    name,
+    source: { kind: 'url', url: `https://static.poly.pizza/${uuid}.glb` },
+    sourceUrl: `https://poly.pizza/m/${slug}`,
+    keepAnimations,
+  })),
+
+  // Snow / mountain nature (Quaternius, CC0 per each model page).
+  ...[
+    ['mountain', 'XY4ej3Zg3I', 'fdad940c-9adb-404a-acd0-bd728e8e3159'],
+    ['mountain_small', '7HYR2s9JVi', '5642bd4a-1742-4025-9700-511a7a55c0b2'],
+    ['mountain_range', 'w9VBrh7Nz0', '37567fee-ed12-4122-a1ae-ffe14b378739'],
+    ['snow_pine', '17vQv2X5rh', '1e077c40-f8df-4322-9faf-964faecc5860'],
+    ['snow_birch', 'R4NgnzZHcK', '6f6529a3-2385-4781-96f2-802cf2c6e832'],
+    ['snow_dead_tree', 'PILl2nbDNz', '4cfe60b4-042a-44fa-881d-0a3ed5adce04'],
+    ['snow_bush', 'H4IEAwYl1z', '84e3f229-b276-4766-8846-a8d70beef332'],
+    ['snow_rock', 'eZRzCg5BcR', '3d9f39ed-af7d-491a-90a3-957036099b1d'],
+    ['ice_block', 'dEY0gPZNzG', 'c3b986f2-25e8-44c8-82dc-e553aea6ae5f'],
+  ].map(([name, slug, uuid]) => ({
+    name,
+    source: { kind: 'url', url: `https://static.poly.pizza/${uuid}.glb` },
+    sourceUrl: `https://poly.pizza/m/${slug}`,
+    keepAnimations: [],
+  })),
+
+  // First-party CC0 (scripts/author-first-party-models.mjs): the five animals
+  // the owner named that have NO CC0 source anywhere, plus every piece of ski
+  // gear (all CC-BY-only upstream) and the igloo/snowman a snow scene needs.
+  // assertLongAxis: 'z' on the animals — they are authored nose-at-+Z and the
+  // catalog tells the model "characters face +Z", so the lint is what keeps
+  // that promise true.
+  ...[
+    'elephant', 'lion', 'tiger', 'crocodile', 'monkey',
+  ].map((name) => ({
+    name,
+    source: { kind: 'local', dir: `assets-src/models/${name}` },
+    sourceUrl: 'https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md',
+    assertLongAxis: 'z',
+  })),
+  ...[
+    'skis', 'ski_poles', 'sled', 'chairlift', 'ski_lift_tower', 'slalom_gate',
+    'igloo', 'snowman', 'snow_mountain',
+  ].map((name) => ({
+    name,
+    source: { kind: 'local', dir: `assets-src/models/${name}` },
+    sourceUrl: 'https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md',
+  })),
+
+  // Snowboard — "Snowboard" by Geldvillager, CC0 per the model page. The one
+  // piece of snow-sport gear that exists as CC0 anywhere; the skis, poles,
+  // sled, chairlift and lift tower beside it are all authored first-party.
+  { name: 'snowboard', source: { kind: 'url', url: 'https://static.poly.pizza/b3f02a40-6db3-46dc-91fd-01d4c3e66598.glb' }, sourceUrl: 'https://poly.pizza/m/sMbO7OqgNX', keepAnimations: [] },
+
+  // Hills — Kenney nature-kit (CC0, same kit as `rock`/`palm_tree` above).
+  // These are the pieces a kid can actually BUILD a hill out of: a slope to
+  // climb, a flat block to stand on, and a plain cliff face. The kit's
+  // `ground_grass` tile is NOT here: it is a zero-thickness plane (1 x 0 x 1 m),
+  // which the manifest validator rightly refuses — modelSize().y = 0 makes
+  // "stand something on top of it" arithmetic meaningless. A flat ground is
+  // what PlaneGeometry is for, and the catalog already teaches it.
+  ...[
+    ['hill_slope', 'cliff_blockSlope_rock'],
+    ['hill_block', 'cliff_block_rock'],
+    ['hill_corner', 'cliff_cornerLarge_rock'],
+    ['cliff', 'cliff_large_rock'],
+  ].map(([name, file]) => ({
+    name,
+    source: { kind: 'kenney-zip', zip: 'https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip', innerPath: `Models/GLTF format/${file}.glb` },
+    sourceUrl: 'https://kenney.nl/assets/nature-kit',
+  })),
 ];
 
 // --only a,b,c: process just the named models (2026-07-26). A full re-run
@@ -943,7 +1041,34 @@ async function prepare(model) {
       return leaf === keep || leaf.endsWith(`_${keep}`);
     };
     for (const anim of doc.getRoot().listAnimations()) {
-      if (!model.keepAnimations.some((k) => matches(anim.getName(), k))) anim.dispose();
+      if (model.keepAnimations.some((k) => matches(anim.getName(), k))) continue;
+      // Dispose the CHANNELS and SAMPLERS before the Animation itself.
+      // Animation.dispose() detaches them but does NOT dispose them, so their
+      // input/output accessors keep a live reference, prune() cannot collect
+      // them, and the dead keyframe data is written into the published GLB
+      // (BUG-FIX-LOG 2026-08-09). It made keepAnimations look like a no-op and
+      // was misread as "mesh-heavy" for years: every animated candidate was
+      // measured carrying EVERY clip it ever had. Measured on the deer —
+      // 261,728 B with the dead clips, 116,012 B without, same three kept
+      // clips. This is what put the Quaternius animal rig inside the budget;
+      // the Shiba Inu / Husky / horse / panda / penguin rejections recorded
+      // above were all this bug, not their meshes.
+      for (const channel of anim.listChannels()) channel.dispose();
+      for (const sampler of anim.listSamplers()) sampler.dispose();
+      anim.dispose();
+    }
+    // The Quaternius rigs ship every clip TWICE — bare ("Walk") and
+    // armature-prefixed ("AnimalArmature|Walk") — and keepAnimations' leaf
+    // match keeps both, so every kept clip cost double. Keep the first of each
+    // leaf name. Safe against the catalog's contract, which tells the model to
+    // FIND a clip by regex search and never by exact string (rule 5).
+    const seenLeaf = new Set();
+    for (const anim of doc.getRoot().listAnimations()) {
+      const leaf = anim.getName().split('|').pop();
+      if (!seenLeaf.has(leaf)) { seenLeaf.add(leaf); continue; }
+      for (const channel of anim.listChannels()) channel.dispose();
+      for (const sampler of anim.listSamplers()) sampler.dispose();
+      anim.dispose();
     }
   }
   // dropMeshes: some source files are whole KITS, not one model — the

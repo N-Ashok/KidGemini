@@ -77,7 +77,18 @@ export const GENRES: readonly GenreDef[] = [
   {
     id: "animals",
     label: "animals / pets",
-    trigger: /\b(animals?|pets?|dogs?|cats?|puppy|kitten|birds?|chickens?|bees?|bunny|zoo|dinos?(aurs?)?|farm)\b/i,
+    // Species words added 2026-08-09 (docs/2026-08-09_PRD_AnimalsSnowSkiAssets.md).
+    // "jungle"/"safari" ride here as well as in nature: a kid asking for a
+    // jungle game wants the crocodile and the monkey, not only the trees.
+    trigger: /\b(animals?|pets?|dogs?|cats?|puppy|kitten|birds?|chickens?|bees?|bunny|zoo|dinos?(aurs?)?|farm|jungle|safari|crocodiles?|alligators?|elephants?|lions?|tigers?|monkeys?|apes?|gorillas?|deers?|stags?|wolf|wolves|foxe?s?|horses?|ponys?|ponies|donkeys?|zebras?|pandas?|snakes?|frogs?)\b/i,
+  },
+  {
+    // Snow / winter batch (2026-08-09, same PRD). Deliberately NOT the bare
+    // word "board" (skateboard/surfboard/whiteboard) or "gate" (castle) —
+    // the same over-triggering lesson the cricket trigger's comment records.
+    id: "snow",
+    label: "snow / skiing",
+    trigger: /\b(snows?|snowy|snowballs?|snowmen|snowman|winter|ice|icy|frozen|frost|ski|skis|skiing|skier|snowboard(ing|er)?|sled(ge|ding)?|sleighs?|toboggans?|slaloms?|chair\s?lifts?|ski\s?lifts?|mountains?|igloos?|arctic|blizzards?|avalanches?)\b/i,
   },
   {
     id: "castle",

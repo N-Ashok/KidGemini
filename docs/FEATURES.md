@@ -626,6 +626,34 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   a real-browser harness), pixel ratio capped at 2, ambient + one
   directional light only, no shadows/post-processing, low poly. Sent only
   on game-BUILD turns (chit-chat pays zero extra tokens)
+- **Which turns get the 3D section** — `catalogGates()`
+  (`src/lib/assets/catalog-gate.ts`) decides from the child's own words, via
+  the shared `THREE_ASK_RE` in `src/lib/builder-mode.ts`. It matches the
+  spellings children actually use — `3d`, `3-d`, `3 d`, `three dimensional`,
+  `3-dimensional` — and deliberately not `3-day` / `3 dogs` / `3ds max`. It is
+  ONE definition shared with the build-turn gate; it was previously two
+  separate copies of `/\b3d\b/i` that had drifted, and a child who wrote
+  **"Make it 3-D"** matched neither, so a literal 3D request was built with none
+  of the rules above (BUG-FIX-LOG 2026-08-09)
+- **Pipeline-bypass guards** (`src/lib/assets/three-import-lint.ts`, wired into
+  both gates in `api/chat/route.ts`). The gate predicts from the child's words;
+  the MODEL decides independently whether to build in 3D, and the two can
+  disagree — so the output is linted too, for three shapes that each kill a game
+  before its first frame:
+  - `unknownThreeImports` — a name the vendored bundle doesn't export
+  - `externalScriptSrcs` — an off-origin `<script src>`; a game that loads
+    three.js from a public CDN gets whatever version the model happened to
+    name (r128 in the real case), and is a liveness dependency on someone
+    else's uptime for a game we promise to keep forever
+  - `danglingModuleSpecifiers` — a specifier for a file that will never exist
+    (`./three.module.js`, `./main.js` — an invented multi-file layout)
+  All three fold into ONE corrective retry naming the exact violation, never a
+  second round. Patch turns are judged only on what the patch ADDED, so a
+  stored game already carrying one stays editable. **Fails soft** — if the
+  retry isn't clean the original is still served: visible and repairable beats
+  dropped. Measured against every stored artifact: both dead games flagged,
+  zero false positives on the working ones (61 of 64 three-using games follow
+  the pipeline)
 - 2D stays the default; unmarked games pass through byte-identical
 - **2D→3D is a NEW game** (owner decision 2026-07-26, supersedes the in-place
   conversion rebuild of BUG-FIX-LOG 2026-07-23): asking an existing 2D game to
@@ -761,6 +789,29 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   Cricket words (cricket, wicket, stumps, batsman, bowler, innings, googly…)
   added to the sports trigger; the CC0 baseball bats were deliberately NOT
   reused, since a round bat reads as the wrong sport
+- **Animals, hills & snow/ski set** (2026-08-09,
+  `docs/2026-08-09_PRD_AnimalsSnowSkiAssets.md`; owner ask: "more CC0 3D meshes
+  … on animals like crocodile, elephats, deer, monkey, lion, tiger and also
+  hills and snow mountains, sking environment"): **38 models, all CC0**.
+  Vendored (Quaternius/Kenney): deer, stag, wolf, fox, horse, donkey, zebra,
+  panda, snake, frog — all with real Idle/Walk/Gallop clips — plus mountain,
+  mountain_small, mountain_range, snow_pine, snow_birch, snow_dead_tree,
+  snow_bush, snow_rock, ice_block, snowboard, and the hill kit (hill_slope,
+  hill_block, hill_corner, cliff). **First-party CC0** for everything with no
+  CC0 source anywhere — crocodile, elephant, lion, tiger, monkey (poly.pizza's
+  whole big-cat/jungle shelf is CC-BY; Kenney's animal packs are 2D sprites)
+  and every piece of ski gear: skis, ski_poles, sled, chairlift,
+  ski_lift_tower, slalom_gate, igloo, snowman, plus a real 28 m `snow_mountain`
+  (the CC0 `mountain` is a 1.9 m grey rock with a white fleck). The owner chose authoring over
+  the CC-BY unlock, so the batch adds **no new credit-chip models**. New
+  **snow / skiing** genre (its own, not a corner of `nature` — a ski game must
+  not drag in cactus and palm trees). Animals are authored at real scale, so
+  the elephant is 6.1 m and towers over the 2 m cars.
+  **The batch also fixed a year-old pipeline bug** (`docs/BUG-FIX-LOG.md`):
+  dropped animation clips were never actually dropped — `Animation.dispose()`
+  leaves its samplers' accessors alive, so every animated model shipped
+  carrying every clip it ever had. Deer 261 KB → 113 KB. The whole animated
+  animal shelf had been rejected as "mesh-heavy" for a year on that number
 - **Indian games set** (2026-07-30, `docs/2026-07-30_PRD_IndianGamesAssets.md`;
   owner ask: games popular with Indian kids 7-14): kabaddi (kabaddi_mat,
   kabaddi_player), carrom (carrom_board, carrom_striker, carrom_coin_white/

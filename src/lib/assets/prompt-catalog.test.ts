@@ -10,8 +10,10 @@ import { join } from "node:path";
 
 vi.mock("server-only", () => ({}));
 
-import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection } from "./prompt-catalog";
+import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection, retrievedModelNames, modelNamesBlock } from "./prompt-catalog";
 import { THREE_MARKER } from "./inject";
+import { GENRE_IDS, modelsInGenre } from "./asset-taxonomy";
+import type { ChatMessage } from "@/types/chat.types";
 import { CHILD_SYSTEM_PROMPT, buildTurnSystemInstruction } from "../gemini";
 import { ASSET_HOST_ORIGIN, type AssetManifest } from "./manifest";
 import realManifest from "./manifest.json";
@@ -123,12 +125,26 @@ const fakeModels: AssetManifest = {
 describe("modelsPromptSection — the catalog version-locks with the manifest (PRD §11)", () => {
   const section = modelsPromptSection(fakeModels);
 
-  it("names every manifest model and nothing else", () => {
-    expect(section).toContain("car");
-    expect(section).toContain("dino");
-    // Models are listed under category headings, each exactly once.
-    expect(section).toMatch(/racing[^:]*: car/);
-    expect(section).toMatch(/animals[^:]*: dino/);
+  // CONTRACT CHANGED 2026-08-09 (the category-map hybrid,
+  // docs/2026-08-09_PRD_AnimalsSnowSkiAssets.md). The section carries the
+  // category map — headings and COUNTS — and no longer the names; the names
+  // ride per-turn at the end of the request contents. These pin the map.
+  it("maps every category that has models, with its count", () => {
+    expect(section).toMatch(/racing[^:]*: 1/);
+    expect(section).toMatch(/animals[^:]*: 1/);
+  });
+
+  it("does NOT spend system-prompt tokens on model names (that is the hybrid's whole point)", () => {
+    const map = section.split("\nThe exact model NAMES")[0]!;
+    expect(map).not.toMatch(/\bcar\b/);
+    expect(map).not.toMatch(/\bdino\b/);
+  });
+
+  it("tells the model where the names actually arrive, or it would think the toy box is empty", () => {
+    expect(section).toMatch(/Toy box/);
+    // \s+ between words — the prompt is a wrapped template literal and a
+    // re-wrap must not break this pin (same convention as the import-list pin).
+    expect(section).toMatch(/end\s+of\s+this\s+conversation/i);
   });
 
   it("teaches the USES_MODELS marker with the exact syntax the injector parses", () => {
@@ -177,10 +193,13 @@ describe("modelsPromptSection — the catalog version-locks with the manifest (P
   });
 
   describe("category grouping — lockstep with the manifest", () => {
-    it("groups models under their category heading", () => {
-      // fakeModels has car + dino only: racing shows car, animals shows dino…
-      expect(section).toMatch(/racing[^:]*: car/);
-      expect(section).toMatch(/animals[^:]*: dino/);
+    it("counts models under their category heading, each counted exactly once", () => {
+      // fakeModels has car + dino only: racing counts 1, animals counts 1 —
+      // `car` is in BOTH racing and city in the taxonomy, and the map must not
+      // double-count it or the counts stop meaning "models that exist".
+      expect(section).toMatch(/racing[^:]*: 1/);
+      expect(section).toMatch(/animals[^:]*: 1/);
+      expect(section).not.toMatch(/city[^:]*: 1/);
       // …and never a library name the manifest lacks.
       expect(section).not.toContain("firetruck");
       expect(section).not.toContain("boat");
@@ -204,19 +223,23 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
   const realModels = real.assets.filter((a) => a.type === "model").map((a) => a.name);
   const section = modelsPromptSection(real);
 
-  it("names every single model in the manifest", () => {
-    const missing = realModels.filter((n) => !new RegExp(`\\b${n}\\b`).test(section));
-    expect(missing).toEqual([]);
+  // REPLACED 2026-08-09 by the hybrid: the guarantee is no longer "every name
+  // is in the system prompt" (that is what grew without bound) but "every name
+  // is REACHABLE — the map always shows its category, and the retrieval always
+  // reaches it for a child who asks for it". Both halves are pinned here,
+  // because a library the model cannot name is exactly the 2026-07-24 bug.
+  it("maps every model into a counted category — the counts add up to the manifest", () => {
+    const map = section.split("\nThe exact model NAMES")[0]!;
+    const counted = [...map.matchAll(/: (\d+)$/gm)].reduce((n, m) => n + Number(m[1]), 0);
+    expect(counted).toBe(realModels.length);
   });
 
-  it("lists each model exactly once across the category block (cross-listing spends tokens to repeat what the model already read)", () => {
-    // Scope to the index itself — the usage steps below it legitimately repeat
-    // one name as the worked example (USES_MODELS + loadModel).
-    const index = section.split("\n1. Add a second marker")[0]!;
-    for (const name of realModels) {
-      const hits = index.match(new RegExp(`(?<![a-z0-9_])${name}(?![a-z0-9_])`, "g")) ?? [];
-      expect(hits.length, `${name} listed ${hits.length}x in the category block`).toBe(1);
-    }
+  it("retrieval can reach EVERY model in the library — no name is unreachable", () => {
+    // A child who says the model's own name must always be taught that name.
+    const unreachable = realModels.filter(
+      (n) => !retrievedModelNames({ message: `make a game with a ${n}`, history: [], manifest: real }).includes(n),
+    );
+    expect(unreachable).toEqual([]);
   });
 
   // Regression, 2026-08-08 (BUG-FIX-LOG fragmented race tracks): the section
@@ -374,10 +397,18 @@ describe("audioPromptSection — the audio catalog version-locks with the manife
 describe("the sports category (2026-07-26 batch) renders in the real catalog", () => {
   const section = modelsPromptSection(realManifest as AssetManifest);
 
-  it("has a sports heading naming the soccer set and the battle tops", () => {
-    expect(section).toMatch(/sports[^\n]*: [^\n]*soccer_ball/);
-    expect(section).toMatch(/\bbattle_top\b/);
-    expect(section).toMatch(/\bblade_top\b/);
+  // Post-hybrid (2026-08-09) these ask the question that actually matters to a
+  // child: does asking for the game GET you the set? The heading is now a
+  // count, so a name assertion against the section would pin nothing.
+  it("a football ask retrieves the soccer set and the battle tops", () => {
+    const names = retrievedModelNames({ message: "make a football game", history: [], manifest: realManifest as AssetManifest });
+    expect(names).toContain("soccer_ball");
+    expect(names).toContain("battle_top");
+    expect(names).toContain("blade_top");
+  });
+
+  it("has a sports category in the map", () => {
+    expect(section).toMatch(/sports[^\n]*: \d+/);
   });
 
   it("the footballers are taught as people-rig models (their clips promise must hold)", () => {
@@ -388,16 +419,14 @@ describe("the sports category (2026-07-26 batch) renders in the real catalog", (
 describe("the military category (2026-07-29 batch) renders in the real catalog", () => {
   const section = modelsPromptSection(realManifest as AssetManifest);
 
-  it("has a military heading naming the tanks", () => {
-    // The heading is the genre LABEL ("army / battle vehicles"), not its id.
-    expect(section).toMatch(/army \/ battle vehicles: [^\n]*\btank\b/);
-    expect(section).toMatch(/\btank_desert\b/);
-    expect(section).toMatch(/\btank_toy\b/);
+  it("has a military category in the map (the heading is the genre LABEL, not its id)", () => {
+    expect(section).toMatch(/army \/ battle vehicles: \d+/);
   });
 
-  it("teaches the fortifications too, not just the vehicles", () => {
-    for (const name of ["turret", "sandbags", "bunker", "watchtower", "barricade"]) {
-      expect(section).toMatch(new RegExp(`\\b${name}\\b`));
+  it("an army ask retrieves the tanks AND the fortifications, not just the vehicles", () => {
+    const names = retrievedModelNames({ message: "make an army battle game", history: [], manifest: realManifest as AssetManifest });
+    for (const name of ["tank", "tank_desert", "tank_toy", "turret", "sandbags", "bunker", "watchtower", "barricade"]) {
+      expect(names, `army ask did not retrieve ${name}`).toContain(name);
     }
   });
 
@@ -455,14 +484,19 @@ describe("the military category (2026-07-29 batch) renders in the real catalog",
 describe("the indian games category (2026-07-30 batch) renders in the real catalog", () => {
   const section = modelsPromptSection(realManifest as AssetManifest);
 
-  it("has an indian-games heading naming the kabaddi/carrom/kho-kho/badminton/ludo/marbles sets", () => {
+  it("a carrom/ludo/kabaddi ask retrieves the whole set (genres are the unit of selection)", () => {
+    const names = retrievedModelNames({ message: "let us play carrom", history: [], manifest: realManifest as AssetManifest });
     for (const name of [
       "kabaddi_mat", "carrom_board", "carrom_striker", "carrom_coin_white", "carrom_queen",
       "kho_kho_pole", "kho_kho_lane_field", "badminton_racket", "shuttlecock", "badminton_net",
       "ludo_board", "ludo_dice", "ludo_pawn_red", "ludo_pawn_blue", "marble", "marble_blue",
     ]) {
-      expect(section).toMatch(new RegExp(`\\b${name}\\b`));
+      expect(names, `carrom ask did not retrieve ${name}`).toContain(name);
     }
+  });
+
+  it("has an indian-games category in the map", () => {
+    expect(section).toMatch(/Indian games: \d+/);
   });
 
   it("kabaddi_player and kho_kho_player are taught as people-rig models (their clips promise must hold)", () => {
@@ -556,5 +590,73 @@ describe("the facing convention is taught (2026-08-06)", () => {
     expect(section).toContain("modelAxis(name)");
     // The universal claim must never come back — it was never true.
     expect(section).not.toMatch(/Every model faces \+Z/);
+  });
+});
+
+// ── the category-map hybrid (2026-08-09) ────────────────────────────────────
+// docs/2026-08-09_PRD_AnimalsSnowSkiAssets.md §3. The static catalog's own note
+// promised this fallback from the day it was written and three ceiling raises
+// deferred it; the animals/snow batch (+38 names) is what finally forced it.
+// These pin the two properties that make the trade safe: the model can still
+// SEE the whole library (counts), and retrieval is generous enough that the
+// 2026-07-24 "taught 6 of 106 models" regression cannot come back.
+describe("the category-map hybrid — retrieval", () => {
+  const real = realManifest as AssetManifest;
+
+  it("a triggered genre arrives WHOLE (genres are the unit of selection)", () => {
+    const names = retrievedModelNames({ message: "make a skiing game", history: [], manifest: real });
+    for (const n of ["skis", "ski_poles", "slalom_gate", "chairlift", "snow_pine", "mountain"]) {
+      expect(names, `ski ask did not retrieve ${n}`).toContain(n);
+    }
+  });
+
+  it("a child who names a model outright always gets that model", () => {
+    expect(retrievedModelNames({ message: "a game with a crocodile", history: [], manifest: real })).toContain("crocodile");
+  });
+
+  it("THE 2026-07-24 REGRESSION: a no-trigger ask still sees every category", () => {
+    // "make me a fun game" triggered nothing, so the old selection taught 6 of
+    // 106 models and the model hand-rolled cubes for a pizza restaurant while
+    // 19 food models sat unused. The spread is what makes that impossible.
+    const names = retrievedModelNames({ message: "make me a fun game", history: [], manifest: real });
+    for (const genre of GENRE_IDS) {
+      const members = modelsInGenre(genre, new Set(real.assets.filter((a) => a.type === "model").map((a) => a.name)));
+      if (members.length === 0) continue;
+      expect(
+        members.some((m) => names.includes(m)),
+        `a no-trigger turn sees nothing from "${genre}" — the pizza-restaurant bug is back`,
+      ).toBe(true);
+    }
+  });
+
+  it("keeps the models the CURRENT GAME already uses, or the model could not maintain its own game", () => {
+    const history: ChatMessage[] = [
+      { id: "m1", createdAt: 1, role: "child", text: "a racing game" },
+      { id: "m2", createdAt: 2, role: "assistant", text: "here", artifactHtml: "<!--USES_MODELS: elephant,igloo--><html></html>" },
+    ];
+    const names = retrievedModelNames({ message: "make it faster", history, manifest: real });
+    expect(names).toContain("elephant");
+    expect(names).toContain("igloo");
+  });
+
+  it("never invents a name — everything retrieved is in the manifest", () => {
+    const available = new Set(real.assets.filter((a) => a.type === "model").map((a) => a.name));
+    const names = retrievedModelNames({ message: "dogs and dragons and skiing", history: [], manifest: real });
+    for (const n of names) expect(available.has(n), `retrieved "${n}" is not in the manifest`).toBe(true);
+  });
+});
+
+describe("the category-map hybrid — the block that rides at the end of the contents", () => {
+  it("renders sorted and deterministic (a stable block is a cacheable block)", () => {
+    expect(modelNamesBlock(["dino", "car"])).toBe(modelNamesBlock(["car", "dino"]));
+    expect(modelNamesBlock(["dino", "car"])).toMatch(/car, dino/);
+  });
+
+  it("repeats the never-invent rule where the names actually are", () => {
+    expect(modelNamesBlock(["car"])).toMatch(/never invent a name/i);
+  });
+
+  it("is empty for an empty selection (zero tokens, never a dangling label)", () => {
+    expect(modelNamesBlock([])).toBe("");
   });
 });

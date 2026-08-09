@@ -5,10 +5,11 @@
 // bundle's exports, the render-budget rules to §7, and the model names to
 // the manifest. Pure strings, no I/O (the manifest is a static import).
 
+import type { ChatMessage } from "@/types/chat.types";
 import type { AssetManifest } from "./manifest";
 import manifestJson from "./manifest.json";
 import { modelsInGenre } from "./asset-taxonomy";
-import { GENRES, peopleModels, soldierModels } from "./model-select";
+import { GENRES, peopleModels, selectModelNames, soldierModels } from "./model-select";
 
 /**
  * The sports playbook (owner ask 2026-07-26): without it the model writes the
@@ -98,25 +99,104 @@ should stay 2D, in which case skip the marker below.) To build in 3D:
    scenery rather than adding many distinct objects), so it stays smooth on
    phones, tablets and Chromebooks.`;
 
-/** The library, grouped into category lines. Every model appears exactly ONCE,
- *  under its primary (first-declared) genre: the model reads the whole index, so
- *  cross-listing `car` under both racing and city would spend tokens to repeat
- *  what it already knows. Categories with nothing available vanish. */
-function categoryLines(available: Set<string>): string {
+/**
+ * THE CATEGORY MAP (2026-08-09, the hybrid this file's §5b note has promised
+ * since 2026-07-24 and three ceiling raises have deferred).
+ *
+ * Headings and COUNTS, no names. Measured before the animals/snow batch: the
+ * section was 2,522 tokens = 1,802 prose + 720 names (264 models at ~2.7
+ * tokens each), and names are the half that grows without bound as the library
+ * does. The exact names now travel per-turn at the END of the request contents
+ * (retrievedModelNames + modelNamesBlock below), which is what keeps this
+ * section byte-stable per manifest and the Gemini prefix cache hitting.
+ *
+ * The counts are load-bearing, not decoration: they are what stops the model
+ * designing a pizza restaurant out of hand-rolled cubes because this turn's
+ * retrieved list happened not to mention food (the 2026-07-24 regression).
+ * They say "19 food models exist" even when none are named this turn.
+ */
+function categoryCountLines(available: Set<string>): string {
   const claimed = new Set<string>();
   const lines: string[] = [];
   for (const genre of GENRES) {
     const names = modelsInGenre(genre.id, available).filter((n) => !claimed.has(n));
     if (names.length === 0) continue;
     for (const n of names) claimed.add(n);
-    lines.push(`   - ${genre.label}: ${names.join(", ")}`);
+    lines.push(`   - ${genre.label}: ${names.length}`);
   }
-  // Anything the taxonomy somehow missed still gets taught — the catalog must
-  // never be a subset of the manifest, or the model is told an asset it can
-  // legitimately load does not exist.
   const orphans = [...available].filter((n) => !claimed.has(n));
-  if (orphans.length > 0) lines.push(`   - other: ${orphans.join(", ")}`);
+  if (orphans.length > 0) lines.push(`   - other: ${orphans.length}`);
   return lines.join("\n");
+}
+
+/**
+ * The per-turn name list: the retrieval half of the hybrid. Pure function of
+ * the child's words + the game being edited + the manifest, so it is cheap,
+ * testable and deterministic.
+ *
+ * Deliberately GENEROUS. The regression this must not reintroduce is the one
+ * that killed per-message selection in 2026-07-24: a child saying "make me a
+ * fun game" triggered no genre, was taught 6 of 106 models, and hand-rolled
+ * cubes while 19 food models sat unused. Guards, in order of what they fix:
+ *   1. models the CURRENT GAME already uses — dropping one would make the
+ *      model unable to keep its own game working (selectModelNames rule 1);
+ *   2. every genre the child's words trigger, whole;
+ *   3. names the child said outright;
+ *   4. a BROAD DEFAULT SPREAD when nothing triggers — a few from every single
+ *      category, so "a fun game" still sees the whole shape of the library;
+ *   5. the core basics last.
+ */
+export function retrievedModelNames(input: {
+  message: string;
+  history: ChatMessage[];
+  manifest?: AssetManifest;
+}): string[] {
+  const manifest = input.manifest ?? (manifestJson as AssetManifest);
+  const available = new Set(
+    manifest.assets.filter((a) => a.type === "model").map((a) => a.name),
+  );
+  const picked = new Set(selectModelNames({ ...input, manifest }));
+
+  // The spread: whatever selection found, top up with a sample from every
+  // category so no category is ever invisible. Sampled from the FRONT of each
+  // genre in taxonomy order — a stable, reviewable choice, not a random one.
+  for (const genre of GENRES) {
+    const names = modelsInGenre(genre.id, available);
+    if (names.some((n) => picked.has(n))) continue; // already represented
+    for (const n of names.slice(0, SPREAD_PER_GENRE)) picked.add(n);
+  }
+  return [...picked];
+}
+
+/** How many names per otherwise-unrepresented category ride in the spread.
+ *  Measured at 8: a no-trigger turn ("make me a fun game") lands ~90 names /
+ *  ~250 tokens, against the 640 tokens the hybrid took OUT of the system
+ *  prompt — so even the broadest turn is cheaper than before, and the block
+ *  lands AFTER the cached prefix so it never costs the game-code cache a hit.
+ *  Deliberately generous rather than minimal: the failure this guards against
+ *  (2026-07-24, a pizza restaurant hand-rolled out of cubes while 19 food
+ *  models sat unused) is SILENT — nobody reports the game that could have been
+ *  better — so the cheap side of the trade is the safe side. */
+export const SPREAD_PER_GENRE = 8;
+
+/**
+ * Renders the retrieved names as the block that rides at the END of the
+ * request contents — after the history and the child's message, never inside
+ * the system instruction.
+ *
+ * WHY THE END, precisely. Gemini implicit caching matches the longest common
+ * PREFIX. Request N is [system][history][message N][names N]; request N+1 is
+ * [system][history + reply N][message N+1][names N+1]. The common prefix runs
+ * through message N — which means the whole system instruction AND the
+ * 10–15k tokens of repeated game code in the history stay cached
+ * (COST_TOKEN_BUDGET.md waste-ledger #4, the exact cost this file's 2026-07-24
+ * note refused to pay). The only thing that ever misses is the small block
+ * itself. That is the entire reason the names moved here rather than staying
+ * in a system prompt that would have had to vary per message.
+ */
+export function modelNamesBlock(names: readonly string[]): string {
+  if (names.length === 0) return "";
+  return `(Toy box — the model names you may use on THIS turn: ${[...names].sort().join(", ")}. Only these; never invent a name.)`;
 }
 
 /**
@@ -155,17 +235,20 @@ export function modelsPromptSection(
   // know the platform adds the credit chip, so it neither removes it nor
   // wastes tokens re-implementing attribution.
   const attributed = models.filter((m) => m.license === "CC-BY-3.0").map((m) => m.name);
-  const categories = categoryLines(available);
+  const categories = categoryCountLines(available);
   const hasSports = modelsInGenre("sports", available).length > 0;
-  return `**Ready-made 3D models**: for a 3D game you may ALSO use these
-professional low-poly models from the toy box — this is the COMPLETE list, so
-design your game around what is actually here:
+  return `**Ready-made 3D models**: for a 3D game you may ALSO use professional
+low-poly models from the toy box. Here is what the toy box HOLDS, by category:
 ${categories}
+The exact model NAMES you may use appear in a "Toy box —" line at the very end
+of this conversation. Design your game around the categories above — if a
+category has models, they exist even when this turn's list is short: ask for
+what you need and use the names you are given.
 1. Add a second marker line right after \`<!--USES_THREE-->\` naming ONLY the
    models you use, e.g. \`<!--USES_MODELS: ${models[0]!.name}-->\` (comma-separated;
-   only names from the list above). NEVER invent a model name — an unlisted name
-   silently loads nothing. If you need an object the list doesn't have, build it
-   from the primitive shapes instead.
+   only names from that "Toy box —" line). NEVER invent a model name — an
+   unlisted name silently loads nothing. If you need an object the toy box
+   doesn't have, build it from the primitive shapes instead.
 2. Load them with the built-in \`loadModel(name)\` helper — do NOT import a
    loader yourself. It returns a Promise of a ready-to-add object, or null
    if loading failed.

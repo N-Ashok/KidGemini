@@ -72,6 +72,9 @@ describe("validateTaxonomy — fails closed on malformed curation", () => {
 // (2026-07-24). If deriving membership from the taxonomy reproduces them
 // exactly, the move is behaviour-preserving and the prompt cannot have shifted.
 const GENRE_MEMBERSHIP_BEFORE_MIGRATION: Record<GenreId, string[]> = {
+  // Empty by construction: `snow` was created 2026-08-09, long after this
+  // migration snapshot, so it had no pre-migration membership to preserve.
+  snow: [],
   people: ["man", "woman", "girl", "scientist", "police_officer", "pirate", "grandstand"],
   racing: [
     "car", "police", "firetruck", "taxi", "ambulance", "tractor", "coin",

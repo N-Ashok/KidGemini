@@ -11,6 +11,46 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-09 — every animated model shipped carrying EVERY clip it ever had (dropped ones included)
+
+- **Found while** probing candidates for the animals/snow batch
+  (`docs/2026-08-09_PRD_AnimalsSnowSkiAssets.md`), not from a user report — the whole Quaternius
+  animal shelf measured 260–320 KB against a 150 KB budget and was about to be rejected for the
+  fifth time.
+- **Symptom that gave it away:** `keepAnimations` was doing nothing measurable. The deer compressed
+  to **261,728 B keeping three clips and 261,664 B keeping one** — a 64-byte difference for two
+  whole animations. A file with `keepAnimations: []` still weighed 255 KB.
+- **ROOT CAUSE.** `Animation.dispose()` (gltf-transform) detaches an animation's channels and
+  samplers but does **not** dispose them. The orphaned samplers keep live references to their
+  input/output accessors, so `prune()` cannot collect them and the writer serialises them anyway.
+  Byte accounting on the output proved it: **813 accessors and 394 KB of bufferViews in a file
+  reporting zero animations**, for a 4,276-vertex mesh. Every clip we thought we had dropped was
+  still in the published bytes — just unreachable.
+- **Fix** (`scripts/vendor-models.mjs`): dispose each animation's channels and samplers *before*
+  the animation itself. Plus a second, smaller win found in the same measurement — the Quaternius
+  rigs ship every clip TWICE (`Walk` and `AnimalArmature|Walk`) and the leaf-name matcher kept
+  both, so each kept clip cost double; now the first of each leaf name wins. Safe against the
+  catalog contract, which tells the model to FIND clips by regex and never by exact string.
+- **Verified** on the real bytes, per model: deer 261.7 → **113.3 KB**, stag 261.9 → **108.6**,
+  wolf 266.7 → **93.4**, fox 262.4 → **91.4**, horse 321.7 → **120.8**, donkey 304.6 → **115.2**,
+  panda 178.5 → **86.6**, zebra 72.4 → **23.4**, frog 108.8 → **65.9**.
+- **The class: a wrong diagnosis that hardened into a rule.** The library's own comments recorded
+  this as settled fact from 2026-07-13 onward — *"Rejected as over-budget: Shiba Inu ~241 KB,
+  Husky ~266 KB, both Quaternius horses ~305 KB (mesh-heavy, and simplify() no-ops on skinned
+  meshes)"* — and every later batch cited it and moved on. It was never mesh weight. Nobody
+  measured *what* the bytes were, only *how many*; a size that fails a budget is a number, and the
+  cause of that number is a different question. Sibling of the fragmented-race-track class: an
+  explanation that fits the symptom and was never checked against the artifact.
+- **Not fixed here:** the ~40 models already published under the leak (dino, cat, dog, chicken,
+  bat, alien, the soldiers…) still carry their dead clip data. Their bytes are permanent under the
+  §10 immutability contract, so recovering it means new hashes, new URLs and a manifest re-point —
+  a separate, separately-approved change, registered as tech debt. **No published game changes
+  behaviour**; the cost is bandwidth on kids' devices.
+- **Related:** the "poorly formed race track" entries below (same class — a plausible cause
+  believed without measuring the artifact).
+
+---
+
 ## 2026-08-09 — a child's 3D game loaded three.js r128 off cdnjs and died on `CapsuleGeometry`
 
 - **Report:** owner, "Calvin asked for a game, it didn't produce — there was an error." A game

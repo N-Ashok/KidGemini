@@ -7,7 +7,7 @@ import type { ChatMessage, ChatModel, ImageAttachment, StreamChunk, TokenUsage }
 import type { ChainSummary } from "@/types/model-ledger.types";
 import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
 import { REPORT_HEADER } from "./error-report";
-import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection } from "./assets/prompt-catalog";
+import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection, modelNamesBlock, retrievedModelNames } from "./assets/prompt-catalog";
 import { PHYSICS_PROMPT_SECTION, physicsEnginePromptSection } from "./assets/physics-playbook";
 import { SAVE_STATE_PROMPT_SECTION } from "./assets/save-state-playbook";
 import { PUBLISHED_SAVE_PROMPT_SECTION } from "./assets/published-save-playbook";
@@ -498,11 +498,19 @@ export const CHILD_FIX_CONTEXT =
  *  safetyContext (CHILD_BUILDER_CONTEXT, see above) rides as its OWN leading
  *  part of the final user turn — never merged into the child's message text —
  *  so the child's own words are never altered, only prefaced. */
-export function buildChatContents(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; safetyContext?: string }) {
+export function buildChatContents(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; safetyContext?: string; modelNames?: string }) {
   const lastParts: ({ text: string } | { inlineData: ImageAttachment })[] = input.image
     ? [{ inlineData: { mimeType: input.image.mimeType, data: input.image.data } }, { text: input.message }]
     : [{ text: input.message }];
   if (input.safetyContext) lastParts.unshift({ text: input.safetyContext });
+  // The retrieved model-name list (the category-map hybrid, 2026-08-09) rides
+  // LAST — after the history and after the child's message. Everything before
+  // it is byte-identical to the previous turn's prefix, so the system prompt
+  // and the 10–15k tokens of game code in the history stay cached and only
+  // this small block ever misses. See modelNamesBlock in prompt-catalog.ts.
+  // Deliberately NOT reproduced onto history turns: it is a per-turn aid, and
+  // re-rendering it into every past message would spend the cache it protects.
+  if (input.modelNames) lastParts.push({ text: input.modelNames });
   return [
     ...input.history.map((m) => ({
       role: m.role === "child" ? "user" : "model",
@@ -592,7 +600,22 @@ export class GeminiChatModel implements ChatModel {
       isChild && isGameBuildTurn(input.message, input.history)
         ? (input.message.includes(REPORT_HEADER) ? CHILD_FIX_CONTEXT : CHILD_BUILDER_CONTEXT)
         : undefined;
-    return buildChatContents({ ...input, ...(safetyContext ? { safetyContext } : {}) });
+    // Model names ride along ONLY when the 3D catalog is unlocked for this
+    // turn — the same gate that decides whether modelsPromptSection() (which
+    // tells the model to expect the list) is in the system prompt at all.
+    // Sending names without that section, or that section without names,
+    // would each be a half-taught catalog.
+    const gates = isGameBuildTurn(input.message, input.history)
+      ? catalogGates({ message: input.message, history: input.history, paid: false })
+      : { three: false, audio: false, save: false };
+    const modelNames = gates.three
+      ? modelNamesBlock(retrievedModelNames({ message: input.message, history: input.history }))
+      : "";
+    return buildChatContents({
+      ...input,
+      ...(safetyContext ? { safetyContext } : {}),
+      ...(modelNames ? { modelNames } : {}),
+    });
   }
 
   /** Same fallback-chain resilience replyStream() has, for a ONE-SHOT call

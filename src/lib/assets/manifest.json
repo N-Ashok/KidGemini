@@ -4094,6 +4094,493 @@
         "+x": 0.496
       },
       "lane": 0.698
+    },
+    {
+      "name": "deer",
+      "type": "model",
+      "url": "https://assets.ariantra.com/deer.668f52.glb",
+      "bytes": 116012,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/T6Cs7tmMHJ",
+      "sha256": "668f5243b1145e3ebd672fcc0a71ff1c476ba390ff2800cbccbaa615be60d36c"
+    },
+    {
+      "name": "stag",
+      "type": "model",
+      "url": "https://assets.ariantra.com/stag.48445f.glb",
+      "bytes": 111168,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/tQdzbZ1Cmw",
+      "sha256": "48445f817a23adf292d307baf6abe0573a9c7ec6405eead766a6330f7e1c0f32"
+    },
+    {
+      "name": "wolf",
+      "type": "model",
+      "url": "https://assets.ariantra.com/wolf.81f5cc.glb",
+      "bytes": 95596,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/P1gU3Qkr9r",
+      "sha256": "81f5cce1c2fa7f546cfaa2f31a4fc1e538456529bd580c06bd5b8e39a1a9a71e"
+    },
+    {
+      "name": "fox",
+      "type": "model",
+      "url": "https://assets.ariantra.com/fox.9021a7.glb",
+      "bytes": 93604,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/Bc97C66HKi",
+      "sha256": "9021a70a6bf4bcc91255b08c0678cbb4a540f8076f5eec9f5a4094c4e2b7db13"
+    },
+    {
+      "name": "horse",
+      "type": "model",
+      "url": "https://assets.ariantra.com/horse.c3c773.glb",
+      "bytes": 123724,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/qvTrSG9pZF",
+      "sha256": "c3c7732c564bbdc0ae3ebdc14afd984c1f232aa9e628c81dbf7bc7bc11aaeb47"
+    },
+    {
+      "name": "donkey",
+      "type": "model",
+      "url": "https://assets.ariantra.com/donkey.da4176.glb",
+      "bytes": 118012,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/qmX6nhnvp7",
+      "sha256": "da41765a49d99f1925c2ee691b61834bbb1c1d4290c5713f7732071d6f4f400a"
+    },
+    {
+      "name": "zebra",
+      "type": "model",
+      "url": "https://assets.ariantra.com/zebra.ae8974.glb",
+      "bytes": 23976,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/iclPBR6SBZ",
+      "sha256": "ae8974954f436c69bd32a9e3cde8208e6f2734bb2cf4e8f18900206f081a517b",
+      "size": [
+        2.57,
+        7.072,
+        9.235
+      ]
+    },
+    {
+      "name": "snake",
+      "type": "model",
+      "url": "https://assets.ariantra.com/snake.43d99f.glb",
+      "bytes": 55452,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/x9x0viZs8V",
+      "sha256": "43d99f5dead629d225ea22c82cf1e1cfcd6c7aa478d8e8052b8335092f6f88c2"
+    },
+    {
+      "name": "frog",
+      "type": "model",
+      "url": "https://assets.ariantra.com/frog.e25d15.glb",
+      "bytes": 67464,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/37wofOCOzG",
+      "sha256": "e25d1537413fbc032af3cd5d88083a5e008c3604b974467741cc7a8ccc44d42d"
+    },
+    {
+      "name": "panda",
+      "type": "model",
+      "url": "https://assets.ariantra.com/panda.46dcad.glb",
+      "bytes": 88704,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/q1uJ28Hs8T",
+      "sha256": "46dcad66d9e573402cff6b707a5db28827373570f0a9f10cb8987bd33de8db07"
+    },
+    {
+      "name": "mountain",
+      "type": "model",
+      "url": "https://assets.ariantra.com/mountain.455316.glb",
+      "bytes": 16848,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/XY4ej3Zg3I",
+      "sha256": "455316195f9e4a32632c29a06a82a3e9aa65a5a929962122a15f6c7e17a675d7",
+      "size": [
+        1.079,
+        1.911,
+        1.103
+      ]
+    },
+    {
+      "name": "mountain_small",
+      "type": "model",
+      "url": "https://assets.ariantra.com/mountain_small.801d45.glb",
+      "bytes": 7720,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/7HYR2s9JVi",
+      "sha256": "801d457ad148f9601ade3b8b4c04c7f502b117e95339a2a81a192eab117be151",
+      "size": [
+        1.496,
+        1.37,
+        1.117
+      ]
+    },
+    {
+      "name": "mountain_range",
+      "type": "model",
+      "url": "https://assets.ariantra.com/mountain_range.625725.glb",
+      "bytes": 46032,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/w9VBrh7Nz0",
+      "sha256": "62572564a19b0d960b703b05b391d5d8327a355403647ccd7a7166670c030530",
+      "size": [
+        4.591,
+        2.488,
+        3.844
+      ]
+    },
+    {
+      "name": "snow_pine",
+      "type": "model",
+      "url": "https://assets.ariantra.com/snow_pine.9071b5.glb",
+      "bytes": 28144,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/17vQv2X5rh",
+      "sha256": "9071b55229f95e4cb99b22eb8bcacab53088767375d1d1709ab9da061a441dd7",
+      "size": [
+        1.254,
+        3.343,
+        1.393
+      ]
+    },
+    {
+      "name": "snow_birch",
+      "type": "model",
+      "url": "https://assets.ariantra.com/snow_birch.c9a384.glb",
+      "bytes": 31080,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/R4NgnzZHcK",
+      "sha256": "c9a3849052c8063e989c4e23e534fc16e20f839695f3cba31dabc2d51bf81f0b",
+      "size": [
+        1.187,
+        5.062,
+        1.933
+      ]
+    },
+    {
+      "name": "snow_dead_tree",
+      "type": "model",
+      "url": "https://assets.ariantra.com/snow_dead_tree.6c79f4.glb",
+      "bytes": 16524,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/PILl2nbDNz",
+      "sha256": "6c79f4f04691a3abfaeefcce20bfbd0cc176be7709576ce6a017921d41b8aeb7",
+      "size": [
+        0.635,
+        3.002,
+        0.812
+      ]
+    },
+    {
+      "name": "snow_bush",
+      "type": "model",
+      "url": "https://assets.ariantra.com/snow_bush.a9fc25.glb",
+      "bytes": 8568,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/H4IEAwYl1z",
+      "sha256": "a9fc2519d672a0fafc9453d4d9e1fd42b6ccc0b4e4a20d9d612c2af71611900b",
+      "size": [
+        1.362,
+        1.158,
+        1.358
+      ]
+    },
+    {
+      "name": "snow_rock",
+      "type": "model",
+      "url": "https://assets.ariantra.com/snow_rock.6ac0f6.glb",
+      "bytes": 5288,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/eZRzCg5BcR",
+      "sha256": "6ac0f63d576768ba09dc1c8e3c8d665a3a0d62ecfb653de8e584c3cbdbcdb2c8",
+      "size": [
+        0.613,
+        0.72,
+        0.65
+      ]
+    },
+    {
+      "name": "ice_block",
+      "type": "model",
+      "url": "https://assets.ariantra.com/ice_block.77cd1e.glb",
+      "bytes": 6432,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/dEY0gPZNzG",
+      "sha256": "77cd1e0e3a2404dc2ca740ba1c22b9d046e21f7e7f1146961ec000fb97e0daba",
+      "size": [
+        2,
+        2,
+        2
+      ]
+    },
+    {
+      "name": "snowboard",
+      "type": "model",
+      "url": "https://assets.ariantra.com/snowboard.f038b6.glb",
+      "bytes": 4632,
+      "license": "CC0",
+      "sourceUrl": "https://poly.pizza/m/sMbO7OqgNX",
+      "sha256": "f038b66d4b189b10ea8a85394bf31531d9ac2063ba44a9f21c1489fc3a01fd26",
+      "size": [
+        0.849,
+        0.173,
+        4.529
+      ]
+    },
+    {
+      "name": "hill_slope",
+      "type": "model",
+      "url": "https://assets.ariantra.com/hill_slope.6894eb.glb",
+      "bytes": 3892,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "6894eb71de6293141d9862914a45d5071ae2002ab813ce32e2f715e01907f7a9",
+      "size": [
+        1.2,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "hill_block",
+      "type": "model",
+      "url": "https://assets.ariantra.com/hill_block.a1e1c3.glb",
+      "bytes": 3000,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "a1e1c30be804b5448b91ae26c949bcb2054bfc9825d5530df9a8aebae7af8ccc",
+      "size": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "hill_corner",
+      "type": "model",
+      "url": "https://assets.ariantra.com/hill_corner.075b3e.glb",
+      "bytes": 2048,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "075b3ea32de576bcd21a12d44f9fff9f51d60dbb4b236b6fd038698ad8cb6646",
+      "size": [
+        0.419,
+        1,
+        0.419
+      ]
+    },
+    {
+      "name": "cliff",
+      "type": "model",
+      "url": "https://assets.ariantra.com/cliff.a72baa.glb",
+      "bytes": 2204,
+      "license": "CC0",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "sha256": "a72baaf00469ab2aee3316ebbb4650ef0d30e0152775ebf27d9bc899b058339d",
+      "size": [
+        1,
+        1,
+        0.419
+      ]
+    },
+    {
+      "name": "elephant",
+      "type": "model",
+      "url": "https://assets.ariantra.com/elephant.b19a33.glb",
+      "bytes": 6704,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "b19a332d12657e1b4a8d51dfd5e9afcf64f49d5fe142ace1695f12da12315bd6",
+      "size": [
+        1.696,
+        3.277,
+        6.073
+      ]
+    },
+    {
+      "name": "lion",
+      "type": "model",
+      "url": "https://assets.ariantra.com/lion.62f2b4.glb",
+      "bytes": 7692,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "62f2b4e8ade176ebdf9d4da507c2f4db47bc7bf5b77698fec8ffcd938f765dfe",
+      "size": [
+        0.86,
+        1.514,
+        2.766
+      ]
+    },
+    {
+      "name": "tiger",
+      "type": "model",
+      "url": "https://assets.ariantra.com/tiger.5d0fa0.glb",
+      "bytes": 6976,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "5d0fa059067d617ea77eb0ea31e437fb60505c09fc48c4d9cabe1e2f51900ee9",
+      "size": [
+        0.466,
+        1.212,
+        2.953
+      ]
+    },
+    {
+      "name": "crocodile",
+      "type": "model",
+      "url": "https://assets.ariantra.com/crocodile.339eca.glb",
+      "bytes": 8780,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "339eca2166ea5f239ec995469fde6622656910f4f8f2f471b8589922541fb08b",
+      "size": [
+        0.636,
+        0.619,
+        4.482
+      ]
+    },
+    {
+      "name": "monkey",
+      "type": "model",
+      "url": "https://assets.ariantra.com/monkey.ead141.glb",
+      "bytes": 6256,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "ead141dd138f880b646e21202dcd5ce4bb45a7ff597e9f6a277b2126c26005b8",
+      "size": [
+        0.47,
+        0.93,
+        0.605
+      ]
+    },
+    {
+      "name": "skis",
+      "type": "model",
+      "url": "https://assets.ariantra.com/skis.d2c4f7.glb",
+      "bytes": 3296,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "d2c4f7412c0f516d111ad2e1be2ee28a9f34203606b50be44af29caca5268af7",
+      "size": [
+        0.37,
+        0.163,
+        1.67
+      ]
+    },
+    {
+      "name": "ski_poles",
+      "type": "model",
+      "url": "https://assets.ariantra.com/ski_poles.945c25.glb",
+      "bytes": 3160,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "945c25ab5aaaf583c003d73548bd50e397926b12af297dd60e8d6ba3366c7f17",
+      "size": [
+        0.45,
+        1.25,
+        0.13
+      ]
+    },
+    {
+      "name": "sled",
+      "type": "model",
+      "url": "https://assets.ariantra.com/sled.0e158c.glb",
+      "bytes": 4672,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "0e158c1587829aba9a3c266231195810a5e409a442dc1c30074f4ee3cc6f0933",
+      "size": [
+        0.5,
+        0.321,
+        1.185
+      ]
+    },
+    {
+      "name": "chairlift",
+      "type": "model",
+      "url": "https://assets.ariantra.com/chairlift.18b056.glb",
+      "bytes": 3868,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "18b056837d76b52f5981a157bf10aa2347a8169da1fb72cad28bc8af39a07fb1",
+      "size": [
+        1.6,
+        2.54,
+        0.64
+      ]
+    },
+    {
+      "name": "ski_lift_tower",
+      "type": "model",
+      "url": "https://assets.ariantra.com/ski_lift_tower.e5aead.glb",
+      "bytes": 3952,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "e5aead31276ac4e9a7e73273cb8154605b6cd0d1d672fee268558439d4298ae4",
+      "size": [
+        2.74,
+        7.52,
+        1
+      ]
+    },
+    {
+      "name": "slalom_gate",
+      "type": "model",
+      "url": "https://assets.ariantra.com/slalom_gate.7c50da.glb",
+      "bytes": 3044,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "7c50dabb83a5c1353cd0d68dd0eefcaa742892317d48c1076321d3f9d67d9c12",
+      "size": [
+        1.26,
+        1.7,
+        0.16
+      ]
+    },
+    {
+      "name": "igloo",
+      "type": "model",
+      "url": "https://assets.ariantra.com/igloo.f603a5.glb",
+      "bytes": 4988,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "f603a5d020539ddbe61620fdce6963631b50b6822b0ee94e3b57c19d16d1160a",
+      "size": [
+        2.6,
+        1.3,
+        2.801
+      ]
+    },
+    {
+      "name": "snowman",
+      "type": "model",
+      "url": "https://assets.ariantra.com/snowman.2f0e8a.glb",
+      "bytes": 12816,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "2f0e8af9b4be44f5369453cca51548556b95a53920fae51ecd4607ffc6159a02",
+      "size": [
+        1.28,
+        1.92,
+        0.799
+      ]
+    },
+    {
+      "name": "snow_mountain",
+      "type": "model",
+      "url": "https://assets.ariantra.com/snow_mountain.d9e376.glb",
+      "bytes": 7072,
+      "license": "CC0",
+      "sourceUrl": "https://github.com/N-Ashok/KidGemini/blob/main/assets-src/LICENSE.md",
+      "sha256": "d9e376e0ea9b70603e30634003f3ee4f4975ed8774cca6c459e82752ba20f0cb",
+      "size": [
+        33.674,
+        28.001,
+        34.17
+      ]
     }
   ]
 }
