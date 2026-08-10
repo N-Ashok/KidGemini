@@ -44,12 +44,19 @@ const check = (name, ok, detail = "") => {
 const browser = await chromium.launch({ executablePath: exe, headless: !HEADED });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const pageErrors = [];
-page.on("pageerror", (e) => pageErrors.push(e.message));
+// Keep the stack, not just the message: an intermittent one-liner with no
+// frames is unactionable, which is how the "reading 'trim'" error sat here
+// unattributed.
+page.on("pageerror", (e) => pageErrors.push(`${e.message}\n${(e.stack || "").split("\n").slice(1, 6).join("\n")}`));
 
 // The save channel's traffic. Its own comment says it must be "active only
 // once the game is up and playable (never mid-verify-cover), so the existing-
 // save lookup and autosave never race the verify loop" — so a request to it
 // while a new version is being probed is that invariant breaking.
+// Console from EVERY frame, so we can prove our injected guard actually runs.
+const glConsole = [];
+page.on("console", (m) => glConsole.push(m.text()));
+
 const saveCalls = [];
 page.on("request", (r) => {
   if (r.url().includes("/api/game-save")) saveCalls.push({ at: Date.now(), url: r.url() });
@@ -202,6 +209,59 @@ if (sawShadow) {
     const n = await ticks(fs[i]);
     console.log(`    frame#${i} rAF ticks in 600ms: ${n}`);
     check(`frame#${i} animation loop is running`, typeof n === "number" && n > 5, `${n} ticks`);
+  
+  }
+
+  // ── 6c. The round gives its GPU context BACK (the pile-up, not one bad edit) ─
+  // The owner's 2026-08-10 console paste shows ELEVEN edits in one sitting before
+  // the blue appeared. A WebGL context is not freed when its iframe is detached —
+  // it lives until GC — so each round leaves one behind until the page hits the
+  // browser's cap and the OLDEST context is evicted: the child's game.
+  //
+  // The cap cannot be reached on demand here (headless uses SwiftShader, whose
+  // limits differ from the owner's machine), so this does NOT prove the eviction
+  // is cured. It proves the mechanism that prevents it: asking a round to release
+  // actually releases it, and releases the RIGHT frame. Without the message
+  // listener in webglContextGuard, or without the parent's layout-effect post,
+  // this fails.
+  if (sawShadow && frames().length === 2) {
+    const marks = await Promise.all(
+      frames().map((f) => f.evaluate(() => window.__harnessMark ?? null).catch(() => "err")),
+    );
+    const shadowIdx = marks.findIndex((m) => m !== 4242);
+    const playIdx = shadowIdx === 0 ? 1 : 0;
+    if (shadowIdx >= 0) {
+      const shadow = frames()[shadowIdx];
+      const read = (f) => f.evaluate(() => window.__arGlCount ?? "absent").catch((e) => `err:${e.message}`);
+
+      const beforeCount = await read(shadow);
+      check(
+        "the shadow round holds a GPU context the guard is tracking",
+        typeof beforeCount === "number" && beforeCount > 0,
+        `__arGlCount=${beforeCount}`,
+      );
+
+      // Exactly what ArtifactFrame's layout-effect cleanup posts on unmount.
+      await page.evaluate(() => {
+        const el = [...document.querySelectorAll("iframe")].find((i) => i.className.includes("opacity-0"));
+        el?.contentWindow?.postMessage({ __ari: "release-gl" }, "*");
+      });
+      await page.waitForTimeout(300);
+
+      const afterCount = await read(shadow);
+      check(
+        "asking the round to release actually frees its context",
+        afterCount === 0,
+        `__arGlCount ${beforeCount} -> ${afterCount}`,
+      );
+
+      const playScene = await sceneState(frames()[playIdx]);
+      check(
+        "releasing the round does NOT touch the child's game",
+        playScene.canvas === true && playScene.lost === false,
+        JSON.stringify(playScene),
+      );
+    }
   }
 }
 
@@ -242,16 +302,76 @@ check(
   JSON.stringify(scenes),
 );
 
+// ── 6b. WebGL context loss: the game must COME BACK, not blank forever ──────
+// The owner's second recording shows the played document intact (Strength 900
+// before AND during the edit) while its canvas empties — the signature of an
+// evicted WebGL context, not a reload. Loss is permanent unless the page calls
+// preventDefault() on `webglcontextlost`, which nothing did. Force a loss and
+// require recovery.
+if (sawShadow) {
+  const play = frames().find(async () => true) ?? frames()[0];
+  const lossResult = await play
+    .evaluate(async () => {
+      const c = document.querySelector("canvas");
+      if (!c) return { ok: false, why: "no canvas" };
+      const gl = c.getContext("webgl2") || c.getContext("webgl");
+      if (!gl) return { ok: false, why: "no gl" };
+      const ext = gl.getExtension("WEBGL_lose_context");
+      if (!ext) return { ok: false, why: "no WEBGL_lose_context (cannot test here)" };
+      let restored = false;
+      c.addEventListener("webglcontextrestored", () => { restored = true; }, { once: true });
+      ext.loseContext();
+      await new Promise((r) => setTimeout(r, 200));
+      const lostNow = gl.isContextLost();
+      ext.restoreContext();
+      await new Promise((r) => setTimeout(r, 800));
+      return { ok: true, lostNow, restored, stillLost: gl.isContextLost() };
+    })
+    .catch((e) => ({ ok: false, why: e.message }));
+  // NOTE on what this can and cannot prove. Restoring after an EXPLICIT
+  // ext.loseContext() works with or without preventDefault — so asserting
+  // "it came back" passes even with the guard removed, and is worthless.
+  // What preventDefault actually buys is recovery from a BROWSER-INITIATED
+  // eviction, which cannot be triggered on demand. So assert the thing that
+  // is genuinely observable: our handler ran and asked for the restore.
+  const ourHandlerRan = glConsole.some((m) => m.includes("[ari] WebGL context lost"));
+  check(
+    "the context-loss guard is installed and fires (preventDefault path)",
+    ourHandlerRan,
+    ourHandlerRan ? "saw '[ari] WebGL context lost'" : `guard silent; frame console: ${JSON.stringify(glConsole.slice(-3))}`,
+  );
+  check(
+    "the context comes back after an explicit loss (weak: passes without the guard too)",
+    lossResult.ok === true && lossResult.stillLost === false,
+    JSON.stringify(lossResult),
+  );
+}
+
 // ── 7. PROMOTION: the new version must actually reach the child ─────────────
 // Preserving the old game is only half the promise. When the edit settles the
 // shadow must unmount and the child must be looking at the NEW game — a fix
 // that kept them on the old one forever would pass every check above.
 let promoted = false;
+// Everything above only proves the guard OBEYS a release request — the harness
+// sent that one itself, and it is tagged `(asked)`. The question that decides
+// whether an editing session accumulates contexts is different: does a round
+// hand its context back when the pane tears it down, with nobody asking?
+// Only `(pagehide)` releases count for that.
+const spontaneous = () => glConsole.filter((m) => m.includes("released (pagehide)")).length;
 for (let i = 0; i < 60; i++) {
   if (frames().length === 1) { promoted = true; break; }
   await page.waitForTimeout(500);
 }
 check("the shadow unmounts once the edit settles", promoted, `${frames().length} frame(s)`);
+
+// A teardown's console line still has to cross CDP after the frame is gone, so
+// give it a moment rather than reading once.
+for (let i = 0; i < 8 && spontaneous() === 0; i++) await page.waitForTimeout(250);
+check(
+  "verify rounds hand their GPU context back at teardown, unasked",
+  spontaneous() > 0,
+  `${spontaneous()} spontaneous release(s); trace below`,
+);
 
 if (promoted) {
   const after = frames()[0];
@@ -278,6 +398,59 @@ if (promoted) {
     .catch((e) => `err:${e.message}`);
   check("the promoted game is animating", typeof t === "number" && t > 5, `${t} ticks`);
 }
+
+// ── 8. A lost context FREEZES the loop — it must not die, and must resume ───
+// The residual behind "blank and clicking does not restart it" (owner,
+// 2026-08-10 second report): while a context is lost, three.js's render
+// throws (`null.trim` in getUniforms — the stack this harness attributed),
+// and games request their next frame AFTER rendering, so the throw kills the
+// loop. preventDefault restores the CONTEXT; nothing is left to draw with it.
+// The guard now holds rAF callbacks while any tracked context is lost.
+// Deterministic both ways: without the hold, `heldDuring` reads ~30 ticks
+// (and 1-in-3 runs die on the trim error); with it, 0 — then restore, and
+// the SAME loop must come back on its own.
+if (promoted) {
+  const f8 = frames()[0];
+  const freeze = await f8
+    .evaluate(async () => {
+      const c = document.querySelector("canvas");
+      const gl = c && (c.getContext("webgl2") || c.getContext("webgl"));
+      const ext = gl && gl.getExtension("WEBGL_lose_context");
+      if (!ext) return { ok: false, why: "no WEBGL_lose_context (cannot test here)" };
+      ext.loseContext();
+      await new Promise((r) => setTimeout(r, 200)); // the loss event is async
+      let n = 0;
+      const probe = () => { n++; requestAnimationFrame(probe); };
+      requestAnimationFrame(probe);
+      await new Promise((r) => setTimeout(r, 500));
+      const heldDuring = n;
+      ext.restoreContext();
+      await new Promise((r) => setTimeout(r, 600));
+      return { ok: true, heldDuring, afterRestore: n - heldDuring };
+    })
+    .catch((e) => ({ ok: false, why: e.message }));
+  check(
+    "while the context is lost, the loop is HELD (nothing renders against dead GL)",
+    freeze.ok === true && freeze.heldDuring === 0,
+    JSON.stringify(freeze),
+  );
+  check(
+    "on restore the SAME loop resumes by itself (it survived the loss)",
+    freeze.ok === true && freeze.afterRestore > 5,
+    JSON.stringify(freeze),
+  );
+}
+
+// The guard's own trace, in order. Collected silently above, so print it —
+// without this the WebGL checks can only ever say pass/fail with no evidence.
+console.log(
+  `\n  [ari] runtime trace:\n${
+    glConsole
+      .filter((m) => /^\[ari(-debug)?\]/.test(m))
+      .map((m) => `    ${m.slice(0, 120)}`)
+      .join("\n") || "    (none)"
+  }`,
+);
 
 check("no uncaught page errors", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
 

@@ -84,6 +84,20 @@ describe("preview gating: verify-loop consumers use `settled`, not `!covered`", 
     expect(src).toMatch(/iframeRef\.current = shadowing \? shadowElRef\.current : playElRef\.current;/);
   });
 
+  it("the shadow round hands its GPU context back before it is unmounted", () => {
+    // A WebGL context outlives the iframe that held it, so each edit leaves one
+    // behind until the browser evicts the oldest — the child's game.
+    //
+    // The release itself happens inside the game document, on `pagehide`
+    // (webglContextGuard) — that is the measured mechanism, asserted in the
+    // browser by scripts/harness-preview.mjs. What this pins is only that the
+    // shadow goes through the ref that carries the belt-and-braces ask, so a
+    // future edit cannot quietly swap it back to a plain ref object and lose
+    // the lever without anything noticing.
+    expect(src).toContain("ref={attachShadow}");
+    expect(src).toMatch(/postMessage\(\{ __ari: "release-gl" \}, "\*"\)/);
+  });
+
   it("`covered` still drives the cover card itself (the rendering question)", () => {
     // The split is the point: covered = "is the cover up?", settled = "has this
     // version finished verifying?". Collapsing them again is the regression.

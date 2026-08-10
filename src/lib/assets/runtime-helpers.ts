@@ -689,3 +689,113 @@ window.requestAnimationFrame = function (cb) {
 };
 })();</script>`;
 }
+
+/**
+ * The WebGL context guard (2026-08-10).
+ *
+ * Shadow verify puts a SECOND live 3D document on the page during every edit,
+ * and preview iframes are discarded and recreated as a child keeps editing. A
+ * browser caps how many WebGL contexts it will keep; past the cap it silently
+ * drops the OLDEST — which is the game the child is playing. The owner's
+ * recording is exactly that signature: the HUD keeps its state (Strength 900
+ * before AND during the edit, so the document was never reloaded) while the
+ * canvas empties, and it returns when the edit ends and the second document
+ * goes away.
+ *
+ * Two gaps, both of which this closes, and both of which apply to the ~200
+ * games that already exist — which is why it rides ensureAssetRuntime rather
+ * than the playbook:
+ *
+ *  1. Context loss is PERMANENT unless the page calls preventDefault() on the
+ *     `webglcontextlost` event. We never did, so an evicted game stayed blank
+ *     forever instead of coming back. three.js already re-uploads its
+ *     resources on `webglcontextrestored`; it just never got the chance.
+ *  2. A discarded iframe's context is released whenever GC gets round to it,
+ *     so contexts pile up across a long editing session until something is
+ *     evicted — and the oldest context on the page is the child's game. The
+ *     owner's 2026-08-10 console paste shows ELEVEN edits in one sitting
+ *     before the blue appeared, which is that pile-up, not a single bad edit.
+ *     Each round is released explicitly instead: the parent posts
+ *     `{__ari:'release-gl'}` immediately before it unmounts the shadow frame.
+ *     `pagehide` is kept as a backstop only — Chrome does not reliably fire it
+ *     for a detached iframe, which is exactly how every round ends.
+ *
+ * getContext is patched rather than the canvas queried, because the canvas
+ * usually does not exist yet when this runs — the same reason the frame
+ * governor patches requestAnimationFrame.
+ */
+export function webglContextGuard(): string {
+  return `<script>(function(){
+if (window.__arGlGuard) return;
+window.__arGlGuard = 1;
+var get = HTMLCanvasElement.prototype.getContext;
+var live = [];
+var lostCount = 0;
+HTMLCanvasElement.prototype.getContext = function (type) {
+  var ctx = get.apply(this, arguments);
+  try {
+    if (ctx && /webgl/i.test(String(type)) && !this.__arGlGuarded) {
+      this.__arGlGuarded = 1;
+      live.push(ctx);
+      this.addEventListener('webglcontextlost', function (e) {
+        // THE line that matters: without preventDefault the loss is final and
+        // the canvas stays blank for the rest of the document's life.
+        e.preventDefault();
+        lostCount++;
+        console.warn('[ari] WebGL context lost — restore requested');
+      }, false);
+      this.addEventListener('webglcontextrestored', function () {
+        if (lostCount > 0) lostCount--;
+        console.warn('[ari] WebGL context restored');
+      }, false);
+    }
+  } catch (e) { /* never break getContext */ }
+  return ctx;
+};
+// Restoring the CONTEXT is not enough — the game's LOOP must survive to see
+// it. While a context is lost, three.js's renderer throws mid-render (the GL
+// introspection APIs return null, and three calls .trim() on the result —
+// the exact stack the harness attributed on 2026-08-10). Games request their
+// next frame AFTER rendering (three's setAnimationLoop does too), so that
+// throw kills the loop for good: the context comes back, nothing draws, the
+// canvas stays blank, and no click can restart it. So: while any tracked
+// context is lost, hold rAF callbacks — always re-request, never run — the
+// same shape as the frame governor's document.hidden skip, and it resumes by
+// itself on webglcontextrestored. Composes with the governor's own wrapper
+// (this one runs outside it) — worst case a held frame is re-queued twice.
+var raf = window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    if (lostCount > 0) { window.requestAnimationFrame(cb); return; }
+    return cb(t);
+  });
+};
+function release(why) {
+  // Hand the GPU back now rather than at GC, so the next preview iframe does
+  // not push the page over the context cap.
+  for (var i = 0; i < live.length; i++) {
+    try {
+      var ext = live[i].getExtension('WEBGL_lose_context');
+      if (ext) ext.loseContext();
+    } catch (e) { /* already gone */ }
+  }
+  live.length = 0;
+  // Observable from the parent page: this is how the harness proves the round
+  // was ASKED to release at unmount, rather than assuming it.
+  console.warn('[ari] WebGL contexts released (' + why + ')');
+}
+// Lets the harness assert that a torn-down round actually gave its context
+// back, instead of assuming pagehide fired.
+Object.defineProperty(window, '__arGlCount', { get: function () { return live.length; } });
+// The parent asks explicitly, immediately before it unmounts this frame.
+// pagehide alone is NOT enough: Chrome does not reliably fire it when an
+// iframe is detached from the DOM, which is precisely how every shadow round
+// ends — so without this the contexts pile up exactly as they did in the
+// owner's eleven-edit session.
+addEventListener('message', function (e) {
+  var d = e && e.data;
+  if (d && d.__ari === 'release-gl') release('asked');
+}, false);
+addEventListener('pagehide', function () { release('pagehide'); });
+})();</script>`;
+}

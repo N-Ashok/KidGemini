@@ -18,6 +18,7 @@ import {
   loadModelHelper,
   loadModelBatchHelper,
   frameGovernor,
+  webglContextGuard,
   LOAD_MODEL_HELPER_VERSION,
   parseAssetTables,
   stripAssetTables,
@@ -151,6 +152,14 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
   // render (ArtifactFrame), so old stored HTML gets it too.
   if (!out.includes("__arFrameGovernor")) {
     markup += frameGovernor();
+  }
+
+  // (2c) WebGL context guard (2026-08-10) — survive an eviction instead of
+  // going permanently blank, and release the GPU on teardown so a session of
+  // edits stops accumulating contexts. Same reasoning as the governor above:
+  // this is the only path that reaches games that already exist.
+  if (!out.includes("__arGlGuard")) {
+    markup += webglContextGuard();
   }
 
   // (3) the AR_ASSETS table — healed UNCONDITIONALLY when the game calls

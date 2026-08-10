@@ -11,6 +11,98 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-10 — the preview still blanked mid-edit after the remount fix: GPU contexts piled up across an editing session
+
+- **Report (owner, production, after deploying the remount fix):** *"the screen turns blue not
+  letting the kid play. yesterday this happened but when we click, it allowed. i wanted even the
+  blanking of screen should not happen but it happened for worse"* — and, crucially, a paste of
+  the session's console showing **eleven consecutive edits** before the blue appeared.
+- **What the previous fix did and did not do.** It worked: the owner's second recording shows
+  **Strength 900 before AND during the edit** where it had gone 1800 → 0. The document is no
+  longer destroyed. What remained was a different failure with a different signature — a live
+  document, HUD and buttons intact, state preserved, and an empty canvas that comes back when the
+  edit ends.
+
+### Root cause — a WebGL context outlives the iframe that held it
+
+Each verify round mounts a second document with its own WebGL context. Detaching that iframe does
+not free the context; it lives until GC. The browser's per-page cap is small, so a long editing
+session walks up to it and the browser evicts the **oldest** context on the page — which is the
+child's game, the one that has been there longest. That is the blue screen. Eleven edits in one
+sitting is the shape of the bug, not a coincidence.
+
+Two gaps, both real, both closed in `webglContextGuard()` (`src/lib/assets/runtime-helpers.ts`),
+injected via `ensureAssetRuntime` so it reaches the **~200 games that already exist** without any
+regeneration:
+
+1. **Loss was permanent.** A lost context is only restorable if the page calls `preventDefault()`
+   on `webglcontextlost`. Nothing did, anywhere in the repo (grepped: no `webglcontextlost`,
+   `loseContext`, `WEBGL_lose_context` or `forceContextRestore` existed). three.js re-uploads its
+   resources on `webglcontextrestored` — it was never given the chance.
+2. **Rounds never handed their context back.** Now released on `pagehide`, plus a
+   `{__ari:'release-gl'}` message listener the parent can drive.
+
+### What was MEASURED, and what was corrected along the way
+
+The guard prints an attributed trace (`released (pagehide)` vs `released (asked)`) and
+`scripts/harness-preview.mjs` dumps it. That trace corrected two of my own claims mid-fix:
+
+- I wrote that an effect cleanup could ask the frame to release before unmount. **It cannot** —
+  measured `contentWindow=null, isConnected=false` in the cleanup: React detaches the node first.
+  Moving it to a ref callback (which runs earlier) did not deliver either.
+- I wrote that "Chrome does not reliably fire `pagehide` for a detached frame". **The trace says
+  otherwise**: every teardown release reads `(pagehide)`. The parent-side ask is kept as a
+  documented belt-and-braces lever, explicitly labelled as *not* the mechanism.
+
+### Tests
+
+- `scripts/harness-preview.mjs` — 26 checks. Two new, both verified to FAIL when the code they
+  guard is removed: *"asking the round to release actually frees its context"* (fails without the
+  message listener: `__arGlCount 1 -> 1`) and *"verify rounds hand their GPU context back at
+  teardown, unasked"* (fails without the `pagehide` release: `0 spontaneous release(s)`).
+- `ensure-runtime.test.ts` F.3c — old games gain the guard; re-flooring stays byte-identical.
+- `preview-verify-gating.test.ts` — the shadow keeps the ref carrying the release lever.
+
+### The second half, found by the harness's own stack capture (same day): a loss KILLED the game's loop, so no restore could ever bring the picture back
+
+The owner's re-report added a decisive detail: *"yesterday … when we click, it allowed"* — now
+clicking does nothing. The stack capture added above attributed the intermittent
+`Cannot read properties of null (reading 'trim')` (KNOWN_BUGS #11) to
+`three.js getUniforms → renderBufferDirect`: while a context is lost, the GL introspection APIs
+return null and three's render **throws**. Games request their next frame AFTER rendering
+(three's own `setAnimationLoop` does too), so that throw kills the loop permanently. So the first
+half of this fix was necessary but not sufficient: `preventDefault` restores the **context**, but
+nothing is left running to draw with it — blank forever, click can't restart what no longer runs.
+
+Fix, in the same `webglContextGuard()`: while any tracked context is lost, rAF callbacks are
+**held** — always re-requested, never run (the frame governor's `document.hidden` shape) — and the
+game resumes by itself on `webglcontextrestored`. This also resolves KNOWN_BUGS #11: the trim
+error was three rendering against a dead context, and it no longer gets the chance.
+
+Tests for this half, each verified to fail without the hold:
+- `src/lib/assets/webgl-guard.test.ts` — 7 vm cases (held while lost, resumes on restore,
+  multi-canvas, counter clamp, release/pagehide behavior intact). 4 failed pre-fix.
+- Harness §8 — force `loseContext()` in the real promoted game: `heldDuring=0` ticks while lost
+  (~30 without the hold), same loop resumes `>5` ticks after `restoreContext()`. Plus the standing
+  "no uncaught page errors" check: 3 consecutive clean runs where the trim error was 1-in-3.
+
+### Honest limits
+
+- **This is not proven to be the cure for what the owner sees.** The eviction itself cannot be
+  triggered on demand, and headless uses SwiftShader, whose cap differs from the owner's machine.
+  What is proven is the mechanism that prevents the pile-up. The decisive artifact is still the
+  preview **Console → 📋 Copy all** during the blue state, looking for Chrome's *"Too many active
+  WebGL contexts. Oldest context will be lost."*
+- **Open, unrelated:** an intermittent uncaught `Cannot read properties of null (reading 'trim')`
+  (once seen as `'precision'`) in the harness, ~1 run in 3. It reproduces on the pre-fix baseline
+  too, so it is NOT from this change — logged in `docs/KNOWN_BUGS.md`. The harness now captures
+  stack frames so the next occurrence is attributable.
+- **Standing product question, undecided:** shadow verify's premise is two live 3D documents.
+  Keep it with the guard, restrict shadow verify to 2D games so a 3D edit never runs two contexts,
+  or revert `df9bd61`. Owner's call.
+
+---
+
 ## 2026-08-10 — an edit destroyed the game the child was playing, and the preview went blank for the whole edit
 
 - **Report (owner, production):** three symptoms within an hour of the shadow-verify deploy —

@@ -53,18 +53,46 @@ describe("ensureAssetRuntime — the three-importmap floor", () => {
   });
 
   it("F.3 idempotent: a fully-floored 3D game is unchanged", () => {
-    // The floor grew a fourth element on 2026-07-30 (the perf probe), so
-    // "fully floored" now includes it too (2026-07-29 added the governor).
-    // The property under test is unchanged: running the floor over
+    // The floor grew a fourth element on 2026-07-30 (the perf probe, after the
+    // 2026-07-29 governor) and a FIFTH on 2026-08-10 (the WebGL context
+    // guard). The property under test is unchanged: running the floor over
     // already-floored HTML must be a no-op.
     const injected = page(
       `<script type="importmap">${JSON.stringify({ imports: { three: ENGINE } })}</script>` +
         `<style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style>` +
         `<script>window.__arFrameGovernor = 1;</script>` +
+        `<script>window.__arGlGuard = 1;</script>` +
         `${PERF_PROBE_MARKER}<script>${buildPerfProbeScript()}</script>` +
         `<script type="module">import { Scene } from "three";</script>`,
     );
     expect(ensureAssetRuntime(injected)).toBe(injected);
+  });
+
+  it("F.3c a game floored BEFORE the WebGL guard existed gains one (2026-08-10)", () => {
+    // Same route as F.3b: ~200 stored games predate the guard, and re-flooring
+    // on every preview render is the ONLY way they get it. Without it a
+    // context evicted by the browser is lost PERMANENTLY (the loss event must
+    // be preventDefault()ed to allow a restore) and a discarded preview iframe
+    // holds its GPU context until GC.
+    const before = page(
+      `<script type="importmap">${JSON.stringify({ imports: { three: ENGINE } })}</script>` +
+        `<script>window.__arFrameGovernor = 1;</script>` +
+        `<script type="module">import { Scene } from "three";</script>`,
+    );
+    const after = ensureAssetRuntime(before);
+    expect(after).toContain("__arGlGuard");
+    expect(after).toContain("webglcontextlost");
+    expect(after).toContain("preventDefault");
+    // Released on teardown, so contexts stop accumulating across an editing
+    // session until the browser evicts the child's game.
+    expect(after).toContain("WEBGL_lose_context");
+    // The load-bearing half: the parent asks explicitly on unmount, because
+    // Chrome does not reliably fire pagehide for a DETACHED iframe — which is
+    // how every shadow round ends. pagehide is only the backstop.
+    expect(after).toContain("release-gl");
+    expect(after).toMatch(/addEventListener\('message'/);
+    // And it must be a no-op the second time.
+    expect(ensureAssetRuntime(after)).toBe(after);
   });
 
   it("F.3b a game floored BEFORE the governor existed gains one (this is what reaches old games)", () => {

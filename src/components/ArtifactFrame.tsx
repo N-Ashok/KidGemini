@@ -11,7 +11,7 @@
 // trace); the console is a debug tool now, hidden unless localStorage
 // "kidgemini:debug" = "1" (grown-ups only — see docs).
 
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { PublishToArcade } from "./PublishToArcade";
 import { InviteToTest } from "./InviteToTest";
 import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
@@ -420,6 +420,40 @@ export function ArtifactFrame({
     // channel) addressing a detached document.
     iframeRef.current = shadowing ? shadowElRef.current : playElRef.current;
   }, [shadowing, docKey, iframeRef]);
+
+  /* Give the round's GPU context back before its frame is torn down.
+   *
+   * A WebGL context is not freed when the iframe holding it is detached — it
+   * lives until GC, and the browser's per-page cap is small. Every edit mounts
+   * one more, so a long session walks up to the cap and the browser evicts the
+   * OLDEST context on the page: the child's game. That is the blue screen, with
+   * the HUD still ticking beside it. The owner's console paste shows eleven
+   * edits in one sitting before it appeared.
+   *
+   * WHAT ACTUALLY DOES THE WORK IS `pagehide`, inside the guard. Measured, not
+   * assumed: the harness prints an attributed trace, and every teardown release
+   * in it reads `(pagehide)`. An effect cleanup cannot do it — by then React has
+   * detached the node (contentWindow=null, isConnected=false, measured) — and
+   * this ref callback, which runs earlier, still does not deliver: the message
+   * is queued against a document that is being destroyed.
+   *
+   * It is kept anyway, deliberately: it costs three lines and nothing at
+   * runtime, and it is the only lever we have if a browser skips `pagehide` on
+   * frame detach. Do not read it as the mechanism — read the trace.
+   */
+  const attachShadow = useCallback((el: HTMLIFrameElement | null) => {
+    if (el) {
+      shadowElRef.current = el;
+      return;
+    }
+    const going = shadowElRef.current;
+    try {
+      going?.contentWindow?.postMessage({ __ari: "release-gl" }, "*");
+    } catch {
+      /* already gone — pagehide is the backstop */
+    }
+    shadowElRef.current = null;
+  }, []);
 
   // Device frame's actual ON-SCREEN box (2026-07-16 fix): shared by the
   // iframe wrapper AND the Idea Button/Bag overlays below. The overlays
@@ -961,7 +995,7 @@ export function ArtifactFrame({
               {shadowing && (
                 <iframe
                   key={docKey}
-                  ref={shadowElRef}
+                  ref={attachShadow}
                   title="Testing the updated game"
                   sandbox="allow-scripts"
                   srcDoc={srcDoc}
