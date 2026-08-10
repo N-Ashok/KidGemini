@@ -41,6 +41,14 @@ describe("POST /api/perf/slow-game", () => {
     expect(String(line)).toContain("grandpa");
   });
 
+  it("P.1b drawCalls lands in the log line when present, and its absence logs nothing odd (2026-08-10)", async () => {
+    warnSpy.mockClear();
+    await POST(makeReq({ docKey: "doc-1", fps: 20, heaviestModel: null, drawCalls: 1250 }));
+    expect(String(warnSpy.mock.calls.at(-1)![0])).toContain("drawCalls=1250");
+    await POST(makeReq({ docKey: "doc-1", fps: 20, heaviestModel: null }));
+    expect(String(warnSpy.mock.calls.at(-1)![0])).not.toContain("drawCalls");
+  });
+
   it("P.2 a report with no heaviest model (pure 2D game) still logs and returns ok:true", async () => {
     const res = await POST(makeReq({ docKey: "doc-1", fps: 10, heaviestModel: null }));
     expect(res.status).toBe(200);

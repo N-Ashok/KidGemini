@@ -37,6 +37,15 @@ describe("buildSlowGameReport — the payload logged when the kid-facing slowdow
     expect(report.heaviestModel).toEqual({ name: "grandpa", instances: 3, animated: true });
   });
 
+  it("carries drawCalls when known and null when the probe couldn't count (2026-08-10)", () => {
+    // 1,250 draws/frame with two static trees tracked is the AutoRicksaw
+    // signature — without this field the server log exonerated nothing.
+    const withDraws = buildSlowGameReport({ docKey: "doc-1", fps: 20, models: [], drawCalls: 1250 });
+    expect(withDraws.drawCalls).toBe(1250);
+    const without = buildSlowGameReport({ docKey: "doc-1", fps: 20, models: [], drawCalls: null });
+    expect(without.drawCalls).toBeNull();
+  });
+
   it("heaviestModel is null for a scene with nothing tracked (a pure 2D game)", () => {
     const report = buildSlowGameReport({ docKey: "doc-1", fps: 10, models: [] });
     expect(report.heaviestModel).toBeNull();

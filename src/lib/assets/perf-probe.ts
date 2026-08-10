@@ -39,7 +39,7 @@ export const PERF_SAMPLE_MS = 1_000;
  *  REACH games that were already previewed once (and so already carry an old
  *  probe), not just new ones. Bump this whenever buildPerfProbeScript()'s
  *  BEHAVIOR changes. v3 (2026-08-06): snapshots carry `playing` — see below. */
-export const PERF_PROBE_VERSION = 3;
+export const PERF_PROBE_VERSION = 4;
 
 /** How recently the kid must have touched the game (pointer/key/touch inside
  *  the iframe) for a snapshot to count as "playing". Owner report 2026-08-06:
@@ -99,6 +99,34 @@ export function buildPerfProbeScript(): string {
     for (var i = 0; i < buffer.length; i++) send(buffer[i]);
     buffer = [];
   });
+
+  // GL draw-call counter (v4, 2026-08-10). snapshot.drawCalls was designed to
+  // read __arPerf.renderer.info — which NOTHING ever assigned, so it was null
+  // in every snapshot ever posted. Meanwhile the owner's AutoRicksaw game ran
+  // at 1,250 draws/frame from hand-built meshes the model accounting cannot
+  // see, and the slowdown hint blamed two static trees nine edits in a row.
+  // Count actual GL draw commands instead: engine-agnostic, needs nothing
+  // from the game, reaches stored games via the version re-floor.
+  var glDraws = 0;
+  function wrapGL(proto) {
+    if (!proto) return;
+    try {
+      var de = proto.drawElements;
+      if (de) proto.drawElements = function () { glDraws++; return de.apply(this, arguments); };
+      var da = proto.drawArrays;
+      if (da) proto.drawArrays = function () { glDraws++; return da.apply(this, arguments); };
+      var dei = proto.drawElementsInstanced;
+      if (dei) proto.drawElementsInstanced = function () { glDraws++; return dei.apply(this, arguments); };
+      var dai = proto.drawArraysInstanced;
+      if (dai) proto.drawArraysInstanced = function () { glDraws++; return dai.apply(this, arguments); };
+    } catch (e) { /* never break rendering for telemetry */ }
+  }
+  if (!window.__arGlDrawPatched) {
+    window.__arGlDrawPatched = 1;
+    wrapGL(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+    wrapGL(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+  }
+  var lastGlDraws = 0;
 
   // FPS estimate: count rAF ticks in the last sample window. Stacks fine on
   // top of the frame governor's own wrap (both call straight through).
@@ -178,7 +206,14 @@ export function buildPerfProbeScript(): string {
     }
     models.sort(function (a, b) { return b.load - a.load; });
     var drawCalls = null, rendererTriangles = null;
-    if (perf.renderer && perf.renderer.info && perf.renderer.info.render) {
+    // Per-frame average over this window from the GL counter — the value
+    // that actually distinguishes "a thousand tiny meshes" from "two trees".
+    var windowDraws = glDraws - lastGlDraws;
+    lastGlDraws = glDraws;
+    if (windowDraws > 0 && frames > 0) {
+      drawCalls = Math.round(windowDraws / frames);
+    } else if (perf.renderer && perf.renderer.info && perf.renderer.info.render) {
+      // Legacy fallback, kept for a game that registers its renderer.
       drawCalls = perf.renderer.info.render.calls;
       rendererTriangles = perf.renderer.info.render.triangles;
     }

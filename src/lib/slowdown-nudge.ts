@@ -121,8 +121,32 @@ export function heaviestModel(models: PerfModelEntry[]): PerfModelEntry | null {
   return [...models].sort((a, b) => b.load - a.load)[0] ?? null;
 }
 
-export function buildSlowdownHint(models: PerfModelEntry[]): string {
+/** Draw calls per frame above which the scene's mesh COUNT — not any single
+ *  model — is the dominant cost. Calibrated on the 2026-08-10 AutoRicksaw
+ *  profile: 1,250 draws/frame = 37ms of per-mesh JS = 20fps with a trivial
+ *  15k triangles; healthy generated games sit well under 150. */
+export const HIGH_DRAW_CALLS_THRESHOLD = 300;
+
+export function buildSlowdownHint(models: PerfModelEntry[], drawCalls?: number | null): string {
   const heaviest = heaviestModel(models);
+  // High draw calls with no genuinely heavy model: the cost is thousands of
+  // hand-built meshes the model accounting can't see. Naming the heaviest
+  // tracked model here sends the fix after the wrong target — the owner's
+  // AutoRicksaw chat did exactly that NINE times ("the tree, 2 instances")
+  // while the real problem was per-floor window meshes.
+  const drawBound =
+    typeof drawCalls === "number" &&
+    drawCalls > HIGH_DRAW_CALLS_THRESHOLD &&
+    (!heaviest || heaviest.bucket === "green");
+  if (drawBound) {
+    return (
+      `The game is running slow because the scene draws about ${drawCalls} separate ` +
+      "objects every frame. Merge repeated things: use one InstancedMesh (or " +
+      "loadModelBatch) per repeated object type — building pieces, windows, coins, " +
+      "scenery — and reuse shared geometries and materials, aiming for under 150 " +
+      "draw calls, without changing what the game is about."
+    );
+  }
   if (!heaviest) {
     return (
       "The game is running slow. Find ways to reduce how much work happens " +

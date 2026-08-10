@@ -230,4 +230,43 @@ describe("buildSlowdownHint — the REAL technical context sent to chat, never s
     const hint = buildSlowdownHint([model()]);
     expect(hint).toContain("without changing what the game is about");
   });
+
+  // ── Draw-call-aware hints (2026-08-10, the AutoRicksaw lesson) ────────────
+  // The owner's slow game was profiled at 1,250 draw calls/frame with only two
+  // static trees tracked — the heaviest-model hint sent Ari after the wrong
+  // target NINE times (each "fix" applied GPU tweaks; the real cost was
+  // thousands of hand-built meshes the model accounting cannot see). When
+  // draw calls are high and no tracked model is heavy, the hint must
+  // prescribe merging/instancing instead of blaming an innocent model.
+
+  it("high draw calls + only light models → prescribes merging/instancing, names no model", () => {
+    const hint = buildSlowdownHint([model({ name: "tree", instances: 2, load: 100, bucket: "green" })], 1250);
+    expect(hint.toLowerCase()).toContain("draw");
+    expect(hint).toMatch(/Instanced|instanc|merge|batch/i);
+    expect(hint).not.toContain("tree");
+    expect(hint).toContain("without changing what the game is about");
+  });
+
+  it("high draw calls + NO tracked models → the same merging prescription", () => {
+    const hint = buildSlowdownHint([], 900);
+    expect(hint.toLowerCase()).toContain("draw");
+    expect(hint).toMatch(/merge|instanc|batch/i);
+  });
+
+  it("a genuinely heavy model still wins over the draw-call story", () => {
+    // A red model IS the dominant cost — naming it stays correct even when
+    // draw calls are also elevated.
+    const hint = buildSlowdownHint([model({ name: "grandpa", load: 999_999, bucket: "red" })], 1250);
+    expect(hint).toContain("grandpa");
+  });
+
+  it("low draw calls change nothing — the model hint stands", () => {
+    const hint = buildSlowdownHint([model({ name: "grandpa" })], 120);
+    expect(hint).toContain("grandpa");
+  });
+
+  it("unknown draw calls (old probe, null) change nothing", () => {
+    const hint = buildSlowdownHint([model({ name: "grandpa" })], null);
+    expect(hint).toContain("grandpa");
+  });
 });

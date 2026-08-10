@@ -29,6 +29,10 @@ export interface SlowGameReport {
   docKey: string;
   fps: number;
   heaviestModel: { name: string; instances: number; animated: boolean } | null;
+  /** Draw calls per frame (probe v4, 2026-08-10) — the number that separates
+   *  "a thousand hand-built meshes" from "two trees". Null when the probe
+   *  couldn't count (no GL activity, or a pre-v4 cached probe). */
+  drawCalls: number | null;
   conversationId?: string;
   chatId?: string;
   messageId?: string;
@@ -38,6 +42,7 @@ export function buildSlowGameReport(input: {
   docKey: string;
   fps: number;
   models: PerfModelEntry[];
+  drawCalls?: number | null;
   conversationId?: string;
   chatId?: string;
   messageId?: string;
@@ -47,6 +52,7 @@ export function buildSlowGameReport(input: {
     docKey: truncate(input.docKey),
     fps: Math.floor(input.fps),
     heaviestModel: heaviest ? { name: heaviest.name, instances: heaviest.instances, animated: heaviest.animated } : null,
+    drawCalls: typeof input.drawCalls === "number" && Number.isFinite(input.drawCalls) ? Math.floor(input.drawCalls) : null,
     ...(input.conversationId !== undefined ? { conversationId: truncate(input.conversationId) } : {}),
     ...(input.chatId !== undefined ? { chatId: truncate(input.chatId) } : {}),
     ...(input.messageId !== undefined ? { messageId: truncate(input.messageId) } : {}),

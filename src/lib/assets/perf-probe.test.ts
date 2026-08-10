@@ -149,8 +149,17 @@ describe("buildPerfProbeScript — runtime behavior (sandboxed via node:vm)", ()
     // requestAnimationFrame(loop) and the browser later invokes it.
     let rafCb: ((t: number) => void) | null = null;
     let intervalCb: (() => void) | null = null;
+    // Real-enough GL prototypes for the probe's draw-call counter to patch —
+    // base impls are no-ops, the probe wraps them.
+    function GL() {}
+    (GL as unknown as { prototype: Record<string, unknown> }).prototype = {
+      drawElements() {},
+      drawArrays() {},
+      drawElementsInstanced() {},
+    };
     const sandbox: Record<string, unknown> = {
       __arPerf: undefined,
+      WebGLRenderingContext: GL,
       document: { hidden: false },
       parent: { postMessage: (msg: unknown) => posted.push(msg) },
       addEventListener: (name: string, fn: (e: unknown) => void) => {
@@ -361,6 +370,54 @@ describe("buildPerfProbeScript — runtime behavior (sandboxed via node:vm)", ()
     sample();
     expect(posted[0].event.snapshot.fps).toBe(0);
     expect(posted[0].event.snapshot.playing).toBe(false);
+  });
+
+  // ── GL draw-call counting (2026-08-10, the AutoRicksaw lesson) ────────────
+  // snapshot.drawCalls was designed to read __arPerf.renderer.info — which
+  // NOTHING ever assigned, so it was null in every snapshot ever posted, and
+  // the owner's 1,250-draw-call game reported heaviestModel=tree ×2 nine
+  // times. The probe now counts actual GL draw commands per frame itself —
+  // engine-agnostic, no game cooperation needed, reaches stored games via
+  // the PERF_PROBE_VERSION re-floor.
+
+  it("counts GL draw calls and reports the per-frame average in snapshot.drawCalls", () => {
+    const { sandbox, posted, ready, tick, sample } = bootProbe();
+    (sandbox as any).__arPerf = { models: {} };
+    ready();
+    const ctx = Object.create((sandbox as any).WebGLRenderingContext.prototype);
+    // Two frames, three draw commands each (mixed kinds).
+    for (let f = 0; f < 2; f++) {
+      tick();
+      ctx.drawElements(4, 300, 5123, 0);
+      ctx.drawElements(4, 300, 5123, 0);
+      ctx.drawArrays(4, 0, 300);
+    }
+    sample();
+    expect(posted.at(-1).event.snapshot.drawCalls).toBe(3);
+  });
+
+  it("draw-call window resets per sample — a heavy first second never inflates the next", () => {
+    const { sandbox, posted, ready, tick, sample } = bootProbe();
+    (sandbox as any).__arPerf = { models: {} };
+    ready();
+    const ctx = Object.create((sandbox as any).WebGLRenderingContext.prototype);
+    tick();
+    for (let i = 0; i < 100; i++) ctx.drawElements(4, 3, 5123, 0);
+    sample();
+    expect(posted.at(-1).event.snapshot.drawCalls).toBe(100);
+    tick();
+    ctx.drawElements(4, 3, 5123, 0);
+    sample();
+    expect(posted.at(-1).event.snapshot.drawCalls).toBe(1);
+  });
+
+  it("no GL activity → drawCalls stays null (a 2D game must not read as zero-cost 3D)", () => {
+    const { sandbox, posted, ready, tick, sample } = bootProbe();
+    (sandbox as any).__arPerf = { models: {} };
+    ready();
+    tick();
+    sample();
+    expect(posted.at(-1).event.snapshot.drawCalls).toBeNull();
   });
 });
 

@@ -305,6 +305,7 @@ export function ArtifactFrame({
         docKey,
         fps: perfSnapshot?.fps ?? 0,
         models: perfSnapshot?.models ?? [],
+        drawCalls: perfSnapshot?.drawCalls ?? null,
         conversationId,
         chatId,
         messageId,
@@ -313,7 +314,7 @@ export function ArtifactFrame({
   }, [slowdownState.visible, docKey, perfSnapshot, conversationId, chatId, messageId]);
   function handleFixSlowdown() {
     dispatchSlowdown({ type: "fixTapped", now: Date.now() });
-    onFixSlowdown?.(buildSlowdownHint(perfSnapshot?.models ?? []));
+    onFixSlowdown?.(buildSlowdownHint(perfSnapshot?.models ?? [], perfSnapshot?.drawCalls ?? null));
   }
   // Pinned per docKey (generation + round): probesEnabled flips false on every
   // finish, and letting srcDoc change without a docKey bump would reload

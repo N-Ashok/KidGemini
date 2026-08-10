@@ -37,6 +37,7 @@ export async function POST(req: Request): Promise<NextResponse> {
       console.warn(
         `[perf] slow game detected: docKey=${docKey} fps=${fps}` +
           (heaviest ? ` heaviestModel=${str(heaviest.name) ?? "?"} instances=${heaviest.instances} animated=${heaviest.animated}` : " heaviestModel=none") +
+          (typeof body?.drawCalls === "number" && Number.isFinite(body.drawCalls) ? ` drawCalls=${Math.floor(body.drawCalls as number)}` : "") +
           (str(body?.conversationId) ? ` conversationId=${str(body?.conversationId)}` : "") +
           (str(body?.chatId) ? ` chatId=${str(body?.chatId)}` : "") +
           (str(body?.messageId) ? ` messageId=${str(body?.messageId)}` : ""),

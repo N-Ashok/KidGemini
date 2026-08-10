@@ -11,6 +11,52 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-10 — "the game is running slow", nine failed fixes: the probe was blind to draw calls, so the hint blamed an innocent model every time
+
+- **Report (owner, local UAT):** an old game (AutoRicksaw-Ride, chat `ac4aadc3…`) still shows the
+  🐢 banner. The chat shows the child tapped "Make it faster" NINE times; every Ari fix applied
+  real-but-irrelevant GPU tweaks (pixelRatio 1, antialias off, fog, distance culling — all
+  present in the code). The child once out-diagnosed the tool ("the fountain is the reason").
+
+### Root cause, measured (owner authorized a read-only pull of the chat from the local dev DB)
+
+Injected a WebGL profiler into the stored game and ran it in real Chromium:
+**19.8fps, 37ms JS/frame, 1,250 draw calls/frame — with only 15k triangles** on a 439×790
+canvas. CPU-bound on three.js per-mesh overhead: each building is a body plus one window-strip
+Mesh PER FLOOR, × dozens of buildings + traffic + scenery ⇒ >1,000 live meshes. The prescription
+for that shape is merging/instancing (`loadModelBatch` exists for exactly this).
+
+Why the tooling kept missing it: `PerfSnapshot.drawCalls` was designed to read
+`__arPerf.renderer.info` — **which nothing ever assigned** (grepped: no writer exists in helpers,
+prompts, or any game), so it was null in every snapshot ever posted. `buildSlowdownHint` then
+named the heaviest *tracked model* — two static trees — and the fix request chased it, nine
+times. Hand-built meshes are invisible to model accounting.
+
+### Fix (probe v4)
+
+- `buildPerfProbeScript` counts actual GL draw commands (drawElements/drawArrays/instanced
+  variants, prototype-patched like webglContextGuard) and reports the per-frame average in
+  `snapshot.drawCalls`; the never-fed renderer.info read remains as legacy fallback. Version
+  bump 3→4 re-floors every stored game on next preview render.
+- `buildSlowdownHint(models, drawCalls)`: when draws > `HIGH_DRAW_CALLS_THRESHOLD` (300;
+  calibrated — healthy generated games sit under 150, AutoRicksaw at 1,250) and no tracked model
+  is beyond green, the hint prescribes merging/instancing with a target, and names no model. A
+  genuinely red model still wins.
+- `buildSlowGameReport` + `/api/perf/slow-game` carry/log `drawCalls=N`.
+
+### Proof
+
+- 6 new tests across 4 suites, all verified failing first (probe vm: counts + window reset +
+  null-when-no-GL; hint: 5 cases; report passthrough; route log line).
+- End-to-end on the REAL game: re-floored through ensureAssetRuntime + v4 probe in a
+  message-capturing host page → posted snapshot `fps=19, drawCalls=1250, models=[]` — matching
+  the independent profiler. The same snapshot through buildSlowdownHint yields the merge
+  prescription.
+- The owner was given a paste-able edit prompt for AutoRicksaw itself (merge to InstancedMesh /
+  loadModelBatch, target <150 draws).
+
+---
+
 ## 2026-08-10 (fourth pass) — shadow verify REMOVED: back to one iframe, by explicit owner decision
 
 - **Decision (owner, 2026-08-10, verbatim in substance):** pause on leaving the preview for chat
