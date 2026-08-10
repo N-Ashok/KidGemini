@@ -763,20 +763,38 @@ HTMLCanvasElement.prototype.getContext = function (type) {
 // same shape as the frame governor's document.hidden skip, and it resumes by
 // itself on webglcontextrestored. Composes with the governor's own wrapper
 // (this one runs outside it) — worst case a held frame is re-queued twice.
+// lostCount alone is NOT enough to gate on: webglcontextlost is dispatched
+// as a task, so there is a window after the actual loss (browser eviction or
+// our own release) where the event has not landed yet — one frame renders
+// against the dead context and three throws anyway. isContextLost() is
+// synchronous truth; the event counter only covers the fake-restore corner
+// (some drivers report isContextLost()=false again before firing restored).
+function anyLost() {
+  for (var i = 0; i < live.length; i++) {
+    try { if (live[i].isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  for (var j = 0; j < released.length; j++) {
+    try { if (released[j].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  return false;
+}
 var raf = window.requestAnimationFrame.bind(window);
 window.requestAnimationFrame = function (cb) {
   return raf(function (t) {
-    if (lostCount > 0) { window.requestAnimationFrame(cb); return; }
+    if (lostCount > 0 || anyLost()) { window.requestAnimationFrame(cb); return; }
     return cb(t);
   });
 };
+var released = [];
 function release(why) {
   // Hand the GPU back now rather than at GC, so the next preview iframe does
-  // not push the page over the context cap.
+  // not push the page over the context cap. Kept restorable (see pageshow):
+  // a release we believed was terminal must be reversible if the page comes
+  // back — 2026-08-10 second owner report, the pane-switch freeze.
   for (var i = 0; i < live.length; i++) {
     try {
       var ext = live[i].getExtension('WEBGL_lose_context');
-      if (ext) ext.loseContext();
+      if (ext) { ext.loseContext(); released.push({ ctx: live[i], ext: ext }); }
     } catch (e) { /* already gone */ }
   }
   live.length = 0;
@@ -796,6 +814,26 @@ addEventListener('message', function (e) {
   var d = e && e.data;
   if (d && d.__ari === 'release-gl') release('asked');
 }, false);
-addEventListener('pagehide', function () { release('pagehide'); });
+addEventListener('pagehide', function (e) {
+  // Safari/iOS fires pagehide when the page is merely BACKGROUNDED (app or
+  // tab switch, pane transitions) and will bring it back — persisted=true.
+  // Releasing there kills the LIVE game's context and the loop-hold freezes
+  // it: the owner's "froze, then turned blue when I clicked back"
+  // (2026-08-10, second report). Only a non-persisted pagehide — the actual
+  // teardown of a detached iframe — releases.
+  if (e && e.persisted) return;
+  release('pagehide');
+});
+addEventListener('pageshow', function () {
+  // The symmetric half: any release that turned out not to be terminal (the
+  // page came back anyway) is undone. restoreContext fires
+  // webglcontextrestored, which unwinds lostCount and resumes the held loop.
+  if (!released.length) return;
+  for (var i = 0; i < released.length; i++) {
+    try { released[i].ext.restoreContext(); live.push(released[i].ctx); } catch (e) { /* gone for real */ }
+  }
+  released.length = 0;
+  console.warn('[ari] WebGL contexts restored (pageshow)');
+});
 })();</script>`;
 }

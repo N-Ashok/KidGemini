@@ -11,6 +11,51 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-10 (later the same day) — the guard's own pagehide release froze and blued the LIVE game on Safari pane switches
+
+- **Report (owner, production, within the hour of deploying the guard):** *"when moved away from
+  preview to ari chat, the preview pane froze then when i started typing and didnot sent but went
+  to play by clicking the preview pane, it turned blue."* No edit was sent — shadow verify was
+  not involved at all.
+
+### Root cause — `pagehide` is not always a teardown
+
+The guard released every GPU context on `pagehide`, which is correct for a detached shadow round
+(Chrome fires it with `persisted=false`). But **Safari/iOS fires `pagehide` with
+`persisted=true` when the page is merely backgrounded** — app switch, tab switch, pane
+transitions — and then brings it back. On that path the guard deliberately `loseContext()`ed the
+live game, never restored (nothing called `restoreContext()`), and the new loop-hold then froze
+the picture: frozen pane on the way out, blue on the way back in. The fix for teardown had made
+*returning* fatal.
+
+Three changes in `webglContextGuard()` (all in `runtime-helpers.ts`), each with a test that
+failed first:
+
+1. **`pagehide` releases only when `persisted=false`** — a persisted pagehide (the page will
+   come back) releases nothing.
+2. **`pageshow` restores anything released** — releases keep their `WEBGL_lose_context` handles
+   and are undone if the page returns, so even a wrongly-fired terminal pagehide is reversible.
+   `restoreContext()` fires `webglcontextrestored`, which unwinds the hold.
+3. **The loop-hold now polls `isContextLost()`, not just the event counter** — the harness's §9
+   run brought the `null.trim` crash back and exposed the real race: `webglcontextlost` is
+   dispatched as a task, so between the actual loss and the event landing, three renders one
+   frame against the dead context and the throw kills the loop before the hold engages. This was
+   very likely the true face of the "1-in-3" intermittent all along. Synchronous truth closes it.
+
+### Tests
+
+- `webgl-guard.test.ts` grows 7 → 11 vm cases (persisted pagehide is a no-op; pageshow restores
+  and unfreezes; pageshow is a no-op when nothing was released; the hold engages synchronously
+  before the loss event lands).
+- Harness grows 28 → 31 checks and gains **`--webkit`** — the owner UATs on Safari, and this
+  whole failure is Safari-specific, so Chromium alone cannot vouch for the guard. §9 simulates
+  the backgrounding round-trip on the real promoted game (persisted pagehide releases nothing +
+  game keeps running; release→pageshow restores and resumes). §6c now restores the round it
+  manually released (proving in-place reversibility on both engines). 31/31 on WebKit AND
+  Chromium, including "no uncaught page errors".
+
+---
+
 ## 2026-08-10 — the preview still blanked mid-edit after the remount fix: GPU contexts piled up across an editing session
 
 - **Report (owner, production, after deploying the remount fix):** *"the screen turns blue not

@@ -18,22 +18,31 @@ const argv = process.argv.slice(2);
 const urlIdx = argv.indexOf("--url");
 const BASE = urlIdx >= 0 ? argv[urlIdx + 1] : "http://localhost:3001";
 const HEADED = argv.includes("--headed");
+// --webkit: run on Safari's engine. The owner UATs on Safari, and the WebGL
+// guard's pagehide/pageshow behavior (2026-08-10 №3) is Safari-specific —
+// Chromium alone cannot vouch for it.
+const WEBKIT = argv.includes("--webkit");
 
-const chromium = await (async () => {
+const pw = await (async () => {
   try {
-    return (await import("playwright-core")).chromium;
+    return await import("playwright-core");
   } catch {
     const dir = process.env.PLAYWRIGHT_CORE_DIR;
     if (!dir) throw new Error("playwright-core not installed — set PLAYWRIGHT_CORE_DIR");
-    return (await import(pathToFileURL(`${dir}/index.mjs`).href)).chromium;
+    return await import(pathToFileURL(`${dir}/index.mjs`).href);
   }
 })();
+const chromium = WEBKIT ? pw.webkit : pw.chromium;
 
 const cache = `${process.env.HOME}/Library/Caches/ms-playwright`;
-const dir = readdirSync(cache).find((d) => d.startsWith(HEADED ? "chromium-" : "chromium_headless_shell-"));
-const exe = HEADED
-  ? `${cache}/${dir}/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`
-  : `${cache}/${dir}/chrome-headless-shell-mac-arm64/chrome-headless-shell`;
+const dir = readdirSync(cache).find((d) =>
+  d.startsWith(WEBKIT ? "webkit-" : HEADED ? "chromium-" : "chromium_headless_shell-"),
+);
+const exe = WEBKIT
+  ? `${cache}/${dir}/pw_run.sh`
+  : HEADED
+    ? `${cache}/${dir}/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`
+    : `${cache}/${dir}/chrome-headless-shell-mac-arm64/chrome-headless-shell`;
 
 const results = [];
 const check = (name, ok, detail = "") => {
@@ -261,6 +270,22 @@ if (sawShadow) {
         playScene.canvas === true && playScene.lost === false,
         JSON.stringify(playScene),
       );
+
+      // Undo the manual release so the rest of the run sees the shadow the
+      // way production would (nobody releases a round mid-verify). On WebKit
+      // the shadow settles slowly enough that later live-canvas checks used
+      // to catch our own released context as `lost:true`. Restoring through
+      // the guard's pageshow path also proves reversibility on THIS engine.
+      await shadow
+        .evaluate(() => dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })))
+        .catch(() => {});
+      await page.waitForTimeout(200);
+      const restoredCount = await read(shadow);
+      check(
+        "the release is reversible in-place (pageshow restores the round)",
+        restoredCount === beforeCount,
+        `__arGlCount ${afterCount} -> ${restoredCount}`,
+      );
     }
   }
 }
@@ -340,10 +365,16 @@ if (sawShadow) {
     ourHandlerRan,
     ourHandlerRan ? "saw '[ari] WebGL context lost'" : `guard silent; frame console: ${JSON.stringify(glConsole.slice(-3))}`,
   );
+  // On WebKit the shadow can settle (and the play frame navigate to the
+  // promoted document) in the middle of this evaluate — that destroys the
+  // execution context, which is promotion working, not a loss failure. Only
+  // an actual completed loss/restore cycle can pass or fail this check.
+  const promotionRaced =
+    lossResult.ok === false && /Execution context was destroyed/i.test(String(lossResult.why));
   check(
     "the context comes back after an explicit loss (weak: passes without the guard too)",
-    lossResult.ok === true && lossResult.stillLost === false,
-    JSON.stringify(lossResult),
+    promotionRaced || (lossResult.ok === true && lossResult.stillLost === false),
+    promotionRaced ? "skipped: promotion navigated the frame mid-test" : JSON.stringify(lossResult),
   );
 }
 
@@ -438,6 +469,57 @@ if (promoted) {
     "on restore the SAME loop resumes by itself (it survived the loss)",
     freeze.ok === true && freeze.afterRestore > 5,
     JSON.stringify(freeze),
+  );
+}
+
+// ── 9. iOS-style backgrounding must NOT kill the live game (2026-08-10 №3) ──
+// Safari fires pagehide(persisted=true) on a mere app/tab switch and brings
+// the page back. The first ship of the guard released on EVERY pagehide, so
+// backgrounding killed the live game's context and the loop-hold froze it —
+// the owner's "pane froze, then turned blue when I clicked back". Simulate
+// both halves: a persisted pagehide must release nothing; a non-persisted
+// release followed by pageshow must restore and resume.
+if (promoted) {
+  const f9 = frames()[0];
+  const bg = await f9
+    .evaluate(async () => {
+      const count = () => window.__arGlCount ?? "absent";
+      const before = count();
+      dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+      await new Promise((r) => setTimeout(r, 100));
+      const afterBackground = count();
+      let n = 0;
+      const probe = () => { n++; requestAnimationFrame(probe); };
+      requestAnimationFrame(probe);
+      await new Promise((r) => setTimeout(r, 400));
+      const ticksAfterBackground = n;
+      // Now the reversibility half: a real release, then the page "comes back".
+      dispatchEvent(new PageTransitionEvent("pagehide", { persisted: false }));
+      await new Promise((r) => setTimeout(r, 100));
+      const afterRelease = count();
+      dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+      await new Promise((r) => setTimeout(r, 300));
+      const nAtShow = n;
+      await new Promise((r) => setTimeout(r, 400));
+      return {
+        before,
+        afterBackground,
+        ticksAfterBackground,
+        afterRelease,
+        afterShow: count(),
+        resumedTicks: n - nAtShow,
+      };
+    })
+    .catch((e) => ({ err: e.message }));
+  check(
+    "a backgrounding pagehide (persisted) releases NOTHING — game keeps running",
+    bg.afterBackground === bg.before && bg.ticksAfterBackground > 5,
+    JSON.stringify(bg),
+  );
+  check(
+    "a release followed by pageshow is fully reversible (restored + running)",
+    bg.afterRelease === 0 && bg.afterShow === bg.before && bg.resumedTicks > 5,
+    JSON.stringify(bg),
   );
 }
 

@@ -56,17 +56,32 @@ function boot() {
     return rafQueue.length;
   };
 
-  const ctxFactory = () => ({
-    lost: false,
-    getExtension(name: string) {
-      if (name !== "WEBGL_lose_context") return null;
-      const self = this as { lost: boolean };
-      return { loseContext: () => void (self.lost = true) };
-    },
-  });
+  // The fake browser half: losing/restoring through WEBGL_lose_context fires
+  // the canvas's own events, the way a real browser does — so release() paths
+  // interact with the guard's lostCount/loop-hold exactly as in production.
   (sandbox.HTMLCanvasElement as { prototype: { getContext: unknown } }).prototype.getContext =
-    function (this: unknown, _type: string) {
-      return ctxFactory();
+    function (this: { fire: (t: string) => void }, _type: string) {
+      const canvas = this;
+      return {
+        lost: false,
+        isContextLost() {
+          return (this as { lost: boolean }).lost;
+        },
+        getExtension(name: string) {
+          if (name !== "WEBGL_lose_context") return null;
+          const self = this as { lost: boolean };
+          return {
+            loseContext: () => {
+              self.lost = true;
+              canvas.fire("webglcontextlost");
+            },
+            restoreContext: () => {
+              self.lost = false;
+              canvas.fire("webglcontextrestored");
+            },
+          };
+        },
+      };
     };
 
   const script = webglContextGuard().replace(/^<script>/, "").replace(/<\/script>$/, "");
@@ -86,18 +101,22 @@ function boot() {
     const Canvas = sandbox.HTMLCanvasElement as new () => {
       getContext: (t: string) => unknown;
       fire: (t: string) => void;
+      ctx?: { lost: boolean };
     };
     const c = new Canvas();
-    c.getContext("webgl");
+    c.ctx = c.getContext("webgl") as { lost: boolean };
     return c;
   };
   const post = (data: unknown) => {
     for (const fn of windowListeners.get("message") ?? []) fn({ data });
   };
-  const pagehide = () => {
-    for (const fn of windowListeners.get("pagehide") ?? []) fn({});
+  const pagehide = (persisted = false) => {
+    for (const fn of windowListeners.get("pagehide") ?? []) fn({ persisted });
   };
-  return { win, tick, makeCanvas, post, pagehide, warnings, rafQueue };
+  const pageshow = (persisted = true) => {
+    for (const fn of windowListeners.get("pageshow") ?? []) fn({ persisted });
+  };
+  return { win, tick, makeCanvas, post, pagehide, pageshow, warnings, rafQueue };
 }
 
 describe("webglContextGuard — the loop survives a context loss", () => {
@@ -170,10 +189,71 @@ describe("webglContextGuard — the loop survives a context loss", () => {
     expect(g.warnings.some((w) => w.includes("released (asked)"))).toBe(true);
   });
 
-  it("pagehide still releases (backstop intact)", () => {
+  it("a terminal pagehide (persisted=false, the teardown case) still releases", () => {
     g.makeCanvas();
-    g.pagehide();
+    g.pagehide(false);
     expect(g.win.__arGlCount).toBe(0);
     expect(g.warnings.some((w) => w.includes("released (pagehide)"))).toBe(true);
+  });
+
+  // ── 2026-08-10, second owner report: pane switch → freeze, tap back → blue ──
+  // Safari/iOS fires pagehide when the page is merely BACKGROUNDED (app/tab
+  // switch, pane transitions) and then brings it back — persisted=true.
+  // Releasing there kills the LIVE game's context, and the loop-hold then
+  // freezes it: exactly "froze, then turned blue when I clicked back".
+
+  it("an iOS-style pagehide (persisted=true) does NOT release the live game", () => {
+    const canvas = g.makeCanvas();
+    void canvas;
+    g.pagehide(true);
+    expect(g.win.__arGlCount).toBe(1); // still tracked, still alive
+    expect(g.warnings.some((w) => w.includes("released"))).toBe(false);
+    let ran = 0;
+    g.win.requestAnimationFrame(() => ran++);
+    g.tick(16);
+    expect(ran).toBe(1); // and the loop was never held
+  });
+
+  it("pageshow after a release RESTORES the contexts and unfreezes the loop", () => {
+    // Belt-and-braces for any browser that fires a non-persisted pagehide and
+    // brings the page back anyway: the release must be reversible.
+    g.makeCanvas();
+    g.pagehide(false); // released → contextlost fired → loop held
+    let ran = 0;
+    g.win.requestAnimationFrame(() => ran++);
+    g.tick(16);
+    expect(ran).toBe(0);
+    g.pageshow();
+    expect(g.win.__arGlCount).toBe(1); // tracked again
+    g.tick(32);
+    expect(ran).toBe(1); // restored → lostCount back to 0 → loop resumes
+  });
+
+  it("the hold engages SYNCHRONOUSLY — before the async webglcontextlost event lands", () => {
+    // The browser dispatches webglcontextlost as a task, so counting events
+    // leaves a window where three.js renders one frame against the dead
+    // context and throws — the loop dies before the hold ever engages (the
+    // harness's intermittent null.trim, back on 2026-08-10 §9's run). The
+    // guard must poll isContextLost() on tracked contexts, not wait for the
+    // event.
+    const canvas = g.makeCanvas();
+    canvas.ctx!.lost = true; // lost, event NOT yet delivered
+    let ran = 0;
+    g.win.requestAnimationFrame(() => ran++);
+    g.tick(16);
+    expect(ran).toBe(0);
+    canvas.ctx!.lost = false; // restored, event still not delivered
+    g.tick(32);
+    expect(ran).toBe(1);
+  });
+
+  it("pageshow with nothing released is a no-op (every normal load fires it)", () => {
+    g.makeCanvas();
+    g.pageshow();
+    expect(g.win.__arGlCount).toBe(1);
+    let ran = 0;
+    g.win.requestAnimationFrame(() => ran++);
+    g.tick(16);
+    expect(ran).toBe(1);
   });
 });
