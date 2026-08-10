@@ -11,6 +11,48 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-10 (fourth pass) — shadow verify REMOVED: back to one iframe, by explicit owner decision
+
+- **Decision (owner, 2026-08-10, verbatim in substance):** pause on leaving the preview for chat
+  and resume on return (already the games' own blur/focus behavior — untouched); *"a child losing
+  a game on preview don't matter because the child is building the game now"*; and the way back
+  to an earlier version *"is in the chat window — the previous version available there."*
+- **Provenance:** shadow verify (df9bd61 + 1bbd94f, 2026-08-09..10) was built by Claude from the
+  owner's report "an edit is not allowing the kid to play the earlier version" — the owner never
+  chose the two-iframe design itself. Asked directly today why a second hidden iframe exists, the
+  owner weighed the trade (continuity + rollback vs simplicity + half the GPU) and chose removal.
+
+### What changed
+
+- `previewDisplay()` (preview-pane.ts) is the whole policy again: ONE iframe, the version under
+  test is the version on the pane, `covered` while probes/repairs run. `shadowHtml`,
+  `lastGoodHtml`, the frozen `playDoc`, the shadow iframe, and its `release-gl` unmount ask are
+  all gone. The `covered`/`settled` name split is KEPT (the 2026-08-10 lesson): consumers that
+  talk to the game, own the mic, or move focus still key off `settled`.
+- GPU lifetime under the new shape: the teardown is the srcDoc swap itself — the outgoing
+  document fires `pagehide`, the runtime guard releases (harness proves it, unasked). Only one
+  live 3D document ever exists, so the context-cap pressure that drove the last three entries is
+  structurally gone. The guard, the loop-hold, the watchdog and the gl-dead remount all stay —
+  they protect against browser-initiated evictions regardless of iframe count.
+- What the child sees on an edit now: the pane covers with "Testing your game…" until the new
+  version verifies, then it appears. The old game is gone the moment the edit lands — accepted
+  explicitly (building, not playing; chat history is the rollback).
+
+### Tests
+
+- `preview-pane.test.ts` — previewDisplay block rewritten (cover mid-verify; uncovered when
+  settled; no shadow field exists).
+- `preview-verify-gating.test.ts` — pins that NO shadow/second-iframe pattern exists in
+  ArtifactFrame (if one reappears, it must go back through the owner), single stable ref, and the
+  gl-dead epoch remount unchanged.
+- `harness-preview.mjs` — 33 → 23 checks: the ten shadow-era checks (second iframe, keeps-their-
+  game, fallback playable/topmost, release-the-right-frame) are deleted with the feature; new
+  checks pin the single-iframe promises (cover up during verify, never a second iframe, save
+  channel quiet mid-verify, cover lifts, old document replaced, spontaneous pagehide release at
+  the srcDoc swap). 23/23 on Chromium AND WebKit.
+
+---
+
 ## 2026-08-10 (third pass) — "it didnot regain": the freeze is the playbook's own GPU pause; what was missing was a self-heal for a context that never comes back
 
 - **Report (owner, production, on CHROME — which killed the Safari-only theory):** *"it froze as

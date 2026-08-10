@@ -98,42 +98,36 @@ const before = await box.inputValue();
 check("composer accepts typing while a game plays", before === "hello before edit", JSON.stringify(before));
 await box.fill("");
 
-// ── 2b. Mark the RUNNING game, so we can tell if the child keeps THEIR game ─
-// The promise on screen during an edit is "you can keep playing this one!".
-// That means the same running document, with its state — not a fresh copy of
-// the same HTML. The owner's recording shows Strength 1800 -> 0 across an
-// edit, i.e. the game restarted. A mark set on the live game survives only if
-// the child's actual frame is preserved.
+// ── 2b. Mark the RUNNING game — the edit is EXPECTED to replace it ──────────
+// Owner decision 2026-08-10: one iframe, the child is building not playing,
+// so an edit replaces the running document (the chat holds earlier versions).
+// The mark proves the replacement actually happened at promotion (§7).
 await frames()[0].evaluate(() => {
   window.__harnessMark = 4242;
 });
 const markBefore = await frames()[0].evaluate(() => window.__harnessMark ?? null);
 check("mark set on the running game", markBefore === 4242, `mark=${markBefore}`);
 
-// ── 3. Swap the game → the pane enters shadow verify (two live iframes) ─────
-// The first game must have SETTLED for a fallback to exist; if it never
-// reaches "done" there is nothing to fall back to and the pane covers instead.
+// ── 3. Swap the game → the pane verifies IN PLACE, behind the cover ─────────
+// Shadow verify (a second hidden iframe preserving the old game) was removed
+// by owner decision 2026-08-10 — if a second frame ever appears again, that
+// architecture is creeping back without the owner being asked.
 const coverBefore = await page.getByText("Testing your game").count();
 check("first game settled (no cover)", coverBefore === 0, `cover elements=${coverBefore}`);
 
 await page.getByTestId("swap").click();
-// Poll: the second iframe appears as soon as the new html starts verifying,
-// and disappears again on promotion — a fixed sleep can miss the window
-// entirely, which is exactly how an untested wiring stays untested.
-let during = 0;
-let sawShadow = false;
+let sawCover = false;
 for (let i = 0; i < 40; i++) {
-  during = frames().length;
-  if (during >= 2) { sawShadow = true; break; }
-  await page.waitForTimeout(500);
+  if ((await page.getByText("Testing your game").count()) > 0) { sawCover = true; break; }
+  await page.waitForTimeout(250);
 }
-check("shadow verify mounts a second iframe", sawShadow, `${during} frame(s) after ${sawShadow ? "poll" : "20s"}`);
+check("the edit verifies behind the cover", sawCover, sawCover ? "cover is up" : "no cover within 10s");
+check("no second iframe is ever mounted", frames().length === 1, `${frames().length} frame(s)`);
 
-// ── 3a. The invariants `covered` used to enforce during a verify round ──────
-// df9bd61 redefined `covered` from "the verify loop is running" to "there is
-// nothing better to show". Four unrelated consumers read that flag, so all of
-// them silently changed behaviour mid-edit. These pin the two that bite.
-const saveDuringEdit = saveCalls.length;
+// ── 3a. The invariants gated on `settled` during a verify round ─────────────
+// The 2026-08-10 lesson stands under either architecture: consumers that talk
+// to the game, own the mic, or move focus key off `settled`, never the cover.
+const saveCallsAtEditStart = saveCalls.length;
 const ideaMounted = await page.locator('[data-testid="idea-mic-tab"], button:has-text("IDEA")').count();
 check(
   "the Idea mic tab is NOT mounted during an edit (one SpeechRecognition per page)",
@@ -141,160 +135,11 @@ check(
   `idea tab elements=${ideaMounted}`,
 );
 
-// ── 3b. Is the fallback actually PLAYABLE? ──────────────────────────────────
-// "Two iframes exist with canvases" is not the promise. The promise is that
-// the child keeps PLAYING the old game: it must be the frame on top, it must
-// be hit-testable, and its animation loop must still be ticking.
-if (sawShadow) {
-  // Role-based, never index-based: which element is on top is the question,
-  // not which slot it happens to occupy. (The first version of this check
-  // hardcoded iframe#1 and so encoded the BROKEN wiring as the expectation.)
-  const panel = await page.evaluate(() => {
-    const f = [...document.querySelectorAll("iframe")];
-    if (f.length < 2) return { ok: false, detail: "fewer than 2 iframes" };
-    const shadow = f.findIndex((el) => el.className.includes("opacity-0"));
-    const play = f.findIndex((el) => !el.className.includes("opacity-0"));
-    const r = f[play].getBoundingClientRect();
-    const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-    return {
-      ok: top === f[play] && shadow !== -1 && play !== shadow,
-      detail: `play=#${play} shadow=#${shadow} topmost=#${f.indexOf(top)} (${top?.getAttribute?.("title")})`,
-    };
-  });
-  check("the PLAYED frame is the one the child can touch, not the shadow", panel.ok, panel.detail);
-
-  // THE REGRESSION the owner recorded: is the playable frame the child's own
-  // running game, or a fresh restart of it? A restart loses their score AND
-  // doubles the WebGL contexts for one scene, which is what blanks the canvas
-  // while the DOM HUD keeps its stale numbers.
-  const marks = await Promise.all(
-    frames().map((f) => f.evaluate(() => window.__harnessMark ?? null).catch(() => "err")),
-  );
-  const playable = await page.evaluate(() => {
-    const f = document.querySelectorAll("iframe");
-    return [...f].findIndex((el) => !el.className.includes("opacity-0"));
-  });
-  check(
-    "the child KEEPS their running game (state survives the edit)",
-    marks[playable] === 4242,
-    `playable=iframe#${playable} marks=${JSON.stringify(marks)}`,
-  );
-
-  // Two contexts for one scene is what costs the older one its context.
-  const lost = await Promise.all(
-    frames().map((f) =>
-      f
-        .evaluate(() => {
-          const c = document.querySelector("canvas");
-          if (!c) return "no-canvas";
-          const gl = c.getContext("webgl2") || c.getContext("webgl");
-          return gl ? gl.isContextLost() : "no-gl";
-        })
-        .catch((e) => `err:${e.message}`),
-    ),
-  );
-  check("no preview frame has lost its WebGL context", !lost.includes(true), JSON.stringify(lost));
-
-  /** rAF ticking = the game is alive rather than a frozen first paint. */
-  const ticks = async (f) =>
-    f
-      .evaluate(
-        () =>
-          new Promise((res) => {
-            let n = 0;
-            const t0 = performance.now();
-            const loop = () => {
-              n++;
-              if (performance.now() - t0 < 600) requestAnimationFrame(loop);
-              else res(n);
-            };
-            requestAnimationFrame(loop);
-          }),
-      )
-      .catch((e) => `err:${e.message}`);
-
-  const fs = frames();
-  for (let i = 0; i < fs.length; i++) {
-    const n = await ticks(fs[i]);
-    console.log(`    frame#${i} rAF ticks in 600ms: ${n}`);
-    check(`frame#${i} animation loop is running`, typeof n === "number" && n > 5, `${n} ticks`);
-  
-  }
-
-  // ── 6c. The round gives its GPU context BACK (the pile-up, not one bad edit) ─
-  // The owner's 2026-08-10 console paste shows ELEVEN edits in one sitting before
-  // the blue appeared. A WebGL context is not freed when its iframe is detached —
-  // it lives until GC — so each round leaves one behind until the page hits the
-  // browser's cap and the OLDEST context is evicted: the child's game.
-  //
-  // The cap cannot be reached on demand here (headless uses SwiftShader, whose
-  // limits differ from the owner's machine), so this does NOT prove the eviction
-  // is cured. It proves the mechanism that prevents it: asking a round to release
-  // actually releases it, and releases the RIGHT frame. Without the message
-  // listener in webglContextGuard, or without the parent's layout-effect post,
-  // this fails.
-  if (sawShadow && frames().length === 2) {
-    const marks = await Promise.all(
-      frames().map((f) => f.evaluate(() => window.__harnessMark ?? null).catch(() => "err")),
-    );
-    const shadowIdx = marks.findIndex((m) => m !== 4242);
-    const playIdx = shadowIdx === 0 ? 1 : 0;
-    if (shadowIdx >= 0) {
-      const shadow = frames()[shadowIdx];
-      const read = (f) => f.evaluate(() => window.__arGlCount ?? "absent").catch((e) => `err:${e.message}`);
-
-      const beforeCount = await read(shadow);
-      check(
-        "the shadow round holds a GPU context the guard is tracking",
-        typeof beforeCount === "number" && beforeCount > 0,
-        `__arGlCount=${beforeCount}`,
-      );
-
-      // Exactly what ArtifactFrame's layout-effect cleanup posts on unmount.
-      await page.evaluate(() => {
-        const el = [...document.querySelectorAll("iframe")].find((i) => i.className.includes("opacity-0"));
-        el?.contentWindow?.postMessage({ __ari: "release-gl" }, "*");
-      });
-      await page.waitForTimeout(300);
-
-      const afterCount = await read(shadow);
-      check(
-        "asking the round to release actually frees its context",
-        afterCount === 0,
-        `__arGlCount ${beforeCount} -> ${afterCount}`,
-      );
-
-      const playScene = await sceneState(frames()[playIdx]);
-      check(
-        "releasing the round does NOT touch the child's game",
-        playScene.canvas === true && playScene.lost === false,
-        JSON.stringify(playScene),
-      );
-
-      // Undo the manual release so the rest of the run sees the shadow the
-      // way production would (nobody releases a round mid-verify). On WebKit
-      // the shadow settles slowly enough that later live-canvas checks used
-      // to catch our own released context as `lost:true`. Restoring through
-      // the guard's pageshow path also proves reversibility on THIS engine.
-      await shadow
-        .evaluate(() => dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })))
-        .catch(() => {});
-      await page.waitForTimeout(200);
-      const restoredCount = await read(shadow);
-      check(
-        "the release is reversible in-place (pageshow restores the round)",
-        restoredCount === beforeCount,
-        `__arGlCount ${afterCount} -> ${restoredCount}`,
-      );
-    }
-  }
-}
-
 // ── 4. THE REGRESSION: can the child still type mid-edit? ───────────────────
 await box.click();
 await box.type("can i type mid edit", { delay: 25 });
 const mid = await box.inputValue();
-check("composer accepts typing DURING shadow verify", mid === "can i type mid edit", JSON.stringify(mid));
+check("composer accepts typing while the edit verifies", mid === "can i type mid edit", JSON.stringify(mid));
 
 // Which element actually holds focus? If the preview iframe stole it, typing
 // goes into the game and the chat looks dead.
@@ -315,85 +160,26 @@ const overlay = await page.evaluate(() => {
 });
 check("nothing overlays the composer", overlay === "textarea", `hit-test=${overlay}`);
 
-// ── 6. The visible game keeps its scene while the new one is probed ─────────
-for (const f of frames()) {
-  const s = await sceneState(f);
-  console.log(`    frame: ${JSON.stringify(s)}`);
-}
-const scenes = await Promise.all(frames().map(sceneState));
-check(
-  "every preview frame still has a live canvas",
-  scenes.every((s) => s.canvas && s.lost === false),
-  JSON.stringify(scenes),
-);
-
-// ── 6b. WebGL context loss: the game must COME BACK, not blank forever ──────
-// The owner's second recording shows the played document intact (Strength 900
-// before AND during the edit) while its canvas empties — the signature of an
-// evicted WebGL context, not a reload. Loss is permanent unless the page calls
-// preventDefault() on `webglcontextlost`, which nothing did. Force a loss and
-// require recovery.
-if (sawShadow) {
-  const play = frames().find(async () => true) ?? frames()[0];
-  const lossResult = await play
-    .evaluate(async () => {
-      const c = document.querySelector("canvas");
-      if (!c) return { ok: false, why: "no canvas" };
-      const gl = c.getContext("webgl2") || c.getContext("webgl");
-      if (!gl) return { ok: false, why: "no gl" };
-      const ext = gl.getExtension("WEBGL_lose_context");
-      if (!ext) return { ok: false, why: "no WEBGL_lose_context (cannot test here)" };
-      let restored = false;
-      c.addEventListener("webglcontextrestored", () => { restored = true; }, { once: true });
-      ext.loseContext();
-      await new Promise((r) => setTimeout(r, 200));
-      const lostNow = gl.isContextLost();
-      ext.restoreContext();
-      await new Promise((r) => setTimeout(r, 800));
-      return { ok: true, lostNow, restored, stillLost: gl.isContextLost() };
-    })
-    .catch((e) => ({ ok: false, why: e.message }));
-  // NOTE on what this can and cannot prove. Restoring after an EXPLICIT
-  // ext.loseContext() works with or without preventDefault — so asserting
-  // "it came back" passes even with the guard removed, and is worthless.
-  // What preventDefault actually buys is recovery from a BROWSER-INITIATED
-  // eviction, which cannot be triggered on demand. So assert the thing that
-  // is genuinely observable: our handler ran and asked for the restore.
-  const ourHandlerRan = glConsole.some((m) => m.includes("[ari] WebGL context lost"));
-  check(
-    "the context-loss guard is installed and fires (preventDefault path)",
-    ourHandlerRan,
-    ourHandlerRan ? "saw '[ari] WebGL context lost'" : `guard silent; frame console: ${JSON.stringify(glConsole.slice(-3))}`,
-  );
-  // On WebKit the shadow can settle (and the play frame navigate to the
-  // promoted document) in the middle of this evaluate — that destroys the
-  // execution context, which is promotion working, not a loss failure. Only
-  // an actual completed loss/restore cycle can pass or fail this check.
-  const promotionRaced =
-    lossResult.ok === false && /Execution context was destroyed/i.test(String(lossResult.why));
-  check(
-    "the context comes back after an explicit loss (weak: passes without the guard too)",
-    promotionRaced || (lossResult.ok === true && lossResult.stillLost === false),
-    promotionRaced ? "skipped: promotion navigated the frame mid-test" : JSON.stringify(lossResult),
-  );
-}
-
-// ── 7. PROMOTION: the new version must actually reach the child ─────────────
-// Preserving the old game is only half the promise. When the edit settles the
-// shadow must unmount and the child must be looking at the NEW game — a fix
-// that kept them on the old one forever would pass every check above.
+// ── 7. PROMOTION: the verified version must reach the child ─────────────────
+// The cover must lift once the edit settles, and the document behind it must
+// be the NEW game — the mark set on the old document proves the replacement.
 let promoted = false;
-// Everything above only proves the guard OBEYS a release request — the harness
-// sent that one itself, and it is tagged `(asked)`. The question that decides
-// whether an editing session accumulates contexts is different: does a round
-// hand its context back when the pane tears it down, with nobody asking?
-// Only `(pagehide)` releases count for that.
+// Does a torn-down document hand its GPU context back with nobody asking?
+// With one iframe the teardown is the srcDoc swap itself: the outgoing
+// document fires pagehide and the guard releases. Only `(pagehide)` releases
+// count for that — this is what stops an editing session accumulating
+// contexts toward the browser's cap.
 const spontaneous = () => glConsole.filter((m) => m.includes("released (pagehide)")).length;
-for (let i = 0; i < 60; i++) {
-  if (frames().length === 1) { promoted = true; break; }
+for (let i = 0; i < 120; i++) {
+  if ((await page.getByText("Testing your game").count()) === 0) { promoted = true; break; }
   await page.waitForTimeout(500);
 }
-check("the shadow unmounts once the edit settles", promoted, `${frames().length} frame(s)`);
+check("the cover lifts once the edit settles", promoted, promoted ? "cover down" : "cover still up after 60s");
+check(
+  "the save channel stayed quiet while the edit verified",
+  saveCalls.length === saveCallsAtEditStart,
+  `${saveCalls.length - saveCallsAtEditStart} save call(s) mid-verify`,
+);
 
 // A teardown's console line still has to cross CDP after the frame is gone, so
 // give it a moment rather than reading once.

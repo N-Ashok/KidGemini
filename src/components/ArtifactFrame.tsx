@@ -11,7 +11,7 @@
 // trace); the console is a debug tool now, hidden unless localStorage
 // "kidgemini:debug" = "1" (grown-ups only — see docs).
 
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { PublishToArcade } from "./PublishToArcade";
 import { InviteToTest } from "./InviteToTest";
 import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
@@ -331,48 +331,26 @@ export function ArtifactFrame({
   // chat whose stored HTML predates the fix — a 3D game that imports "three" is
   // guaranteed a resolvable import map here, so the preview iframe can never throw
   // "Failed to resolve module specifier three". Idempotent + 2D-safe.
-  // The last version that finished verifying — the game the child can actually
-  // play. Kept so an EDIT never takes their working game away while the new
-  // version is probed (owner report 2026-08-09; see previewDisplay's note).
-  const [lastGoodHtml, setLastGoodHtml] = useState<string | null>(null);
-  useEffect(() => {
-    if (state.phase === "done" && state.currentHtml) setLastGoodHtml(state.currentHtml);
-  }, [state.phase, state.currentHtml]);
-
-  // The two iframes are now fixed ROLES, not fixed documents: `play` is the
-  // one the child touches and is never remounted mid-edit; `shadow` is the
-  // version being probed. iframeRef must always address the document under
-  // test, which is the shadow element while an edit is in flight and the play
-  // element otherwise.
+  // ONE iframe again (owner decision 2026-08-10 — see previewDisplay's note):
+  // the version under test is the version on the pane, behind the cover while
+  // probes/repairs run. The child is building, not playing; earlier versions
+  // stay reachable from the chat.
   const playElRef = useRef<HTMLIFrameElement | null>(null);
-  const shadowElRef = useRef<HTMLIFrameElement | null>(null);
 
   const display = previewDisplay({
     verifyingHtml: state.currentHtml,
     phase: state.phase,
-    lastGoodHtml,
   });
-  // `covered` now means "there is nothing better to show" — NOT merely
-  // "verifying". Mid-verify with a playable game in hand, the child keeps it.
   const covered = display.covered;
-  /** True while a new version is being probed behind the game on screen. */
-  const shadowing = display.shadowHtml !== null;
   /**
    * The verify loop is QUIET — no probes running, no repair in flight.
    *
-   * This used to be spelled `!covered`, because `covered` WAS `phase !== "done"`.
-   * Shadow verify (2026-08-09) redefined `covered` to mean "there is nothing
-   * better to show", which is false throughout an edit whenever a playable
-   * fallback exists. Four unrelated consumers read that flag and silently
-   * inherited the new meaning, including the save channel below — whose own
-   * contract is "never race the verify loop".
-   *
-   * So the two ideas are now separate names. `covered` answers "is the cover
-   * up?" (a rendering question). `settled` answers "has this version finished
-   * verifying?" (a lifecycle question). Anything that talks to the game, owns
-   * the microphone, or moves focus wants THIS one — during an edit `iframeRef`
-   * points at the hidden document under test, not the game in the child's
-   * hands.
+   * With a single iframe `covered` and `!settled` coincide again, but the two
+   * NAMES stay separate on purpose (2026-08-10 lesson): `covered` answers "is
+   * the cover up?" (rendering), `settled` answers "has this version finished
+   * verifying?" (lifecycle). Anything that talks to the game, owns the
+   * microphone, or moves focus keys off THIS one — collapsing them is how
+   * four consumers silently changed meaning last time.
    */
   const settled = state.phase === "done";
   // Save & continue building (docs/2026-08-01_PRD_SaveContinueBuilding.md):
@@ -398,35 +376,12 @@ export function ArtifactFrame({
     return gameSave.injectedState ? injectInitialGameState(withRuntime, gameSave.injectedState) : withRuntime;
   }, [docKey, gameSave.injectedState]);
 
-  /**
-   * The EXACT document the child is playing right now, frozen.
-   *
-   * This is the whole fix for 2026-08-10. The first attempt kept the child's
-   * game "playable" by mounting a SECOND iframe that replayed the same HTML
-   * from scratch, and handed their live frame to the probes. That restarted
-   * their game (the owner's recording shows Strength 1800 -> 0) and left two
-   * iframes fetching the same models, so nothing drew until the edit ended —
-   * the blue screen.
-   *
-   * Keeping a re-derived string here would not be enough: re-injecting the
-   * same html produces a DIFFERENT string depending on whether probes were
-   * enabled, and any change to `srcDoc` navigates the iframe. So we freeze the
-   * literal string that is already loaded, and only refresh it once the new
-   * version has verified. While an edit is in flight this does not change, so
-   * React never touches the attribute and the child's game simply keeps
-   * running, with its state and its already-downloaded models.
-   */
-  const [playDoc, setPlayDoc] = useState<string | null>(null);
   useEffect(() => {
-    if (settled) setPlayDoc(srcDoc);
-  }, [settled, srcDoc]);
-
-  useEffect(() => {
-    // Re-point on every role change, not only on load: the shadow unmounts at
-    // promotion, and a stale ref would leave the controller (and the save
-    // channel) addressing a detached document.
-    iframeRef.current = shadowing ? shadowElRef.current : playElRef.current;
-  }, [shadowing, docKey, iframeRef]);
+    // Re-point per document: a gl-dead remount replaces the element, and a
+    // stale ref would leave the controller (and the save channel) addressing
+    // a detached document.
+    iframeRef.current = playElRef.current;
+  }, [docKey, iframeRef]);
 
   /* The gl-dead self-heal (2026-08-10 №4). The runtime guard's watchdog posts
    * {__ari:'gl-dead'} when a game's WebGL context is lost AND the browser
@@ -454,39 +409,10 @@ export function ArtifactFrame({
     return () => window.removeEventListener("message", onGlDead);
   }, []);
 
-  /* Give the round's GPU context back before its frame is torn down.
-   *
-   * A WebGL context is not freed when the iframe holding it is detached — it
-   * lives until GC, and the browser's per-page cap is small. Every edit mounts
-   * one more, so a long session walks up to the cap and the browser evicts the
-   * OLDEST context on the page: the child's game. That is the blue screen, with
-   * the HUD still ticking beside it. The owner's console paste shows eleven
-   * edits in one sitting before it appeared.
-   *
-   * WHAT ACTUALLY DOES THE WORK IS `pagehide`, inside the guard. Measured, not
-   * assumed: the harness prints an attributed trace, and every teardown release
-   * in it reads `(pagehide)`. An effect cleanup cannot do it — by then React has
-   * detached the node (contentWindow=null, isConnected=false, measured) — and
-   * this ref callback, which runs earlier, still does not deliver: the message
-   * is queued against a document that is being destroyed.
-   *
-   * It is kept anyway, deliberately: it costs three lines and nothing at
-   * runtime, and it is the only lever we have if a browser skips `pagehide` on
-   * frame detach. Do not read it as the mechanism — read the trace.
-   */
-  const attachShadow = useCallback((el: HTMLIFrameElement | null) => {
-    if (el) {
-      shadowElRef.current = el;
-      return;
-    }
-    const going = shadowElRef.current;
-    try {
-      going?.contentWindow?.postMessage({ __ari: "release-gl" }, "*");
-    } catch {
-      /* already gone — pagehide is the backstop */
-    }
-    shadowElRef.current = null;
-  }, []);
+  // (Shadow verify's second iframe — and its release-gl unmount ask — was
+  // removed 2026-08-10 by owner decision; the GPU release at teardown is the
+  // runtime guard's pagehide handler, which fires when srcDoc replaces the
+  // document. See previewDisplay's note.)
 
   // Device frame's actual ON-SCREEN box (2026-07-16 fix): shared by the
   // iframe wrapper AND the Idea Button/Bag overlays below. The overlays
@@ -986,60 +912,24 @@ export function ArtifactFrame({
                 : undefined
             }
           >
-            {/* Two iframes, one job each (owner report 2026-08-09).
-                UNDER TEST: always mounted and ALWAYS PAINTING — opacity, never
-                display:none, because rAF stops in a hidden frame and the probes
-                would "repair" a healthy game. It carries iframeRef, so the
-                controller talks to it whether it is on screen or behind the
-                fallback. Promotion is just the fallback unmounting, so the new
-                game never reloads at the swap.
-                PLAYABLE: the last verified version, layered on top while a new
-                one is probed, so an edit never costs the child their game. */}
+            {/* ONE iframe (owner decision 2026-08-10): the version under test
+                is the version on the pane — the cover hides it while probes
+                and repairs run. srcDoc changes per docKey (round), which fires
+                pagehide in the outgoing document so the runtime guard releases
+                its GPU context; the epoch key remounts ONLY on gl-dead. */}
             <div className="relative h-full w-full">
-              {/* THE GAME THE CHILD IS PLAYING. One stable element with a
-                  stable key, so an edit never remounts it — that remount is
-                  what threw away their progress and forced every model to be
-                  re-fetched, leaving the pane blank for the whole edit
-                  (docs/BUG-FIX-LOG.md 2026-08-10). Its document only changes
-                  when a new version has finished verifying. */}
               <iframe
                 key={`preview-play#${playEpoch}`}
                 ref={playElRef}
                 title="AI-generated game"
                 sandbox="allow-scripts"
-                srcDoc={playDoc ?? srcDoc}
+                srcDoc={srcDoc}
                 onLoad={() => {
-                  // Only claim the handshake when this frame IS the one under
-                  // test; mid-edit that is the shadow, and sending `ready` to
-                  // the wrong document would arm the probes on the child's game.
-                  if (!shadowing) {
-                    iframeRef.current = playElRef.current;
-                    onIframeLoad();
-                  }
+                  iframeRef.current = playElRef.current;
+                  onIframeLoad();
                 }}
                 className="absolute inset-0 h-full w-full border-0"
               />
-              {/* THE VERSION UNDER TEST. Mounted only during an edit, and
-                  ALWAYS PAINTING — opacity, never display:none, because rAF
-                  does not tick in a hidden frame and the probes would
-                  "repair" a healthy game (§8.1). Keyed on docKey so each
-                  verify round (and the pristine reload after a probe-click
-                  clean) gets a fresh document. */}
-              {shadowing && (
-                <iframe
-                  key={docKey}
-                  ref={attachShadow}
-                  title="Testing the updated game"
-                  sandbox="allow-scripts"
-                  srcDoc={srcDoc}
-                  onLoad={() => {
-                    iframeRef.current = shadowElRef.current;
-                    onIframeLoad();
-                  }}
-                  aria-hidden
-                  className="pointer-events-none absolute inset-0 h-full w-full border-0 opacity-0"
-                />
-              )}
             </div>
           </div>
           {/* Idea Button overlays (docs/PRD-IDEA-BUTTON.md): the mic tab docks

@@ -129,36 +129,26 @@ export function nextExpandOnManualToggle(state: ExpandState): ExpandState {
   return { expanded: !state.expanded };
 }
 
-// ---- Shadow verify: an edit must not take away a working game ---------------
-// Owner report, 2026-08-09 UAT: "for every edit, it is not allowing the kid to
-// play the earlier version."
-//
-// The cover itself never regressed — `const covered = state.phase !== "done"`
-// has exactly one commit in its history (d419e78, the self-healing preview).
-// What changed is how LONG it sits there: production shows ~398 repairs across
-// ~1,861 turns (roughly one edit in five) with repair calls running to 60s
-// timeouts. A cover that used to blink past now parks over the preview for up
-// to a minute, and the child's working game is behind it.
-//
-// The structural cause is that ONE iframe is both the thing the child plays and
-// the thing the probes drive, so verifying a new version necessarily takes the
-// old one away. The fix is to separate those roles: keep the last verified game
-// visible and playable, and verify the incoming version in a hidden iframe.
-//
-// This is the decision, kept pure so the promotion rule is testable without a
-// DOM — the states that matter (first game vs. edit, mid-verify vs. settled)
-// are exactly where an inline version would drift.
+// ---- Preview display: ONE iframe, covered while verifying -------------------
+// Owner decision 2026-08-10, reversing the 2026-08-09 shadow-verify design
+// (which kept the old game playable in a second hidden iframe through every
+// edit). The owner's reasoning, recorded verbatim in spirit:
+//  - the child is BUILDING the game, not playing it — losing the running game
+//    when an edit lands is acceptable;
+//  - the rollback path is the CHAT: every earlier version stays reachable
+//    from its message, so the preview does not need to preserve a fallback;
+//  - two live 3D documents doubled GPU load, which is what walked the browser
+//    into its WebGL context cap (BUG-FIX-LOG 2026-08-10, all three entries).
+// The pause/resume the owner asked for lives in the games themselves (the
+// playbook's blur/focus pause) and is untouched by this.
 
 export type VerifyPhase = "testing" | "repairing" | "done";
 
 export interface PreviewDisplay {
-  /** The document the child sees and plays. */
+  /** The document in the (single) preview iframe. */
   visibleHtml: string;
-  /** The document being probed off-screen, or null when the visible document
-   *  IS the one under test (nothing better to show yet). */
-  shadowHtml: string | null;
-  /** Cover the preview with "Testing your game…". True ONLY when there is no
-   *  previously-verified game to fall back to. */
+  /** Cover the preview with "Testing your game…" while probes/repairs run —
+   *  a child must not watch the probes poke a half-built game. */
   covered: boolean;
 }
 
@@ -166,25 +156,6 @@ export function previewDisplay(args: {
   /** What the controller is currently verifying (changes across repair rounds). */
   verifyingHtml: string;
   phase: VerifyPhase;
-  /** The last version that finished verifying — null before the first game. */
-  lastGoodHtml: string | null;
 }): PreviewDisplay {
-  const { verifyingHtml, phase, lastGoodHtml } = args;
-
-  // Settled: what was verified is what the child plays. No shadow, no cover.
-  if (phase === "done") {
-    return { visibleHtml: verifyingHtml, shadowHtml: null, covered: false };
-  }
-
-  // Mid-verify with a working game in hand — the case this exists for. The
-  // child keeps playing it, uncovered, while the new version is probed
-  // out of sight.
-  if (lastGoodHtml !== null && lastGoodHtml !== "") {
-    return { visibleHtml: lastGoodHtml, shadowHtml: verifyingHtml, covered: false };
-  }
-
-  // The very first game: there is nothing to fall back to, so the document
-  // under test is also the one on screen, and the cover earns its keep —
-  // a child must not watch the probes poke a half-built game.
-  return { visibleHtml: verifyingHtml, shadowHtml: null, covered: true };
+  return { visibleHtml: args.verifyingHtml, covered: args.phase !== "done" };
 }

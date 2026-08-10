@@ -180,52 +180,32 @@ describe("UPDATING_LINE", () => {
 // the kid to play the earlier version"). The cover never regressed — what grew
 // is its duration, because ~1 edit in 5 now triggers a repair and repairs run
 // to 60s timeouts. These pin the rule that keeps a working game reachable.
-describe("previewDisplay — an edit must never take away a working game", () => {
-  const OLD = "<html>old playable game</html>";
+describe("previewDisplay — ONE iframe, cover while verifying (owner decision 2026-08-10)", () => {
   const NEW = "<html>new version being tested</html>";
 
-  it("mid-verify with a previous game: the CHILD KEEPS PLAYING IT, uncovered", () => {
+  // Shadow verify (a second hidden iframe preserving the old game through an
+  // edit) was tried 2026-08-09..10 and REMOVED by explicit owner decision:
+  // the child is BUILDING, not playing — losing the running game on an edit
+  // is fine, and the rollback path is the chat history, where every earlier
+  // version stays reachable. Two live 3D documents also doubled GPU load,
+  // which is what walked the browser into its WebGL context cap.
+
+  it("mid-verify: the version under test is on the pane, behind the cover", () => {
     for (const phase of ["testing", "repairing"] as const) {
-      const d = previewDisplay({ verifyingHtml: NEW, phase, lastGoodHtml: OLD });
-      expect(d.visibleHtml, phase).toBe(OLD);   // the working game
-      expect(d.shadowHtml, phase).toBe(NEW);    // probed out of sight
-      expect(d.covered, phase).toBe(false);     // and NOT hidden behind a card
+      const d = previewDisplay({ verifyingHtml: NEW, phase });
+      expect(d.visibleHtml, phase).toBe(NEW);
+      expect(d.covered, phase).toBe(true); // a child never watches the probes poke a half-built game
     }
   });
 
-  it("the very first game has nothing to fall back to — cover it, no shadow", () => {
-    const d = previewDisplay({ verifyingHtml: NEW, phase: "testing", lastGoodHtml: null });
-    expect(d.visibleHtml).toBe(NEW);
-    expect(d.shadowHtml).toBeNull();
-    expect(d.covered).toBe(true);
-  });
-
-  it("treats an empty previous game as no previous game", () => {
-    // "" is what usePreviewVerify passes before any html exists; it must not be
-    // mistaken for a playable fallback, or the child would be shown a blank.
-    const d = previewDisplay({ verifyingHtml: NEW, phase: "testing", lastGoodHtml: "" });
-    expect(d.covered).toBe(true);
-    expect(d.shadowHtml).toBeNull();
-  });
-
-  it("once settled, the verified version is what plays — no shadow, no cover", () => {
-    const d = previewDisplay({ verifyingHtml: NEW, phase: "done", lastGoodHtml: OLD });
-    expect(d.visibleHtml).toBe(NEW);
-    expect(d.shadowHtml).toBeNull();
-    expect(d.covered).toBe(false);
-  });
-
-  it("a settled FIRST game also plays uncovered", () => {
-    const d = previewDisplay({ verifyingHtml: NEW, phase: "done", lastGoodHtml: null });
+  it("settled: the verified version plays, uncovered", () => {
+    const d = previewDisplay({ verifyingHtml: NEW, phase: "done" });
     expect(d.visibleHtml).toBe(NEW);
     expect(d.covered).toBe(false);
   });
 
-  it("the visible document is never the one under test while a fallback exists", () => {
-    // The property that matters: probes must never poke the game being played.
-    for (const phase of ["testing", "repairing"] as const) {
-      const d = previewDisplay({ verifyingHtml: NEW, phase, lastGoodHtml: OLD });
-      expect(d.visibleHtml).not.toBe(d.shadowHtml);
-    }
+  it("there is no shadow document — the single iframe IS the one under test", () => {
+    const d = previewDisplay({ verifyingHtml: NEW, phase: "testing" });
+    expect("shadowHtml" in d).toBe(false);
   });
 });

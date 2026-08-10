@@ -80,37 +80,22 @@ describe("preview gating: verify-loop consumers use `settled`, not `!covered`", 
     expect(src).toMatch(/GL_DEAD_REMOUNT_COOLDOWN_MS/);
   });
 
-  it("the played document is FROZEN while a new version verifies", () => {
-    // Re-deriving the string would differ by probe-injection and any change to
-    // srcDoc navigates the iframe — so the literal loaded string is held.
-    expect(src).toMatch(/const \[playDoc, setPlayDoc\] = useState<string \| null>\(null\)/);
-    expect(src).toMatch(/if \(settled\) setPlayDoc\(srcDoc\);/);
-    expect(src).toContain("srcDoc={playDoc ?? srcDoc}");
+  it("ONE iframe: no shadow frame exists, and srcDoc drives it directly (owner decision 2026-08-10)", () => {
+    // Shadow verify was removed by explicit owner decision: the child is
+    // BUILDING, not playing — an edit may replace the running game — and the
+    // rollback path is the chat history. A second live 3D document was also
+    // half the GPU story behind the 2026-08-10 context-cap outage. If a
+    // shadow/second-iframe pattern reappears, it must go back through the
+    // owner.
+    expect(src).not.toMatch(/shadowElRef|attachShadow|shadowing/);
+    expect(src).not.toMatch(/playDoc/);
+    expect(src).toContain("srcDoc={srcDoc}");
   });
 
-  it("the SHADOW carries docKey and is the only frame mounted per verify round", () => {
-    expect(src).toMatch(/\{shadowing && \(/);
-    expect(src).toMatch(/key=\{docKey\}/);
-  });
-
-  it("iframeRef addresses the document under TEST, not the one being played", () => {
-    // The probes, the ready handshake and the save channel all go through this
-    // ref; pointing it at the child's game is what let probes drive it.
-    expect(src).toMatch(/iframeRef\.current = shadowing \? shadowElRef\.current : playElRef\.current;/);
-  });
-
-  it("the shadow round hands its GPU context back before it is unmounted", () => {
-    // A WebGL context outlives the iframe that held it, so each edit leaves one
-    // behind until the browser evicts the oldest — the child's game.
-    //
-    // The release itself happens inside the game document, on `pagehide`
-    // (webglContextGuard) — that is the measured mechanism, asserted in the
-    // browser by scripts/harness-preview.mjs. What this pins is only that the
-    // shadow goes through the ref that carries the belt-and-braces ask, so a
-    // future edit cannot quietly swap it back to a plain ref object and lose
-    // the lever without anything noticing.
-    expect(src).toContain("ref={attachShadow}");
-    expect(src).toMatch(/postMessage\(\{ __ari: "release-gl" \}, "\*"\)/);
+  it("iframeRef always addresses the single play iframe", () => {
+    // The probes, the ready handshake and the save channel all go through
+    // this ref; it must re-point per document (gl-dead remounts the element).
+    expect(src).toMatch(/iframeRef\.current = playElRef\.current;/);
   });
 
   it("`covered` still drives the cover card itself (the rendering question)", () => {
