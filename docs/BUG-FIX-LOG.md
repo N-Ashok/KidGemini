@@ -11,6 +11,46 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-10 — the corrected slow-game hint prescribed InstancedMesh, the lint rejected it, and the fallback regeneration REPLACED the child's game
+
+- **Report (owner, local UAT, within the hour):** *"The same game didnot work … The whole game
+  changed and it is pathetic."* The log tells it exactly:
+  `⛔ patch introduces unknown three imports: loadModelBatch` → strict rung
+  `declined (bad_imports:InstancedMesh+DynamicDrawUsage)` → `falling back to full regeneration`
+  → the 89-message AutoRicksaw city was rebuilt from scratch (then hit a `load_error` whose
+  repair dead-ended on `no_patch_in_reply`, KNOWN_BUGS #10).
+
+### Root cause — the hint prescribed tools the pipeline forbids
+
+The new draw-call hint told Ari to use `InstancedMesh` / `loadModelBatch`. The model obeyed —
+and the three-import lint rejected the patch, because `CURATED_IMPORT_NAMES` never included
+`InstancedMesh` **even though the served bundle has always exported it** (it backs
+`loadModelBatch`; verified by fetching `three.098b4c.js` — `as InstancedMesh` is in the served
+bytes). The model also imported `loadModelBatch` from "three" (it is a runtime GLOBAL) and
+reached for unvendored `Object3D`/`DynamicDrawUsage`. Every rejection funneled into the full
+regeneration, which is what actually destroyed the game.
+
+### Fix — no engine upload needed
+
+- `CURATED_IMPORT_NAMES` += `InstancedMesh` (lint + prompt update together, per
+  vendor-three.mjs's standing rule; its alias comment corrected). `Object3D`/`DynamicDrawUsage`
+  stay illegal — placement is taught via already-vendored `Matrix4`
+  (`setMatrixAt(i, new Matrix4().setPosition(x,y,z))`, `.compose()` for rotation).
+- `THREE_PROMPT_SECTION` rule 7 (new): object COUNT is a cost; many copies of one shape = ONE
+  InstancedMesh with the Matrix4 pattern; target <150 draw calls. Fresh builds learn it.
+- The slowdown hint now spells the pattern and says loadModelBatch is a global —
+  "never import it".
+- Recovery: the pre-regeneration game is intact in the chat history (and was profiled from the
+  DB earlier the same day) — nothing was lost permanently.
+
+**Open owner decision:** the fallback ladder itself. A failed/rejected edit patch currently ends
+in FULL regeneration — "no worse than before this feature existed" was written when the floor
+was a fresh build, but for a long-lived game the regeneration IS the destruction. Alternative:
+fail the edit softly (keep the current game, tell the child the change didn't work, invite a
+retry). Needs an explicit owner call — logged here so it isn't decided silently.
+
+---
+
 ## 2026-08-10 — "the game is running slow", nine failed fixes: the probe was blind to draw calls, so the hint blamed an innocent model every time
 
 - **Report (owner, local UAT):** an old game (AutoRicksaw-Ride, chat `ac4aadc3…`) still shows the
@@ -26,11 +66,15 @@ canvas. CPU-bound on three.js per-mesh overhead: each building is a body plus on
 Mesh PER FLOOR, × dozens of buildings + traffic + scenery ⇒ >1,000 live meshes. The prescription
 for that shape is merging/instancing (`loadModelBatch` exists for exactly this).
 
-Why the tooling kept missing it: `PerfSnapshot.drawCalls` was designed to read
-`__arPerf.renderer.info` — **which nothing ever assigned** (grepped: no writer exists in helpers,
-prompts, or any game), so it was null in every snapshot ever posted. `buildSlowdownHint` then
-named the heaviest *tracked model* — two static trees — and the fix request chased it, nine
-times. Hand-built meshes are invisible to model accounting.
+Why the tooling kept missing it: **`buildSlowdownHint` and `buildSlowGameReport` never looked at
+`snapshot.drawCalls` at all** — the hint named the heaviest *tracked model* (two static trees)
+and the log omitted the number, so the fix request chased the wrong target nine times.
+Hand-built meshes are invisible to model accounting. (Correction, same day: the entry as first
+written claimed `__arPerf.renderer` was never assigned — WRONG: the vendored `WebGLRenderer`
+wrapper in `scripts/vendor-three.mjs` registers itself, so snapshots on the current engine did
+carry a renderer-info draw-call reading. The consumers ignored it. The v4 GL-level counter is
+still the right primary — it also covers games on a bypassed/older engine — but the blame line
+belongs on the consumers, not the probe.)
 
 ### Fix (probe v4)
 

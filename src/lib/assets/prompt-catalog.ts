@@ -59,6 +59,13 @@ export const CURATED_IMPORT_NAMES = [
   // 2026-07-29 — see the note in scripts/vendor-three.mjs: the model kept
   // reaching for these and crashing on the import line.
   "Quaternion", "Euler", "Matrix4", "Vector2", "MathUtils", "Raycaster",
+  // 2026-08-10 (AutoRicksaw, 1,250 draws/frame): the draw-call slowdown hint
+  // prescribes instancing for hand-built scenery. The served bundle has
+  // ALWAYS exported InstancedMesh (it backs loadModelBatch) — only this list
+  // blocked it, which is how a correct fix patch got rejected and a child's
+  // 89-message game was regenerated away. Placement composes via Matrix4
+  // (already taught) — Object3D/DynamicDrawUsage stay unvendored.
+  "InstancedMesh",
 ];
 const CURATED_IMPORTS = CURATED_IMPORT_NAMES.join(", ");
 
@@ -97,7 +104,17 @@ should stay 2D, in which case skip the marker below.) To build in 3D:
    the page itself at height:100dvh.
 6. Keep the poly count low — a handful of primitives (repeat one shape for
    scenery rather than adding many distinct objects), so it stays smooth on
-   phones, tablets and Chromebooks.`;
+   phones, tablets and Chromebooks.
+7. Keep the OBJECT COUNT low too — every separate Mesh is a draw call, and a
+   few hundred of them (window strips, fence posts, crowd pieces) makes any
+   game stutter no matter how simple each one is. When you need MANY copies
+   of the same shape, build ONE \`InstancedMesh(geometry, material, count)\`
+   and place each copy with
+   \`im.setMatrixAt(i, new Matrix4().setPosition(x, y, z))\` (compose with
+   Quaternion/scale via \`new Matrix4().compose(pos, quat, scale)\` if a copy
+   needs rotation), then \`im.instanceMatrix.needsUpdate = true\`. One
+   InstancedMesh = one draw call for ALL its copies. Aim for under 150 draw
+   calls in the scene.`;
 
 /**
  * THE CATEGORY MAP (2026-08-09, the hybrid this file's §5b note has promised

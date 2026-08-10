@@ -83,10 +83,12 @@ const PASSTHROUGH_EXPORTS = THREE_EXPORTS.filter((n) => !WRAPPED_EXPORTS.include
 const entry = [
   `import {`,
   `  ${PASSTHROUGH_EXPORTS.join(',\n  ')},`,
-  // InstancedMesh backs loadModelBatch() (runtime-helpers.ts) — internal to
-  // that helper, not taught to Gemini as an importable name, same precedent
-  // as MeshoptDecoder below. Aliased so it isn't accidentally swept into the
-  // PASSTHROUGH_EXPORTS join below (which IS the taught/lockstep-tested list).
+  // InstancedMesh backs loadModelBatch() (runtime-helpers.ts) AND — since
+  // 2026-08-10 (AutoRicksaw, 1,250 draws/frame) — is TAUGHT to Gemini as an
+  // importable name for instancing hand-built scenery: it was always exported
+  // below, only the lint's curated list blocked it. Still aliased here so it
+  // isn't swept into the PASSTHROUGH_EXPORTS join (that list mirrors
+  // CURATED_IMPORT_NAMES minus this alias-exported name).
   `  InstancedMesh as __ArInstancedMesh,`,
   `  WebGLRenderer as __ArRealWebGLRenderer,`,
   `  AnimationMixer as __ArRealAnimationMixer,`,

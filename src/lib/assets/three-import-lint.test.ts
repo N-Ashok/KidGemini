@@ -33,6 +33,18 @@ describe("unknownThreeImports", () => {
     expect(unknownThreeImports(game("Shape, ShapeGeometry, DoubleSide"))).toEqual([]);
   });
 
+  it("InstancedMesh is legal (2026-08-10) — it was ALWAYS in the served bundle; only this lint blocked it", () => {
+    // The AutoRicksaw lesson, second half: the draw-call hint prescribed
+    // InstancedMesh, the lint rejected the model's correct patch, and the
+    // fallback regeneration REPLACED the child's 89-message game ("the whole
+    // game changed and it is pathetic" — owner). The bundle exports it (it
+    // backs loadModelBatch); the curated list just never said so.
+    expect(unknownThreeImports(game("InstancedMesh"))).toEqual([]);
+    // Placement composes via Matrix4 — Object3D/DynamicDrawUsage remain
+    // unvendored, and must keep failing until someone vendors them.
+    expect(unknownThreeImports(game("Object3D, DynamicDrawUsage"))).toEqual(["Object3D", "DynamicDrawUsage"]);
+  });
+
   it("checks the ORIGINAL name behind an alias, handles multiline imports and multiple statements", () => {
     const html =
       `<script type="module">import {\n  Scene,\n  FancyThing as F\n} from "three";\n` +

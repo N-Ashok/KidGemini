@@ -141,10 +141,14 @@ export function buildSlowdownHint(models: PerfModelEntry[], drawCalls?: number |
   if (drawBound) {
     return (
       `The game is running slow because the scene draws about ${drawCalls} separate ` +
-      "objects every frame. Merge repeated things: use one InstancedMesh (or " +
-      "loadModelBatch) per repeated object type — building pieces, windows, coins, " +
-      "scenery — and reuse shared geometries and materials, aiming for under 150 " +
-      "draw calls, without changing what the game is about."
+      "objects every frame. Merge repeated things: for hand-built shapes use one " +
+      "InstancedMesh (import it from \"three\") per repeated object type — building " +
+      "pieces, windows, coins, scenery — placing each copy with " +
+      "setMatrixAt(i, new Matrix4().setPosition(x, y, z)); for " +
+      "repeated 3D models use the loadModelBatch(name, count) helper that already " +
+      "exists as a global function (never import it). Reuse shared geometries and " +
+      "materials, aiming for under 150 draw calls, without changing what the game " +
+      "is about."
     );
   }
   if (!heaviest) {
