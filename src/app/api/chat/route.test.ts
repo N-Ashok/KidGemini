@@ -17,7 +17,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // when a whole-game rebuild happened (penguin-maze hardening, 2026-07-18).
 import { REBUILT_GAME_LINE, FRESH_GAME_LINE } from "@/lib/game-edit";
 import { SafetyBlockedError } from "@/lib/model-runner";
-import { KIND_REDIRECT, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY, BUILD_STARTER_SPLIT } from "@/lib/chat-copy";
+import { KIND_REDIRECT, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY, BUILD_STARTER_SPLIT, EDIT_FAILED_SOFT } from "@/lib/chat-copy";
 // The REAL floor (not mocked): delivery now guarantees the three import map on
 // any game that imports "three", even without the <!--USES_THREE--> marker
 // (BUG-FIX-LOG 2026-07-23). Tests assert the delivered game === the game floored.
@@ -751,23 +751,27 @@ describe("POST /api/chat — never publish a truncated/blank build", () => {
     expect(done.artifactHtml).toContain("WHOLE GAME");
   });
 
-  it("CG.4 an EDIT turn whose rebuild fallback is truncated is ALSO guarded — never ships the partial (old-chat parity)", async () => {
+  it("CG.4 a failed edit patch NEVER regenerates — the game stays untouched and the child gets a soft retry (owner decision 2026-08-10)", async () => {
     // History with an existing game → routes to the EDIT path, not fresh build.
-    // The patch can't apply → full-regeneration fallback; that rebuild (and the
-    // completeness retry) come back truncated → the guard must bail, never ship
-    // the partial. This is the old-chat gap ("new chat built a game, old didn't").
+    // The patch can't apply and the strict rung can't rescue it. The OLD
+    // fallback was a full regeneration — which is what replaced the owner's
+    // 89-message AutoRicksaw city ("the whole game changed and it is
+    // pathetic"). The contract now: the rebuild path must never even be
+    // CALLED from a failed edit; the child keeps their game and is told
+    // honestly what to do next.
     const history = [
       { id: "1", role: "child", text: "make a game", createdAt: 1 },
       { id: "2", role: "assistant", text: "Here!", artifactHtml: WHOLE, createdAt: 2 },
     ];
     extractArtifactMock.mockImplementation(() => ({ text: "edit", artifactHtml: TRUNCATED, wasFenced: false }));
-    replyMock.mockResolvedValue({ text: "still cut", artifactHtml: TRUNCATED, wasFenced: false }); // every rung truncated
+    replyMock.mockResolvedValue({ text: "still cut", artifactHtml: TRUNCATED, wasFenced: false });
 
     const res = await POST(makeReq({ message: "add 30 characters", history }));
     const done = doneOf(await res.text());
 
-    expect(done.artifactHtml == null).toBe(true); // the truncated rebuild is NEVER published
-    expect(done.text).toBe(BUILD_INCOMPLETE_RETRY); // friendly retry instead
+    expect(replyMock).not.toHaveBeenCalled(); // the regeneration path is DEAD for edits
+    expect(done.artifactHtml == null).toBe(true); // nothing replaces the child's game
+    expect(done.text).toBe(EDIT_FAILED_SOFT); // honest, with a way forward
   });
 });
 
@@ -1086,51 +1090,48 @@ describe("POST /api/chat — patch-based feature edits", () => {
   // genuine off-topic chat and got shown to the child as literal raw text
   // (visible <<<<<<< markers, broken fragments). looksLikeAttemptedEdit
   // must catch this and route it to the fallback regeneration instead.
-  it("a truncated/malformed patch attempt is NEVER shown raw — falls back to a full regeneration instead", async () => {
+  it("a truncated/malformed patch attempt is NEVER shown raw — soft-fails with the game untouched (owner decision 2026-08-10)", async () => {
     const truncatedReply = "Sure, adding that now!\n<<<<<<< SEARCH\nOLD_FEATURE\n";
     replyStreamMock.mockReturnValue(one(truncatedReply));
-    replyMock.mockResolvedValue({ text: "Here you go!", artifactHtml: "<html>FALLBACK GAME</html>", wasFenced: true });
 
     const res = await POST(makeReq({ message: "add a medic kit", history: historyWithGame }));
     const text = await res.text();
     const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
 
     expect(done.text).not.toContain("<<<<<<<"); // never leak raw patch markers to the chat bubble
-    expect(replyMock).toHaveBeenCalledTimes(1);
-    expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
-    expect(done.artifactHtml).toBe("<html>FALLBACK GAME</html>");
+    expect(replyMock).not.toHaveBeenCalled(); // regeneration is DEAD for failed edits
+    expect(done.artifactHtml).toBeNull(); // the child's game is untouched
+    expect(done.text).toBe(EDIT_FAILED_SOFT);
   });
 
   // Same class: applyPatch()'s "regeneration" fallback trusts ANY ```html
   // fence as a full replacement — if the model ignored the patch contract
   // and explained "here's the changed part" with a PARTIAL snippet, that
   // fragment would silently become the entire game.
-  it("a partial snippet mistaken for a full document is rejected — falls back to a full regeneration instead of corrupting the game", async () => {
+  it("a partial snippet mistaken for a full document is rejected — soft-fail, never corrupts the game (owner decision 2026-08-10)", async () => {
     const partialSnippetReply = "Here's the updated part:\n```html\n<div>MEDIC_KIT_FEATURE</div>\n```";
     replyStreamMock.mockReturnValue(one(partialSnippetReply));
-    replyMock.mockResolvedValue({ text: "Here you go!", artifactHtml: "<html>FALLBACK GAME</html>", wasFenced: true });
 
     const res = await POST(makeReq({ message: "add a medic kit", history: historyWithGame }));
     const text = await res.text();
     const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
 
-    expect(replyMock).toHaveBeenCalledTimes(1);
-    expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
-    expect(done.artifactHtml).toBe("<html>FALLBACK GAME</html>"); // never the bare <div> snippet
+    expect(replyMock).not.toHaveBeenCalled();
+    expect(done.artifactHtml).toBeNull(); // never the bare <div> snippet, never a rebuild
+    expect(done.text).toBe(EDIT_FAILED_SOFT);
   });
 
-  it("a genuinely attempted-but-mismatched patch falls back to ONE full-regeneration call — never a dead end", async () => {
+  it("a genuinely attempted-but-mismatched patch soft-fails — not a dead end, not a rebuild (owner decision 2026-08-10)", async () => {
     const badPatchReply = "Trying to add that!\n<<<<<<< SEARCH\nTHIS_TEXT_IS_NOT_IN_THE_SOURCE\n=======\nNEW\n>>>>>>> REPLACE";
     replyStreamMock.mockReturnValue(one(badPatchReply));
-    replyMock.mockResolvedValue({ text: "Here you go!", artifactHtml: "<html>FALLBACK GAME</html>", wasFenced: true });
 
     const res = await POST(makeReq({ message: "add a medic kit", history: historyWithGame }));
     const text = await res.text();
     const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
 
-    expect(replyMock).toHaveBeenCalledTimes(1);
-    expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
-    expect(done.artifactHtml).toBe("<html>FALLBACK GAME</html>");
+    expect(replyMock).not.toHaveBeenCalled();
+    expect(done.artifactHtml).toBeNull();
+    expect(done.text).toBe(EDIT_FAILED_SOFT); // honest, with a way forward — not silence
   });
 
   // #2a history: BUG-FIX-LOG 2026-07-23 ("racing game" incident) made a 3D
@@ -1161,15 +1162,15 @@ describe("POST /api/chat — patch-based feature edits", () => {
       "Removed it!\n```html\n<!doctype html><html><head><style>#x{color:red}\n\n" +
       ">>>>>>> REPLACE\n<<<<<<< SEARCH\n<div>Leaderboard</div>\n=======\n</style></head><body>game</body></html>\n```";
     replyStreamMock.mockReturnValue(one(leaked));
-    replyMock.mockResolvedValue({ text: "Here you go!", artifactHtml: "<html>CLEAN GAME</html>", wasFenced: true });
 
     const res = await POST(makeReq({ message: "remove the leaderboard", history: historyWithGame }));
     const done = JSON.parse((await res.text()).trim().split("\n").find((l) => l.includes('"done"'))!);
 
-    expect(done.artifactHtml).not.toContain(">>>>>>>"); // never ship conflict markers
-    expect(done.artifactHtml).not.toContain("SEARCH");
-    expect(done.artifactHtml).toBe("<html>CLEAN GAME</html>"); // clean full regeneration
-    expect(replyMock).toHaveBeenCalledTimes(1);
+    // A marker-corrupted document is NEVER published — and (owner decision
+    // 2026-08-10) never triggers a rebuild either: the game stays untouched.
+    expect(done.artifactHtml).toBeNull();
+    expect(replyMock).not.toHaveBeenCalled();
+    expect(done.text).toBe(EDIT_FAILED_SOFT);
   });
 
   // ---- Penguin-maze hardening (2026-07-18): strict retry, kill switch, honest messaging ----
@@ -1217,17 +1218,18 @@ describe("POST /api/chat — patch-based feature edits", () => {
     expect(done.text).toBe(REBUILT_GAME_LINE); // honest: a rebuild happened, invite bug reports
   });
 
-  it("the fallback regeneration never shows the bare generic done-line either — substitutes the honest rebuilt-game line", async () => {
+  it("a failed patch soft-fails with the EDIT_FAILED_SOFT line — never a silent rebuild story (owner decision 2026-08-10)", async () => {
+    // Supersedes the REBUILT_GAME_LINE honesty rule: with regeneration gone,
+    // the honest message is that nothing changed — and what to try next.
     const badPatchReply = "Trying!\n<<<<<<< SEARCH\nNOT_IN_SOURCE\n=======\nNEW\n>>>>>>> REPLACE";
     replyStreamMock.mockReturnValue(one(badPatchReply));
-    replyMock.mockResolvedValue({ text: FRESH_GAME_LINE, artifactHtml: "<html>FALLBACK GAME</html>", wasFenced: true });
 
     const res = await POST(makeReq({ message: "add a medic kit", history: historyWithGame }));
     const text = await res.text();
     const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
 
-    expect(done.artifactHtml).toBe("<html>FALLBACK GAME</html>");
-    expect(done.text).toBe(REBUILT_GAME_LINE);
+    expect(done.artifactHtml).toBeNull();
+    expect(done.text).toBe(EDIT_FAILED_SOFT);
   });
 
   // Kill switch (the user's guaranteed rollback): GAME_EDIT_PATCH=off restores
@@ -1323,7 +1325,7 @@ describe("POST /api/chat — three-import lint", () => {
     expect(replyMock).not.toHaveBeenCalled();
   });
 
-  it("L.4 an edit patch that INTRODUCES an unknown three import is a failed patch — falls back to full regeneration", async () => {
+  it("L.4 an edit patch that INTRODUCES an unknown three import is a failed patch — soft-fail, never ships the crash (owner decision 2026-08-10)", async () => {
     const GAME = '<!doctype html><html><body><div>OLD_FEATURE</div></body></html>';
     const history = [
       { id: "1", role: "child" as const, text: "make me a game", createdAt: 1 },
@@ -1333,15 +1335,14 @@ describe("POST /api/chat — three-import lint", () => {
       "Added a track! 🎮\n<<<<<<< SEARCH\n<div>OLD_FEATURE</div>\n=======\n" +
       '<script type="module">import { TubeGeometry } from "three";</script>\n>>>>>>> REPLACE';
     replyStreamMock.mockReturnValue(one(patchReply));
-    replyMock.mockResolvedValue({ text: "Rebuilt!", artifactHtml: CLEAN_GAME, wasFenced: true });
 
     const res = await POST(makeReq({ message: "add a tube track", history }));
     const text = await res.text();
     const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
 
-    expect(replyMock).toHaveBeenCalledTimes(1);
-    expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
-    expect(done.artifactHtml).toBe(ensureAssetRuntime(CLEAN_GAME)); // never the import-crashing patch result; map floored in
+    expect(replyMock).not.toHaveBeenCalled();
+    expect(done.artifactHtml).toBeNull(); // never the import-crashing patch result, never a rebuild
+    expect(done.text).toBe(EDIT_FAILED_SOFT);
   });
 });
 
@@ -1628,34 +1629,32 @@ describe("POST /api/chat — cheap strict-edit rung before full rebuild (PRD-RES
     expect(d.artifactHtml).toBe(CURRENT_GAME.replace("OLD_FEATURE", "NEW_FEATURE")); // patched in place
   });
 
-  it("DR.2 when the strict rung declines (NEEDS_FULL_REBUILD), it falls through to ONE full regeneration", async () => {
+  it("DR.2 when the strict rung declines (NEEDS_FULL_REBUILD), the edit soft-fails — no rebuild (owner decision 2026-08-10)", async () => {
     replyStreamMock.mockReturnValue(one(badPatchReply));
     strictEditRetryMock.mockResolvedValue({ text: "NEEDS_FULL_REBUILD" });
-    replyMock.mockResolvedValue({ text: "Here you go!", artifactHtml: "<html>REBUILT GAME</html>", wasFenced: true });
 
     const res = await POST(makeReq({ message: "add a medic kit", history: historyWithGame }));
     const d = done(await res.text());
 
-    expect(strictEditRetryMock).toHaveBeenCalledTimes(1); // tried the cheap rung first…
-    expect(replyMock).toHaveBeenCalledTimes(1); // …then the rebuild, exactly once
-    expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
-    expect(d.artifactHtml).toBe("<html>REBUILT GAME</html>");
+    expect(strictEditRetryMock).toHaveBeenCalledTimes(1); // the cheap rung is still tried first…
+    expect(replyMock).not.toHaveBeenCalled(); // …but a declined rung ends in soft-fail, never a rebuild
+    expect(d.artifactHtml).toBeNull();
+    expect(d.text).toBe(EDIT_FAILED_SOFT);
   });
 
-  it("DR.3 a rung patch that introduces a broken import is rejected — still falls through to rebuild", async () => {
+  it("DR.3 a rung patch that introduces a broken import is rejected — soft-fail, never ships it, never rebuilds", async () => {
     replyStreamMock.mockReturnValue(one(badPatchReply));
     // The rung 'applies' but swaps in a bad three import; the guard must reject it.
     strictEditRetryMock.mockResolvedValue({
       text: '<<<<<<< SEARCH\nOLD_FEATURE\n=======\n<script type="module">import { FakeNonexistentThing } from "three";</script>\n>>>>>>> REPLACE',
     });
-    replyMock.mockResolvedValue({ text: "Rebuilt!", artifactHtml: "<html>REBUILT</html>", wasFenced: true });
 
     const res = await POST(makeReq({ message: "make the car faster", history: historyWithGame }));
     const d = done(await res.text());
 
-    // rung patch rejected for the bad import → full rebuild
-    expect(replyMock).toHaveBeenCalledTimes(1);
-    expect(d.artifactHtml).toBe("<html>REBUILT</html>");
+    expect(replyMock).not.toHaveBeenCalled();
+    expect(d.artifactHtml).toBeNull(); // the import-crashing rung result is never published
+    expect(d.text).toBe(EDIT_FAILED_SOFT);
   });
 });
 

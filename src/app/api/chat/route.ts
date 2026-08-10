@@ -14,7 +14,7 @@ import type { ChainSummary } from "@/types/model-ledger.types";
 import { SafetyBlockedError } from "@/lib/model-runner";
 import {
   isGameEditTurn, isThreeConversionTurn, currentGameHtml, editReplyProse, looksLikeAttemptedEdit, looksLikeCompleteDocument, looksTruncatedDocument,
-  regenReplyProse, reconcileAssetMarkers, reconcileAssetMarkersWithReason, detectsNewGame, NEW_GAME_PROMPT_LINE, THREE_D_NEW_GAME_LINE, REBUILT_GAME_LINE, FRESH_GAME_LINE,
+  regenReplyProse, reconcileAssetMarkers, reconcileAssetMarkersWithReason, detectsNewGame, NEW_GAME_PROMPT_LINE, THREE_D_NEW_GAME_LINE,
 } from "@/lib/game-edit";
 import { stripAssetMarkers } from "@/lib/assets/markers";
 import { applyPatch } from "@/lib/repair-prompt";
@@ -28,7 +28,7 @@ import { buildFallbackNextAskHints, kidHintsEnabled } from "@/lib/next-ask-hints
 import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
 import { RulesClassifier } from "@/lib/safety.rules";
-import { KIND_REDIRECT, SPARKS_OVER_LINE, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY, BUILD_STARTER_SPLIT, adultSafetyBlockMessage } from "@/lib/chat-copy";
+import { KIND_REDIRECT, SPARKS_OVER_LINE, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY, BUILD_STARTER_SPLIT, EDIT_FAILED_SOFT, adultSafetyBlockMessage } from "@/lib/chat-copy";
 import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore, SqliteTurnResultStore, SqliteScreenTimeStore } from "@/lib/db";
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
@@ -901,47 +901,18 @@ export async function POST(req: NextRequest) {
         if (rescued) {
           // Kept the child's game with a small patch — no rebuild needed.
         } else {
-        console.warn(`[api/chat] patch failed (${reason}) — falling back to full regeneration @${ms()}ms`);
-        try {
-          const fallback = await chatModel.reply({ history, message, image, forceFullRegen: true, persona: persona.id, onLedger: mkLedger("regen"), onLoserCost: recordLoser });
-          trackTurn(() => recordUsage("chat", servedModel, message, fallback.text, false, fallback.usage));
-          // Same completeness guard as the fresh-build path (BUG-FIX-LOG
-          // 2026-07-22): an EDIT that falls back to a full rebuild can be
-          // truncated too (owner UAT — "a new chat developed a game but the old
-          // chat did not": the old chat was an edit turn, unguarded). If the
-          // rebuild is cut off, one compact-complete retry; if it STILL can't
-          // finish, never ship a blank game — a friendly retry instead.
-          const editGuard = await completeTruncatedBuild(fallback.artifactHtml);
-          if (editGuard?.status === "incomplete") {
-            deliverableHtml = null;
-            displayText = BUILD_INCOMPLETE_RETRY;
-          } else {
-            const whole = editGuard ? editGuard.reply : fallback;
-            // Auto-split: a working starter subset — lead with the "add the rest"
-            // offer, same as the fresh-build path.
-            if (editGuard?.reduced) {
-              displayText = whole.artifactHtml
-                ? `${BUILD_STARTER_SPLIT}\n\n\`\`\`html\n${whole.artifactHtml}\n\`\`\``.trim()
-                : BUILD_STARTER_SPLIT;
-            } else {
-              // Honest messaging (penguin-maze hardening): this path REPLACED the
-              // child's game — the bare fresh-build default would read as a small
-              // targeted change and hide the rebuild that just happened.
-              const fallbackProse = whole.artifactHtml && (!whole.text.trim() || whole.text.trim() === FRESH_GAME_LINE)
-                ? REBUILT_GAME_LINE
-                : whole.text;
-              displayText = whole.artifactHtml && !whole.wasFenced
-                ? `${fallbackProse}\n\n\`\`\`html\n${whole.artifactHtml}\n\`\`\``.trim()
-                : fallbackProse;
-            }
-            deliverableHtml = toDeliverable(whole.artifactHtml);
-          }
-        } catch (err) {
-          console.error(`[api/chat] ✖ fallback regeneration failed @${ms()}ms: ${(err as Error).message}`);
-          send({ type: "error", text: "Oops! Something went wrong. Let's try again." });
-          if (replyId) trackTurn(() => turnResults.fail(replyId, userId, Date.now()));
-          return;
-        }
+          // Owner decision 2026-08-10 ("fail softly", after the fallback
+          // regeneration replaced the 89-message AutoRicksaw city — "The
+          // whole game changed and it is pathetic"): a failed or rejected
+          // edit patch must NEVER rebuild the game from scratch. For a
+          // long-lived game the regeneration IS the destruction — the old
+          // "no worse than before edits existed" floor was written when the
+          // floor was a fresh build. Keep the child's game untouched, say so
+          // honestly, and invite a rephrase. The regen path (with its own
+          // truncation guard) still exists for FRESH builds only.
+          console.warn(`[api/chat] patch failed (${reason}) — soft-fail, game untouched @${ms()}ms`);
+          displayText = EDIT_FAILED_SOFT;
+          deliverableHtml = null;
         }
       }
     } else {

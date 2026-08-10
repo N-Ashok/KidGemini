@@ -33,6 +33,13 @@ export const MODEL_GLITCH_RETRY =
 // half-written game) AND a corrective retry couldn't finish it either. We never
 // publish a blank/truncated game (BUG-FIX-LOG 2026-07-22) — so instead of a dead
 // artifact, invite a retry and nudge toward a smaller ask that won't overflow.
+/** A failed/rejected edit patch keeps the game UNTOUCHED (owner decision
+ *  2026-08-10, after a fallback regeneration replaced an 89-message game:
+ *  "The whole game changed and it is pathetic"). Honest about what happened,
+ *  concrete about what to do next — never a silent rebuild. */
+export const EDIT_FAILED_SOFT =
+  "That change turned out tricky, and I didn't want to risk breaking your game — so I left it exactly as it was. 🛟 Ask me again in different words, one small change at a time, and I'll get it right!";
+
 export const BUILD_INCOMPLETE_RETRY =
   "Oof — that one got too big for me to finish in one go! 😅 Tap try again, or ask for it in two steps: the game first, then the details (like the full list of characters).";
 

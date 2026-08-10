@@ -43,11 +43,14 @@ regeneration, which is what actually destroyed the game.
 - Recovery: the pre-regeneration game is intact in the chat history (and was profiled from the
   DB earlier the same day) — nothing was lost permanently.
 
-**Open owner decision:** the fallback ladder itself. A failed/rejected edit patch currently ends
-in FULL regeneration — "no worse than before this feature existed" was written when the floor
-was a fresh build, but for a long-lived game the regeneration IS the destruction. Alternative:
-fail the edit softly (keep the current game, tell the child the change didn't work, invite a
-retry). Needs an explicit owner call — logged here so it isn't decided silently.
+**Owner decision (same day): FAIL SOFTLY — implemented.** A failed/rejected edit patch now ends
+with the game UNTOUCHED and an honest message (`EDIT_FAILED_SOFT`, chat-copy.ts): the change
+didn't work, ask again in different words, one small change at a time. The full-regeneration
+fallback is DEAD for edit turns (it survives only for fresh builds, where it always belonged);
+`chatModel.reply({forceFullRegen})` is no longer reachable from a failed patch. Contract pinned
+in route.test.ts CG.4 (`replyMock` must never be called) and in the 7 rewritten patch-fallback
+tests — every "never leak/never corrupt" invariant they guarded still holds, more strongly:
+nothing is published at all.
 
 ---
 
