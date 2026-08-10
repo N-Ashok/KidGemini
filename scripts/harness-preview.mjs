@@ -448,26 +448,44 @@ if (promoted) {
       const gl = c && (c.getContext("webgl2") || c.getContext("webgl"));
       const ext = gl && gl.getExtension("WEBGL_lose_context");
       if (!ext) return { ok: false, why: "no WEBGL_lose_context (cannot test here)" };
-      ext.loseContext();
-      await new Promise((r) => setTimeout(r, 200)); // the loss event is async
-      let n = 0;
-      const probe = () => { n++; requestAnimationFrame(probe); };
+      // Timing-independent measurement: with preventDefault in place Chrome
+      // auto-restores an evicted context in well under a second, so "wait,
+      // then probe" races the recovery (measured: lostNow=false by +600ms —
+      // the system healing faster than the test). Instead classify every
+      // probe tick by whether the context was lost AT THAT INSTANT.
+      let lostTicks = 0;
+      let liveTicks = 0;
+      const probe = () => {
+        if (gl.isContextLost()) lostTicks++;
+        else liveTicks++;
+        requestAnimationFrame(probe);
+      };
       requestAnimationFrame(probe);
-      await new Promise((r) => setTimeout(r, 500));
-      const heldDuring = n;
-      ext.restoreContext();
+      ext.loseContext();
+      await new Promise((r) => setTimeout(r, 1200));
+      ext.restoreContext(); // no-op if the browser already restored
       await new Promise((r) => setTimeout(r, 600));
-      return { ok: true, heldDuring, afterRestore: n - heldDuring };
+      return {
+        ok: true,
+        lostTicks,
+        liveTicks,
+        stillLost: gl.isContextLost(),
+        guard: !!window.__arGlGuard,
+        tracked: window.__arGlCount ?? "absent",
+      };
     })
     .catch((e) => ({ ok: false, why: e.message }));
   check(
+    // ≤3, not ===0: a stray callback can slip through around the loss edge.
+    // The failure mode under test is the loop running FREE against dead GL —
+    // dozens of lost-instant ticks without the hold.
     "while the context is lost, the loop is HELD (nothing renders against dead GL)",
-    freeze.ok === true && freeze.heldDuring === 0,
+    freeze.ok === true && freeze.lostTicks <= 3,
     JSON.stringify(freeze),
   );
   check(
-    "on restore the SAME loop resumes by itself (it survived the loss)",
-    freeze.ok === true && freeze.afterRestore > 5,
+    "after restore the SAME loop is running (it survived the loss)",
+    freeze.ok === true && freeze.liveTicks > 5 && freeze.stillLost === false,
     JSON.stringify(freeze),
   );
 }
@@ -521,6 +539,45 @@ if (promoted) {
     bg.afterRelease === 0 && bg.afterShow === bg.before && bg.resumedTicks > 5,
     JSON.stringify(bg),
   );
+}
+
+// ── 10. gl-dead: a context that cannot come back remounts the game frame ────
+// The last rung of the watchdog ladder (2026-08-10 №4, "it didnot regain"):
+// when restoreContext is refused too, the game document can never draw again
+// — the runtime posts {__ari:'gl-dead'} and ArtifactFrame must replace the
+// played iframe (the automatic version of the owner's manual code↔preview
+// toggle). Posted here directly (the real watchdog waits 5s of wall clock);
+// what's under test is the parent's handling: remount, fresh document, alive.
+if (promoted) {
+  const before = frames()[0];
+  await before.evaluate(() => { window.__harnessMark = 777; });
+  await before.evaluate(() => parent.postMessage({ __ari: "gl-dead" }, "*"));
+  let fresh = null;
+  for (let i = 0; i < 20; i++) {
+    await page.waitForTimeout(250);
+    const f = frames()[0];
+    const mark = await f?.evaluate(() => window.__harnessMark ?? null).catch(() => "gone");
+    if (mark === null) { fresh = f; break; }
+  }
+  check("gl-dead remounts the played frame (fresh document)", fresh !== null, fresh ? "mark cleared" : "old document still mounted");
+  if (fresh) {
+    const alive = await fresh
+      .evaluate(
+        () =>
+          new Promise((res) => {
+            let n = 0;
+            const t0 = performance.now();
+            const loop = () => {
+              n++;
+              if (performance.now() - t0 < 600) requestAnimationFrame(loop);
+              else res(n);
+            };
+            requestAnimationFrame(loop);
+          }),
+      )
+      .catch((e) => `err:${e.message}`);
+    check("the remounted game is animating (self-heal complete)", typeof alive === "number" && alive > 5, `${alive} ticks`);
+  }
 }
 
 // The guard's own trace, in order. Collected silently above, so print it —

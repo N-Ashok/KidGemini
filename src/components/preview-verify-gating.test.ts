@@ -58,11 +58,26 @@ describe("preview gating: verify-loop consumers use `settled`, not `!covered`", 
   // owner's recording) and both frames re-fetched every model, so nothing drew
   // until the edit ended. The frames are ROLES now, not documents.
 
-  it("the played iframe has a STABLE key so an edit never remounts it", () => {
+  it("the played iframe's key varies ONLY with the gl-dead epoch, never the document", () => {
     // A key that varies with the document is the remount: it throws away the
-    // child's progress and forces every GLB to be downloaded again.
-    expect(src).toContain('key="preview-play"');
+    // child's progress and forces every GLB to be downloaded again. The ONE
+    // sanctioned remount is the gl-dead self-heal (2026-08-10 №4): a game
+    // whose GPU context is gone and not coming back is already blank — a
+    // remount is strictly better, and it is what the owner's manual
+    // code↔preview toggle did.
+    expect(src).toMatch(/key=\{`preview-play#\$\{playEpoch\}`\}/);
     expect(src).not.toMatch(/key=\{`play:\$\{lastGoodHtml/);
+  });
+
+  it("gl-dead from the PLAYED frame remounts it — and only from the played frame", () => {
+    // The message is the last rung of the guard's watchdog ladder. The source
+    // check matters: the shadow (an unvetted new version) must never be able
+    // to remount the child's game; and a rate limit stops a game whose
+    // context can never be re-created from remount-looping forever.
+    expect(src).toMatch(/__ari !== "gl-dead"/);
+    expect(src).toMatch(/e\.source !== playElRef\.current\?\.contentWindow/);
+    expect(src).toMatch(/setPlayEpoch/);
+    expect(src).toMatch(/GL_DEAD_REMOUNT_COOLDOWN_MS/);
   });
 
   it("the played document is FROZEN while a new version verifies", () => {

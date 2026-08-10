@@ -41,6 +41,13 @@ import type { GameConsoleMessage } from "@/types/game-console.types";
 import type { PreviewDeviceId, PreviewOrientation } from "@/types/device-preview.types";
 import type { VerifyCheckId } from "@/types/preview-verify.types";
 
+/** How long after a gl-dead remount further gl-dead messages are ignored.
+ *  Long enough for the fresh document to boot and create its context; short
+ *  enough that a SECOND real eviction later in the session still self-heals.
+ *  On a machine that cannot create a context at all this is the only thing
+ *  standing between the child and an infinite remount loop. */
+const GL_DEAD_REMOUNT_COOLDOWN_MS = 15_000;
+
 interface ArtifactFrameProps {
   html: string | null;
   /** True while the reply is still streaming — publish waits for the full game. */
@@ -420,6 +427,32 @@ export function ArtifactFrame({
     // channel) addressing a detached document.
     iframeRef.current = shadowing ? shadowElRef.current : playElRef.current;
   }, [shadowing, docKey, iframeRef]);
+
+  /* The gl-dead self-heal (2026-08-10 №4). The runtime guard's watchdog posts
+   * {__ari:'gl-dead'} when a game's WebGL context is lost AND the browser
+   * refused both the polite wait and an explicit restoreContext() ask — a
+   * state from which that document can never draw again. The owner's manual
+   * cure was switching code↔preview, which remounts the iframe; this is that
+   * cure, automatic. Bumping the epoch changes the played iframe's key, so
+   * React replaces the frame and the same document loads fresh (new context).
+   * Source-checked: only the PLAYED frame may trigger it (the shadow is an
+   * unvetted document and must never be able to remount the child's game),
+   * and rate-limited so a machine that cannot make a context at all doesn't
+   * remount-loop. */
+  const [playEpoch, setPlayEpoch] = useState(0);
+  const lastGlRemountRef = useRef(0);
+  useEffect(() => {
+    function onGlDead(e: MessageEvent) {
+      if ((e.data as { __ari?: string } | null)?.__ari !== "gl-dead") return;
+      if (e.source !== playElRef.current?.contentWindow) return;
+      const now = Date.now();
+      if (now - lastGlRemountRef.current < GL_DEAD_REMOUNT_COOLDOWN_MS) return;
+      lastGlRemountRef.current = now;
+      setPlayEpoch((n) => n + 1);
+    }
+    window.addEventListener("message", onGlDead);
+    return () => window.removeEventListener("message", onGlDead);
+  }, []);
 
   /* Give the round's GPU context back before its frame is torn down.
    *
@@ -970,7 +1003,7 @@ export function ArtifactFrame({
                   (docs/BUG-FIX-LOG.md 2026-08-10). Its document only changes
                   when a new version has finished verifying. */}
               <iframe
-                key="preview-play"
+                key={`preview-play#${playEpoch}`}
                 ref={playElRef}
                 title="AI-generated game"
                 sandbox="allow-scripts"

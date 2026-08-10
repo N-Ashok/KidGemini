@@ -11,6 +11,54 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-10 (third pass) — "it didnot regain": the freeze is the playbook's own GPU pause; what was missing was a self-heal for a context that never comes back
+
+- **Report (owner, production, on CHROME — which killed the Safari-only theory):** *"it froze as
+  soon as i reached ari chat and it didnot regain"* — and the decisive observation: *"it worked
+  when i switched to code on preview pane and again to preview"*. The code↔preview toggle
+  remounts the play iframe. A remount fixing it means the *document* was unrecoverable, not the
+  wiring around it.
+
+### What was measured (scratchpad repro, real Chrome, real ArtifactFrame tree)
+
+1. **The instant freeze on reaching chat is BY DESIGN.** The physics playbook's "STOP WHEN NOBODY
+   IS WATCHING" rule teaches every generated game `addEventListener('blur', () => setOn(false))`
+   with `if (!on) return;` first in the loop — the loop dies on blur and only a `focus` event
+   restarts it. Clicking into the composer blurs the game's window. This is the GPU-saving the
+   owner remembered asking for.
+2. **Resume-on-click WORKS on the current build.** The repro installed the exact playbook pattern
+   in a real game frame: composer click → 0 ticks/600ms (frozen); click back on the game →
+   focus delivered → 37 ticks/600ms. The plumbing is not broken in tree — which means the owner's
+   frozen-forever state had a dead loop or dead context that no focus event could revive
+   (consistent with testing on the previous bundle: a deploy never updates an already-open tab).
+
+### What was still genuinely missing — the watchdog
+
+If a context is lost and the browser never volunteers `webglcontextrestored`, the guard held the
+loop forever: polite waiting is not a plan. New ladder in `webglContextGuard()`, the automatic
+version of the owner's manual remedy:
+
+- **+2s still lost** → ask the driver directly (`WEBGL_lose_context.restoreContext()`).
+- **+5s still lost** → post `{__ari:'gl-dead'}`; `ArtifactFrame` remounts the played iframe
+  (epoch-keyed `preview-play#N`) — source-checked so only the PLAYED frame can trigger it (the
+  shadow must never remount the child's game), rate-limited (15s) so a machine that cannot make
+  a context at all doesn't remount-loop.
+
+Also measured along the way: with `preventDefault` in place **Chrome auto-restores an evicted
+context in under a second** — harness §8 originally raced that recovery and was rewritten to
+classify each probe tick by `isContextLost()` at that instant (timing-independent both engines).
+
+### Tests
+
+- `webgl-guard.test.ts` 11 → 14 (watchdog asks the driver; escalates to gl-dead only when
+  refused; stands down when the browser restores on its own — the two new paths failed pre-fix).
+- `preview-verify-gating.test.ts` 11 → 12: the played key varies ONLY with the gl-dead epoch;
+  gl-dead is source-checked + rate-limited.
+- Harness 31 → 33: §10 posts gl-dead from the real played frame → fresh document, animating.
+  5 consecutive clean runs (3 Chromium + 2 WebKit).
+
+---
+
 ## 2026-08-10 (later the same day) — the guard's own pagehide release froze and blued the LIVE game on Safari pane switches
 
 - **Report (owner, production, within the hour of deploying the guard):** *"when moved away from

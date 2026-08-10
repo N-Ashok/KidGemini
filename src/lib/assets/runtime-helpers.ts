@@ -736,13 +736,34 @@ HTMLCanvasElement.prototype.getContext = function (type) {
   try {
     if (ctx && /webgl/i.test(String(type)) && !this.__arGlGuarded) {
       this.__arGlGuarded = 1;
-      live.push(ctx);
+      var ext = null;
+      try { ext = ctx.getExtension('WEBGL_lose_context'); } catch (e2) { /* none */ }
+      live.push({ ctx: ctx, ext: ext });
       this.addEventListener('webglcontextlost', function (e) {
         // THE line that matters: without preventDefault the loss is final and
         // the canvas stays blank for the rest of the document's life.
         e.preventDefault();
         lostCount++;
         console.warn('[ari] WebGL context lost — restore requested');
+        // Watchdog (2026-08-10 №4, "it didnot regain"): browsers do not
+        // always volunteer webglcontextrestored, and a politely-held loop
+        // waits forever. The ladder is the automatic version of what fixed
+        // it for the owner by hand (code↔preview toggle = a remount):
+        // after 2s still lost → ask the driver; 3s more still lost → ask
+        // the parent to remount this frame.
+        setTimeout(function () {
+          var still = true;
+          try { still = ctx.isContextLost(); } catch (e3) { /* gone */ }
+          if (!still) return;
+          try { if (ext) ext.restoreContext(); } catch (e3) { /* refused */ }
+          setTimeout(function () {
+            var dead = true;
+            try { dead = ctx.isContextLost(); } catch (e4) { /* gone */ }
+            if (!dead) return;
+            console.warn('[ari] WebGL context is not coming back — asking the parent to reload the game');
+            try { parent.postMessage({ __ari: 'gl-dead' }, '*'); } catch (e4) { /* no parent */ }
+          }, 3000);
+        }, 2000);
       }, false);
       this.addEventListener('webglcontextrestored', function () {
         if (lostCount > 0) lostCount--;
@@ -771,7 +792,7 @@ HTMLCanvasElement.prototype.getContext = function (type) {
 // (some drivers report isContextLost()=false again before firing restored).
 function anyLost() {
   for (var i = 0; i < live.length; i++) {
-    try { if (live[i].isContextLost()) return true; } catch (e) { /* gone */ }
+    try { if (live[i].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
   }
   for (var j = 0; j < released.length; j++) {
     try { if (released[j].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
@@ -793,8 +814,7 @@ function release(why) {
   // back — 2026-08-10 second owner report, the pane-switch freeze.
   for (var i = 0; i < live.length; i++) {
     try {
-      var ext = live[i].getExtension('WEBGL_lose_context');
-      if (ext) { ext.loseContext(); released.push({ ctx: live[i], ext: ext }); }
+      if (live[i].ext) { live[i].ext.loseContext(); released.push(live[i]); }
     } catch (e) { /* already gone */ }
   }
   live.length = 0;

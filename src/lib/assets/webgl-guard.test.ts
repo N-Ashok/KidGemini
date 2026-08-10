@@ -25,9 +25,16 @@ function boot() {
   const rafQueue: Array<(t: number) => void> = [];
   const warnings: string[] = [];
   const windowListeners = new Map<string, Listener[]>();
+  const timers: Array<() => void> = [];
+  const parentPosts: unknown[] = [];
 
   const sandbox: Record<string, unknown> = {
     console: { warn: (m: string) => warnings.push(m) },
+    setTimeout: (fn: () => void, _ms: number) => {
+      timers.push(fn);
+      return timers.length;
+    },
+    parent: { postMessage: (d: unknown) => parentPosts.push(d) },
     HTMLCanvasElement: class {
       // Instance listeners land on the object via the guard's addEventListener
       listeners = new Map<string, Listener[]>();
@@ -76,6 +83,8 @@ function boot() {
               canvas.fire("webglcontextlost");
             },
             restoreContext: () => {
+              // A driver that refuses lets the watchdog's escalation be tested.
+              if ((canvas as { refuseRestore?: boolean }).refuseRestore) return;
               self.lost = false;
               canvas.fire("webglcontextrestored");
             },
@@ -102,10 +111,18 @@ function boot() {
       getContext: (t: string) => unknown;
       fire: (t: string) => void;
       ctx?: { lost: boolean };
+      refuseRestore?: boolean;
     };
     const c = new Canvas();
     c.ctx = c.getContext("webgl") as { lost: boolean };
     return c;
+  };
+  // Run every timer queued SO FAR (a nested setTimeout queued by a running
+  // timer waits for the next flush — which is exactly the watchdog's
+  // two-stage shape: flush #1 = the restore attempt, flush #2 = escalation).
+  const flushTimers = () => {
+    const q = timers.splice(0);
+    for (const fn of q) fn();
   };
   const post = (data: unknown) => {
     for (const fn of windowListeners.get("message") ?? []) fn({ data });
@@ -116,7 +133,7 @@ function boot() {
   const pageshow = (persisted = true) => {
     for (const fn of windowListeners.get("pageshow") ?? []) fn({ persisted });
   };
-  return { win, tick, makeCanvas, post, pagehide, pageshow, warnings, rafQueue };
+  return { win, tick, makeCanvas, post, pagehide, pageshow, warnings, rafQueue, flushTimers, parentPosts };
 }
 
 describe("webglContextGuard — the loop survives a context loss", () => {
@@ -245,6 +262,49 @@ describe("webglContextGuard — the loop survives a context loss", () => {
     canvas.ctx!.lost = false; // restored, event still not delivered
     g.tick(32);
     expect(ran).toBe(1);
+  });
+
+  // ── 2026-08-10 №4: "it didnot regain" — no browser restore ever arrived ──
+  // Waiting politely for webglcontextrestored is not a plan: browsers do not
+  // always volunteer it. The watchdog is the automatic version of what fixed
+  // it for the owner by hand (switching code↔preview = a remount): first ASK
+  // the driver (restoreContext), and if the context still won't come back,
+  // tell the parent to remount this frame (gl-dead).
+
+  it("watchdog stage 1: a loss with no restore event → the guard asks the driver itself", () => {
+    const canvas = g.makeCanvas();
+    canvas.ctx!.lost = true;
+    canvas.fire("webglcontextlost");
+    let ran = 0;
+    g.win.requestAnimationFrame(() => ran++);
+    g.tick(16);
+    expect(ran).toBe(0); // held
+    g.flushTimers(); // the 2s restore attempt — fake driver honors it
+    g.tick(32);
+    expect(ran).toBe(1); // restored → resumed, no escalation
+    g.flushTimers();
+    expect(g.parentPosts).toEqual([]);
+  });
+
+  it("watchdog stage 2: the driver refuses → the guard asks the parent to remount (gl-dead)", () => {
+    const canvas = g.makeCanvas();
+    canvas.refuseRestore = true;
+    canvas.ctx!.lost = true;
+    canvas.fire("webglcontextlost");
+    g.flushTimers(); // restore attempt — refused, still lost
+    g.flushTimers(); // escalation
+    expect(g.parentPosts).toEqual([{ __ari: "gl-dead" }]);
+  });
+
+  it("watchdog stands down when the browser restores on its own", () => {
+    const canvas = g.makeCanvas();
+    canvas.ctx!.lost = true;
+    canvas.fire("webglcontextlost");
+    canvas.ctx!.lost = false;
+    canvas.fire("webglcontextrestored"); // browser did its job
+    g.flushTimers();
+    g.flushTimers();
+    expect(g.parentPosts).toEqual([]);
   });
 
   it("pageshow with nothing released is a no-op (every normal load fires it)", () => {
