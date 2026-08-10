@@ -16,8 +16,11 @@ import {
   SUSTAINED_LOW_SAMPLES,
   initialSlowdownBannerState,
   nextSlowdownBannerState,
+  buildAutoFixHint,
   buildSlowdownHint,
   heaviestModel,
+  isDrawCallBound,
+  shouldAutoFixSlowdown,
   type SlowdownBannerState,
 } from "./slowdown-nudge";
 import type { PerfModelEntry } from "@/types/preview-perf.types";
@@ -268,5 +271,81 @@ describe("buildSlowdownHint — the REAL technical context sent to chat, never s
   it("unknown draw calls (old probe, null) change nothing", () => {
     const hint = buildSlowdownHint([model({ name: "grandpa" })], null);
     expect(hint).toContain("grandpa");
+  });
+});
+
+describe("isDrawCallBound — shared gate between buildSlowdownHint and the proactive auto-fix", () => {
+  it("true when draws exceed the threshold and no model is heavy", () => {
+    expect(isDrawCallBound([model({ bucket: "green" })], 1250)).toBe(true);
+  });
+
+  it("false when a genuinely heavy model dominates instead", () => {
+    expect(isDrawCallBound([model({ bucket: "red" })], 1250)).toBe(false);
+  });
+
+  it("false under the threshold, false on null/undefined draws", () => {
+    expect(isDrawCallBound([], 120)).toBe(false);
+    expect(isDrawCallBound([], null)).toBe(false);
+    expect(isDrawCallBound([], undefined)).toBe(false);
+  });
+});
+
+describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026-08-10, no tap/fps wait)", () => {
+  it("fires the first time a fresh docKey is draw-call-bound", () => {
+    expect(
+      shouldAutoFixSlowdown({
+        docKey: "gen-1",
+        lastAutoFixedDocKey: null,
+        models: [],
+        drawCalls: 1250,
+      }),
+    ).toBe(true);
+  });
+
+  it("does NOT fire again for the SAME docKey (one-shot per document — no tight loop on a soft-failed patch)", () => {
+    expect(
+      shouldAutoFixSlowdown({
+        docKey: "gen-1",
+        lastAutoFixedDocKey: "gen-1",
+        models: [],
+        drawCalls: 1250,
+      }),
+    ).toBe(false);
+  });
+
+  it("fires again once the fix (or any edit) produces a NEW docKey that's still draw-call-bound", () => {
+    expect(
+      shouldAutoFixSlowdown({
+        docKey: "gen-2",
+        lastAutoFixedDocKey: "gen-1",
+        models: [],
+        drawCalls: 900,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not fire when the scene isn't actually draw-call-bound", () => {
+    expect(
+      shouldAutoFixSlowdown({
+        docKey: "gen-1",
+        lastAutoFixedDocKey: null,
+        models: [],
+        drawCalls: 120,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("buildAutoFixHint — the silent proactive turn's full prompt", () => {
+  it("carries the same technical fix as buildSlowdownHint's draw-call branch", () => {
+    const hint = buildAutoFixHint([model({ bucket: "green" })], 1250);
+    expect(hint).toMatch(/Instanced|instanc|merge|batch/i);
+  });
+
+  it("instructs the model to explain itself in ONE plain, kid-friendly sentence", () => {
+    const hint = buildAutoFixHint([], 1250);
+    expect(hint.toLowerCase()).toContain("did not ask");
+    expect(hint.toLowerCase()).toContain("one short, friendly sentence");
+    expect(hint.toLowerCase()).toContain("no numbers");
   });
 });

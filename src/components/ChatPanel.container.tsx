@@ -1425,7 +1425,17 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   async function handleSend(
     text: string,
     attachment?: Attachment,
-    opts?: { fromIdeaBag?: boolean; onSuccess?: (childId: string) => void; forceRebuild?: boolean },
+    opts?: {
+      fromIdeaBag?: boolean;
+      onSuccess?: (childId: string) => void;
+      forceRebuild?: boolean;
+      /** Proactive slowdown auto-fix (owner decision 2026-08-10): the child
+       *  never typed this, so no child bubble is rendered for it — the
+       *  model's own reply (crafted by buildAutoFixHint to be one plain
+       *  sentence) is the only visible trace. Still a real turn: sent to the
+       *  model, saved in history, same runStream path as any other. */
+      silent?: boolean;
+    },
   ) {
     // A turn deliberately started is a kid action: it clears a "restored"
     // hold — but NOT a "failed" one (PRD v2 §3.5): a frozen line keeps asking
@@ -1505,21 +1515,28 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
       : sessionImagesRef.current.get(activeId);
     if (isImage && image) sessionImagesRef.current.set(activeId, image);
     const childId = crypto.randomUUID();
-    anchorIdRef.current = childId; // pin the request to the top of the view
+    if (!opts?.silent) anchorIdRef.current = childId; // pin the request to the top of the view
     patchActive((c) => ({
       ...c,
-      title: c.title === "New chat" ? (text || attachment?.name || "New chat").slice(0, 40) : c.title,
+      title:
+        c.title === "New chat" && !opts?.silent
+          ? (text || attachment?.name || "New chat").slice(0, 40)
+          : c.title,
       activeGameMessageId: undefined, // consumed by this turn — see runStream below
       messages: [
         ...c.messages,
-        {
-          id: childId,
-          role: "child",
-          text: displayText,
-          attachmentName: attachment?.name,
-          ...(opts?.fromIdeaBag ? { fromIdeaBag: true } : {}),
-          createdAt: Date.now(),
-        },
+        ...(opts?.silent
+          ? []
+          : [
+              {
+                id: childId,
+                role: "child" as const,
+                text: displayText,
+                attachmentName: attachment?.name,
+                ...(opts?.fromIdeaBag ? { fromIdeaBag: true } : {}),
+                createdAt: Date.now(),
+              },
+            ]),
         {
           id: replyId, role: "assistant", text: "", createdAt: Date.now(),
           ...(activeGameMessageId ? { basedOnMessageId: activeGameMessageId } : {}),
@@ -2055,6 +2072,10 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             // ArtifactFrame from the latest perf snapshot — sent through the
             // ordinary chat pipeline exactly like a next-ask hint chip.
             onFixSlowdown={(hint) => void handleSend(hint)}
+            // Proactive draw-call auto-fix (owner decision 2026-08-10): fires
+            // itself the instant a fresh scene is draw-call-bound, no tap —
+            // `silent` skips the child bubble since the child never asked.
+            onAutoFixSlowdown={(hint) => void handleSend(hint, undefined, { silent: true })}
           />
         </div>
       )}

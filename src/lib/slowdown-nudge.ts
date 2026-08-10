@@ -127,18 +127,27 @@ export function heaviestModel(models: PerfModelEntry[]): PerfModelEntry | null {
  *  15k triangles; healthy generated games sit well under 150. */
 export const HIGH_DRAW_CALLS_THRESHOLD = 300;
 
-export function buildSlowdownHint(models: PerfModelEntry[], drawCalls?: number | null): string {
+/** True when the scene's draw-call COUNT, not any single tracked model, is
+ *  the dominant cost — the case `buildSlowdownHint` and the proactive
+ *  auto-fix trigger (below) must both recognize the same way, so they can
+ *  never disagree about which fix a given snapshot calls for. */
+export function isDrawCallBound(models: PerfModelEntry[], drawCalls?: number | null): boolean {
   const heaviest = heaviestModel(models);
   // High draw calls with no genuinely heavy model: the cost is thousands of
   // hand-built meshes the model accounting can't see. Naming the heaviest
   // tracked model here sends the fix after the wrong target — the owner's
   // AutoRicksaw chat did exactly that NINE times ("the tree, 2 instances")
   // while the real problem was per-floor window meshes.
-  const drawBound =
+  return (
     typeof drawCalls === "number" &&
     drawCalls > HIGH_DRAW_CALLS_THRESHOLD &&
-    (!heaviest || heaviest.bucket === "green");
-  if (drawBound) {
+    (!heaviest || heaviest.bucket === "green")
+  );
+}
+
+export function buildSlowdownHint(models: PerfModelEntry[], drawCalls?: number | null): string {
+  const heaviest = heaviestModel(models);
+  if (isDrawCallBound(models, drawCalls)) {
     return (
       `The game is running slow because the scene draws about ${drawCalls} separate ` +
       "objects every frame. Merge repeated things: for hand-built shapes use one " +
@@ -165,5 +174,43 @@ export function buildSlowdownHint(models: PerfModelEntry[], drawCalls?: number |
     `the '${heaviest.name}' model (${countPhrase}${animPhrase}). Reduce its ` +
     `cost — fewer instances, remove animation, or a simpler version — ` +
     `without changing what the game is about.`
+  );
+}
+
+/**
+ * Proactive draw-call nudge (owner decision 2026-08-10): the tap-based flow
+ * above waits for FIVE CONSECUTIVE low-fps samples while the kid is actually
+ * playing — real for AutoRicksaw's kind of slowdown too, but it means a scene
+ * that's already draw-call-bound the moment an edit lands sits there until
+ * gameplay happens to surface it (or never, if the kid never taps back in).
+ * `shouldAutoFixSlowdown` fires the SAME instant a fresh snapshot shows the
+ * scene is draw-call-bound, independent of fps/play state — one-shot per
+ * docKey (a fix attempt changes the document, giving a new docKey to re-check
+ * against; a soft-failed patch leaves docKey unchanged, so this can only ever
+ * fire once per actual document, never loop).
+ */
+export function shouldAutoFixSlowdown(args: {
+  docKey: string;
+  lastAutoFixedDocKey: string | null;
+  models: PerfModelEntry[];
+  drawCalls?: number | null;
+}): boolean {
+  return args.docKey !== args.lastAutoFixedDocKey && isDrawCallBound(args.models, args.drawCalls);
+}
+
+/**
+ * The chat turn sent when `shouldAutoFixSlowdown` fires — the SAME technical
+ * ask as `buildSlowdownHint`'s draw-call branch, plus one instruction the
+ * tap flow doesn't need: nothing typed this, so the model must say so itself
+ * in plain, kid-friendly words instead of silently just returning code.
+ * `handleSend`'s caller marks this turn `silent` (no child bubble rendered)
+ * so the ONLY visible trace is that one sentence, not a fake typed request.
+ */
+export function buildAutoFixHint(models: PerfModelEntry[], drawCalls?: number | null): string {
+  return (
+    `${buildSlowdownHint(models, drawCalls)} The child did not ask for this — ` +
+    "you noticed it yourself right after the last change. After applying the " +
+    "fix, reply with exactly ONE short, friendly sentence (no numbers, no " +
+    "technical terms) telling them their game runs smoother now, and nothing else."
   );
 }

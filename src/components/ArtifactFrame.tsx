@@ -28,9 +28,11 @@ import { usePerfProbe } from "./usePerfProbe";
 import { useGameSaveChannel } from "./useGameSaveChannel";
 import { injectInitialGameState } from "@/lib/game-save-inject";
 import {
+  buildAutoFixHint,
   buildSlowdownHint,
   initialSlowdownBannerState,
   nextSlowdownBannerState,
+  shouldAutoFixSlowdown,
 } from "@/lib/slowdown-nudge";
 import { buildSlowGameReport, reportSlowGame } from "@/lib/perf-report";
 import type { LoadBucket } from "@/types/preview-perf.types";
@@ -144,6 +146,11 @@ interface ArtifactFrameProps {
    *  handleSend chat pipeline like any other turn. Absent prop = feature
    *  hidden, same convention as onCaptureIdea/helpTab. */
   onFixSlowdown?: (hint: string) => void;
+  /** Proactive draw-call auto-fix (owner decision 2026-08-10): fired at most
+   *  once per docKey the instant a fresh snapshot shows the scene is
+   *  draw-call-bound — no tap, no fps threshold. Absent prop = feature
+   *  hidden, same convention as onFixSlowdown/onCaptureIdea/helpTab. */
+  onAutoFixSlowdown?: (hint: string) => void;
 }
 
 type Tab = "preview" | "code" | "console" | "perf";
@@ -206,6 +213,7 @@ export function ArtifactFrame({
   conversationId,
   messageId,
   onFixSlowdown,
+  onAutoFixSlowdown,
 }: ArtifactFrameProps) {
   const [tab, setTab] = useState<Tab>("preview");
   const [publishing, setPublishing] = useState(false);
@@ -312,6 +320,32 @@ export function ArtifactFrame({
       }),
     );
   }, [slowdownState.visible, docKey, perfSnapshot, conversationId, chatId, messageId]);
+  // Proactive draw-call auto-fix (owner decision 2026-08-10): checks EVERY
+  // fresh snapshot, not just ones the fps-based reducer above would notice —
+  // a draw-call-bound scene can be perfectly smooth on an idle/unstarted
+  // preview and still choke the moment the kid actually plays, so this
+  // doesn't wait for sustained low fps or a tap. `lastAutoFixedDocKeyRef`
+  // makes it one-shot per document: a real fix changes docKey (re-checked
+  // fresh), a soft-failed patch leaves docKey unchanged (never retried
+  // in a tight loop). Also dispatches `fixTapped` so the fps-based banner's
+  // cooldown suppresses it from ALSO popping right after.
+  const lastAutoFixedDocKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!perfSnapshot || !onAutoFixSlowdown) return;
+    if (
+      !shouldAutoFixSlowdown({
+        docKey,
+        lastAutoFixedDocKey: lastAutoFixedDocKeyRef.current,
+        models: perfSnapshot.models ?? [],
+        drawCalls: perfSnapshot.drawCalls ?? null,
+      })
+    ) {
+      return;
+    }
+    lastAutoFixedDocKeyRef.current = docKey;
+    dispatchSlowdown({ type: "fixTapped", now: Date.now() });
+    onAutoFixSlowdown(buildAutoFixHint(perfSnapshot.models ?? [], perfSnapshot.drawCalls ?? null));
+  }, [perfSnapshot, docKey, onAutoFixSlowdown]);
   function handleFixSlowdown() {
     dispatchSlowdown({ type: "fixTapped", now: Date.now() });
     onFixSlowdown?.(buildSlowdownHint(perfSnapshot?.models ?? [], perfSnapshot?.drawCalls ?? null));

@@ -894,7 +894,23 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   logs `[perf] slow game detected: ...` (docKey, fps, heaviest model)
   server-side (`lib/perf-report.ts`) — `pm2 logs kidgemini | grep '\[perf\]'`
   on the box now surfaces a real slowdown as it happens, not just inside the
-  one kid's browser tab that hit it.
+  one kid's browser tab that hit it. **Proactive draw-call auto-fix**
+  (2026-08-10, owner decision, same file): the tap above still waits for 5
+  CONSECUTIVE low-fps samples WHILE the kid is playing — a scene that's
+  already draw-call-bound (`isDrawCallBound`, > `HIGH_DRAW_CALLS_THRESHOLD`
+  300 draws/frame with no genuinely heavy tracked model — the AutoRicksaw
+  case) can sit unnoticed until gameplay happens to surface it, or never if
+  the kid doesn't tap back into the preview. `shouldAutoFixSlowdown` checks
+  EVERY fresh perf snapshot instead, independent of fps/play state, and
+  fires at most once per docKey (a real fix changes the doc, re-checking
+  fresh; a soft-failed patch leaves docKey unchanged, so it can never loop).
+  It sends `buildAutoFixHint`'s turn through `handleSend(..., { silent:
+  true })` — a real edit turn, same patch/fail-soft pipeline as any edit,
+  but with no child chat bubble (the kid never typed it); the hint itself
+  instructs the model to reply with exactly one plain, kid-friendly sentence
+  ("your game runs smoother now") instead of technical detail. Wired via
+  `ArtifactFrame`'s new `onAutoFixSlowdown` prop, absent-prop-hides-feature
+  like every other opt-in surface here.
 - **Retrieval-lite selection** (PRD §14, `src/lib/assets/model-select.ts`):
   the library is unbounded but each build-turn prompt teaches ≤ 30 models,
   picked by cheap regex — the iterated game's own USES_MODELS markers,
