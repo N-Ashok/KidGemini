@@ -7,8 +7,19 @@ import type { ChatMessage, Conversation } from "@/types/chat.types";
 const MAX_ID = 100;
 export const MAX_TITLE = 200;
 const MAX_MESSAGES = 500;
-/** A game-building chat runs ~200KB with artifacts; 2MB is generous headroom. */
-export const MAX_CONVO_BYTES = 2_000_000;
+/** A single game's HTML (with the injected asset runtime, import maps,
+ *  AR_ASSETS tables) can run 100-300KB, and — by owner decision — EVERY
+ *  edit's reply keeps its own full snapshot ("the previous version is
+ *  available in the chat window" is the rollback story). 2MB (the original
+ *  cap) silently rejected a realistic ~30-edit session (2026-08-11 incident:
+ *  a morning of real edits never reached the server — every write-through
+ *  PUT 400'd from the moment the conversation crossed the old cap onward,
+ *  with no user-visible error). 20MB covers roughly 60-100 such edits;
+ *  raising a fixed cap is a stopgap, not a structural fix — a long enough
+ *  session will eventually hit ANY fixed cap as long as every version is
+ *  kept inline. See docs/BUG-FIX-LOG.md same date for the open follow-up
+ *  question (externalize old artifacts vs. bound the rollback window). */
+export const MAX_CONVO_BYTES = 20_000_000;
 /** Migration cap — a device store holds tens of chats, never hundreds. */
 export const MAX_BULK = 200;
 export const LIST_DEFAULT = 30;

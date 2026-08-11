@@ -11,6 +11,63 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-11 — a long editing session's chat silently stopped saving to the server, no error visible to the child; "this morning's history and a published game are missing"
+
+- **Report (owner):** "The chat history is missing from morning whatever i did and the game i
+  publishe[d] is not available in the chat history."
+- **Surface area:** `src/lib/chat-history.ts` (`sanitizeConversation`/`MAX_CONVO_BYTES`),
+  `src/components/ChatPanel.container.tsx` (the write-through PUT effect), `src/app/api/chats/[id]/route.ts`.
+- **Root cause:** every console log the owner sent across this whole session (unrelated to what
+  each was originally captured for) showed the SAME line after every turn: `PUT
+  /api/chats/... 400` / `"write-through persist failed: 400"` — visible but not investigated until
+  now, since each earlier log was being read for a different bug. `ChatPanel.container.tsx`'s
+  write-through effect PUTs the WHOLE conversation — every message's own `artifactHtml` included —
+  to the server on every finished turn (by design: a game streams too fast to PUT per token). By
+  owner decision, EVERY edit's reply keeps its own full HTML snapshot ("the previous version is
+  available in the chat window" is the rollback story) — so a long editing session's JSON grows
+  without bound. `sanitizeConversation` (`chat-history.ts`) fail-closed rejects (400) anything over
+  `MAX_CONVO_BYTES`, originally 2,000,000 bytes ("~200KB with artifacts; 2MB is generous headroom"
+  — calibrated for a SHORT session, never revisited for a long one). Once a conversation crosses
+  that cap, it NEVER shrinks back — so from that point on, EVERY subsequent turn's write-through
+  save fails, silently (console-only warning, nothing surfaced to the child or parent). The
+  child's own device was never affected — `chat-store.ts`'s local save is separate and explicitly
+  designed to never be overwritten by stale server state — but anything read from a DIFFERENT
+  device/browser, or the server-side "recents" list, showed the conversation frozen at whatever
+  state existed the last time it was under 2MB.
+- **Fix:** `MAX_CONVO_BYTES` raised 2MB → 20MB (`chat-history.ts`) — covers roughly 60-100 edits
+  at a realistic ~200-300KB/artifact instead of ~7-10. Explicitly a STOPGAP, not a structural fix:
+  any fixed cap is eventually reachable by a long enough session while every version is kept
+  inline. Zero test coverage existed on this file before today; added
+  `src/lib/chat-history.test.ts` (8 tests) covering the whitelist boundary generally, plus the
+  exact incident shape (a 30-edit / ~6MB realistic session, which failed under the old cap and
+  passes under the new one) and a "still fails closed on a truly pathological payload" case so the
+  fail-closed property itself stays pinned.
+- **Result (verified):** the new test reproduces the exact failure under the OLD cap
+  (`expect(out).not.toBeNull()` failed pre-fix), passes post-fix. Full suite green
+  (203 files / 2355 tests), typecheck clean.
+- **Recovery guidance given to the owner:** do NOT clear browser data or switch devices/browsers
+  for the affected chat — the local copy in the SAME browser almost certainly still has everything
+  (write-through is fire-and-forget; local state is never overwritten by stale server data by
+  design). The published game itself is a separate write path (`/api/arcade/publish`), independent
+  of this conversation save, so it should be unaffected even though the CHAT used to find/edit it
+  further may show as stale.
+- **Impact:** any sufficiently long single-conversation game-editing session — likely more common
+  the longer a kid works on one favorite game — has been silently losing every edit past whatever
+  point it first crossed 2MB, with no error surfaced anywhere a parent or kid would see it.
+- **Open follow-up, NOT decided/built — needs an explicit owner call:** the structural question
+  this stopgap doesn't answer — keep raising a fixed cap (simple, still eventually breaks), move
+  each message's `artifactHtml` OUT of the single conversation blob into its own row/reference
+  (bounds the metadata size forever, bigger change), or bound the rollback window (keep only the
+  last N full versions, prune older ones) — the last option trades away part of the "previous
+  version is always in the chat window" promise and must not be chosen silently.
+- **Prevention — name the class:** **an unbounded-growth cap with no user-visible failure signal.**
+  The write-through path already had a working local fallback, which is exactly what let this run
+  undetected all morning — the fix must eventually add a visible signal (a toast, a sidebar badge)
+  when server persistence has been failing, not just a console warning nobody sees.
+- **Related:** the 400 line is visible verbatim in three separate console logs pasted earlier in
+  this same session while investigating an unrelated WebGL/blue-screen bug — a reminder to read
+  every line of a pasted log, not just the one being chased.
+
 ## 2026-08-11 — a fix to `webglContextGuard()` could never reach a game that already had ANY version of it baked in — including the diagnostics shipped to investigate the blue-screen bug below
 
 - **Discovered while investigating the entry below:** the diagnostic logging shipped to catch the
