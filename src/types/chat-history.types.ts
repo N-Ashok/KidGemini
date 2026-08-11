@@ -23,8 +23,15 @@ export interface ChatHistoryStore {
    *  a composite (updatedAt, id) cursor, so rows sharing a timestamp
    *  (rapid same-ms saves) are never skipped. */
   list(userId: string, limit: number, before?: { updatedAt: number; id: string }, workspace?: Workspace): ConvoSummary[];
-  /** Full conversation, or null when absent OR owned by someone else. */
+  /** Full conversation, or null when absent OR owned by someone else. Older
+   *  messages may carry `artifactExternal: true` instead of `artifactHtml`
+   *  (2026-08-11, the size-cap scalable follow-up) — fetch those via
+   *  getMessageArtifact on demand. */
   get(userId: string, id: string): Conversation | null;
+  /** One externalized artifact (see `get`'s note), or null when there is
+   *  none stored OR the conversation isn't owned by this userId (fail
+   *  closed, same ownership contract as `get`). */
+  getMessageArtifact(userId: string, conversationId: string, messageId: string): string | null;
   /** SOFT delete (owner ask 2026-07-26): hides the chat from this account's
    *  view (list + get) — the row itself stays in the system (safety review,
    *  recoverability). Fail-closed on ownership: a foreign or unknown id is a

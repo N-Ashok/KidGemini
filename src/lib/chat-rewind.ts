@@ -13,16 +13,19 @@
 import type { ChatMessage } from "@/types/chat.types";
 
 /** True when message `index` should offer a "Continue from here" action: it
- *  carries a game, something exists after it to diverge from (there's
- *  nothing to "continue from" on the last message — it's already current),
- *  and it isn't already the pinned version. */
+ *  carries a game — inline OR externalized (2026-08-11, the chat-history
+ *  size-cap scalable follow-up: an OLD message is exactly the case that's
+ *  most likely to be externalized, so this must recognize both) — something
+ *  exists after it to diverge from (there's nothing to "continue from" on
+ *  the last message — it's already current), and it isn't already the
+ *  pinned version. */
 export function canContinueFromHere(
   messages: ChatMessage[],
   index: number,
   activeGameMessageId: string | undefined,
 ): boolean {
   const m = messages[index];
-  if (!m?.artifactHtml) return false;
+  if (!m?.artifactHtml && !m?.artifactExternal) return false;
   if (index >= messages.length - 1) return false;
   if (activeGameMessageId === m.id) return false;
   return true;

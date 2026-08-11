@@ -20,7 +20,7 @@ interface MessageItemProps {
   onStop: () => void;
   onRestart: () => void;
   onRegenerate: () => void;
-  onOpenArtifact?: () => void; // set when the message carries artifactHtml
+  onOpenArtifact?: () => void; // set when the message carries a game, inline or externalized (artifactHtml / artifactExternal)
   onContinueFromHere?: () => void; // set when this earlier game message can become the pinned edit target
   isPinned: boolean; // this message IS the current "Continue from here" target
 }
@@ -54,7 +54,7 @@ export function MessageItem(props: MessageItemProps) {
   return (
     <div className="group">
       <Markdown>{m.text}</Markdown>
-      {m.artifactHtml && props.onOpenArtifact && (
+      {(m.artifactHtml || m.artifactExternal) && props.onOpenArtifact && (
         // One clear action per message (owner UAT 2026-07-24): kids scan
         // top-to-bottom, so the primary button comes first and alone, the
         // rewind link sits quietly below it, and the ⋯-menu tip last — two

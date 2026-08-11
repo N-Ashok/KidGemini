@@ -13,8 +13,17 @@ export interface ChatMessage {
   id: string;
   role: ChatRole;
   text: string;
-  /** Optional self-contained HTML game, rendered in the sandboxed ArtifactFrame. */
+  /** Optional self-contained HTML game, rendered in the sandboxed ArtifactFrame.
+   *  Present for a recent message; an OLDER message past the server's inline
+   *  budget carries `artifactExternal` instead (2026-08-11, the chat-history
+   *  size-cap fix) — fetch it on demand from
+   *  `/api/chats/:id/messages/:messageId/artifact` before using it. */
   artifactHtml?: string;
+  /** True when this message HAS a game but it's stored externally (not
+   *  inlined in this payload) because it's past the server's recent-window
+   *  budget. Never set by the client — only ever attached by the server on
+   *  GET, reflecting how the row is actually stored. */
+  artifactExternal?: boolean;
   /** Name of a file the child attached to this message (shown as a chip). */
   attachmentName?: string;
   /** True when this child message is a bundled TWEAK send from the Idea Queue

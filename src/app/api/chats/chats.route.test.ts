@@ -11,6 +11,7 @@ vi.mock("@/lib/ariantra-session.server", () => ({ getAriantraSession: () => auth
 
 import { GET as listGET, POST as bulkPOST } from "./route";
 import { GET as oneGET, PUT as onePUT, PATCH as onePATCH } from "./[id]/route";
+import { GET as artifactGET } from "./[id]/messages/[messageId]/artifact/route";
 import type { NextRequest } from "next/server";
 
 function makeReq(opts: { cookie?: string; body?: unknown; query?: Record<string, string> } = {}): NextRequest {
@@ -68,6 +69,49 @@ describe("PUT + GET /api/chats/:id", () => {
     // id mismatch between URL and body is rejected too.
     const mismatch = await onePUT(makeReq({ body: { convo: convo("y") } }), { params: { id: "x" } });
     expect(mismatch.status).toBe(400);
+  });
+});
+
+// The scalable follow-up (2026-08-11) to the chat-history size-cap incident:
+// old artifacts move out of the conversation row and are fetched on demand.
+describe("GET /api/chats/:id/messages/:messageId/artifact", () => {
+  const longConvo = (id: string) => ({
+    id,
+    title: "Long session",
+    messages: Array.from({ length: 20 }, (_, i) => ({
+      id: `${id}-m${i}`, role: "assistant" as const, text: "game", artifactHtml: "x".repeat(200 * 1024), createdAt: i,
+    })), // 4MB total, 2x the 2MB inline budget — forces externalization
+  });
+
+  it("A.1 an externalized message's real html is fetchable by its owner", async () => {
+    authMock.mockResolvedValue({ userId: "user:art@x.com" });
+    await onePUT(makeReq({ body: { convo: longConvo("art1") } }), { params: { id: "art1" } });
+    const got = await (await oneGET(makeReq({}), { params: { id: "art1" } })).json();
+    const old = got.convo.messages.find((m: { artifactExternal?: boolean }) => m.artifactExternal);
+    expect(old).toBeDefined();
+    expect(old.artifactHtml).toBeUndefined();
+    const res = await artifactGET(makeReq({}), { params: { id: "art1", messageId: old.id } });
+    expect(res.status).toBe(200);
+    expect((await res.json()).html).toBe("x".repeat(200 * 1024));
+  });
+
+  it("A.2 fail-closed: another identity gets 404, never the content", async () => {
+    await onePUT(makeReq({ cookie: "guest:owner2", body: { convo: longConvo("art2") } }), { params: { id: "art2" } });
+    const got = await (await oneGET(makeReq({ cookie: "guest:owner2" }), { params: { id: "art2" } })).json();
+    const old = got.convo.messages.find((m: { artifactExternal?: boolean }) => m.artifactExternal);
+    const stolen = await artifactGET(makeReq({ cookie: "guest:thief2" }), { params: { id: "art2", messageId: old.id } });
+    expect(stolen.status).toBe(404);
+    const anon = await artifactGET(makeReq({}), { params: { id: "art2", messageId: old.id } });
+    expect(anon.status).toBe(404);
+  });
+
+  it("A.3 an unknown message id, or one that was never externalized, is a plain 404 (never an error)", async () => {
+    authMock.mockResolvedValue({ userId: "user:art3@x.com" });
+    await onePUT(makeReq({ body: { convo: convo("art3") } }), { params: { id: "art3" } }); // small — nothing externalized
+    const miss = await artifactGET(makeReq({}), { params: { id: "art3", messageId: "art3-m2" } });
+    expect(miss.status).toBe(404);
+    const unknown = await artifactGET(makeReq({}), { params: { id: "art3", messageId: "no-such-id" } });
+    expect(unknown.status).toBe(404);
   });
 });
 

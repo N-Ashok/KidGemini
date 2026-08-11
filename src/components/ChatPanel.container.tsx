@@ -132,6 +132,27 @@ function plain(text: string): string {
     .trim();
 }
 
+/** The scalable follow-up (2026-08-11) to the chat-history size-cap
+ *  incident: an old message past the server's inline budget carries
+ *  `artifactExternal: true` instead of `artifactHtml` — every "open/restore
+ *  this old game" path must go through here so it fetches on demand instead
+ *  of finding nothing. A RECENT message already has `artifactHtml` inline
+ *  (the overwhelmingly common case — no network round trip needed), so this
+ *  only ever hits the network for a genuinely old version. Null on any
+ *  failure (fail soft — the kid's OTHER games are unaffected either way). */
+async function resolveArtifactHtml(conversationId: string, message: ChatMessage): Promise<string | null> {
+  if (message.artifactHtml) return message.artifactHtml;
+  if (!message.artifactExternal) return null;
+  try {
+    const res = await fetch(`/api/chats/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(message.id)}/artifact`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { html?: string };
+    return typeof data.html === "string" ? data.html : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Props for the chat container. `persona` selects a server persona for this
  *  surface (PRD-BIBLE-TEACHER): the /bible-teacher page passes "bible-teacher"
  *  so /api/chat can apply the teacher prompt/safety — but the server ALWAYS
@@ -1653,12 +1674,12 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
   // consumed and cleared by handleSend) instead of whatever's newest — see
   // chat-rewind.ts. Non-destructive: nothing is deleted or reordered, the
   // regressed later messages stay right where they are in the thread.
-  function handleContinueFromHere(messageId: string) {
+  async function handleContinueFromHere(messageId: string) {
     if (busy) return;
     const target = active.messages.find((m) => m.id === messageId);
     if (!target) return;
     tts.stop();
-    setArtifact(target.artifactHtml ?? null);
+    setArtifact(await resolveArtifactHtml(active.id, target));
     patchActive((c) => ({ ...c, activeGameMessageId: messageId }));
   }
 
@@ -1776,10 +1797,14 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
                 onStop={tts.stop}
                 onRestart={tts.restart}
                 onRegenerate={handleRegenerate}
-                onOpenArtifact={m.artifactHtml ? () => setArtifact(m.artifactHtml!) : undefined}
+                onOpenArtifact={
+                  m.artifactHtml || m.artifactExternal
+                    ? () => void resolveArtifactHtml(active.id, m).then(setArtifact)
+                    : undefined
+                }
                 onContinueFromHere={
                   canContinueFromHere(active.messages, i, active.activeGameMessageId)
-                    ? () => handleContinueFromHere(m.id)
+                    ? () => void handleContinueFromHere(m.id)
                     : undefined
                 }
                 isPinned={active.activeGameMessageId === m.id}

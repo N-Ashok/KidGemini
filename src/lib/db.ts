@@ -43,6 +43,7 @@ import { MAX_REPORT_CHARS } from "./error-report";
 import { evaluate } from "./rate-limit";
 import type { GameSaveRecord, GameSaveState, GameSaveStore } from "@/types/game-save.types";
 import { WRITE_DEBOUNCE_MS } from "./game-save.config";
+import { splitOldArtifacts } from "./chat-history";
 
 let db: Database.Database | null = null;
 
@@ -146,6 +147,21 @@ export function getDb(): Database.Database {
       deletedAt INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_convos_user ON conversations(userId, updatedAt DESC);
+    -- The scalable follow-up to the 2026-08-11 chat-history size-cap incident
+    -- (owner decision): only the MOST RECENT ~2MB of a conversation's game
+    -- HTML stays inlined in the conversations.messages JSON above — older
+    -- artifacts live here instead, one row per message, fetched on demand
+    -- (chat-history.ts's splitOldArtifacts decides the split; upsert below
+    -- writes it). Ownership is checked via conversations.userId at read time
+    -- (getMessageArtifact) — this table carries no userId of its own.
+    CREATE TABLE IF NOT EXISTS message_artifacts (
+      conversationId TEXT NOT NULL,
+      messageId TEXT NOT NULL,
+      html TEXT NOT NULL,
+      createdAt INTEGER NOT NULL,
+      PRIMARY KEY (conversationId, messageId)
+    );
+    CREATE INDEX IF NOT EXISTS idx_message_artifacts_convo ON message_artifacts(conversationId);
     -- Resumable generations (TECH_DEBT #23, shipped 2026-07-13): each turn's
     -- finished reply keyed by the client's replyId. A disconnected client
     -- (screen lock, stall-guard abort under heavy load) polls
@@ -963,8 +979,24 @@ export class SqliteChatHistoryStore implements ChatHistoryStore {
   constructor(private gameSaves: GameSaveStore = new SqliteGameSaveStore()) {}
 
   upsert(userId: string, convo: Conversation, now: number): void {
-    getDb()
-      .prepare(
+    const db = getDb();
+    // Scalable follow-up to the 2026-08-11 size-cap incident: split BEFORE
+    // writing, so the conversations row itself stays bounded near
+    // INLINE_ARTIFACT_BUDGET_BYTES forever, regardless of session length —
+    // growth by design, not a wall to eventually hit. Transactional: a crash
+    // between the artifact writes and the conversation write can never leave
+    // an artifact reference (artifactExternal:true) pointing at a row that
+    // was never actually written.
+    const { messages: trimmed, toStore } = splitOldArtifacts(convo.messages);
+    db.transaction(() => {
+      for (const a of toStore) {
+        db.prepare(
+          `INSERT INTO message_artifacts (conversationId, messageId, html, createdAt)
+           VALUES (@conversationId, @messageId, @html, @now)
+           ON CONFLICT(conversationId, messageId) DO UPDATE SET html = excluded.html`,
+        ).run({ conversationId: convo.id, messageId: a.messageId, html: a.html, now });
+      }
+      db.prepare(
         // workspace is set on INSERT and left untouched on UPDATE — a thread's
         // surface is fixed at creation (a bible-teacher chat can't migrate into
         // the kid app by being re-saved).
@@ -973,8 +1005,24 @@ export class SqliteChatHistoryStore implements ChatHistoryStore {
          ON CONFLICT(id) DO UPDATE SET
            title = excluded.title, messages = excluded.messages, updatedAt = excluded.updatedAt
          WHERE conversations.userId = excluded.userId`,
-      )
-      .run({ id: convo.id, userId, title: convo.title, messages: JSON.stringify(convo.messages), workspace: convo.workspace ?? "default", now });
+      ).run({ id: convo.id, userId, title: convo.title, messages: JSON.stringify(trimmed), workspace: convo.workspace ?? "default", now });
+    })();
+  }
+
+  /** One externalized artifact, or null when the message has none stored OR
+   *  the conversation isn't owned by this userId (fail-closed, same
+   *  ownership check as get()). Never rejects a message whose artifact was
+   *  never externalized (still inline in `messages`) — the client only
+   *  calls this when a message actually carries `artifactExternal: true`. */
+  getMessageArtifact(userId: string, conversationId: string, messageId: string): string | null {
+    const owns = getDb()
+      .prepare(`SELECT 1 FROM conversations WHERE id = ? AND userId = ? AND deletedAt IS NULL`)
+      .get(conversationId, userId);
+    if (!owns) return null;
+    const row = getDb()
+      .prepare(`SELECT html FROM message_artifacts WHERE conversationId = ? AND messageId = ?`)
+      .get(conversationId, messageId) as { html: string } | undefined;
+    return row?.html ?? null;
   }
 
   bulkUpsert(userId: string, convos: Conversation[], now: number): number {

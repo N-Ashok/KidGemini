@@ -7,7 +7,7 @@ import { vi } from "vitest";
 vi.mock("server-only", () => ({}));
 process.env.DATABASE_PATH = ":memory:";
 
-import { SqliteChatHistoryStore, SqliteGameSaveStore } from "./db";
+import { SqliteChatHistoryStore, SqliteGameSaveStore, getDb } from "./db";
 import type { Conversation } from "@/types/chat.types";
 import type { GameSaveState } from "@/types/game-save.types";
 
@@ -278,5 +278,79 @@ describe("SqliteChatHistoryStore", () => {
     // empty/unknown tokens are a plain miss, never an oracle
     expect(store.getSharedByToken("")).toBeNull();
     expect(store.getSharedByToken("tok-unknown")).toBeNull();
+  });
+
+  // ── The scalable follow-up to the 2026-08-11 chat-history size-cap
+  // incident (owner decision): upsert splits old artifacts into their own
+  // table instead of leaving the conversations row to grow forever.
+  it("H.27 an old artifact past the inline budget is externalized on save, not lost", () => {
+    const bigMsg = (id: string, kb: number) =>
+      ({ id, role: "assistant" as const, text: "game", artifactHtml: "x".repeat(kb * 1024), createdAt: 1 });
+    const long: Conversation = {
+      id: "long1",
+      title: "Long session",
+      messages: Array.from({ length: 20 }, (_, i) => bigMsg(`m${i}`, 200)), // 4MB, 2x the 2MB budget
+    };
+    store.upsert("user:long@x.com", long, 1000);
+    const got = store.get("user:long@x.com", "long1")!;
+    // The newest message stays inline...
+    expect(got.messages.at(-1)!.artifactHtml).toBeDefined();
+    // ...an old one is externalized, not silently dropped from the row.
+    const old = got.messages[0]!;
+    expect(old.artifactHtml).toBeUndefined();
+    expect(old.artifactExternal).toBe(true);
+    // ...and its real content is still fetchable.
+    expect(store.getMessageArtifact("user:long@x.com", "long1", old.id)).toBe("x".repeat(200 * 1024));
+    // The STORED row itself is now bounded near the budget (~2MB of inline
+    // artifact bytes, plus small per-message JSON overhead for all 20
+    // messages) — nowhere near the full 4MB the un-trimmed conversation
+    // would have been, which is what actually removes the wall.
+    const row = getDb()
+      .prepare("SELECT length(messages) AS n FROM conversations WHERE id = ?")
+      .get("long1") as { n: number };
+    expect(row.n).toBeLessThan(2_500_000);
+  });
+
+  it("H.28 getMessageArtifact is fail-closed on ownership, same as get()", () => {
+    const withArtifact: Conversation = {
+      id: "own1",
+      title: "t",
+      messages: Array.from({ length: 15 }, (_, i) => ({
+        id: `m${i}`, role: "assistant" as const, text: "g", artifactHtml: "x".repeat(200 * 1024), createdAt: 1,
+      })),
+    };
+    store.upsert("user:owner@x.com", withArtifact, 1000);
+    const externalized = store.get("user:owner@x.com", "own1")!.messages.find((m) => m.artifactExternal)!;
+    expect(store.getMessageArtifact("guest:thief", "own1", externalized.id)).toBeNull();
+    expect(store.getMessageArtifact("user:owner@x.com", "own1", externalized.id)).not.toBeNull();
+    // An unknown messageId under a conversation the caller DOES own is a
+    // plain miss, never an error.
+    expect(store.getMessageArtifact("user:owner@x.com", "own1", "no-such-message")).toBeNull();
+  });
+
+  it("H.29 re-saving the same long conversation doesn't duplicate or corrupt externalized rows (idempotent)", () => {
+    const bigMsg = (id: string, kb: number) =>
+      ({ id, role: "assistant" as const, text: "game", artifactHtml: "x".repeat(kb * 1024), createdAt: 1 });
+    const long: Conversation = {
+      id: "long2",
+      title: "v1",
+      messages: Array.from({ length: 20 }, (_, i) => bigMsg(`n${i}`, 200)),
+    };
+    store.upsert("user:re@x.com", long, 1000);
+    // The client always sends full history again on the NEXT save (it has
+    // no concept of externalization) — this must settle cleanly, not error
+    // or grow message_artifacts unboundedly.
+    store.upsert("user:re@x.com", { ...long, title: "v2" }, 2000);
+    const got = store.get("user:re@x.com", "long2")!;
+    expect(got.title).toBe("v2");
+    const old = got.messages[0]!;
+    expect(store.getMessageArtifact("user:re@x.com", "long2", old.id)).toBe("x".repeat(200 * 1024));
+  });
+
+  it("H.30 a small conversation is unaffected — no message_artifacts rows created", () => {
+    store.upsert("user:small@x.com", convo("small1"), 1000);
+    const got = store.get("user:small@x.com", "small1")!;
+    expect(got.messages.every((m) => !m.artifactExternal)).toBe(true);
+    expect(got.messages[1]!.artifactHtml).toBe("<html>game</html>");
   });
 });

@@ -11,6 +11,62 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-11 — the scalable fix for the chat-history size cap: recent artifacts stay inline, older ones are externalized and pulled on demand
+
+- **Context:** same-day follow-up to the entry immediately below (the 2MB→20MB stopgap). A
+  production DB check during that incident found the wall isn't rare: **3 real accounts** were
+  frozen at/near the old 2MB cap, dating back to **2026-07-21** — at least 3 weeks of silent
+  truncation on any long-lived favorite game. Raising a fixed cap only moves that wall; it doesn't
+  remove it. Owner decision: "only recent chat[s] of 2MB be there" — externalize the rest,
+  reference and pull it when required.
+- **Design:** `SqliteChatHistoryStore.upsert` (`db.ts`) now calls a new pure function,
+  `splitOldArtifacts` (`chat-history.ts`), before writing — walking messages NEWEST→OLDEST, it
+  keeps inlining `artifactHtml` until `INLINE_ARTIFACT_BUDGET_BYTES` (2MB, same number as the
+  original cap — chosen because going over it now costs almost nothing, one extra local SQLite
+  read, so there's no reason to be conservative; the real production average, ~19KB/message,
+  comfortably fits 100+ recent messages inline at 2MB). Anything older is written to a NEW table,
+  `message_artifacts` (one row per message, keyed by conversationId+messageId), and the stored
+  message gets `artifactExternal: true` instead of the inline HTML. The conversations row itself
+  now stays bounded near 2MB **forever**, regardless of session length — growth by design, not a
+  wall to eventually re-hit. A new fail-closed endpoint,
+  `GET /api/chats/:id/messages/:messageId/artifact`, fetches one externalized version on demand
+  (same ownership check as the conversation GET). Idempotent by construction: the client has no
+  concept of externalization and always sends full history on every save, so this decision just
+  re-runs every time — re-upserting the same html to an already-externalized row is a harmless
+  no-op.
+- **Client:** `ChatMessage` gained `artifactExternal?: boolean` (server-attached only, never sent
+  by the client). New `resolveArtifactHtml(conversationId, message)` helper
+  (`ChatPanel.container.tsx`) is now the ONLY path every "open/restore an old game" flow goes
+  through — `onOpenArtifact` and `handleContinueFromHere` both route through it, falling back to
+  the network only when a message is actually externalized (the overwhelmingly common case, the
+  newest message, never needs it). `MessageItem.tsx`'s "🎮 Open game" card and
+  `chat-rewind.ts`'s `canContinueFromHere` both used to gate on bare `artifactHtml` presence,
+  which would have silently hidden the whole card for any externalized (old) message — both fixed
+  to recognize `artifactExternal` too.
+- **Result (verified):** `chat-history.test.ts` (+6 tests, `splitOldArtifacts`: small conversation
+  untouched, a realistic 30-edit/6MB session trimmed not rejected, the newest artifact-bearing
+  message NEVER externalized even alone and over budget, a custom-budget unit case, artifact-free
+  messages pass through untouched); `db.chat-history.test.ts` (+4, H.27-30: externalize-on-save,
+  fail-closed `getMessageArtifact`, idempotent re-save, small conversations create zero
+  `message_artifacts` rows); `chats.route.test.ts` (+3, A.1-3: fetch an externalized artifact,
+  fail-closed on foreign identity, plain 404 on an unknown/never-externalized message id);
+  `chat-rewind.test.ts` (+1: externalized old message still offers "Continue from here"). Full
+  suite green (203 files / 2369 tests), typecheck clean.
+- **Impact:** the wall from the entry below is now gone by design, not just moved — a
+  conversation's own stored size no longer grows with session length at all. The three accounts
+  found stuck will self-heal the next time each conversation is saved again (no migration needed —
+  `upsert` is the same code path for old and new rows).
+- **Not done, deliberately out of scope this round:** the three already-stuck conversations aren't
+  being proactively re-saved server-side (each self-heals on its own next edit); `MAX_MESSAGES`
+  (500) is untouched — at the measured ~19KB/message average it's now the practical ceiling before
+  `MAX_CONVO_BYTES` (20MB) would matter, and 500 messages (~250 edit turns) is far beyond where any
+  known session has ever landed, so raising it wasn't part of this ask.
+- **Prevention — name the class:** **unbounded growth "fixed" by a bigger wall instead of bounded
+  growth.** The 20MB stopgap in the entry below was explicitly labeled as such at the time — this
+  entry is that promise kept the same day, not a separate initiative.
+- **Related:** the entry immediately below (2MB→20MB stopgap, same incident); the "who's affected"
+  production scan that found the 3 stuck accounts.
+
 ## 2026-08-11 — a long editing session's chat silently stopped saving to the server, no error visible to the child; "this morning's history and a published game are missing"
 
 - **Report (owner):** "The chat history is missing from morning whatever i did and the game i
@@ -54,12 +110,8 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 - **Impact:** any sufficiently long single-conversation game-editing session — likely more common
   the longer a kid works on one favorite game — has been silently losing every edit past whatever
   point it first crossed 2MB, with no error surfaced anywhere a parent or kid would see it.
-- **Open follow-up, NOT decided/built — needs an explicit owner call:** the structural question
-  this stopgap doesn't answer — keep raising a fixed cap (simple, still eventually breaks), move
-  each message's `artifactHtml` OUT of the single conversation blob into its own row/reference
-  (bounds the metadata size forever, bigger change), or bound the rollback window (keep only the
-  last N full versions, prune older ones) — the last option trades away part of the "previous
-  version is always in the chat window" promise and must not be chosen silently.
+- **Follow-up DECIDED and BUILT same day** — owner chose "move old artifacts out, reference and
+  pull when required." See the entry immediately below.
 - **Prevention — name the class:** **an unbounded-growth cap with no user-visible failure signal.**
   The write-through path already had a working local fallback, which is exactly what let this run
   undetected all morning — the fix must eventually add a visible signal (a toast, a sidebar badge)

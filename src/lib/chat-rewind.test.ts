@@ -34,4 +34,12 @@ describe("canContinueFromHere", () => {
   it("returns false for an out-of-range index", () => {
     expect(canContinueFromHere(messages, 99, undefined)).toBe(false);
   });
+
+  // 2026-08-11 (chat-history size-cap scalable follow-up): an OLD message is
+  // exactly the one most likely to have been externalized — it must still
+  // offer "Continue from here", the same as an inline one.
+  it("offers it on an EXTERNALIZED old game message, same as an inline one", () => {
+    const withExternal = [msg("a"), msg("b", { artifactExternal: true }), msg("c"), msg("d", { artifactHtml: "<html>v2</html>" })];
+    expect(canContinueFromHere(withExternal, 1, undefined)).toBe(true);
+  });
 });
