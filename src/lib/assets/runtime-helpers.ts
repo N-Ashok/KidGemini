@@ -834,6 +834,21 @@ addEventListener('message', function (e) {
   var d = e && e.data;
   if (d && d.__ari === 'release-gl') release('asked');
 }, false);
+// Diagnostic-only (2026-08-11): a non-persisted pagehide fired mid-edit on
+// the STILL-PLAYING game, with no deliberate srcDoc/key change from React —
+// after shadow-verify was removed the same day, the explicit 'release-gl'
+// message (sent by the parent right before it unmounted the shadow frame)
+// went with it, leaving THIS listener as the only release trigger, carrying
+// more weight than "pagehide is kept as a backstop only" (the comment above
+// release()) ever assumed. This context string is what will tell us whether
+// it's a real backgrounding event (visibility/online state) or something
+// else entirely — never throws, so it can never break the guard itself.
+function diag() {
+  try {
+    return 'visibility=' + document.visibilityState + ' hidden=' + document.hidden +
+      ' online=' + navigator.onLine + ' at=' + Date.now();
+  } catch (e) { return 'diag-unavailable'; }
+}
 addEventListener('pagehide', function (e) {
   // Safari/iOS fires pagehide when the page is merely BACKGROUNDED (app or
   // tab switch, pane transitions) and will bring it back — persisted=true.
@@ -841,7 +856,11 @@ addEventListener('pagehide', function (e) {
   // it: the owner's "froze, then turned blue when I clicked back"
   // (2026-08-10, second report). Only a non-persisted pagehide — the actual
   // teardown of a detached iframe — releases.
-  if (e && e.persisted) return;
+  if (e && e.persisted) {
+    console.warn('[ari] pagehide (persisted, backgrounded — kept alive) ' + diag());
+    return;
+  }
+  console.warn('[ari] pagehide (NOT persisted — releasing) ' + diag());
   release('pagehide');
 });
 addEventListener('pageshow', function () {

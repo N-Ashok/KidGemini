@@ -56,6 +56,12 @@ function boot() {
       windowListeners.set(type, l);
     },
     Object,
+    Date,
+    // diag() (2026-08-11 investigation) reads these — never throw here, or
+    // every test in this file would trip the guard's own try/catch instead
+    // of exercising the real log line.
+    document: { visibilityState: "visible", hidden: false },
+    navigator: { onLine: true },
   };
   sandbox.window = sandbox;
   (sandbox.window as Record<string, unknown>).requestAnimationFrame = (cb: (t: number) => void) => {
@@ -211,6 +217,31 @@ describe("webglContextGuard — the loop survives a context loss", () => {
     g.pagehide(false);
     expect(g.win.__arGlCount).toBe(0);
     expect(g.warnings.some((w) => w.includes("released (pagehide)"))).toBe(true);
+  });
+
+  // ── 2026-08-11 investigation: a non-persisted pagehide fired on the
+  // STILL-PLAYING game mid-edit, with nothing in React deliberately changing
+  // the iframe — shadow-verify's explicit 'release-gl' (sent right before
+  // unmount) is gone, leaving this listener carrying more than it used to.
+  // These diagnostics are what will tell us, from the next real occurrence,
+  // whether it's a genuine backgrounding/connectivity event or something
+  // else — never behavior-changing, so the log content itself is the point.
+  it("a non-persisted pagehide logs visibility/online/timestamp diagnostics", () => {
+    g.makeCanvas();
+    g.pagehide(false);
+    const line = g.warnings.find((w) => w.includes("NOT persisted"));
+    expect(line).toBeDefined();
+    expect(line).toContain("visibility=");
+    expect(line).toContain("online=");
+    expect(line).toContain("at=");
+  });
+
+  it("a persisted (backgrounded) pagehide ALSO logs diagnostics, even though it doesn't release", () => {
+    g.makeCanvas();
+    g.pagehide(true);
+    const line = g.warnings.find((w) => w.includes("persisted, backgrounded"));
+    expect(line).toBeDefined();
+    expect(line).toContain("visibility=");
   });
 
   // ── 2026-08-10, second owner report: pane switch → freeze, tap back → blue ──
