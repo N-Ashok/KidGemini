@@ -14,7 +14,7 @@ import { ensureAssetRuntime } from "./ensure-runtime";
 import { PERF_PROBE_MARKER, buildPerfProbeScript } from "./perf-probe";
 import manifestJson from "./manifest.json";
 import type { AssetManifest } from "./manifest";
-import { countSizeTables, parseSizeTables } from "./runtime-helpers";
+import { countSizeTables, parseSizeTables, webglContextGuard, WEBGL_GUARD_VERSION } from "./runtime-helpers";
 
 const manifest = manifestJson as AssetManifest;
 const ENGINE = manifest.assets.find((a) => a.type === "engine")!.url;
@@ -61,7 +61,7 @@ describe("ensureAssetRuntime — the three-importmap floor", () => {
       `<script type="importmap">${JSON.stringify({ imports: { three: ENGINE } })}</script>` +
         `<style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style>` +
         `<script>window.__arFrameGovernor = 1;</script>` +
-        `<script>window.__arGlGuard = 1;</script>` +
+        webglContextGuard() +
         `${PERF_PROBE_MARKER}<script>${buildPerfProbeScript()}</script>` +
         `<script type="module">import { Scene } from "three";</script>`,
     );
@@ -93,6 +93,29 @@ describe("ensureAssetRuntime — the three-importmap floor", () => {
     expect(after).toMatch(/addEventListener\('message'/);
     // And it must be a no-op the second time.
     expect(ensureAssetRuntime(after)).toBe(after);
+  });
+
+  // 2026-08-11: found investigating an owner report where a guard fix never
+  // reached the game being tested against. The v1 guard shipped 2026-08-10
+  // with a bare presence check (`!out.includes("__arGlGuard")`) — exactly
+  // the bug perf-probe's own comment already named ("presence alone used to
+  // be treated as done"): a game whose guard was baked in before ANY LATER
+  // fix to webglContextGuard() was frozen on that version forever, surviving
+  // both edits and deploys, because presence alone satisfied the check.
+  it("F.3e a game carrying a STALE (unversioned, pre-v2) guard gets it replaced, not left alone", () => {
+    const v1Guard = `<script>(function(){window.__arGlGuard=1;/* no version stamp — the original 2026-08-10 shape */})();</script>`;
+    const stored = page(
+      `<script type="importmap">${JSON.stringify({ imports: { three: ENGINE } })}</script>` +
+        `<script>window.__arFrameGovernor = 1;</script>` +
+        v1Guard +
+        `<script type="module">import { Scene } from "three";</script>`,
+    );
+    const out = ensureAssetRuntime(stored);
+    expect(out).toContain(`window.__arGlGuardVersion = ${WEBGL_GUARD_VERSION}`);
+    // The stale v1 block was stripped, not left alongside the fresh one —
+    // exactly ONE window.__arGlGuard assignment survives.
+    expect(out.match(/window\.__arGlGuard\s*=\s*1/g)?.length).toBe(1);
+    expect(ensureAssetRuntime(out)).toBe(out); // settles immediately
   });
 
   it("F.3b a game floored BEFORE the governor existed gains one (this is what reaches old games)", () => {

@@ -11,6 +11,93 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-11 — a fix to `webglContextGuard()` could never reach a game that already had ANY version of it baked in — including the diagnostics shipped to investigate the blue-screen bug below
+
+- **Discovered while investigating the entry below:** the diagnostic logging shipped to catch the
+  blue-screen bug in the act never appeared in the owner's follow-up console log — not even the
+  OLD (pre-diagnostic) `[ari] WebGL contexts released (pagehide)` line changed shape, and a real
+  `Navigated to https://games-lab.ariantra.com/` full-page load in the SAME log still showed the
+  stale text. Not a browser-cache/stale-tab issue (ruled out by the real navigation) — the STORED
+  game HTML itself carried an old guard.
+- **Root cause:** `ensureAssetRuntime()`'s WebGL-guard step (`src/lib/assets/ensure-runtime.ts`,
+  step 2c) gated re-injection on bare marker PRESENCE — `if (!out.includes("__arGlGuard"))`. This
+  is the EXACT bug the file's own `injectPerfProbe` comment already named and fixed for the perf
+  probe on 2026-08-06: *"the old marker-presence guard here short-circuited before the version
+  check ever ran, stranding every stored game on whatever probe it was first given."* The WebGL
+  guard, shipped 2026-08-10, never got the same treatment — so ANY game whose guard was baked in
+  (server-side at generation, or client-side on first preview) before a later change to
+  `webglContextGuard()` was frozen on that exact version forever, immune to every subsequent fix:
+  the pagehide/persisted correction, the watchdog ladder, and today's diagnostics all silently
+  failed to reach games that predated them, with no error or signal anywhere.
+- **Fix:** `WEBGL_GUARD_VERSION` constant + `window.__arGlGuardVersion` stamp added to
+  `webglContextGuard()` (`runtime-helpers.ts`), mirroring `LOAD_MODEL_HELPER_VERSION`/
+  `PERF_PROBE_VERSION`. `ensure-runtime.ts` gained `hasCurrentGlGuard`/`stripStaleGlGuard`
+  (same shape as the existing `hasCurrentHelper`/`stripStaleLoadModelHelper` pair) — a stale guard
+  block is now stripped and replaced, never left alongside or skipped.
+- **Result (verified):** `ensure-runtime.test.ts` F.3e — a stored game with an unversioned (v1)
+  guard gets it replaced with the current version, exactly one `window.__arGlGuard` assignment
+  survives, settles idempotently. F.3's existing idempotency fixture switched from a hand-rolled
+  `<script>window.__arGlGuard = 1;</script>` stub (which would now — correctly — read as stale
+  every time) to the real `webglContextGuard()` output, matching how the perf-probe fixture
+  already uses `buildPerfProbeScript()`. Full suite green (202 files / 2347 tests), typecheck
+  clean.
+- **Impact:** every game generated or last previewed before this fix — potentially all of them,
+  since the guard has been edited multiple times since 2026-08-10 — picks up the CURRENT guard
+  the next time it's previewed (`ArtifactFrame.tsx`'s client-side re-floor), no regeneration
+  needed. This is what will finally let the diagnostics below actually run on the owner's next
+  repro.
+- **Prevention — name the class:** **an idempotency check that only asks "is ANY version
+  present," never "is the CURRENT version present."** This is the second time this exact class has
+  hit this file (perf-probe, 2026-08-06; the WebGL guard, today) — any FUTURE `ensureAssetRuntime`
+  floor that can change behavior after its first ship must be version-stamped from day one, not
+  retrofitted after the first time it silently strands a fix.
+- **Related:** the entry immediately below (the blue-screen investigation this was found chasing);
+  `injectPerfProbe`'s 2026-08-06 fix (`perf-probe.ts`) — the precedent this should have followed
+  from the start.
+
+## 2026-08-11 (open, diagnostics shipped) — the preview blue-screens mid-edit; a non-persisted `pagehide` fires on the STILL-PLAYING game with no deliberate srcDoc change
+
+- **Report (owner, screen recording + console log):** the crocodile/river game blue-screens
+  ~4-5s into an edit (HUD frozen on stale values, canvas flat blue, no game objects), recovers
+  only via a Code-tab round trip (which restarts the game). The console log the owner captured:
+  `[ari] WebGL contexts released (pagehide)` fires **during** an edit's generation, **before**
+  that edit's own `finished` line — the currently-displayed game is the PREVIOUS edit's result,
+  untouched by anything React did. Two `net::ERR_NETWORK_CHANGED` errors appear immediately
+  before it in the same log.
+- **Ruled out:** the same-day auto-fix concurrency bug (entry above) — its own send in this exact
+  log fires strictly AFTER this release, prompted by the game's real 2016 draw calls, not
+  concurrently with it.
+- **Working theory, NOT yet confirmed — do not treat as root cause:** `webglContextGuard()`
+  (`src/lib/assets/runtime-helpers.ts`) only releases GPU contexts on a **non-persisted**
+  `pagehide` (a real teardown, never a mere backgrounding). Its own comment says pagehide is "kept
+  as a backstop only" because "Chrome does not reliably fire it for a detached iframe" — the
+  *primary*, deterministic signal was the shadow-verify parent's explicit `{__ari:'release-gl'}`
+  message, sent right before it unmounted the shadow frame. Shadow-verify was **removed the same
+  day** (`f05359c`) and that message went with it — `pagehide` is now the ONLY release trigger,
+  covering a broader class of real-world events (tab discard under memory pressure, connectivity
+  changes) than it was ever validated against alone.
+- **Fix so far — diagnostics only, no behavior change (`2caced6`):** `diag()` helper added to
+  `runtime-helpers.ts`, logging `document.visibilityState`, `document.hidden`, `navigator.onLine`,
+  and a timestamp on BOTH `pagehide` branches (persisted and non-persisted). Never throws (wrapped
+  try/catch), so it cannot itself break the guard. `webgl-guard.test.ts` — sandbox gained
+  `document`/`navigator` mocks, 2 new tests pin the diagnostic log content on both branches.
+- **Result (verified):** full suite green (202 files / 2346 tests — 4 unrelated flaky failures on
+  one parallel run, confirmed passing on rerun and in isolation), typecheck clean. Deployed
+  2026-08-11. **Root cause still open** — owner will capture the console log again on the next
+  occurrence; that log's `visibility=`/`online=` values will say whether this is a genuine
+  backgrounding/connectivity event or something else the guard needs to handle differently.
+- **Impact:** none yet (diagnostic-only) — the underlying blue-screen bug is still live in
+  production while this is open.
+- **Prevention — name the class:** **an event downgraded from "backstop" to "sole signal" without
+  re-validating its coverage.** `pagehide`'s own code comment warned it wasn't reliable enough to
+  be the only release trigger; removing shadow-verify's explicit message silently promoted it to
+  exactly that role. Any future removal of an explicit signal must re-check what backup mechanisms
+  were quietly relying on it being the primary one.
+- **Related:** the entry immediately below (same-day auto-fix concurrency bug — real, fixed,
+  but NOT this bug); the 2026-08-10 WebGL context guard entries; `f05359c` (shadow-verify removal).
+
+---
+
 ## 2026-08-11 — the proactive draw-call auto-fix fired a SECOND concurrent turn while the kid's own edit was still streaming, leaving the preview stuck on a blue screen
 
 - **Report (owner, production UAT):** *"in production, the game is stuck with a blue screen when
@@ -47,6 +134,13 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
   mechanism), and it exactly matches the reported timing, but I have not personally reproduced
   the stuck-WebGL-context symptom end to end. Flagging as a hypothesis per the "never use
   production UAT as the test loop" rule — owner re-test after deploy will confirm.
+- **Correction (same day, 2026-08-11, after the owner sent a screen recording):** this fix is a
+  real, still-correct bug fix — but it is **NOT** what the recording shows. The console log the
+  owner captured shows `[ari] WebGL contexts released (pagehide)` firing DURING an edit's own
+  generation, BEFORE that edit's `finished` line — i.e. before any artifact/docKey change could
+  have happened. The auto-fix's own send (visible later in the same log, prompted by that game's
+  real 2016 draw calls) fires strictly AFTER, not concurrently. See the follow-up entry below —
+  the actual trigger is still open, diagnostics shipped to pin it down on the next occurrence.
 - **Impact:** the proactive auto-fix (built and deployed the same day) could stall an in-progress
   edit's preview for ANY kid whose current game was already draw-call-bound when they asked for
   a change — a regression introduced by the very feature meant to help slow games, within hours

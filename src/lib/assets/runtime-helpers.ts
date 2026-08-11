@@ -724,10 +724,24 @@ window.requestAnimationFrame = function (cb) {
  * usually does not exist yet when this runs — the same reason the frame
  * governor patches requestAnimationFrame.
  */
+/** Bumped whenever webglContextGuard()'s BEHAVIOR changes — mirrors
+ *  perf-probe.ts's PERF_PROBE_VERSION. Root cause of the 2026-08-11
+ *  investigation stalling: ensure-runtime.ts used to gate re-injection on
+ *  bare marker PRESENCE (`!out.includes("__arGlGuard")`), exactly the bug
+ *  perf-probe's own comment already named ("presence alone used to be
+ *  treated as done") — a game whose guard was baked in before ANY later fix
+ *  (the pagehide/persisted fix, the watchdog, these diagnostics) was frozen
+ *  on that first version forever, surviving both edits and deploys. v1 was
+ *  the original unversioned guard (2026-08-10); v2 adds this version marker
+ *  itself plus the pagehide diagnostics (2026-08-11).
+ */
+export const WEBGL_GUARD_VERSION = 2;
+
 export function webglContextGuard(): string {
   return `<script>(function(){
 if (window.__arGlGuard) return;
 window.__arGlGuard = 1;
+window.__arGlGuardVersion = ${WEBGL_GUARD_VERSION};
 var get = HTMLCanvasElement.prototype.getContext;
 var live = [];
 var lostCount = 0;

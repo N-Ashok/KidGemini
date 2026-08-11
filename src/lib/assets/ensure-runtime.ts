@@ -19,6 +19,7 @@ import {
   loadModelBatchHelper,
   frameGovernor,
   webglContextGuard,
+  WEBGL_GUARD_VERSION,
   LOAD_MODEL_HELPER_VERSION,
   parseAssetTables,
   stripAssetTables,
@@ -66,6 +67,18 @@ function hasCurrentHelper(html: string): boolean {
 const SCRIPT_BLOCK_RE = /<script[^>]*>[\s\S]*?<\/script>/g;
 function stripStaleLoadModelHelper(html: string): string {
   return html.replace(SCRIPT_BLOCK_RE, (block) => (block.includes("window.loadModel =") ? "" : block));
+}
+
+// Same shape as HELPER_VERSION_RE/hasCurrentHelper/stripStaleLoadModelHelper
+// above (2026-08-11 — see the (2c) comment at the call site for why this
+// needed to exist at all).
+const GL_GUARD_VERSION_RE = /window\.__arGlGuardVersion\s*=\s*(\d+)/;
+function hasCurrentGlGuard(html: string): boolean {
+  const m = html.match(GL_GUARD_VERSION_RE);
+  return !!m && Number(m[1]) >= WEBGL_GUARD_VERSION;
+}
+function stripStaleGlGuard(html: string): string {
+  return html.replace(SCRIPT_BLOCK_RE, (block) => (block.includes("window.__arGlGuard") ? "" : block));
 }
 
 // The SECOND black-screen cause (BUG-FIX-LOG 2026-07-23 follow-up, verified in a
@@ -157,8 +170,16 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
   // (2c) WebGL context guard (2026-08-10) — survive an eviction instead of
   // going permanently blank, and release the GPU on teardown so a session of
   // edits stops accumulating contexts. Same reasoning as the governor above:
-  // this is the only path that reaches games that already exist.
-  if (!out.includes("__arGlGuard")) {
+  // this is the only path that reaches games that already exist. Version-
+  // aware since 2026-08-11 (WEBGL_GUARD_VERSION) — the bare presence check
+  // this used to be (`!out.includes("__arGlGuard")`) is the EXACT bug
+  // perf-probe's own comment already named ("presence alone used to be
+  // treated as done"): a game whose guard was baked in before ANY later fix
+  // to this function was frozen on that version forever, surviving both
+  // edits and deploys — found investigating an owner report where a fix
+  // never reached the game being tested against.
+  if (!hasCurrentGlGuard(out)) {
+    if (out.includes("__arGlGuard")) out = stripStaleGlGuard(out);
     markup += webglContextGuard();
   }
 
