@@ -298,6 +298,7 @@ describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026
         lastAutoFixedDocKey: null,
         models: [],
         drawCalls: 1250,
+        busy: false,
       }),
     ).toBe(true);
   });
@@ -309,6 +310,7 @@ describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026
         lastAutoFixedDocKey: "gen-1",
         models: [],
         drawCalls: 1250,
+        busy: false,
       }),
     ).toBe(false);
   });
@@ -320,6 +322,7 @@ describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026
         lastAutoFixedDocKey: "gen-1",
         models: [],
         drawCalls: 900,
+        busy: false,
       }),
     ).toBe(true);
   });
@@ -331,8 +334,42 @@ describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026
         lastAutoFixedDocKey: null,
         models: [],
         drawCalls: 120,
+        busy: false,
       }),
     ).toBe(false);
+  });
+
+  // ── Regression: production incident 2026-08-11 ─────────────────────────
+  // handleSend has no concurrency guard — the silent auto-fix turn fired
+  // WHILE the kid's own edit was still streaming, two concurrent runStream()
+  // calls raced the artifact/docKey update mid-generation, and the preview's
+  // WebGL context got stuck on a blue screen recoverable only by a forced
+  // remount (switching to the Code tab and back, which also restarted the
+  // game). Must never fire while a turn is already in flight.
+  it("does NOT fire while a turn is already streaming, even on an otherwise-eligible fresh docKey", () => {
+    expect(
+      shouldAutoFixSlowdown({
+        docKey: "gen-1",
+        lastAutoFixedDocKey: null,
+        models: [],
+        drawCalls: 1250,
+        busy: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("does NOT consume the docKey when skipped for busy — retries once the turn finishes", () => {
+    const argsWhileBusy = {
+      docKey: "gen-1",
+      lastAutoFixedDocKey: null,
+      models: [],
+      drawCalls: 1250,
+      busy: true,
+    };
+    expect(shouldAutoFixSlowdown(argsWhileBusy)).toBe(false);
+    // Caller never advances lastAutoFixedDocKey on a false return (see
+    // ArtifactFrame.tsx) — the SAME docKey must still fire once busy clears.
+    expect(shouldAutoFixSlowdown({ ...argsWhileBusy, busy: false })).toBe(true);
   });
 });
 

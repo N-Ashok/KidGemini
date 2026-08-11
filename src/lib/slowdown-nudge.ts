@@ -194,8 +194,21 @@ export function shouldAutoFixSlowdown(args: {
   lastAutoFixedDocKey: string | null;
   models: PerfModelEntry[];
   drawCalls?: number | null;
+  /** A real edit is already streaming (handleSend has no concurrency guard
+   *  of its own — production incident 2026-08-11: the silent auto-fix turn
+   *  fired WHILE the kid's own edit was mid-stream, two concurrent
+   *  runStream() calls against the same conversation raced the artifact/
+   *  docKey update mid-generation and left the preview's WebGL context
+   *  stuck — only a forced iframe remount, e.g. Code tab and back,
+   *  recovered it). Must stay false while busy — the caller does NOT
+   *  advance `lastAutoFixedDocKey` on a false return, so this retries on
+   *  the next snapshot once the kid's turn finishes, rather than being
+   *  silently skipped forever for this docKey. */
+  busy: boolean;
 }): boolean {
-  return args.docKey !== args.lastAutoFixedDocKey && isDrawCallBound(args.models, args.drawCalls);
+  return (
+    !args.busy && args.docKey !== args.lastAutoFixedDocKey && isDrawCallBound(args.models, args.drawCalls)
+  );
 }
 
 /**

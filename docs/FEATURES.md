@@ -910,7 +910,13 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   instructs the model to reply with exactly one plain, kid-friendly sentence
   ("your game runs smoother now") instead of technical detail. Wired via
   `ArtifactFrame`'s new `onAutoFixSlowdown` prop, absent-prop-hides-feature
-  like every other opt-in surface here.
+  like every other opt-in surface here. **`shouldAutoFixSlowdown` also takes
+  `busy` and returns `false` while a turn is already streaming** (2026-08-11
+  fix, `docs/BUG-FIX-LOG.md` same date) — `handleSend` has no concurrency
+  guard of its own, and firing this while the kid's own edit was mid-stream
+  produced two concurrent `runStream()` calls that stuck the preview's WebGL
+  context on a blue screen. A busy-skip does NOT consume the one-shot
+  docKey guard, so it retries on the next snapshot once the kid's turn ends.
 - **Retrieval-lite selection** (PRD §14, `src/lib/assets/model-select.ts`):
   the library is unbounded but each build-turn prompt teaches ≤ 30 models,
   picked by cheap regex — the iterated game's own USES_MODELS markers,

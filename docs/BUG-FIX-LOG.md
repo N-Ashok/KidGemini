@@ -11,6 +11,53 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-11 — the proactive draw-call auto-fix fired a SECOND concurrent turn while the kid's own edit was still streaming, leaving the preview stuck on a blue screen
+
+- **Report (owner, production UAT):** *"in production, the game is stuck with a blue screen when
+  ari is working to get the edit."* Confirmed via follow-up: happens **during generation**
+  (before the edit reply finishes), never self-recovers, and only clears by switching to the Code
+  tab and back — which also restarts the game (a forced iframe remount).
+- **Surface area:** `src/lib/slowdown-nudge.ts` (`shouldAutoFixSlowdown`), `src/components/ArtifactFrame.tsx`
+  (the auto-fix effect), `src/components/ChatPanel.container.tsx` (`handleSend`).
+- **Root cause:** the same-day (2026-08-10) proactive auto-fix feature calls `onAutoFixSlowdown`
+  → `handleSend(hint, undefined, { silent: true })` — a REAL chat turn, sent straight through
+  `handleSend`, the instant a fresh perf snapshot shows the scene is draw-call-bound.
+  `handleSend` has **no concurrency guard of its own** (confirmed by reading it in full — it sets
+  `sendingRef.current = true` unconditionally and proceeds, the only existing caller that checks
+  `sendingRef.current` first is the unrelated idea-queue drain effect). The auto-fix effect never
+  checked whether a turn was already in flight, so a kid's own edit request and the silent
+  auto-fix turn could both be streaming against the same conversation at once — two concurrent
+  `runStream()` calls racing the artifact/docKey update mid-generation, which left the preview
+  iframe's WebGL context stuck (recoverable only by the forced remount a Code-tab round trip
+  causes).
+- **Fix:** `shouldAutoFixSlowdown` (`slowdown-nudge.ts`) gained a required `busy: boolean` arg —
+  returns `false` whenever a turn is already streaming, and (unlike the docKey one-shot guard)
+  does NOT get treated as "consumed": `ArtifactFrame.tsx`'s caller only advances
+  `lastAutoFixedDocKeyRef` on a `true` return, so a busy-skipped attempt naturally retries on the
+  next ~1s perf snapshot once the kid's turn finishes, instead of being silently dropped forever
+  for that docKey. `ArtifactFrame` already had a `busy` prop (used elsewhere for the same "a turn
+  is streaming" signal) — reused it rather than adding a duplicate; `ChatPanel.container.tsx`
+  already passed `busy={busy}` into the one `<ArtifactFrame>` render.
+- **Result (verified):** `src/lib/slowdown-nudge.test.ts` — 2 new tests: never fires while
+  `busy: true` even on an otherwise-eligible fresh docKey, and the SAME docKey still fires once
+  `busy` flips back to `false` (busy-skip never consumes the one-shot guard). Full suite green
+  (202 files / 2344 tests), `npm run typecheck` clean. **Not yet UAT-verified in a real browser
+  against the exact blue-screen manifestation** — this is a confirmed, unambiguous concurrency
+  bug (two simultaneous `runStream()` calls against one conversation is wrong regardless of
+  mechanism), and it exactly matches the reported timing, but I have not personally reproduced
+  the stuck-WebGL-context symptom end to end. Flagging as a hypothesis per the "never use
+  production UAT as the test loop" rule — owner re-test after deploy will confirm.
+- **Impact:** the proactive auto-fix (built and deployed the same day) could stall an in-progress
+  edit's preview for ANY kid whose current game was already draw-call-bound when they asked for
+  a change — a regression introduced by the very feature meant to help slow games, within hours
+  of shipping it.
+- **Prevention — name the class:** **unguarded concurrent side-effect**: any code path that can
+  call `handleSend`/trigger a new chat turn from a background effect (perf telemetry, auto-nudges,
+  future proactive features) MUST check the existing `busy`/`sendingRef` signal before firing —
+  `handleSend` itself still has no guard, so this is a per-call-site obligation until it does.
+- **Related:** the 2026-08-10 entry immediately below (draw-call telemetry, InstancedMesh lint)
+  — the proactive auto-fix this bug is in was built as a same-day follow-up to that entry.
+
 ## 2026-08-10 — the corrected slow-game hint prescribed InstancedMesh, the lint rejected it, and the fallback regeneration REPLACED the child's game
 
 - **Report (owner, local UAT, within the hour):** *"The same game didnot work … The whole game

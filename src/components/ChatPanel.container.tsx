@@ -2075,6 +2075,11 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             // Proactive draw-call auto-fix (owner decision 2026-08-10): fires
             // itself the instant a fresh scene is draw-call-bound, no tap —
             // `silent` skips the child bubble since the child never asked.
+            // `busy` (passed once already above, production incident
+            // 2026-08-11): handleSend has no concurrency guard of its own,
+            // so ArtifactFrame must never be allowed to fire this while a
+            // real turn is already streaming — see shouldAutoFixSlowdown's
+            // doc comment.
             onAutoFixSlowdown={(hint) => void handleSend(hint, undefined, { silent: true })}
           />
         </div>

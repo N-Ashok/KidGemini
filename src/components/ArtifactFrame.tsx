@@ -338,6 +338,7 @@ export function ArtifactFrame({
         lastAutoFixedDocKey: lastAutoFixedDocKeyRef.current,
         models: perfSnapshot.models ?? [],
         drawCalls: perfSnapshot.drawCalls ?? null,
+        busy: busy ?? false,
       })
     ) {
       return;
@@ -345,7 +346,7 @@ export function ArtifactFrame({
     lastAutoFixedDocKeyRef.current = docKey;
     dispatchSlowdown({ type: "fixTapped", now: Date.now() });
     onAutoFixSlowdown(buildAutoFixHint(perfSnapshot.models ?? [], perfSnapshot.drawCalls ?? null));
-  }, [perfSnapshot, docKey, onAutoFixSlowdown]);
+  }, [perfSnapshot, docKey, onAutoFixSlowdown, busy]);
   function handleFixSlowdown() {
     dispatchSlowdown({ type: "fixTapped", now: Date.now() });
     onFixSlowdown?.(buildSlowdownHint(perfSnapshot?.models ?? [], perfSnapshot?.drawCalls ?? null));
