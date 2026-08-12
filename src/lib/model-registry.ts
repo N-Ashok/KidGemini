@@ -68,16 +68,51 @@ export const MODEL_CATALOG: ModelSpec[] = [
   { id: "kimi-k2", provider: "moonshot", tier: "frontier", inputPerMTok: 0.6, outputPerMTok: 2.5, safety: "prompt-only" },
   { id: "moonshot-v1-32k", provider: "moonshot", tier: "workhorse", inputPerMTok: 0.5, outputPerMTok: 2.0, safety: "prompt-only" },
   { id: "moonshot-v1-8k", provider: "moonshot", tier: "lite", inputPerMTok: 0.2, outputPerMTok: 0.8, safety: "prompt-only" },
+
+  // ── DeepSeek ────────────────────────────────────────────────────────────────
+  // `prompt-only`, same double gate as Claude and Kimi (owner ask 2026-08-12:
+  // "make deepseek functional in the fallback"). DeepSeek is OpenAI-API-
+  // compatible, so it reuses the OpenAI request/stream shape
+  // (deepseek-generation.ts) with a different base URL.
+  //
+  // DATA-HANDLING NOTE: DeepSeek is a China-based provider — the same
+  // consideration recorded for Moonshot above. Sending a child's prompts there
+  // is a privacy/compliance decision, which is why (beyond the prompt-only
+  // gate) it stays behind DEEPSEEK_API_KEY and off by default. Do not enable
+  // for real kid traffic without that review.
+  //
+  // Ids + prices best-effort 2026-08-12 — VERIFY against DeepSeek's current
+  // pricing page before enabling; prices here only affect ORDER within a tier,
+  // never the safety gate. deepseek-reasoner is tiered `frontier` on its code
+  // benchmarks, but tier is a judgement about GAME-BUILD output quality
+  // (model-provider.types.ts) — run the portability eval before trusting it
+  // with a build turn.
+  { id: "deepseek-reasoner", provider: "deepseek", tier: "frontier", inputPerMTok: 0.55, outputPerMTok: 2.19, cachedInputPerMTok: 0.14, safety: "prompt-only" },
+  { id: "deepseek-chat", provider: "deepseek", tier: "workhorse", inputPerMTok: 0.27, outputPerMTok: 1.1, cachedInputPerMTok: 0.07, safety: "prompt-only" },
 ];
 
 /** Which env var proves a provider is usable. Missing key → its models are
- *  dropped when the chain is BUILT, so a failover never discovers the gap. */
-const PROVIDER_KEY: Record<string, string> = {
-  google: "GEMINI_API_KEY",
-  openai: "OPENAI_API_KEY",
-  anthropic: "ANTHROPIC_API_KEY",
-  moonshot: "MOONSHOT_API_KEY",
+ *  dropped when the chain is BUILT, so a failover never discovers the gap.
+ *
+ *  Google accepts EITHER key because the transport is switchable
+ *  (google-backend.ts): AI Studio reads GEMINI_API_KEY, Vertex express reads
+ *  VERTEX_API_KEY. Checking only the Studio key here would empty the entire
+ *  Google side of the chain the moment an operator cut over to Vertex — a
+ *  total-outage-shaped bug caused by a working config. The EXACT key for the
+ *  selected backend is still enforced at client construction, which fails with
+ *  an actionable message rather than a silently short chain. */
+const PROVIDER_KEY: Record<string, string[]> = {
+  google: ["GEMINI_API_KEY", "VERTEX_API_KEY"],
+  openai: ["OPENAI_API_KEY"],
+  anthropic: ["ANTHROPIC_API_KEY"],
+  moonshot: ["MOONSHOT_API_KEY"],
+  deepseek: ["DEEPSEEK_API_KEY"],
 };
+
+/** True when at least one credential that could serve this provider is present. */
+function providerConfigured(provider: string, env: Record<string, string | undefined>): boolean {
+  return (PROVIDER_KEY[provider] ?? []).some((k) => !!env[k]);
+}
 
 /** Cheaper tiers are valid deeper rescues; richer ones are not. Falling UP in
  *  price during an incident is how a 503 becomes a bill shock — falling down
@@ -172,7 +207,7 @@ export function chainFor(opts: {
   // the configured-provider check are correctness, not heuristics — an
   // explicit override must not be able to route around either.
   const permitted = catalog.filter(
-    (m) => !!env[PROVIDER_KEY[m.provider] ?? ""] && safetyAllows(m, env) && m.id !== primary,
+    (m) => providerConfigured(m.provider, env) && safetyAllows(m, env) && m.id !== primary,
   );
   // The tier rule is the AUTO-ordering heuristic only.
   const eligible = permitted.filter((m) => TIER_ORDER.indexOf(m.tier) >= minTierIdx);

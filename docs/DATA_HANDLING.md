@@ -74,8 +74,33 @@ data for children outside a jurisdiction/relationship where "we just keep
 everything" is acceptable, or on the first parent/regulator question about
 retention.
 
+## Where a child's prompt can be SENT — open decision per provider
+
+Retention above is about our own store. This is the other half: which third
+parties a child's words reach. Today, in production, the answer is **Google
+only** — either AI Studio or Vertex AI express, selected by `GEMINI_BACKEND`
+(`src/lib/google-backend.ts`). Both are the same vendor and the same data
+posture; the switch is transport, not destination. Note Vertex bills and logs
+against a GCP project rather than the AI Studio key, so the *account* holding
+those request logs changes when it is flipped.
+
+Two catalogued providers are **China-based** and would send a child's prompt
+outside that arrangement:
+
+- **Moonshot (Kimi)** — catalogued 2026-07-20
+- **DeepSeek** — catalogued 2026-08-12
+
+Both are held shut by two independent gates: their API key is unset, AND they
+are `prompt-only` so `ALLOW_PROMPT_ONLY_SAFETY_MODELS=1` is also required
+(`src/lib/model-registry.ts`). Neither has ever served a turn. **Trigger to
+revisit:** before either key is set on any box that serves real children —
+enabling them is a privacy/compliance decision on top of the safety-floor one,
+and the two are separate approvals.
+
 ## Related
 
 - `docs/BUG-FIX-LOG.md` (2026-07-17 entry) — the audit finding that surfaced
   this as needing an explicit decision.
+- `docs/2026-08-12_PRD_VertexBackendAndDeepSeek.md` — the backend switch and
+  the DeepSeek gates described above.
 - `src/app/api/usage/route.ts` — the admin read path described above.

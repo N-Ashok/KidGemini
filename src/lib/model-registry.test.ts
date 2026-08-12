@@ -220,3 +220,69 @@ describe("Claude + Kimi providers — prompt-only, doubly gated", () => {
     expect(chain).not.toContain("kimi-k2");
   });
 });
+
+// DeepSeek (owner ask 2026-08-12) is prompt-only and China-based, exactly like
+// Kimi — so "functional in the fallback" means REACHABLE when both gates are
+// open, not routable by default. These pin that it joined the chain machinery
+// without joining the default routing.
+describe("DeepSeek — prompt-only, doubly gated", () => {
+  const withDeepSeek = (env: Record<string, string | undefined>) =>
+    chainFor({ primary: "gemini-3.5-flash", tier: "frontier", env: { ...env, MODEL_FALLBACK_CHAIN: "deepseek-reasoner,deepseek-chat" } });
+
+  it("R.25 the catalog carries the DeepSeek ids, marked prompt-only", () => {
+    for (const id of ["deepseek-reasoner", "deepseek-chat"]) {
+      expect(specFor(id), id).toBeDefined();
+      expect(specFor(id)!.provider, id).toBe("deepseek");
+      expect(specFor(id)!.safety, id).toBe("prompt-only");
+    }
+  });
+
+  it("R.26 excluded by default even with DEEPSEEK_API_KEY set (the opt-in flag is missing)", () => {
+    expect(withDeepSeek({ GEMINI_API_KEY: "g", DEEPSEEK_API_KEY: "d" })).toEqual([]);
+  });
+
+  it("R.27 excluded when the flag is set but DEEPSEEK_API_KEY is missing", () => {
+    expect(withDeepSeek({ GEMINI_API_KEY: "g", ALLOW_PROMPT_ONLY_SAFETY_MODELS: "1" })).toEqual([]);
+  });
+
+  it("R.28 admitted only with BOTH the opt-in flag AND the key", () => {
+    const chain = withDeepSeek({ GEMINI_API_KEY: "g", DEEPSEEK_API_KEY: "d", ALLOW_PROMPT_ONLY_SAFETY_MODELS: "1" });
+    expect(chain).toEqual(["deepseek-reasoner", "deepseek-chat"]);
+  });
+
+  it("R.29 never enters the AUTO chain without the flag, however cheap it is", () => {
+    // deepseek-chat undercuts every workhorse in the catalog, so if price could
+    // beat the safety gate this is the row that would prove it.
+    const auto = chainFor({
+      primary: "gemini-3.5-flash",
+      tier: "frontier",
+      env: { GEMINI_API_KEY: "g", DEEPSEEK_API_KEY: "d" },
+    });
+    expect(auto.some((id) => id.startsWith("deepseek"))).toBe(false);
+  });
+});
+
+// The Vertex switch (owner ask 2026-08-12) changes which env var holds the
+// Google credential. The chain must not treat a cut-over box as "Google not
+// configured" — that would empty the Google side of every chain at the exact
+// moment the operator believed they had a working backend.
+describe("Google credential — either backend's key counts", () => {
+  it("R.30 Google models stay routable on a Vertex-only box (VERTEX_API_KEY, no GEMINI_API_KEY)", () => {
+    const chain = chainFor({
+      primary: "gemini-3.5-flash",
+      tier: "frontier",
+      env: { GEMINI_BACKEND: "vertex", VERTEX_API_KEY: "v" },
+    });
+    expect(chain.length).toBeGreaterThan(0);
+    expect(chain.every((id) => id.startsWith("gemini-"))).toBe(true);
+  });
+
+  it("R.31 with NEITHER Google key, Google is still dropped entirely", () => {
+    const chain = chainFor({
+      primary: "gpt-5.6-luna",
+      tier: "frontier",
+      env: { OPENAI_API_KEY: "o" },
+    });
+    expect(chain.some((id) => id.startsWith("gemini-"))).toBe(false);
+  });
+});

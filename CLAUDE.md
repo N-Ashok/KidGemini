@@ -40,13 +40,28 @@ A kids-safe, Gemini-quality chat app (text + voice) with a **server-enforced saf
 
 - **Next.js 14 (App Router)** + **TypeScript (strict)** — frontend and secure backend in one repo.
 - **Tailwind CSS** wired to design tokens (`docs/DESIGN_SYSTEM.md`).
-- **@google/genai** for Gemini (chat model + Flash-Lite safety model).
+- **@google/genai** for Gemini (chat model + Flash-Lite safety model). The
+  transport is switchable: `GEMINI_BACKEND=studio` (default, AI Studio +
+  `GEMINI_API_KEY`) or `vertex` (Vertex AI **express** mode — `vertexai: true` +
+  `VERTEX_API_KEY`, no service account/ADC). ONE builder,
+  `src/lib/google-backend.ts`, used by both `gemini.ts` and `safety.ts` so the
+  classifier can never end up on a different backend from the model it gates.
+  Models, `safetySettings`, thinking budgets and the fallback chain are
+  IDENTICAL on both — it is a transport switch, reversible by unsetting the var
+  (2026-08-12, `docs/2026-08-12_PRD_VertexBackendAndDeepSeek.md`). Prove a flip
+  with `npm run check:backend` before anyone opens the app (global rule 12).
 - **openai** — cross-provider fallback, LIVE for streaming chat turns
   (2026-07-20, `docs/PRD-MODEL-FALLBACK.md` §7). Engages only when the Gemini
   primary fails; requires `OPENAI_API_KEY`. Every OpenAI call goes through
   `OpenAIGenerator`, which moderates input and output — that wrapper is what
   makes the `provider-enforced` claim in `MODEL_CATALOG` true. One-shot paths
   (`reply`/`repair`/`strictEditRetry`) remain Gemini-only.
+- **Anthropic / Moonshot / DeepSeek** — also catalogued, all `prompt-only`, all
+  OFF by default. Each needs BOTH its key AND `ALLOW_PROMPT_ONLY_SAFETY_MODELS=1`
+  before it can enter a chain; Moonshot and DeepSeek additionally carry an
+  unresolved China data-handling review (`docs/DATA_HANDLING.md`). DeepSeek was
+  wired 2026-08-12 (OpenAI-compatible, like Moonshot); its `reasoning_content`
+  deltas are deliberately dropped so a child never sees the model thinking.
 - **better-sqlite3** for local storage (alerts, settings, transcripts).
 - **Web Speech API** for speech-to-text (browser-native, no key).
 

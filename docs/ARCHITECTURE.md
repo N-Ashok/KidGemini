@@ -17,6 +17,12 @@ Browser ── pages: / (chat) · /help · /parent · /admin · /admin/help · /
                  → input rules (deterministic, lib/safety.rules.ts)
                  → chat (Gemini chat model: built-in safety thresholds +
                    child-safety system prompt; no output monitor — 2026-07-09)
+                   Transport is switchable: GEMINI_BACKEND=studio (default) |
+                   vertex → AI Studio or Vertex AI express, one shared client
+                   builder (lib/google-backend.ts) so generation and the safety
+                   classifier can never land on different backends. Models,
+                   thresholds and the fallback chain are identical on both —
+                   see 2026-08-12_PRD_VertexBackendAndDeepSeek.md
 /api/safety    → standalone safety checks (Flash-Lite classifier)
 /api/alerts    → parent alert feed (PIN-gated)
 /api/usage     → usage/cost admin feed

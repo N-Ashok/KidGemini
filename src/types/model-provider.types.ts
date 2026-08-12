@@ -7,7 +7,7 @@
 // to route a turn now travels WITH the model, not in gemini.ts.
 
 /** Who serves the model. Adding one = adding an adapter, not editing callers. */
-export type ProviderId = "google" | "openai" | "anthropic" | "moonshot";
+export type ProviderId = "google" | "openai" | "anthropic" | "moonshot" | "deepseek";
 
 /**
  * Capability class. Models in the SAME tier are treated as interchangeable for

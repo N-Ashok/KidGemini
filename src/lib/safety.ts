@@ -9,6 +9,7 @@ import type {
   SafetyVerdict,
 } from "@/types/safety.types";
 import { ALWAYS_HARD_BLOCK, CATEGORY_GUIDE } from "./safety.config";
+import { googleClientOptions } from "./google-backend";
 import { withRetry } from "./retry";
 
 export class SafetyGateError extends Error {
@@ -59,9 +60,14 @@ export class FlashLiteClassifier implements SafetyClassifier {
     text: string;
     origin: "child" | "model";
   }): Promise<SafetyVerdict> {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new SafetyGateError("GEMINI_API_KEY is not set");
-    const ai = new GoogleGenAI({ apiKey });
+    // Same transport as the generation path (google-backend.ts) — the gate must
+    // never end up on a different backend from the model it is gating.
+    let ai: GoogleGenAI;
+    try {
+      ai = new GoogleGenAI(googleClientOptions(process.env));
+    } catch (err) {
+      throw new SafetyGateError(err instanceof Error ? err.message : String(err));
+    }
 
     try {
       const res = await withRetry(

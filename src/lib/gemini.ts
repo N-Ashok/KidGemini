@@ -26,9 +26,12 @@ import { chainFor, specFor } from "./model-registry";
 import { openaiAdapter } from "./providers/openai-adapter";
 import { anthropicAdapter } from "./providers/anthropic-adapter";
 import { moonshotAdapter } from "./providers/moonshot-adapter";
+import { deepseekAdapter } from "./providers/deepseek-adapter";
 import { OpenAIGenerator } from "./providers/openai-generation";
 import { AnthropicGenerator } from "./providers/anthropic-generation";
 import { MoonshotGenerator } from "./providers/moonshot-generation";
+import { DeepSeekGenerator } from "./providers/deepseek-generation";
+import { googleClientOptions } from "./google-backend";
 import type { GenerationRequest, ProviderAdapter, ProviderId } from "@/types/model-provider.types";
 import { withRetry } from "./retry";
 
@@ -392,10 +395,20 @@ export function buildTurnSystemInstruction(
   return sections.length ? `${base}\n\n${sections.join("\n\n")}` : base;
 }
 
+/**
+ * The Google client for this process, on whichever transport GEMINI_BACKEND
+ * selects (AI Studio by default, Vertex AI express when flipped). Everything
+ * downstream — models, safetySettings, thinkingConfig, the fallback chain — is
+ * identical on both; see google-backend.ts.
+ */
 function getClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new GeminiError("GEMINI_API_KEY is not set");
-  return new GoogleGenAI({ apiKey });
+  try {
+    return new GoogleGenAI(googleClientOptions(process.env));
+  } catch (err) {
+    // Keep the caller-facing error type stable: every route already handles
+    // GeminiError, and a config mistake should read the same as it always did.
+    throw new GeminiError(err instanceof Error ? err.message : String(err));
+  }
 }
 
 export class GeminiError extends Error {
@@ -541,6 +554,7 @@ export class GeminiChatModel implements ChatModel {
     openai: new OpenAIGenerator(),
     anthropic: new AnthropicGenerator(),
     moonshot: new MoonshotGenerator(),
+    deepseek: new DeepSeekGenerator(),
   };
 
   // Per-provider error classifiers (walk-vs-throw + retired-id detection).
@@ -548,6 +562,7 @@ export class GeminiChatModel implements ChatModel {
     openai: openaiAdapter,
     anthropic: anthropicAdapter,
     moonshot: moonshotAdapter,
+    deepseek: deepseekAdapter,
   };
 
   /** The non-Google provider serving this slot, or undefined for Google (the

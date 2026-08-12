@@ -287,6 +287,31 @@ rate ($1.5/$9) — same class as BUG-FIX-LOG 2026-07-13's "$0 dashboard". Not
 live (nothing routes off Google yet). Fix = derive `MODEL_PRICING` from
 `MODEL_CATALOG` so there is one price source; own change, own tests.
 
+**DeepSeek — BUILT 2026-08-12** (owner ask: "make deepseek functional in the
+fallback"). OpenAI-API-compatible, so it mirrors Moonshot: OpenAI SDK with a
+base-URL override (`deepseek-generation.ts`), error taxonomy delegated to
+`openaiAdapter` (`deepseek-adapter.ts`). Catalog rows `deepseek-reasoner`
+(frontier) and `deepseek-chat` (workhorse), prices best-effort — VERIFY before
+enabling. Safety: **`prompt-only`** — no moderation endpoint to front it with —
+so it is excluded from every chain unless `ALLOW_PROMPT_ONLY_SAFETY_MODELS=1`
+AND `DEEPSEEK_API_KEY` is set, and it carries the same China data-handling note
+as Kimi. Two DeepSeek-specific shapes are handled that Moonshot lacks:
+`reasoning_content` deltas are dropped from the text stream (a child must never
+see the model's chain-of-thought, and it would corrupt every generated game),
+and `prompt_cache_hit_tokens` is read as cached usage. Tests:
+`deepseek-adapter.test.ts`, `deepseek-generation.test.ts` (DS.1–DS.6),
+`model-registry.test.ts` R.25–R.29. Full rationale + use cases:
+`2026-08-12_PRD_VertexBackendAndDeepSeek.md`.
+
+**Google transport switch — BUILT 2026-08-12.** `GEMINI_BACKEND=studio|vertex`
+(`google-backend.ts`) selects AI Studio (default) or Vertex AI express mode for
+every Google call — generation AND the safety classifier, which must never split
+across backends. Relevant to this PRD because the chain's Google key check was
+Studio-only: a correctly cut-over Vertex box would have dropped every Google
+model from every chain. `PROVIDER_KEY.google` now accepts either credential
+(R.30/R.31); the exact key is enforced at client construction, which fails with
+an actionable message rather than a silently short chain.
+
 ## 7b. Non-goals
 
 - Cost-based routing of easy turns to cheap models on healthy days: adjacent
