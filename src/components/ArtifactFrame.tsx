@@ -108,6 +108,14 @@ interface ArtifactFrameProps {
    *  A SLOT rather than props: the tab's own state (sheet, mic, nudge) belongs
    *  to the container, and this panel stays presentational. Absent = flag off. */
   helpTab?: React.ReactNode;
+  /** Fired once per generation, ONLY when the self-heal loop actually fixed
+   *  something (outcome "repaired") — never on "clean" (nothing to save) or
+   *  "failed"/"bailed" (nothing worked). BUG-FIX-LOG 2026-08-13: without this,
+   *  a successful in-browser patch lived only in this component's own state
+   *  and vanished on the next reload — the container persists it back to the
+   *  stored message (turn-recovery.ts's applyRepairedArtifact). Absent =
+   *  feature inert, same convention as onCaptureIdea/helpTab. */
+  onRepaired?: (html: string) => void;
   /** Reported once per generation, when the verify/repair loop settles: what
    *  the machine concluded, plus the SAME bounded diagnosis the grown-up
    *  "copy error details" button produces. The container needs both — to decide
@@ -205,6 +213,7 @@ export function ArtifactFrame({
   onIdeaInterrupted,
   onIdeaDraftConsumed,
   helpTab,
+  onRepaired,
   onDiagnostics,
   previewTheme = "default",
   bibleTeacher = false,
@@ -555,8 +564,14 @@ export function ArtifactFrame({
   // numbers would make the stuck signal fire while the machine is still trying.
   const onDiagnosticsRef = useRef(onDiagnostics);
   onDiagnosticsRef.current = onDiagnostics;
+  const onRepairedRef = useRef(onRepaired);
+  onRepairedRef.current = onRepaired;
   useEffect(() => {
     if (state.phase !== "done" || !state.outcome) return;
+    // Persist BEFORE the diagnostics report below — a repaired game is the
+    // one outcome where currentHtml differs from what the container already
+    // has, and saving it is more urgent than the Help-tab bookkeeping.
+    if (state.outcome === "repaired") onRepairedRef.current?.(state.currentHtml);
     onDiagnosticsRef.current?.({
       generationId: docKey,
       verifyFailed: state.outcome === "failed" || state.outcome === "bailed",

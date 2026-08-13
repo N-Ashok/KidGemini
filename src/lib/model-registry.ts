@@ -28,6 +28,16 @@ export const MODEL_CATALOG: ModelSpec[] = [
   { id: "gemini-3.5-flash", provider: "google", tier: "frontier", inputPerMTok: 1.5, outputPerMTok: 9.0, cachedInputPerMTok: 0.15, safety: "provider-enforced" },
   { id: "gemini-3-flash-preview", provider: "google", tier: "workhorse", inputPerMTok: 0.5, outputPerMTok: 3.0, cachedInputPerMTok: 0.05, safety: "provider-enforced" },
   { id: "gemini-2.5-flash", provider: "google", tier: "workhorse", inputPerMTok: 0.3, outputPerMTok: 2.5, cachedInputPerMTok: 0.03, safety: "provider-enforced" },
+  // Lite tier, newest first — prices verified against ai.google.dev/gemini-api/docs/pricing
+  // 2026-08-13 (owner ask, after a spec-compile call 404'd on gemini-2.5-flash-lite in the
+  // asia-southeast1 Vertex region — the compiler had NO fallback because it was already
+  // the only lite-tier Google model in the catalog). gemini-2.5-flash (non-lite, above) is
+  // scheduled to retire 2026-10-16 (ai.google.dev/gemini-api/docs/deprecations) — the
+  // lite variant itself carries no announced shutdown date as of this writing, but adding
+  // the newer generations here gives every lite-tier caller (not just the compiler)
+  // real cross-generation redundancy instead of a single point of failure.
+  { id: "gemini-3.5-flash-lite", provider: "google", tier: "lite", inputPerMTok: 0.30, outputPerMTok: 2.50, cachedInputPerMTok: 0.03, safety: "provider-enforced" },
+  { id: "gemini-3.1-flash-lite", provider: "google", tier: "lite", inputPerMTok: 0.25, outputPerMTok: 1.50, cachedInputPerMTok: 0.025, safety: "provider-enforced" },
   { id: "gemini-2.5-flash-lite", provider: "google", tier: "lite", inputPerMTok: 0.1, outputPerMTok: 0.4, cachedInputPerMTok: 0.01, safety: "provider-enforced" },
 
   // ── OpenAI ────────────────────────────────────────────────────────────────
@@ -81,14 +91,24 @@ export const MODEL_CATALOG: ModelSpec[] = [
   // gate) it stays behind DEEPSEEK_API_KEY and off by default. Do not enable
   // for real kid traffic without that review.
   //
-  // Ids + prices best-effort 2026-08-12 — VERIFY against DeepSeek's current
-  // pricing page before enabling; prices here only affect ORDER within a tier,
-  // never the safety gate. deepseek-reasoner is tiered `frontier` on its code
-  // benchmarks, but tier is a judgement about GAME-BUILD output quality
-  // (model-provider.types.ts) — run the portability eval before trusting it
-  // with a build turn.
-  { id: "deepseek-reasoner", provider: "deepseek", tier: "frontier", inputPerMTok: 0.55, outputPerMTok: 2.19, cachedInputPerMTok: 0.14, safety: "prompt-only" },
-  { id: "deepseek-chat", provider: "deepseek", tier: "workhorse", inputPerMTok: 0.27, outputPerMTok: 1.1, cachedInputPerMTok: 0.07, safety: "prompt-only" },
+  // Ids + prices READ FROM api-docs.deepseek.com/quick_start/pricing on
+  // 2026-08-12 (and cross-checked against /api/list-models, which returns
+  // exactly these two). The older `deepseek-chat` / `deepseek-reasoner` names
+  // are NOT in the current catalog — do not re-add them from memory; an
+  // unrecognised id is precisely what this registry exists to keep out of an
+  // SDK call.
+  //
+  // ⚠ PRICES WILL MOVE: the same pricing page carries DeepSeek's own notice
+  // that it plans "a significant increase" to API pricing in the near future.
+  // Re-read before enabling, and again before trusting any margin number —
+  // prices here affect ORDER within a tier, never the safety gate.
+  //
+  // Tiering is a judgement about GAME-BUILD output quality
+  // (model-provider.types.ts), NOT a price bucket: v4-pro is tiered `frontier`
+  // and v4-flash `workhorse` on their positioning alone. Neither has been run
+  // against a build turn — `npm run eval:portability` before either serves one.
+  { id: "deepseek-v4-pro", provider: "deepseek", tier: "frontier", inputPerMTok: 0.435, outputPerMTok: 0.87, cachedInputPerMTok: 0.003625, safety: "prompt-only" },
+  { id: "deepseek-v4-flash", provider: "deepseek", tier: "workhorse", inputPerMTok: 0.14, outputPerMTok: 0.28, cachedInputPerMTok: 0.0028, safety: "prompt-only" },
 ];
 
 /** Which env var proves a provider is usable. Missing key → its models are

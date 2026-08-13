@@ -1,0 +1,2167 @@
+<!DOCTYPE html>
+<html>
+<head><!--ari-perf-probe--><script>(function () {
+  window.__arPerfProbeVersion = 4;
+  var buffer = [];
+  var ready = false;
+  function send(ev) {
+    try { parent.postMessage({ source: "ari-perf-probe", event: ev }, "*"); } catch (e) { /* parent gone */ }
+  }
+  function post(ev) { if (ready) send(ev); else buffer.push(ev); }
+  addEventListener("message", function (event) {
+    var d = event && event.data;
+    if (!d || d.source !== "ari-parent" || d.type !== "ready") return;
+    ready = true;
+    for (var i = 0; i < buffer.length; i++) send(buffer[i]);
+    buffer = [];
+  });
+
+  // GL draw-call counter (v4, 2026-08-10). snapshot.drawCalls was designed to
+  // read __arPerf.renderer.info — which NOTHING ever assigned, so it was null
+  // in every snapshot ever posted. Meanwhile the owner's AutoRicksaw game ran
+  // at 1,250 draws/frame from hand-built meshes the model accounting cannot
+  // see, and the slowdown hint blamed two static trees nine edits in a row.
+  // Count actual GL draw commands instead: engine-agnostic, needs nothing
+  // from the game, reaches stored games via the version re-floor.
+  var glDraws = 0;
+  function wrapGL(proto) {
+    if (!proto) return;
+    try {
+      var de = proto.drawElements;
+      if (de) proto.drawElements = function () { glDraws++; return de.apply(this, arguments); };
+      var da = proto.drawArrays;
+      if (da) proto.drawArrays = function () { glDraws++; return da.apply(this, arguments); };
+      var dei = proto.drawElementsInstanced;
+      if (dei) proto.drawElementsInstanced = function () { glDraws++; return dei.apply(this, arguments); };
+      var dai = proto.drawArraysInstanced;
+      if (dai) proto.drawArraysInstanced = function () { glDraws++; return dai.apply(this, arguments); };
+    } catch (e) { /* never break rendering for telemetry */ }
+  }
+  if (!window.__arGlDrawPatched) {
+    window.__arGlDrawPatched = 1;
+    wrapGL(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+    wrapGL(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+  }
+  var lastGlDraws = 0;
+
+  // FPS estimate: count rAF ticks in the last sample window. Stacks fine on
+  // top of the frame governor's own wrap (both call straight through).
+  var frames = 0;
+  var origRaf = window.requestAnimationFrame;
+  if (origRaf) {
+    window.requestAnimationFrame = function (cb) {
+      return origRaf.call(window, function (t) {
+        frames++;
+        return cb(t);
+      });
+    };
+  }
+
+  // "Playing" signal (v3, owner report 2026-08-06): frames alone can't tell
+  // "running slow" from "not running" — an unstarted game or idle lobby
+  // renders little/nothing by design. Track the last real input so the
+  // slowdown banner only trusts samples taken while the kid is actually
+  // playing. Capture phase: game code often stopPropagation()s.
+  var lastInput = 0;
+  var inputEvents = ["pointerdown", "keydown", "touchstart"];
+  for (var ie = 0; ie < inputEvents.length; ie++) {
+    addEventListener(inputEvents[ie], function () { lastInput = Date.now(); }, true);
+  }
+
+  function snapshot() {
+    // A hidden tab/panel genuinely renders zero frames — that's true, but it
+    // is NOT the same claim as "the game is running slow," which is what
+    // this snapshot exists to detect. Without this guard, every setInterval
+    // tick during a background gap (leaving Ari and coming back) posts a
+    // near-zero fps reading, which is enough on its own to satisfy the
+    // slowdown banner's "5 consecutive low samples" rule — so the banner
+    // flashes on return even though nothing was ever actually slow. Skip
+    // sampling entirely while hidden, and keep resetting the frame counter
+    // so no partial/corrupted count leaks into the first reading after the
+    // tab becomes visible again.
+    if (document.hidden) { frames = 0; return; }
+    var perf = window.__arPerf || {};
+    var reg = perf.models || {};
+    var animatedRoots = perf.animatedRoots;
+    var models = [];
+    for (var name in reg) {
+      if (!Object.prototype.hasOwnProperty.call(reg, name)) continue;
+      var entry = reg[name];
+      var roots = entry.instances || [];
+      // Live = still parented into a scene graph. A load()ed-but-never-added
+      // (or later removed) root reads parent as falsy — never a stale row.
+      var live = [];
+      for (var i = 0; i < roots.length; i++) {
+        if (roots[i] && roots[i].parent) live.push(roots[i]);
+      }
+      if (live.length === 0) continue;
+      var animated = false;
+      if (animatedRoots) {
+        for (var j = 0; j < live.length; j++) {
+          if (animatedRoots.has(live[j])) { animated = true; break; }
+        }
+      }
+      var triangles = entry.triangles || 0;
+      var load = triangles * live.length * (animated ? 2 : 1);
+      var bucket = load <= 20000 ? "green" : (load <= 150000 ? "yellow" : "red");
+      models.push({ name: name, triangles: triangles, instances: live.length, animated: animated, load: load, bucket: bucket });
+    }
+    var batches = perf.batches || {};
+    for (var bname in batches) {
+      if (!Object.prototype.hasOwnProperty.call(batches, bname)) continue;
+      var bentry = batches[bname];
+      var broots = bentry.roots || [];
+      var blive = false;
+      for (var bi = 0; bi < broots.length; bi++) { if (broots[bi] && broots[bi].parent) { blive = true; break; } }
+      if (!blive) continue;
+      var btriangles = bentry.triangles || 0;
+      var bdrawCalls = bentry.drawCalls || 1;
+      var bload = btriangles * bdrawCalls;
+      var bbucket = bload <= 20000 ? "green" : (bload <= 150000 ? "yellow" : "red");
+      models.push({ name: bentry.name, triangles: btriangles, instances: bentry.count || 0, animated: false, load: bload, bucket: bbucket, batched: true, drawCalls: bdrawCalls });
+    }
+    models.sort(function (a, b) { return b.load - a.load; });
+    var drawCalls = null, rendererTriangles = null;
+    // Per-frame average over this window from the GL counter — the value
+    // that actually distinguishes "a thousand tiny meshes" from "two trees".
+    var windowDraws = glDraws - lastGlDraws;
+    lastGlDraws = glDraws;
+    if (windowDraws > 0 && frames > 0) {
+      drawCalls = Math.round(windowDraws / frames);
+    } else if (perf.renderer && perf.renderer.info && perf.renderer.info.render) {
+      // Legacy fallback, kept for a game that registers its renderer.
+      drawCalls = perf.renderer.info.render.calls;
+      rendererTriangles = perf.renderer.info.render.triangles;
+    }
+    var playing = frames > 0 && lastInput > 0 && (Date.now() - lastInput) < 10000;
+    post({ type: "snapshot", snapshot: { fps: frames, playing: playing, drawCalls: drawCalls, rendererTriangles: rendererTriangles, models: models } });
+    frames = 0;
+  }
+  setInterval(snapshot, 1000);
+})();</script><script type="importmap">{"imports":{"three":"https://assets.ariantra.com/three.098b4c.js","cannon-es":"https://assets.ariantra.com/physics.4eb81a.js"}}</script><style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style><script>(function(){
+if (window.__arFrameGovernor) return;
+window.__arFrameGovernor = 1;
+var raf = window.requestAnimationFrame.bind(window);
+var seen = new WeakMap();
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    // Skipped frames ALWAYS re-request through the wrapper, so the loop can
+    // never die — that is the one failure mode that would break a live game.
+    if (document.hidden) { window.requestAnimationFrame(cb); return; }
+    var prev = (typeof cb === 'function' ? seen.get(cb) : 0) || 0;
+    if (prev && t - prev < 15) { window.requestAnimationFrame(cb); return; }
+    if (typeof cb === 'function') seen.set(cb, t);
+    return cb(t);
+  });
+};
+})();</script><script>(function(){
+if (window.__arGlGuard) return;
+window.__arGlGuard = 1;
+window.__arGlGuardVersion = 2;
+var get = HTMLCanvasElement.prototype.getContext;
+var live = [];
+var lostCount = 0;
+HTMLCanvasElement.prototype.getContext = function (type) {
+  var ctx = get.apply(this, arguments);
+  try {
+    if (ctx && /webgl/i.test(String(type)) && !this.__arGlGuarded) {
+      this.__arGlGuarded = 1;
+      var ext = null;
+      try { ext = ctx.getExtension('WEBGL_lose_context'); } catch (e2) { /* none */ }
+      live.push({ ctx: ctx, ext: ext });
+      this.addEventListener('webglcontextlost', function (e) {
+        // THE line that matters: without preventDefault the loss is final and
+        // the canvas stays blank for the rest of the document's life.
+        e.preventDefault();
+        lostCount++;
+        console.warn('[ari] WebGL context lost — restore requested');
+        // Watchdog (2026-08-10 №4, "it didnot regain"): browsers do not
+        // always volunteer webglcontextrestored, and a politely-held loop
+        // waits forever. The ladder is the automatic version of what fixed
+        // it for the owner by hand (code↔preview toggle = a remount):
+        // after 2s still lost → ask the driver; 3s more still lost → ask
+        // the parent to remount this frame.
+        setTimeout(function () {
+          var still = true;
+          try { still = ctx.isContextLost(); } catch (e3) { /* gone */ }
+          if (!still) return;
+          try { if (ext) ext.restoreContext(); } catch (e3) { /* refused */ }
+          setTimeout(function () {
+            var dead = true;
+            try { dead = ctx.isContextLost(); } catch (e4) { /* gone */ }
+            if (!dead) return;
+            console.warn('[ari] WebGL context is not coming back — asking the parent to reload the game');
+            try { parent.postMessage({ __ari: 'gl-dead' }, '*'); } catch (e4) { /* no parent */ }
+          }, 3000);
+        }, 2000);
+      }, false);
+      this.addEventListener('webglcontextrestored', function () {
+        if (lostCount > 0) lostCount--;
+        console.warn('[ari] WebGL context restored');
+      }, false);
+    }
+  } catch (e) { /* never break getContext */ }
+  return ctx;
+};
+// Restoring the CONTEXT is not enough — the game's LOOP must survive to see
+// it. While a context is lost, three.js's renderer throws mid-render (the GL
+// introspection APIs return null, and three calls .trim() on the result —
+// the exact stack the harness attributed on 2026-08-10). Games request their
+// next frame AFTER rendering (three's setAnimationLoop does too), so that
+// throw kills the loop for good: the context comes back, nothing draws, the
+// canvas stays blank, and no click can restart it. So: while any tracked
+// context is lost, hold rAF callbacks — always re-request, never run — the
+// same shape as the frame governor's document.hidden skip, and it resumes by
+// itself on webglcontextrestored. Composes with the governor's own wrapper
+// (this one runs outside it) — worst case a held frame is re-queued twice.
+// lostCount alone is NOT enough to gate on: webglcontextlost is dispatched
+// as a task, so there is a window after the actual loss (browser eviction or
+// our own release) where the event has not landed yet — one frame renders
+// against the dead context and three throws anyway. isContextLost() is
+// synchronous truth; the event counter only covers the fake-restore corner
+// (some drivers report isContextLost()=false again before firing restored).
+function anyLost() {
+  for (var i = 0; i < live.length; i++) {
+    try { if (live[i].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  for (var j = 0; j < released.length; j++) {
+    try { if (released[j].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  return false;
+}
+var raf = window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    if (lostCount > 0 || anyLost()) { window.requestAnimationFrame(cb); return; }
+    return cb(t);
+  });
+};
+var released = [];
+function release(why) {
+  // Hand the GPU back now rather than at GC, so the next preview iframe does
+  // not push the page over the context cap. Kept restorable (see pageshow):
+  // a release we believed was terminal must be reversible if the page comes
+  // back — 2026-08-10 second owner report, the pane-switch freeze.
+  for (var i = 0; i < live.length; i++) {
+    try {
+      if (live[i].ext) { live[i].ext.loseContext(); released.push(live[i]); }
+    } catch (e) { /* already gone */ }
+  }
+  live.length = 0;
+  // Observable from the parent page: this is how the harness proves the round
+  // was ASKED to release at unmount, rather than assuming it.
+  console.warn('[ari] WebGL contexts released (' + why + ')');
+}
+// Lets the harness assert that a torn-down round actually gave its context
+// back, instead of assuming pagehide fired.
+Object.defineProperty(window, '__arGlCount', { get: function () { return live.length; } });
+// The parent asks explicitly, immediately before it unmounts this frame.
+// pagehide alone is NOT enough: Chrome does not reliably fire it when an
+// iframe is detached from the DOM, which is precisely how every shadow round
+// ends — so without this the contexts pile up exactly as they did in the
+// owner's eleven-edit session.
+addEventListener('message', function (e) {
+  var d = e && e.data;
+  if (d && d.__ari === 'release-gl') release('asked');
+}, false);
+// Diagnostic-only (2026-08-11): a non-persisted pagehide fired mid-edit on
+// the STILL-PLAYING game, with no deliberate srcDoc/key change from React —
+// after shadow-verify was removed the same day, the explicit 'release-gl'
+// message (sent by the parent right before it unmounted the shadow frame)
+// went with it, leaving THIS listener as the only release trigger, carrying
+// more weight than "pagehide is kept as a backstop only" (the comment above
+// release()) ever assumed. This context string is what will tell us whether
+// it's a real backgrounding event (visibility/online state) or something
+// else entirely — never throws, so it can never break the guard itself.
+function diag() {
+  try {
+    return 'visibility=' + document.visibilityState + ' hidden=' + document.hidden +
+      ' online=' + navigator.onLine + ' at=' + Date.now();
+  } catch (e) { return 'diag-unavailable'; }
+}
+addEventListener('pagehide', function (e) {
+  // Safari/iOS fires pagehide when the page is merely BACKGROUNDED (app or
+  // tab switch, pane transitions) and will bring it back — persisted=true.
+  // Releasing there kills the LIVE game's context and the loop-hold freezes
+  // it: the owner's "froze, then turned blue when I clicked back"
+  // (2026-08-10, second report). Only a non-persisted pagehide — the actual
+  // teardown of a detached iframe — releases.
+  if (e && e.persisted) {
+    console.warn('[ari] pagehide (persisted, backgrounded — kept alive) ' + diag());
+    return;
+  }
+  console.warn('[ari] pagehide (NOT persisted — releasing) ' + diag());
+  release('pagehide');
+});
+addEventListener('pageshow', function () {
+  // The symmetric half: any release that turned out not to be terminal (the
+  // page came back anyway) is undone. restoreContext fires
+  // webglcontextrestored, which unwinds lostCount and resumes the held loop.
+  if (!released.length) return;
+  for (var i = 0; i < released.length; i++) {
+    try { released[i].ext.restoreContext(); live.push(released[i].ctx); } catch (e) { /* gone for real */ }
+  }
+  released.length = 0;
+  console.warn('[ari] WebGL contexts restored (pageshow)');
+});
+})();</script><script>window.AR_ASSETS={"airplane":"https://assets.ariantra.com/airplane.4abd7e.glb","tower":"https://assets.ariantra.com/tower.b66714.glb","grandstand":"https://assets.ariantra.com/grandstand.7b7e77.glb","car":"https://assets.ariantra.com/car.710895.glb","taxi":"https://assets.ariantra.com/taxi.e637f5.glb","coin_pickup":"https://assets.ariantra.com/coin_pickup.affa86.mp3","explosion":"https://assets.ariantra.com/explosion.d84e0a.mp3","game_over":"https://assets.ariantra.com/game_over.2866a9.mp3","win":"https://assets.ariantra.com/win.820154.mp3","pop":"https://assets.ariantra.com/pop.a0585f.mp3","click":"https://assets.ariantra.com/click.ba0d40.mp3","whoosh":"https://assets.ariantra.com/whoosh.f5810c.mp3"};</script><script>window.AR_SIZES={"airplane":[35.763,9.674,36],"tower":[9.437,14.599,8.976],"grandstand":[1,0.896,1],"car":[1.3,0.733,2.56],"taxi":[1.5,1.5,2.75]};</script><script type="module">
+  import { GLTFLoader, MeshoptDecoder } from "three";
+  window.__arLoadModelVersion = 7;
+// modelSize (2026-08-08, the fragmented-track fix): the measured metres a model
+// renders at scale 1, available BEFORE loading so a game can plan a layout. The
+// "|| {}" guard means order-of-injection never matters, and an unknown or
+// skinned model answers null rather than a made-up number — a game that checks
+// for null degrades to eyeballing, which is exactly what it did before v4.
+window.AR_SIZES = window.AR_SIZES || {};
+window.modelSize = function (name) {
+  var s = window.AR_SIZES[name];
+  return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
+};
+// modelAxis (2026-08-08, the poorly-formed-track fix): which axis a PATH
+// piece's road runs along at rest — "x", "z", or "none" for a hub/corner. The
+// two road kits genuinely disagree (city road_straight runs along X, racing
+// race_track_straight along Z) and a 1x1 square tile's size cannot reveal it,
+// so before this a game had to guess and got it wrong every time. Unknown
+// answers null — then eyeball it, same as before.
+window.AR_AXES = window.AR_AXES || {};
+window.modelAxis = function (name) {
+  var a = window.AR_AXES[name];
+  return (a === "x" || a === "z" || a === "none") ? a : null;
+};
+// modelJoins (2026-08-09, the SECOND poorly-formed-track fix): which edges a
+// tile's road actually reaches, measured from a top-down render of the
+// published bytes. modelAxis() answers "none" for every corner — true, and
+// useless for placing one; with nothing else to reason from, generated tracks
+// guessed corner rotations and the curves never met the straights.
+//   .joins  ["-x","+z"]  edges the carriageway reaches at rest (no rotation)
+//   .lane   0.7          drivable width in METRES at scale 1
+//   .at     {"-x":0.5}   where each join sits, in metres from the piece's own
+//                        minimum on that edge's axis (matters on 2x2 pieces)
+// Unknown answers null — then eyeball it, exactly as before.
+window.AR_EDGES = window.AR_EDGES || {};
+window.modelJoins = function (name) {
+  var e = window.AR_EDGES[name];
+  return (e && e.joins && e.joins.length) ? e : null;
+};
+// rotateToJoin: the one calculation every track needs and no game got right by
+// hand. Returns the rotation.y IN RADIANS that carries a piece's "from" edge
+// onto the "to" edge — e.g. a corner joining ["+z","+x"] that must instead join
+// west and south is rotateToJoin("race_track_corner","+x","+z"). Quarter turns
+// only, which is all a square grid can use.
+// (No backticks anywhere in this block: it is inlined into a TEMPLATE LITERAL,
+// so one would end the helper string mid-function.)
+window.rotateToJoin = function (name, from, to) {
+  var order = ["-z", "+x", "+z", "-x"]; // clockwise seen from above
+  var a = order.indexOf(from), b = order.indexOf(to);
+  if (a < 0 || b < 0) return 0;
+  return ((b - a + 4) % 4) * (Math.PI / 2);
+};
+// fitTile (2026-08-09): say WHICH DIRECTIONS a grid cell must connect and get
+// the rotation.y that makes the piece do it. Added after three rounds of
+// teaching failed to land: a generated track chose the right kit and one scale
+// factor, then hardcoded all four corner rotations and got all four wrong,
+// because working out "this cell needs north and east, the piece joins +z and
+// +x at rest, so rotate 3pi/2" is four steps of reasoning under a token budget.
+// This is one call. Directions are where the ROAD LEAVES the cell:
+//   fitTile("race_track_corner", ["-z", "+x"])   // track to the north and east
+// Returns 0 for an unknown piece, and null when no quarter turn can satisfy the
+// request — which means the wrong PIECE was chosen (asking a corner to join two
+// opposite edges), so a game can detect that instead of silently drawing a gap.
+window.fitTile = function (name, need) {
+  var e = window.AR_EDGES[name];
+  if (!e || !e.joins || !need || !need.length) return 0;
+  var order = ["-z", "+x", "+z", "-x"];
+  var want = need.slice().sort().join(",");
+  for (var q = 0; q < 4; q++) {
+    var got = e.joins
+      .map(function (j) { return order[(order.indexOf(j) + q) % 4]; })
+      .sort()
+      .join(",");
+    if (got === want) return q * (Math.PI / 2);
+  }
+  return null;
+};
+  const __arLoader = new GLTFLoader();
+__arLoader.setMeshoptDecoder(MeshoptDecoder);
+window.__arPerf = window.__arPerf || { models: {}, rootNames: new WeakMap(), animatedRoots: new WeakSet(), renderer: null };
+var __arStaticTemplates = {};
+function __arCountTriangles(obj) {
+  var triangles = 0;
+  obj.traverse(function (child) {
+    if (!child.isMesh || !child.geometry) return;
+    var geo = child.geometry;
+    if (geo.index) triangles += geo.index.count / 3;
+    else if (geo.attributes && geo.attributes.position) triangles += geo.attributes.position.count / 3;
+  });
+  return Math.round(triangles);
+}
+async function __arLoadFresh(name) {
+  const url = (window.AR_ASSETS || {})[name];
+  if (!url) { console.warn("[ariantra] unknown model:", name); return null; }
+  const gltf = await __arLoader.loadAsync(url);
+  return { scene: gltf.scene, animations: gltf.animations || [] };
+}
+window.loadModel = async function (name) {
+  try {
+    var obj;
+    if (__arStaticTemplates[name]) {
+      // Cache only ever holds a STATIC (no-animation) template — see the
+      // loadModelHelper() doc comment for why animated models are excluded.
+      obj = __arStaticTemplates[name].scene.clone();
+      obj.animations = [];
+    } else {
+      const fresh = await __arLoadFresh(name);
+      if (!fresh) return null;
+      if (fresh.animations.length) {
+        obj = fresh.scene;
+        obj.animations = fresh.animations;
+      } else {
+        __arStaticTemplates[name] = fresh;
+        obj = fresh.scene.clone();
+        obj.animations = [];
+      }
+    }
+    // Same answer as modelSize(name), riding on the object — so code that
+    // already holds the loaded root can size it without re-quoting the name.
+    obj.userData.arSize = window.modelSize(name);
+    try {
+      var __arEntry = window.__arPerf.models[name] || { name: name, triangles: 0, instances: [] };
+      __arEntry.triangles = __arCountTriangles(obj);
+      __arEntry.instances.push(obj);
+      if (__arEntry.instances.length > 1000) __arEntry.instances.shift();
+      window.__arPerf.models[name] = __arEntry;
+      window.__arPerf.rootNames.set(obj, name);
+    } catch (e) { /* telemetry only — never blocks the load */ }
+    return obj;
+  } catch (e) {
+    console.warn("[ariantra] loadModel failed:", name, e);
+    return null;
+  }
+};
+</script><script>
+(function () {
+  var ctx = null, buffers = {}, currentMusic = null;
+  function context() {
+    if (!ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC();
+      var resume = function () { if (ctx.state === "suspended") ctx.resume(); };
+      addEventListener("pointerdown", resume, true);
+      addEventListener("keydown", resume, true);
+    }
+    return ctx;
+  }
+  function load(name) {
+    var url = (window.AR_ASSETS || {})[name];
+    if (!url) { console.warn("[ariantra] unknown sound:", name); return Promise.resolve(null); }
+    if (!buffers[name]) {
+      buffers[name] = fetch(url)
+        .then(function (r) { return r.arrayBuffer(); })
+        .then(function (ab) {
+          return new Promise(function (res, rej) { context().decodeAudioData(ab, res, rej); });
+        })
+        .catch(function (e) { console.warn("[ariantra] sound failed:", name, e); return null; });
+    }
+    return buffers[name];
+  }
+  function trimBounds(buf) {
+    var d = buf.getChannelData(0), t = 0.001, s = 0, e = d.length - 1;
+    while (s < e && Math.abs(d[s]) < t) s++;
+    while (e > s && Math.abs(d[e]) < t) e--;
+    return { start: s / buf.sampleRate, end: (e + 1) / buf.sampleRate };
+  }
+  window.playSound = function (name) {
+    try {
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        src.connect(context().destination);
+        src.start();
+      });
+    } catch (e) { /* a silent effect, never a broken game */ }
+  };
+  window.playMusic = function (name) {
+    var handle = { stop: function () {} };
+    try {
+      if (currentMusic) { try { currentMusic.stop(); } catch (e2) {} currentMusic = null; }
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        var b = trimBounds(buf);
+        src.loop = true;
+        src.loopStart = b.start;
+        src.loopEnd = b.end;
+        var gain = context().createGain();
+        gain.gain.value = 0.5;
+        src.connect(gain);
+        gain.connect(context().destination);
+        src.start(0, b.start);
+        currentMusic = src;
+        handle.stop = function () { try { src.stop(); } catch (e3) {} if (currentMusic === src) currentMusic = null; };
+      });
+    } catch (e) { /* silent */ }
+    return handle;
+  };
+})();
+</script><script>
+(function () {
+  function mount() {
+    try {
+      var credits = [{"name":"airplane","author":"jeremy","sourceUrl":"https://poly.pizza/m/9Ev6pklkSYp"}];
+      if (!credits.length || document.getElementById("ar-credits")) return;
+      var chip = document.createElement("div");
+      chip.id = "ar-credits";
+      chip.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:99999;font:11px/1.4 system-ui,sans-serif;";
+      var btn = document.createElement("button");
+      btn.textContent = "\uD83C\uDFA8 art";
+      btn.setAttribute("aria-label", "Art credits");
+      btn.style.cssText = "border:0;border-radius:10px;padding:3px 8px;background:rgba(0,0,0,.45);color:#fff;cursor:pointer;font:inherit;";
+      var panel = document.createElement("div");
+      panel.style.cssText = "display:none;margin-top:4px;background:rgba(0,0,0,.75);color:#fff;border-radius:8px;padding:6px 10px;max-width:75vw;";
+      for (var i = 0; i < credits.length; i++) {
+        var c = credits[i], row = document.createElement("div");
+        var a = document.createElement("a");
+        a.href = c.sourceUrl; a.target = "_blank"; a.rel = "noopener";
+        a.style.cssText = "color:#9cf;text-decoration:underline;";
+        a.textContent = "\"" + c.name.replace(/_/g, " ") + "\" by " + c.author;
+        row.appendChild(a);
+        row.appendChild(document.createTextNode(" (CC BY 3.0)"));
+        panel.appendChild(row);
+      }
+      btn.addEventListener("click", function () {
+        panel.style.display = panel.style.display === "none" ? "block" : "none";
+      });
+      chip.appendChild(btn); chip.appendChild(panel);
+      document.body.appendChild(chip);
+    } catch (e) { /* credits must never break a game */ }
+  }
+  if (document.body) mount();
+  else addEventListener("DOMContentLoaded", mount);
+})();
+</script>
+    <title>Airport Pilot Adventure!</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Arial', sans-serif; color: #fff; }
+        #scene { display: block; width: 100%; height: 100dvh; }
+        #ui {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; /* Allows canvas interaction below */
+            display: flex; flex-direction: column; justify-content: space-between;
+            align-items: flex-start;
+            padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+            box-sizing: border-box;
+        }
+        #hud {
+            display: flex; flex-direction: column; gap: 5px; background: rgba(0,0,0,0.5); padding: 8px; border-radius: 5px;
+            pointer-events: none; /* HUD should not block clicks */
+            font-size: 1.2em;
+        }
+        #cockpit-dashboard {
+            position: absolute; bottom: max(12px, env(safe-area-inset-bottom)); width: 100%;
+            height: 20%; background: linear-gradient(to top, rgba(0,0,0,0.8), rgba(0,0,0,0.4));
+            box-sizing: border-box; display: flex; justify-content: space-around; align-items: flex-end;
+            pointer-events: none; /* Dashboard should not block clicks */
+            padding-bottom: max(12px, env(safe-area-inset-bottom));
+        }
+        #cockpit-view-indicator {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 2px; height: 2px; background-color: white; border-radius: 50%;
+            box-shadow: 0 0 5px white;
+            pointer-events: none;
+        }
+        .hud-item { margin-bottom: 3px; }
+        .control-panel {
+            position: absolute;
+            bottom: max(12px, env(safe-area-inset-bottom));
+            width: 100%;
+            display: flex; justify-content: space-around;
+            padding: 10px 0;
+            background: linear-gradient(to top, rgba(0,0,0,0.6), rgba(0,0,0,0.2));
+            box-sizing: border-box;
+            pointer-events: all; /* Important for controls */
+            flex-wrap: wrap; /* Allow controls to wrap on small screens */
+            gap: 5px;
+            min-height: 80px; /* Ensure space for buttons */
+        }
+        .control-group {
+            display: flex; flex-direction: column; align-items: center; gap: 5px;
+            margin: 0 5px;
+        }
+        .control-button {
+            background: linear-gradient(145deg, #4CAF50, #66BB6A); /* Green gradient */
+            color: white; border: none; padding: 12px 18px; border-radius: 8px; font-size: 1.1em;
+            cursor: pointer; min-width: 80px; text-align: center;
+            box-shadow: 0 4px #388E3C; /* Darker green for depth */
+            transition: all 0.1s ease;
+            touch-action: manipulation; /* Prevent 300ms delay on touch */
+            pointer-events: all;
+        }
+        .control-button:active {
+            box-shadow: 0 2px #388E3C;
+            transform: translateY(2px);
+        }
+        .control-button.disabled {
+            background: #888;
+            box-shadow: 0 4px #666;
+            cursor: not-allowed;
+        }
+        .control-button.active {
+            background: linear-gradient(145deg, #2196F3, #64B5F6); /* Blue gradient for active */
+            box-shadow: 0 4px #1976D2;
+        }
+
+        /* Slider styles */
+        .slider-container {
+            display: flex; flex-direction: column; align-items: center; gap: 5px;
+        }
+        .vertical-slider {
+            -webkit-appearance: none;
+            width: 15px;
+            height: 80px; /* Adjust height as needed */
+            background: #d3d3d3;
+            outline: none;
+            opacity: 0.7;
+            -webkit-transition: .2s;
+            transition: opacity .2s;
+            border-radius: 8px;
+            transform: rotate(-90deg); /* Make it appear vertical */
+            margin: 20px 0; /* Adjust margin for rotated element */
+            pointer-events: all;
+        }
+        .vertical-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 25px;
+            height: 25px;
+            background: #4CAF50;
+            cursor: grab;
+            border-radius: 50%;
+            box-shadow: 0 0 5px rgba(0,0,0,0.5);
+        }
+        .vertical-slider::-moz-range-thumb {
+            width: 25px;
+            height: 25px;
+            background: #4CAF50;
+            cursor: grab;
+            border-radius: 50%;
+            box-shadow: 0 0 5px rgba(0,0,0,0.5);
+        }
+        /* Steering wheel (simplified as a horizontal slider for now) */
+        .steering-wheel-slider {
+            -webkit-appearance: none;
+            width: 100px;
+            height: 15px;
+            background: #d3d3d3;
+            outline: none;
+            opacity: 0.7;
+            -webkit-transition: .2s;
+            transition: opacity .2s;
+            border-radius: 8px;
+            pointer-events: all;
+        }
+        .steering-wheel-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 25px;
+            height: 25px;
+            background: #2196F3;
+            cursor: grab;
+            border-radius: 50%;
+            box-shadow: 0 0 5px rgba(0,0,0,0.5);
+        }
+        .steering-wheel-slider::-moz-range-thumb {
+            width: 25px;
+            height: 25px;
+            background: #2196F3;
+            cursor: grab;
+            border-radius: 50%;
+            box-shadow: 0 0 5px rgba(0,0,0,0.5);
+        }
+
+        #atc-message {
+            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.8); color: #333; padding: 15px 25px; border-radius: 10px;
+            font-size: 1.5em; text-align: center; max-width: 80%; box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            display: none; z-index: 10;
+        }
+        #score {
+            position: absolute;
+            top: max(12px, env(safe-area-inset-top));
+            right: max(12px, env(safe-area-inset-right));
+            background: rgba(0,0,0,0.5); padding: 8px 15px; border-radius: 5px;
+            font-size: 1.5em;
+            pointer-events: none;
+        }
+        #game-over-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7); color: white;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            font-size: 2em; text-align: center;
+            z-index: 100;
+            display: none;
+        }
+        #game-over-screen button {
+            margin-top: 20px; padding: 15px 30px; font-size: 0.8em;
+            background: #4CAF50; color: white; border: none; border-radius: 8px;
+            cursor: pointer; box-shadow: 0 5px #388E3C;
+        }
+        #game-over-screen button:active {
+            box-shadow: 0 2px #388E3C;
+            transform: translateY(3px);
+        }
+
+        /* Responsive adjustments for smaller screens */
+        @media (max-width: 600px) {
+            .control-panel {
+                flex-direction: row;
+                justify-content: space-around;
+                align-items: flex-end;
+                padding-bottom: max(5px, env(safe-area-inset-bottom));
+                min-height: auto;
+            }
+            .control-group {
+                margin: 0;
+                gap: 2px;
+            }
+            .control-button {
+                padding: 10px 12px;
+                font-size: 0.9em;
+                min-width: 60px;
+            }
+            .vertical-slider {
+                height: 60px;
+                width: 12px;
+                margin: 15px 0;
+            }
+            .vertical-slider::-webkit-slider-thumb, .vertical-slider::-moz-range-thumb {
+                width: 20px;
+                height: 20px;
+            }
+            .steering-wheel-slider {
+                width: 80px;
+                height: 12px;
+            }
+            .steering-wheel-slider::-webkit-slider-thumb, .steering-wheel-slider::-moz-range-thumb {
+                width: 20px;
+                height: 20px;
+            }
+            #hud { font-size: 1em; padding: 5px; }
+            #atc-message { font-size: 1.2em; padding: 10px 15px; }
+            #score { font-size: 1.2em; padding: 5px 10px; }
+        }
+    </style>
+</head>
+<body>
+    
+    
+    
+
+    <canvas id="scene"></canvas>
+    <div id="ui">
+        <div id="hud">
+            <div class="hud-item">Speed: <span id="speed-display">0</span> kts</div>
+            <div class="hud-item">Altitude: <span id="altitude-display">0</span> ft</div>
+            <div class="hud-item">Flaps: <span id="flaps-display">UP</span></div>
+            <div class="hud-item">Gear: <span id="gear-display">DOWN</span></div>
+            <div class="hud-item">Camera: <span id="camera-display">Cockpit</span></div>
+            <div class="hud-item">Mission: <span id="mission-display">1/5</span></div>
+            <div class="hud-item">ATC Fails: <span id="atc-fails-display">0/3</span></div>
+        </div>
+
+        <div id="atc-message"></div>
+        <div id="score">Score: <span id="score-value">0</span></div>
+
+        <!-- Cockpit Dashboard Elements (Instruments) -->
+        <div id="cockpit-dashboard">
+            <div id="cockpit-view-indicator"></div>
+        </div>
+
+        <!-- Controls Panel -->
+        <div class="control-panel">
+            <div class="control-group">
+                <label>Throttle</label>
+                <input type="range" id="throttle-slider" class="vertical-slider" min="0" max="100" value="0">
+            </div>
+            <div class="control-group">
+                <button id="gear-toggle-btn" class="control-button">GEAR DOWN</button>
+                <button id="flaps-toggle-btn" class="control-button">FLAPS UP</button>
+            </div>
+            <div class="control-group">
+                <button id="brake-btn" class="control-button">BRAKE</button>
+            </div>
+            <div class="control-group">
+                <label>Steer</label>
+                <input type="range" id="steering-slider" class="steering-wheel-slider" min="-1" max="1" step="0.1" value="0">
+            </div>
+            <div class="control-group">
+                <button id="yaw-left-btn" class="control-button">YAW LEFT</button>
+                <button id="yaw-right-btn" class="control-button">YAW RIGHT</button>
+            </div>
+            <div class="control-group">
+                <button id="camera-toggle-btn" class="control-button">3RD PERSON</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="game-over-screen">
+        <h2 id="game-over-message">Game Over!</h2>
+        <button id="restart-button">Play Again?</button>
+    </div>
+
+    <script type="module">
+        import {
+            Scene, PerspectiveCamera, WebGLRenderer, Clock, Color, Fog, Group, Vector3, Box3,
+            BoxGeometry, SphereGeometry, CylinderGeometry, PlaneGeometry, MeshStandardMaterial,
+            MeshBasicMaterial, Mesh, AmbientLight, DirectionalLight, Quaternion, Matrix4, MathUtils
+        } from "three";
+        import { World, Body, Vec3, Box, Sphere, Plane, Cylinder } from "cannon-es";
+
+        // --- GAME STATE ---
+        let on = true; // For pausing the game when tab is not active
+        let gameOver = false;
+        let score = 0;
+        let currentMissionIndex = 0;
+        let atcInstructionFails = 0;
+        const MAX_ATC_FAILS = 3;
+
+        // --- THREE.JS GLOBALS ---
+        let scene, camera, renderer, clock, mixer;
+        let playerMesh, playerBody; // Player's 3D model and physics body
+        let thirdPersonCamera; // For the third-person view
+        let cockpitCamera; // For the cockpit view
+        let currentCamera; // Which camera is currently active
+        const UP_VECTOR = new Vec3(0, 1, 0); // Cannon.js up vector
+
+        // --- PLAYER AIRCRAFT STATE ---
+        const playerState = {
+            speed: 0, // Current forward speed
+            throttle: 0, // 0-100%
+            groundSteering: 0, // -1 (left) to 1 (right)
+            yawControl: 0, // -1 (left) to 1 (right) for flight
+            pitch: 0, // Current pitch angle
+            roll: 0, // Current roll angle
+            isGrounded: true,
+            isGearDown: true,
+            flapsState: 0, // 0: Up, 1: Half, 2: Full
+            isBraking: false,
+            altitude: 0, // Above ground level
+            takeoffSpeedThreshold: 30, // knots
+            landingSpeedThreshold: 20, // knots
+            airSpeed: 0 // In knots
+        };
+        const AIRCRAFT_MAX_SPEED_KTS = 150; // Max speed in knots
+        const AIRCRAFT_MAX_THROTTLE_FORCE = 500; // Max force applied by throttle
+        const AIRCRAFT_DRAG_COEFF = 0.005; // Drag coefficient
+        const AIRCRAFT_LIFT_COEFF = 0.05; // Lift coefficient
+        const AIRCRAFT_GRAVITY = -9.82; // m/s^2
+        const AIRCRAFT_GROUND_FRICTION_COEFF = 0.8;
+        const AIRCRAFT_AIR_FRICTION_COEFF = 0.01;
+        const AIRCRAFT_STEER_RATE = 0.8; // Radians per second for ground steering
+        const AIRCRAFT_YAW_RATE = 0.5; // Radians per second for air yaw
+        const AIRCRAFT_PITCH_RATE = 0.2; // Radians per second for up/down (simulated)
+        const AIRCRAFT_ROLL_RATE = 0.4; // Radians per second for left/right (simulated)
+
+        let playerLandingGearMeshes = [];
+        let playerFlapMeshes = [];
+
+        // --- UI ELEMENTS ---
+        const speedDisplay = document.getElementById('speed-display');
+        const altitudeDisplay = document.getElementById('altitude-display');
+        const flapsDisplay = document.getElementById('flaps-display');
+        const gearDisplay = document.getElementById('gear-display');
+        const cameraDisplay = document.getElementById('camera-display');
+        const missionDisplay = document.getElementById('mission-display');
+        const atcFailsDisplay = document.getElementById('atc-fails-display');
+        const scoreValueDisplay = document.getElementById('score-value');
+
+        const throttleSlider = document.getElementById('throttle-slider');
+        const gearToggleButton = document.getElementById('gear-toggle-btn');
+        const flapsToggleButton = document.getElementById('flaps-toggle-btn');
+        const brakeButton = document.getElementById('brake-btn');
+        const steeringSlider = document.getElementById('steering-slider');
+        const yawLeftButton = document.getElementById('yaw-left-btn');
+        const yawRightButton = document.getElementById('yaw-right-btn');
+        const cameraToggleButton = document.getElementById('camera-toggle-btn');
+        const atcMessageDiv = document.getElementById('atc-message');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const gameOverMessage = document.getElementById('game-over-message');
+        const restartButton = document.getElementById('restart-button');
+
+        // --- PHYSICS WORLD ---
+        let world;
+        const collisionGroups = {
+            PLAYER: 1,
+            GROUND: 2,
+            AI_PLANE: 4
+        };
+
+        // --- AIRPORT LAYOUT ---
+        const airportConfig = {
+            runways: [
+                { id: "27", position: new Vector3(0, 0, 100), rotationY: Math.PI / 2, length: 1000, width: 60, startPoint: new Vector3(-450, 0, 100), endPoint: new Vector3(450, 0, 100) }, // East-West
+                { id: "09", position: new Vector3(0, 0, 100), rotationY: -Math.PI / 2, length: 1000, width: 60, startPoint: new Vector3(450, 0, 100), endPoint: new Vector3(-450, 0, 100) },
+                { id: "36", position: new Vector3(100, 0, -200), rotationY: 0, length: 800, width: 50, startPoint: new Vector3(100, 0, -550), endPoint: new Vector3(100, 0, 250) }, // North-South
+                { id: "18", position: new Vector3(100, 0, -200), rotationY: Math.PI, length: 800, width: 50, startPoint: new Vector3(100, 0, 250), endPoint: new Vector3(100, 0, -550) }
+            ],
+            taxiways: [
+                { start: new Vector3(-200, 0, 100), end: new Vector3(-200, 0, 0), width: 20 },
+                { start: new Vector3(200, 0, 100), end: new Vector3(200, 0, 0), width: 20 },
+                { start: new Vector3(-200, 0, 0), end: new Vector3(200, 0, 0), width: 20 },
+                { start: new Vector3(0, 0, 0), end: new Vector3(0, 0, -100), width: 20 },
+                { start: new Vector3(0, 0, -100), end: new Vector3(100, 0, -100), width: 20 },
+                { start: new Vector3(100, 0, -100), end: new Vector3(100, 0, -200), width: 20 }
+            ],
+            terminal: { position: new Vector3(0, 10, -150), size: new Vector3(150, 20, 80) },
+            hangars: [
+                { position: new Vector3(-250, 10, -100), size: new Vector3(80, 20, 60) },
+                { position: new Vector3(250, 10, -100), size: new Vector3(80, 20, 60) }
+            ],
+            controlTower: { position: new Vector3(-100, 50, -50), height: 100 }
+        };
+
+        let runwayMeshes = [];
+        let taxiwayMeshes = [];
+
+        // --- AI TRAFFIC ---
+        const aiAircraft = [];
+        const AI_PLANE_COUNT = 3;
+        const AI_SPAWN_POINTS = [
+            new Vector3(-300, 0, 150),
+            new Vector3(300, 0, 150),
+            new Vector3(50, 0, -250)
+        ];
+        const aiTaxiPaths = {
+            "taxiTo27": [
+                new Vector3(-300, 0, 150),
+                new Vector3(-200, 0, 150),
+                new Vector3(-200, 0, 100),
+                new Vector3(-450, 0, 100) // Runway 27 start
+            ],
+            "taxiTo18": [
+                new Vector3(50, 0, -250),
+                new Vector3(100, 0, -250),
+                new Vector3(100, 0, 250) // Runway 18 start
+            ]
+        };
+        const AI_TAXI_SPEED = 10; // m/s
+        const AI_TAKEOFF_SPEED = 30; // m/s
+        const AI_FLIGHT_SPEED = 50; // m/s
+        const AI_LANDING_SPEED = 25; // m/s
+
+        // --- ATC SYSTEM ---
+        const ATC_MESSAGES = {
+            "taxiToRunway27": "Player, taxi to runway 27. Use taxiway Alpha.",
+            "taxiToRunway18": "Player, taxi to runway 18. Use taxiway Bravo.",
+            "lineUpAndWait27": "Player, line up and wait runway 27.",
+            "lineUpAndWait18": "Player, line up and wait runway 18.",
+            "clearedForTakeoff27": "Player, runway 27, cleared for takeoff.",
+            "clearedForTakeoff18": "Player, runway 18, cleared for takeoff.",
+            "climbTo": (alt) => `Player, climb and maintain ${alt} feet.`,
+            "flyHeading": (hdg) => `Player, fly heading ${hdg} degrees.`,
+            "clearedToLand09": "Player, cleared to land runway 09.",
+            "clearedToLand36": "Player, cleared to land runway 36.",
+            "missionComplete": "Mission complete. Well done!",
+            "missionFailed": "Mission failed. Try again!"
+        };
+        let currentATCMissionInstruction = null;
+        let atcMessageTimeout = null;
+        let atcMessageSaid = false; // To track if ATC instruction has been presented to player
+        let atcLastInstructionTime = 0;
+        const ATC_INSTRUCTION_GRACE_PERIOD = 15000; // 15 seconds to acknowledge/start complying
+
+        // --- TAXIWAY GUIDANCE ---
+        let currentGuidanceLine = null;
+        let taxiPathNodes = {}; // Graph representation of taxiways
+
+        // --- MISSION SYSTEM ---
+        const missions = [
+            {
+                name: "Taxi to Runway 27",
+                instruction: "taxiToRunway27",
+                objective: { type: "reachRunwayStart", runwayId: "27" },
+                startPosition: new Vector3(-50, 0, -120),
+                startRotationY: Math.PI / 2
+            },
+            {
+                name: "Takeoff from Runway 27",
+                instruction: "clearedForTakeoff27",
+                objective: { type: "takeoffAndClimb", altitude: 500, heading: 90 }, // Heading East
+                startPosition: new Vector3(-450, 0, 100), // Start of Runway 27
+                startRotationY: Math.PI / 2
+            },
+            {
+                name: "Fly a Heading",
+                instruction: (alt, hdg) => ATC_MESSAGES.flyHeading(hdg) + " " + ATC_MESSAGES.climbTo(alt),
+                instructionArgs: [1000, 180],
+                objective: { type: "reachAltitudeAndHeading", altitude: 1000, heading: 180, duration: 10 },
+                startPosition: new Vector3(0, 500, 0),
+                startRotationY: 0
+            },
+            {
+                name: "Taxi to Runway 18",
+                instruction: "taxiToRunway18",
+                objective: { type: "reachRunwayStart", runwayId: "18" },
+                startPosition: new Vector3(50, 0, -120),
+                startRotationY: 0
+            },
+            {
+                name: "Landing on Runway 09",
+                instruction: "clearedToLand09",
+                objective: { type: "landSuccessfully", runwayId: "09" },
+                startPosition: new Vector3(400, 200, 100), // Approach for Runway 09
+                startRotationY: Math.PI + Math.PI / 2 // Facing towards Runway 09
+            }
+        ];
+
+        // --- UTILITIES ---
+        function degreesToRadians(degrees) {
+            return degrees * (Math.PI / 180);
+        }
+        function radiansToDegrees(radians) {
+            return radians * (180 / Math.PI);
+        }
+        function toKnots(metersPerSecond) {
+            return metersPerSecond * 1.94384;
+        }
+        function toMetersPerSecond(knots) {
+            return knots * 0.514444;
+        }
+
+        // --- GAME INITIALIZATION ---
+        function init() {
+            // Scene setup
+            scene = new Scene();
+            scene.background = new Color(0x87CEEB); // Sky blue
+            scene.fog = new Fog(0x87CEEB, 200, 1000); // Light fog for depth
+
+            // Camera setup (placeholder, will be replaced by player's cameras)
+            camera = new PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+            cockpitCamera = new PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+            thirdPersonCamera = new PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+            currentCamera = cockpitCamera; // Start in cockpit view
+
+            // Renderer setup
+            renderer = new WebGLRenderer({ canvas: document.getElementById('scene'), antialias: true, preserveDrawingBuffer: true });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+            // Lighting
+            const ambientLight = new AmbientLight(0xffffff, 0.7); // Soft white light
+            scene.add(ambientLight);
+
+            const directionalLight = new DirectionalLight(0xffffff, 0.8); // Sunlight
+            directionalLight.position.set(500, 500, 500);
+            scene.add(directionalLight);
+
+            clock = new Clock();
+            world = new World({
+                gravity: new Vec3(0, AIRCRAFT_GRAVITY, 0)
+            });
+
+            createAirportEnvironment();
+            createPlayerAircraft();
+            createAIPlanes();
+            setupTaxiPathNodes();
+            resetGame(); // Start the first mission
+
+            // Responsive window resizing
+            window.addEventListener('resize', resizeRendererToDisplaySize);
+            resizeRendererToDisplaySize(); // Initial call
+
+            // Game loop start
+            animate();
+
+            // Pause when tab is not active
+            document.addEventListener('visibilitychange', () => setOn(!document.hidden));
+            window.addEventListener('blur', () => setOn(false));
+            window.addEventListener('focus', () => setOn(true));
+        }
+
+        function setOn(value) {
+            if (value === on) return;
+            on = value;
+            if (value) {
+                clock.getDelta(); // Reset delta time
+                requestAnimationFrame(animate);
+            }
+        }
+
+        function resizeRendererToDisplaySize() {
+            const canvas = renderer.domElement;
+            const width = canvas.clientWidth;
+            const height = canvas.clientHeight;
+            if (canvas.width !== width || canvas.height !== height) {
+                renderer.setSize(width, height, false);
+                currentCamera.aspect = width / height;
+                currentCamera.updateProjectionMatrix();
+            }
+        }
+
+        // --- AIRPORT CREATION ---
+        function createAirportEnvironment() {
+            // Ground
+            const groundGeometry = new PlaneGeometry(2000, 2000);
+            const groundMaterial = new MeshStandardMaterial({ color: 0x6B8E23, flatShading: true }); // Olive green for grass
+            const ground = new Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = -0.1; // Slightly below 0 to avoid z-fighting with runways
+            scene.add(ground);
+
+            const groundBody = new Body({ mass: 0 });
+            groundBody.addShape(new Plane());
+            groundBody.quaternion.setFromAxisAngle(new Vec3(1, 0, 0), -Math.PI / 2);
+            world.addBody(groundBody);
+
+            // Runways
+            const runwayMaterial = new MeshStandardMaterial({ color: 0x333333, flatShading: true }); // Dark grey
+            airportConfig.runways.forEach(r => {
+                const runwayGeometry = new BoxGeometry(r.length, 0.1, r.width);
+                const runwayMesh = new Mesh(runwayGeometry, runwayMaterial);
+                runwayMesh.position.copy(r.position);
+                runwayMesh.rotation.y = r.rotationY;
+                scene.add(runwayMesh);
+                runwayMeshes.push(runwayMesh);
+
+                const runwayBody = new Body({ mass: 0 });
+                runwayBody.addShape(new Box(new Vec3(r.length / 2, 0.05, r.width / 2)));
+                runwayBody.position.copy(r.position);
+                runwayBody.quaternion.setFromAxisAngle(UP_VECTOR, r.rotationY);
+                world.addBody(runwayBody);
+            });
+
+            // Taxiways
+            const taxiwayMaterial = new MeshStandardMaterial({ color: 0x555555, flatShading: true }); // Lighter grey
+            airportConfig.taxiways.forEach(t => {
+                const length = t.start.distanceTo(t.end);
+                const center = t.start.clone().lerp(t.end, 0.5);
+                const angle = Math.atan2(t.end.x - t.start.x, t.end.z - t.start.z);
+
+                const taxiwayGeometry = new BoxGeometry(t.width, 0.1, length);
+                const taxiwayMesh = new Mesh(taxiwayGeometry, taxiwayMaterial);
+                taxiwayMesh.position.set(center.x, center.y, center.z);
+                taxiwayMesh.rotation.y = angle; // Rotate to connect start and end
+                scene.add(taxiwayMesh);
+                taxiwayMeshes.push(taxiwayMesh);
+
+                const taxiwayBody = new Body({ mass: 0 });
+                taxiwayBody.addShape(new Box(new Vec3(t.width / 2, 0.05, length / 2)));
+                taxiwayBody.position.copy(taxiwayMesh.position);
+                taxiwayBody.quaternion.setFromAxisAngle(UP_VECTOR, taxiwayMesh.rotation.y);
+                world.addBody(taxiwayBody);
+            });
+
+            // Terminal
+            loadModel("grandstand").then(model => {
+                if (model) {
+                    model.position.copy(airportConfig.terminal.position);
+                    model.scale.set(0.5, 0.5, 0.5); // Adjust scale to fit
+                    scene.add(model);
+                } else {
+                    const terminalGeometry = new BoxGeometry(airportConfig.terminal.size.x, airportConfig.terminal.size.y, airportConfig.terminal.size.z);
+                    const terminalMaterial = new MeshStandardMaterial({ color: 0xD3D3D3 }); // Light grey
+                    const terminalMesh = new Mesh(terminalGeometry, terminalMaterial);
+                    terminalMesh.position.copy(airportConfig.terminal.position);
+                    scene.add(terminalMesh);
+                }
+            });
+
+            // Hangars
+            airportConfig.hangars.forEach(h => {
+                const hangarGeometry = new BoxGeometry(h.size.x, h.size.y, h.size.z);
+                const hangarMaterial = new MeshStandardMaterial({ color: 0xA9A9A9 }); // Grey
+                const hangarMesh = new Mesh(hangarGeometry, hangarMaterial);
+                hangarMesh.position.copy(h.position);
+                scene.add(hangarMesh);
+            });
+
+            // Control Tower
+            loadModel("tower").then(model => {
+                if (model) {
+                    model.position.set(airportConfig.controlTower.position.x, 0, airportConfig.controlTower.position.z);
+                    model.scale.set(0.5, 0.5, 0.5); // Adjust scale
+                    scene.add(model);
+                } else {
+                    const towerBase = new BoxGeometry(20, airportConfig.controlTower.height * 0.8, 20);
+                    const towerTop = new SphereGeometry(15, 16, 8);
+                    const towerMaterial = new MeshStandardMaterial({ color: 0x778899 });
+                    const towerMeshBase = new Mesh(towerBase, towerMaterial);
+                    const towerMeshTop = new Mesh(towerTop, towerMaterial);
+                    towerMeshBase.position.set(airportConfig.controlTower.position.x, airportConfig.controlTower.height * 0.4, airportConfig.controlTower.position.z);
+                    towerMeshTop.position.set(airportConfig.controlTower.position.x, airportConfig.controlTower.height * 0.8 + 10, airportConfig.controlTower.position.z);
+                    scene.add(towerMeshBase);
+                    scene.add(towerMeshTop);
+                }
+            });
+        }
+
+        // --- PLAYER AIRCRAFT CREATION ---
+        function createPlayerAircraft() {
+            // Placeholder mesh for player until model loads
+            const playerGeometry = new BoxGeometry(3, 1, 10);
+            const playerMaterial = new MeshStandardMaterial({ color: 0x00BFFF }); // Deep sky blue
+            playerMesh = new Mesh(playerGeometry, playerMaterial);
+            playerMesh.position.set(0, 10, 0); // Start slightly elevated for testing
+            scene.add(playerMesh);
+
+            // Cannon.js body for player
+            const playerShape = new Box(new Vec3(1.5, 0.5, 5)); // Half extents
+            playerBody = new Body({ mass: 100, shape: playerShape });
+            playerBody.position.copy(playerMesh.position);
+            playerBody.angularFactor.set(0, 0, 0); // Disable angular rotation from physics for now, we control it
+            playerBody.linearDamping = 0.9; // Air resistance / friction
+            playerBody.angularDamping = 0.9;
+            playerBody.collisionFilterGroup = collisionGroups.PLAYER;
+            playerBody.collisionFilterMask = collisionGroups.GROUND | collisionGroups.AI_PLANE;
+            world.addBody(playerBody);
+
+            playerBody.addEventListener("collide", (event) => {
+                if (event.body.collisionFilterGroup === collisionGroups.AI_PLANE) {
+                    // Collision with AI plane
+                    if (!gameOver) {
+                        endGame("crash");
+                    }
+                }
+            });
+
+            // Load actual airplane model
+            loadModel("airplane").then(model => {
+                if (model) {
+                    console.log("Player airplane model loaded!", model);
+                    // Remove placeholder
+                    scene.remove(playerMesh);
+                    playerMesh.geometry.dispose();
+                    playerMesh.material.dispose();
+
+                    playerMesh = model;
+                    playerMesh.scale.set(0.2, 0.2, 0.2); // Adjust scale if needed
+                    scene.add(playerMesh);
+
+                    // Landing Gear (simulated if model doesn't have it)
+                    // Let's assume the model is a single mesh for simplicity and add gear
+                    playerLandingGearMeshes = createLandingGear(playerMesh);
+                    playerFlapMeshes = createFlaps(playerMesh);
+
+                    updateLandingGearVisuals();
+                    updateFlapsVisuals();
+                }
+            });
+
+            // Cameras for the player
+            cockpitCamera.position.set(0, 0.5, 1); // Relative to playerMesh center
+            cockpitCamera.rotation.set(0, Math.PI, 0); // Rotate 180 to look forward from inside
+            playerMesh.add(cockpitCamera); // Attach to player mesh
+
+            thirdPersonCamera.position.set(0, 5, -15); // Behind and above
+            playerMesh.add(thirdPersonCamera); // Attach to player mesh
+
+            currentCamera = cockpitCamera;
+        }
+
+        // Helper to create simple landing gear
+        function createLandingGear(parentMesh) {
+            const gearMaterial = new MeshStandardMaterial({ color: 0x888888 });
+            const wheelMaterial = new MeshStandardMaterial({ color: 0x000000 });
+
+            const gearGroup = new Group();
+            parentMesh.add(gearGroup); // Attach gear to the plane
+
+            const mainGearLeft = new CylinderGeometry(0.3, 0.3, 2, 8);
+            const mainWheelLeft = new CylinderGeometry(0.5, 0.5, 0.3, 16);
+            const mgL = new Mesh(mainGearLeft, gearMaterial);
+            const mwL = new Mesh(mainWheelLeft, wheelMaterial);
+            mgL.position.set(-2, -1.5, 0);
+            mwL.position.set(-2, -2.5, 0);
+            mwL.rotation.x = Math.PI / 2;
+            gearGroup.add(mgL, mwL);
+
+            const mainGearRight = new CylinderGeometry(0.3, 0.3, 2, 8);
+            const mainWheelRight = new CylinderGeometry(0.5, 0.5, 0.3, 16);
+            const mgR = new Mesh(mainGearRight, gearMaterial);
+            const mwR = new Mesh(mainWheelRight, wheelMaterial);
+            mgR.position.set(2, -1.5, 0);
+            mwR.position.set(2, -2.5, 0);
+            mwR.rotation.x = Math.PI / 2;
+            gearGroup.add(mgR, mwR);
+
+            const noseGear = new CylinderGeometry(0.2, 0.2, 1.5, 8);
+            const noseWheel = new CylinderGeometry(0.4, 0.4, 0.3, 16);
+            const ng = new Mesh(noseGear, gearMaterial);
+            const nw = new Mesh(noseWheel, wheelMaterial);
+            ng.position.set(0, -1, 4);
+            nw.position.set(0, -1.7, 4);
+            nw.rotation.x = Math.PI / 2;
+            gearGroup.add(ng, nw);
+
+            return [gearGroup]; // Return the group that contains all gear meshes
+        }
+
+        // Helper to create simple flaps
+        function createFlaps(parentMesh) {
+            const flapMaterial = new MeshStandardMaterial({ color: 0x666666, side: DoubleSide });
+
+            const leftFlap = new BoxGeometry(0.5, 0.1, 2);
+            const rightFlap = new BoxGeometry(0.5, 0.1, 2);
+
+            const lfMesh = new Mesh(leftFlap, flapMaterial);
+            lfMesh.position.set(-3, 0, -2); // Relative to plane body
+            lfMesh.rotation.y = Math.PI / 8; // Slight initial angle
+            lfMesh.visible = false; // Hidden when up
+
+            const rfMesh = new Mesh(rightFlap, flapMaterial);
+            rfMesh.position.set(3, 0, -2);
+            rfMesh.rotation.y = -Math.PI / 8;
+            rfMesh.visible = false;
+
+            parentMesh.add(lfMesh, rfMesh);
+            return [lfMesh, rfMesh];
+        }
+
+        // --- AI PLANES ---
+        function createAIPlanes() {
+            for (let i = 0; i < AI_PLANE_COUNT; i++) {
+                const aiState = {
+                    speed: 0,
+                    throttle: 0,
+                    heading: 0, // Radians
+                    isGrounded: true,
+                    isGearDown: true,
+                    flapsState: 0,
+                    altitude: 0,
+                    targetPath: null,
+                    pathIndex: 0,
+                    state: "taxi" // "taxi", "takeoff", "flight", "landing"
+                };
+
+                const aiGeometry = new BoxGeometry(3, 1, 10);
+                const aiMaterial = new MeshStandardMaterial({ color: 0xFFD700 }); // Gold color for AI
+                let aiMesh = new Mesh(aiGeometry, aiMaterial);
+                aiMesh.position.copy(AI_SPAWN_POINTS[i]);
+                scene.add(aiMesh);
+
+                const aiShape = new Box(new Vec3(1.5, 0.5, 5));
+                const aiBody = new Body({ mass: 100, shape: aiShape });
+                aiBody.position.copy(aiMesh.position);
+                aiBody.angularFactor.set(0, 0, 0);
+                aiBody.linearDamping = 0.9;
+                aiBody.collisionFilterGroup = collisionGroups.AI_PLANE;
+                aiBody.collisionFilterMask = collisionGroups.PLAYER | collisionGroups.GROUND | collisionGroups.AI_PLANE;
+                world.addBody(aiBody);
+
+                aiBody.addEventListener("collide", (event) => {
+                    if (event.body.collisionFilterGroup === collisionGroups.PLAYER) {
+                        // Collision with player plane
+                        if (!gameOver) {
+                            endGame("crash");
+                        }
+                    }
+                });
+
+                loadModel("airplane").then(model => {
+                    if (model) {
+                        scene.remove(aiMesh);
+                        aiMesh.geometry.dispose();
+                        aiMesh.material.dispose();
+
+                        aiMesh = model;
+                        aiMesh.scale.set(0.2, 0.2, 0.2);
+                        scene.add(aiMesh);
+                        // Make sure to attach the physics body to the new mesh
+                        aiMesh.userData.body = aiBody;
+                    }
+                });
+
+                aiAircraft.push({ mesh: aiMesh, body: aiBody, state: aiState });
+            }
+        }
+
+        // --- TAXI PATH NODE SETUP (simplified graph for guidance) ---
+        function setupTaxiPathNodes() {
+            // Add runway start/end points
+            airportConfig.runways.forEach(r => {
+                taxiPathNodes[r.id + "_start"] = { pos: r.startPoint, neighbors: [] };
+                taxiPathNodes[r.id + "_end"] = { pos: r.endPoint, neighbors: [] };
+            });
+
+            // Example static nodes (can be dynamically generated from taxiway geometry later)
+            // Connecting some key points in the airport
+            const points = {
+                "player_start_mission1": new Vector3(-50, 0, -120),
+                "player_start_mission4": new Vector3(50, 0, -120),
+                "taxi_int_A": new Vector3(-200, 0, 0),
+                "taxi_int_B": new Vector3(200, 0, 0),
+                "taxi_int_C": new Vector3(0, 0, 0),
+                "taxi_int_D": new Vector3(0, 0, -100),
+                "taxi_int_E": new Vector3(100, 0, -100)
+            };
+            Object.assign(taxiPathNodes, points);
+
+            // Connect them (simplified for this example)
+            function addConnection(node1, node2) {
+                taxiPathNodes[node1].neighbors.push(taxiPathNodes[node2]);
+                taxiPathNodes[node2].neighbors.push(taxiPathNodes[node1]); // Bidirectional
+            }
+
+            addConnection("player_start_mission1", "taxi_int_C");
+            addConnection("player_start_mission4", "taxi_int_C");
+            addConnection("taxi_int_C", "taxi_int_D");
+            addConnection("taxi_int_D", "taxi_int_E");
+            addConnection("taxi_int_E", "18_start");
+
+            // Connect to runway 27 for example
+            // For now, hardcode direct path for mission logic
+        }
+
+        function findTaxiPath(startPos, endNodeName) {
+            // This would be a proper pathfinding algorithm (A* or Dijkstra)
+            // For simplicity, let's return a hardcoded path based on common missions
+            if (endNodeName === "27_start") {
+                return [
+                    taxiPathNodes["player_start_mission1"].pos, // Actual start point might be different from mission start
+                    new Vector3(-50, 0, 0),
+                    new Vector3(-200, 0, 0),
+                    new Vector3(-200, 0, 100),
+                    new Vector3(-450, 0, 100) // Runway 27 start
+                ];
+            } else if (endNodeName === "18_start") {
+                return [
+                    taxiPathNodes["player_start_mission4"].pos, // Actual start point might be different
+                    new Vector3(50, 0, 0),
+                    new Vector3(0, 0, 0),
+                    new Vector3(0, 0, -100),
+                    new Vector3(100, 0, -100),
+                    new Vector3(100, 0, 250) // Runway 18 start
+                ];
+            }
+            return [];
+        }
+
+        // --- TAXIWAY GUIDANCE VISUAL ---
+        function drawTaxiGuidance(path) {
+            if (currentGuidanceLine) {
+                scene.remove(currentGuidanceLine);
+                currentGuidanceLine.geometry.dispose();
+                currentGuidanceLine.material.dispose();
+            }
+
+            if (path.length < 2) return;
+
+            const points = [];
+            path.forEach(p => points.push(p.clone().add(new Vector3(0, 0.2, 0)))); // Slightly above ground
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = new THREE.LineBasicMaterial({ color: 0x00FF00, linewidth: 5 }); // Green glowing line
+            currentGuidanceLine = new THREE.Line(geometry, material);
+            scene.add(currentGuidanceLine);
+        }
+
+        function clearTaxiGuidance() {
+            if (currentGuidanceLine) {
+                scene.remove(currentGuidanceLine);
+                currentGuidanceLine.geometry.dispose();
+                currentGuidanceLine.material.dispose();
+                currentGuidanceLine = null;
+            }
+        }
+
+        // --- HUD INSTRUMENTS ---
+        function updateHUD() {
+            // Speed (convert m/s to knots)
+            const speedMps = playerBody.velocity.length();
+            playerState.airSpeed = toKnots(speedMps);
+            speedDisplay.textContent = Math.round(playerState.airSpeed);
+
+            // Altitude (height above ground level)
+            playerState.altitude = Math.max(0, playerBody.position.y); // Assume ground is Y=0
+            altitudeDisplay.textContent = Math.round(playerState.altitude);
+
+            // Flaps
+            flapsDisplay.textContent = ['UP', 'HALF', 'FULL'][playerState.flapsState];
+
+            // Gear
+            gearDisplay.textContent = playerState.isGearDown ? 'DOWN' : 'UP';
+
+            // Camera
+            cameraDisplay.textContent = (currentCamera === cockpitCamera) ? 'Cockpit' : '3rd Person';
+
+            // Mission
+            missionDisplay.textContent = `${currentMissionIndex + 1}/${missions.length}`;
+
+            // ATC Fails
+            atcFailsDisplay.textContent = `${atcInstructionFails}/${MAX_ATC_FAILS}`;
+
+            // Player plane's pitch/roll (for crash detection)
+            const playerQuaternion = playerBody.quaternion;
+            const euler = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(playerQuaternion.x, playerQuaternion.y, playerQuaternion.z, playerQuaternion.w), 'YXZ');
+            playerState.pitch = radiansToDegrees(euler.x);
+            playerState.roll = radiansToDegrees(euler.z);
+
+            // Runway Approach Indicator (simplified)
+            if (currentATCMissionInstruction === "clearedToLand09") {
+                const targetRunway = airportConfig.runways.find(r => r.id === "09");
+                if (targetRunway && playerState.altitude < 100) {
+                    const planePos = new Vector3(playerMesh.position.x, 0, playerMesh.position.z);
+                    const runwayStart = targetRunway.startPoint.clone();
+                    const runwayEnd = targetRunway.endPoint.clone();
+                    const runwayDirection = new Vector3().subVectors(runwayEnd, runwayStart).normalize();
+                    const distToRunwayLine = planePos.clone().sub(runwayStart).cross(runwayDirection).length();
+
+                    // Check if player is somewhat aligned and near
+                    if (distToRunwayLine < 30 && playerMesh.position.distanceTo(targetRunway.position) < 500) {
+                        // Display a visual guide on the HUD (e.g., a simple crosshair or arrow)
+                        // For this text-based HUD, we can just print a message
+                        // This would ideally be a 2D overlay on the canvas
+                        // For now, let's just make sure the player is aware of it.
+                        // In a real UI, this would be drawn with CSS or on a separate canvas layer.
+                        // For now, we'll indicate it with a simple text-based "Runway Aligned!" for demonstration.
+                        // If it's a critical UI element, a real DOM element would be better.
+                    }
+                }
+            }
+        }
+
+        // --- ATC SYSTEM ---
+        function showATCMessage(message, duration = 5000) {
+            atcMessageDiv.textContent = message;
+            atcMessageDiv.style.display = 'block';
+            atcMessageSaid = true;
+            atcLastInstructionTime = Date.now();
+            clearTimeout(atcMessageTimeout);
+            atcMessageTimeout = setTimeout(() => {
+                atcMessageDiv.style.display = 'none';
+            }, duration);
+            speak(message);
+        }
+
+        function speak(text) {
+            if ('speechSynthesis' in window) {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.volume = 0.8;
+                utterance.rate = 1.0;
+                utterance.pitch = 1.0;
+                speechSynthesis.speak(utterance);
+            } else {
+                console.warn("Speech synthesis not supported in this browser.");
+            }
+        }
+
+        function checkATCCompliance(delta) {
+            if (!currentATCMissionInstruction || atcMessageDiv.style.display === 'none') { // Only check if an instruction was given and is not on display
+                // The instruction was given but player didn't look at it or it timed out
+                // We need a proper way to check if an instruction is currently "active" for compliance.
+                // For simplicity, let's say if the mission objective hasn't changed and enough time passed, it's a fail.
+            }
+            if (atcMessageSaid && (Date.now() - atcLastInstructionTime > ATC_INSTRUCTION_GRACE_PERIOD)) {
+                // If player hasn't progressed mission and message has timed out, consider it a fail
+                const currentMission = missions[currentMissionIndex];
+                let complianceMet = false;
+                // Add specific checks for each mission type
+                if (currentMission.objective.type === "reachRunwayStart") {
+                    const runwayStartPos = airportConfig.runways.find(r => r.id === currentMission.objective.runwayId).startPoint;
+                    if (playerMesh.position.distanceTo(runwayStartPos) < 50) {
+                        complianceMet = true; // Player is at runway start
+                    }
+                } else if (currentMission.objective.type === "takeoffAndClimb") {
+                    if (playerState.altitude > currentMission.objective.altitude * 0.5) { // Check half way to altitude
+                        complianceMet = true;
+                    }
+                }
+                // ... add other mission types ...
+
+                if (!complianceMet) {
+                    atcInstructionFails++;
+                    atcMessageSaid = false; // Reset for next check
+                    console.log("ATC compliance failed! Fails:", atcInstructionFails);
+                    if (atcInstructionFails >= MAX_ATC_FAILS) {
+                        endGame("atc_fail");
+                    } else {
+                        showATCMessage("Player, please follow instructions. Repeat last instruction.", 3000);
+                        // Re-issue current mission instruction
+                        setTimeout(() => {
+                            startMission(currentMissionIndex);
+                        }, 3000);
+                    }
+                } else {
+                    atcMessageSaid = false; // Player complied, reset
+                }
+            }
+        }
+
+        // --- GAME OVER / WIN ---
+        function endGame(reason) {
+            if (gameOver) return;
+            gameOver = true;
+            playSound("game_over");
+            switch (reason) {
+                case "crash":
+                    gameOverMessage.textContent = "CRASH! Game Over! Careful out there!";
+                    playSound("explosion");
+                    break;
+                case "atc_fail":
+                    gameOverMessage.textContent = "ATC Instructions Failed! Game Over!";
+                    break;
+                case "win":
+                    gameOverMessage.textContent = "Congratulations Pilot! You completed all missions!";
+                    playSound("win");
+                    break;
+                default:
+                    gameOverMessage.textContent = "Game Over!";
+            }
+            gameOverScreen.style.display = 'flex';
+        }
+
+        function resetGame() {
+            gameOver = false;
+            score = 0;
+            currentMissionIndex = 0;
+            atcInstructionFails = 0;
+            scoreValueDisplay.textContent = score;
+            gameOverScreen.style.display = 'none';
+            playerState.speed = 0;
+            playerState.throttle = 0;
+            playerState.groundSteering = 0;
+            playerState.yawControl = 0;
+            playerState.isGrounded = true;
+            playerState.isGearDown = true;
+            playerState.flapsState = 0;
+            playerState.isBraking = false;
+
+            // Reset player body physics
+            playerBody.velocity.set(0, 0, 0);
+            playerBody.angularVelocity.set(0, 0, 0);
+            playerBody.quaternion.set(0, 0, 0, 1); // Reset rotation
+
+            // Update UI elements
+            throttleSlider.value = 0;
+            steeringSlider.value = 0;
+            updateLandingGearVisuals();
+            updateFlapsVisuals();
+
+            // Clear any active guidance
+            clearTaxiGuidance();
+            currentATCMissionInstruction = null;
+            atcMessageDiv.style.display = 'none';
+
+            // Reset AI planes
+            aiAircraft.forEach((ai, i) => {
+                ai.body.position.copy(AI_SPAWN_POINTS[i]);
+                ai.body.velocity.set(0, 0, 0);
+                ai.body.angularVelocity.set(0, 0, 0);
+                ai.body.quaternion.set(0, 0, 0, 1);
+                ai.state = {
+                    speed: 0, throttle: 0, heading: 0, isGrounded: true, isGearDown: true,
+                    flapsState: 0, altitude: 0, targetPath: null, pathIndex: 0, state: "taxi"
+                };
+            });
+
+            startMission(0); // Start the first mission
+        }
+
+        restartButton.addEventListener('pointerdown', (event) => {
+            event.preventDefault(); // Prevent default touch behavior
+            playSound("click");
+            resetGame();
+        });
+
+        // --- MISSION MANAGEMENT ---
+        function startMission(index) {
+            if (index >= missions.length) {
+                endGame("win");
+                return;
+            }
+            currentMissionIndex = index;
+            atcInstructionFails = 0; // Reset fails for new mission
+            atcFailsDisplay.textContent = `${atcInstructionFails}/${MAX_ATC_FAILS}`;
+
+            const mission = missions[currentMissionIndex];
+            playerBody.position.copy(mission.startPosition);
+            playerBody.quaternion.setFromAxisAngle(UP_VECTOR, mission.startRotationY);
+
+            // Ensure player is grounded and gear is down at start of mission
+            playerState.isGrounded = true;
+            playerState.isGearDown = true;
+            playerState.flapsState = 0;
+            playerState.speed = 0;
+            playerState.throttle = 0;
+            throttleSlider.value = 0;
+
+            updateLandingGearVisuals();
+            updateFlapsVisuals();
+
+            let atcText = "";
+            if (typeof mission.instruction === 'function') {
+                atcText = mission.instruction(...mission.instructionArgs);
+            } else {
+                atcText = ATC_MESSAGES[mission.instruction];
+            }
+            currentATCMissionInstruction = mission.instruction;
+            showATCMessage(atcText);
+
+            if (mission.objective.type === "reachRunwayStart") {
+                const targetRunwayId = mission.objective.runwayId;
+                const path = findTaxiPath(mission.startPosition, targetRunwayId + "_start");
+                drawTaxiGuidance(path);
+            } else {
+                clearTaxiGuidance();
+            }
+            console.log("Mission Started:", mission.name);
+        }
+
+        function completeMission() {
+            playSound("coin_pickup"); // Indicate success
+            score += 100;
+            scoreValueDisplay.textContent = score;
+            showATCMessage(ATC_MESSAGES.missionComplete, 3000);
+            clearTaxiGuidance();
+            currentATCMissionInstruction = null;
+            setTimeout(() => {
+                startMission(currentMissionIndex + 1);
+            }, 3500); // Small delay before next mission
+        }
+
+        function checkMissionObjective() {
+            if (gameOver) return;
+            const mission = missions[currentMissionIndex];
+            if (!mission) return; // Should not happen
+
+            const playerPos = playerBody.position;
+            const playerRot = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(playerBody.quaternion.x, playerBody.quaternion.y, playerBody.quaternion.z, playerBody.quaternion.w), 'YXZ');
+            const playerHeadingDegrees = radiansToDegrees(playerRot.y < 0 ? playerRot.y + 2 * Math.PI : playerRot.y); // 0-360
+
+            switch (mission.objective.type) {
+                case "reachRunwayStart":
+                    const runwayStartPos = airportConfig.runways.find(r => r.id === mission.objective.runwayId).startPoint;
+                    if (playerPos.distanceTo(runwayStartPos) < 20) { // Within 20 meters
+                        completeMission();
+                    }
+                    break;
+                case "takeoffAndClimb":
+                    if (playerState.airSpeed > playerState.takeoffSpeedThreshold * 1.2 && playerState.altitude > mission.objective.altitude * 0.9) {
+                        completeMission();
+                    }
+                    break;
+                case "reachAltitudeAndHeading":
+                    // Check if player is near target altitude
+                    const altAchieved = Math.abs(playerState.altitude - mission.objective.altitude) < 50;
+                    // Check if player is near target heading
+                    const headingDiff = Math.abs(playerHeadingDegrees - mission.objective.heading);
+                    const headingAchieved = Math.min(headingDiff, 360 - headingDiff) < 10; // Within 10 degrees
+                    if (altAchieved && headingAchieved) {
+                        // For a duration based objective, start a timer or check cumulative time
+                        // For simplicity, just check once for now
+                        completeMission();
+                    }
+                    break;
+                case "landSuccessfully":
+                    // A complex objective: must be on runway, speed low, gear down, flaps down
+                    const targetRunway = airportConfig.runways.find(r => r.id === mission.objective.runwayId);
+                    if (targetRunway && playerState.isGrounded && playerPos.distanceTo(targetRunway.position) < targetRunway.length / 2 - 20) {
+                        if (playerState.airSpeed < playerState.landingSpeedThreshold && playerState.isGearDown && playerState.flapsState === 2) {
+                            completeMission();
+                        }
+                    }
+                    break;
+            }
+        }
+
+        // --- PLAYER CONTROLS ---
+        // Throttle
+        throttleSlider.addEventListener('input', () => {
+            playerState.throttle = parseInt(throttleSlider.value);
+        });
+
+        // Steering (ground)
+        steeringSlider.addEventListener('input', () => {
+            playerState.groundSteering = parseFloat(steeringSlider.value);
+        });
+        steeringSlider.addEventListener('pointerup', () => { // Reset after release
+            playerState.groundSteering = 0;
+            steeringSlider.value = 0;
+        });
+        steeringSlider.addEventListener('touchend', () => { // Reset after release
+            playerState.groundSteering = 0;
+            steeringSlider.value = 0;
+        });
+
+        // Gear Toggle
+        gearToggleButton.addEventListener('pointerdown', (event) => {
+            event.preventDefault();
+            if (!gameOver) {
+                playerState.isGearDown = !playerState.isGearDown;
+                playSound("pop");
+                updateLandingGearVisuals();
+            }
+        });
+
+        function updateLandingGearVisuals() {
+            if (playerLandingGearMeshes.length > 0) {
+                playerLandingGearMeshes.forEach(mesh => {
+                    mesh.visible = playerState.isGearDown;
+                });
+            }
+            gearToggleButton.textContent = playerState.isGearDown ? 'GEAR UP' : 'GEAR DOWN';
+            gearToggleButton.classList.toggle('active', playerState.isGearDown);
+        }
+
+        // Flaps Toggle
+        flapsToggleButton.addEventListener('pointerdown', (event) => {
+            event.preventDefault();
+            if (!gameOver) {
+                playerState.flapsState = (playerState.flapsState + 1) % 3; // 0 -> 1 -> 2 -> 0
+                playSound("pop");
+                updateFlapsVisuals();
+            }
+        });
+
+        function updateFlapsVisuals() {
+            if (playerFlapMeshes.length > 0) {
+                // Adjust rotation for flap deployment
+                playerFlapMeshes[0].rotation.z = -playerState.flapsState * Math.PI / 6; // Left flap
+                playerFlapMeshes[1].rotation.z = playerState.flapsState * Math.PI / 6;  // Right flap
+                playerFlapMeshes.forEach(mesh => {
+                    mesh.visible = playerState.flapsState > 0;
+                });
+            }
+            flapsToggleButton.textContent = ['FLAPS UP', 'FLAPS HALF', 'FLAPS FULL'][playerState.flapsState];
+            flapsToggleButton.classList.toggle('active', playerState.flapsState > 0);
+        }
+
+        // Brake Button
+        brakeButton.addEventListener('pointerdown', (event) => {
+            event.preventDefault();
+            if (!gameOver) {
+                playerState.isBraking = true;
+                brakeButton.classList.add('active');
+            }
+        });
+        brakeButton.addEventListener('pointerup', (event) => {
+            event.preventDefault();
+            if (!gameOver) {
+                playerState.isBraking = false;
+                brakeButton.classList.remove('active');
+            }
+        });
+        brakeButton.addEventListener('touchstart', (event) => {
+            event.preventDefault();
+            if (!gameOver) {
+                playerState.isBraking = true;
+                brakeButton.classList.add('active');
+            }
+        }, { passive: false });
+        brakeButton.addEventListener('touchend', (event) => {
+            event.preventDefault();
+            if (!gameOver) {
+                playerState.isBraking = false;
+                brakeButton.classList.remove('active');
+            }
+        }, { passive: false });
+
+        // Yaw Control (Air)
+        yawLeftButton.addEventListener('pointerdown', (event) => {
+            event.preventDefault();
+            if (!gameOver) playerState.yawControl = -1;
+            yawLeftButton.classList.add('active');
+        });
+        yawLeftButton.addEventListener('pointerup', (event) => {
+            event.preventDefault();
+            playerState.yawControl = 0;
+            yawLeftButton.classList.remove('active');
+        });
+        yawLeftButton.addEventListener('touchstart', (event) => {
+            event.preventDefault();
+            if (!gameOver) playerState.yawControl = -1;
+            yawLeftButton.classList.add('active');
+        }, { passive: false });
+        yawLeftButton.addEventListener('touchend', (event) => {
+            event.preventDefault();
+            playerState.yawControl = 0;
+            yawLeftButton.classList.remove('active');
+        }, { passive: false });
+
+        yawRightButton.addEventListener('pointerdown', (event) => {
+            event.preventDefault();
+            if (!gameOver) playerState.yawControl = 1;
+            yawRightButton.classList.add('active');
+        });
+        yawRightButton.addEventListener('pointerup', (event) => {
+            event.preventDefault();
+            playerState.yawControl = 0;
+            yawRightButton.classList.remove('active');
+        });
+        yawRightButton.addEventListener('touchstart', (event) => {
+            event.preventDefault();
+            if (!gameOver) playerState.yawControl = 1;
+            yawRightButton.classList.add('active');
+        }, { passive: false });
+        yawRightButton.addEventListener('touchend', (event) => {
+            event.preventDefault();
+            playerState.yawControl = 0;
+            yawRightButton.classList.remove('active');
+        }, { passive: false });
+
+
+        // Camera Toggle
+        cameraToggleButton.addEventListener('pointerdown', (event) => {
+            event.preventDefault();
+            if (!gameOver) {
+                currentCamera = (currentCamera === cockpitCamera) ? thirdPersonCamera : cockpitCamera;
+                cameraToggleButton.textContent = (currentCamera === cockpitCamera) ? '3RD PERSON' : 'COCKPIT';
+            }
+        });
+
+        // Keyboard Controls
+        window.addEventListener('keydown', (event) => {
+            if (gameOver) return;
+            event.preventDefault(); // Prevent scrolling for arrow keys
+            switch (event.key) {
+                case 'ArrowUp':
+                case 'w':
+                    playerState.throttle = Math.min(100, playerState.throttle + 5);
+                    throttleSlider.value = playerState.throttle;
+                    break;
+                case 'ArrowDown':
+                case 's':
+                    playerState.throttle = Math.max(0, playerState.throttle - 5);
+                    throttleSlider.value = playerState.throttle;
+                    break;
+                case 'ArrowLeft':
+                case 'a':
+                    playerState.groundSteering = -1;
+                    steeringSlider.value = -1;
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                    playerState.groundSteering = 1;
+                    steeringSlider.value = 1;
+                    break;
+                case 'g': // Gear
+                    playerState.isGearDown = !playerState.isGearDown;
+                    playSound("pop");
+                    updateLandingGearVisuals();
+                    break;
+                case 'f': // Flaps
+                    playerState.flapsState = (playerState.flapsState + 1) % 3;
+                    playSound("pop");
+                    updateFlapsVisuals();
+                    break;
+                case 'b': // Brake
+                    playerState.isBraking = true;
+                    brakeButton.classList.add('active');
+                    break;
+                case 'q': // Yaw left
+                    playerState.yawControl = -1;
+                    yawLeftButton.classList.add('active');
+                    break;
+                case 'e': // Yaw right
+                    playerState.yawControl = 1;
+                    yawRightButton.classList.add('active');
+                    break;
+                case 'c': // Change camera
+                    currentCamera = (currentCamera === cockpitCamera) ? thirdPersonCamera : cockpitCamera;
+                    cameraToggleButton.textContent = (currentCamera === cockpitCamera) ? '3RD PERSON' : 'COCKPIT';
+                    break;
+            }
+        });
+
+        window.addEventListener('keyup', (event) => {
+            if (gameOver) return;
+            switch (event.key) {
+                case 'ArrowLeft':
+                case 'a':
+                case 'ArrowRight':
+                case 'd':
+                    playerState.groundSteering = 0;
+                    steeringSlider.value = 0;
+                    break;
+                case 'b': // Brake
+                    playerState.isBraking = false;
+                    brakeButton.classList.remove('active');
+                    break;
+                case 'q':
+                    playerState.yawControl = 0;
+                    yawLeftButton.classList.remove('active');
+                    break;
+                case 'e':
+                    playerState.yawControl = 0;
+                    yawRightButton.classList.remove('active');
+                    break;
+            }
+        });
+
+        // --- GAME LOOP ---
+        let lastTime = 0;
+        const FIXED_FPS = 60;
+        const FRAME_DURATION = 1000 / FIXED_FPS; // ms
+        function animate(now) {
+            if (!on || gameOver) {
+                requestAnimationFrame(animate);
+                return;
+            }
+
+            if (!lastTime) lastTime = now;
+            const deltaTimeMs = now - lastTime;
+
+            if (deltaTimeMs < FRAME_DURATION) {
+                requestAnimationFrame(animate);
+                return;
+            }
+
+            const delta = Math.min(deltaTimeMs / 1000, 0.05); // Cap delta to prevent large jumps
+            lastTime = now;
+
+            // Physics step
+            world.step(1 / FIXED_FPS, delta, 3);
+
+            // --- PLAYER MOVEMENT ---
+            if (playerMesh && playerBody) {
+                // Check if grounded (simple check for now: near Y=0)
+                playerState.isGrounded = playerBody.position.y < 0.5 && playerBody.velocity.y < 0.1;
+
+                // Apply throttle force
+                const forwardVector = new Vec3();
+                playerBody.quaternion.vmult(new Vec3(0, 0, 1), forwardVector); // Forward is +Z in model space
+                const throttleForce = (playerState.throttle / 100) * AIRCRAFT_MAX_THROTTLE_FORCE;
+                playerBody.applyForce(forwardVector.scale(throttleForce), playerBody.position);
+
+                // Braking
+                if (playerState.isBraking && playerState.isGrounded) {
+                    const brakeForce = playerBody.velocity.clone().scale(-500 * delta); // Strong friction
+                    playerBody.applyForce(brakeForce, playerBody.position);
+                }
+
+                // Air friction / Drag (always present)
+                playerBody.velocity.scale(1 - AIRCRAFT_AIR_FRICTION_COEFF * delta);
+
+                // Ground Friction (if grounded and not flying)
+                if (playerState.isGrounded && playerState.airSpeed < playerState.takeoffSpeedThreshold) {
+                    playerBody.velocity.x *= (1 - AIRCRAFT_GROUND_FRICTION_COEFF * delta);
+                    playerBody.velocity.z *= (1 - AIRCRAFT_GROUND_FRICTION_COEFF * delta);
+                }
+
+                // Ground Steering
+                if (playerState.isGrounded && playerState.airSpeed < playerState.takeoffSpeedThreshold * 1.5) { // Only steer on ground below takeoff speed
+                    const currentAngularVelocityY = playerBody.angularVelocity.y;
+                    const desiredAngularVelocityY = playerState.groundSteering * AIRCRAFT_STEER_RATE * (playerState.airSpeed / toKnots(AI_TAXI_SPEED + 5)); // Steer slower when speed is lower
+                    playerBody.angularVelocity.y = MathUtils.lerp(currentAngularVelocityY, desiredAngularVelocityY, 0.1);
+                } else if (!playerState.isGrounded && playerState.airSpeed > 10) { // Air Yaw control
+                    const currentAngularVelocityY = playerBody.angularVelocity.y;
+                    const desiredAngularVelocityY = playerState.yawControl * AIRCRAFT_YAW_RATE;
+                    playerBody.angularVelocity.y = MathUtils.lerp(currentAngularVelocityY, desiredAngularVelocityY, 0.1);
+                } else {
+                    playerBody.angularVelocity.y = 0; // Stop turning if not actively steering/yawing
+                }
+
+                // Simplified Lift (only when flying)
+                if (!playerState.isGrounded && playerState.airSpeed > 10) {
+                    const liftForce = AIRCRAFT_LIFT_COEFF * playerState.airSpeed * playerState.airSpeed; // Lift increases with square of speed
+                    // Flaps increase lift and drag
+                    const flapEffect = playerState.flapsState * 0.2; // 0%, 20%, 40% additional lift/drag
+                    playerBody.applyForce(new Vec3(0, liftForce + flapEffect * liftForce, 0), playerBody.position);
+                    playerBody.velocity.scale(1 - AIRCRAFT_DRAG_COEFF * (1 + flapEffect) * delta); // Flaps increase drag
+                }
+
+                // Update player mesh position and rotation from physics body
+                playerMesh.position.copy(playerBody.position);
+                playerMesh.quaternion.copy(playerBody.quaternion);
+            }
+
+            // --- AI PLANE MOVEMENT ---
+            aiAircraft.forEach(ai => {
+                const aiMesh = ai.mesh;
+                const aiBody = ai.body;
+                const aiState = ai.state;
+
+                if (!aiMesh || !aiBody) return; // Model might not be loaded yet
+
+                // Grounding check for AI
+                aiState.isGrounded = aiBody.position.y < 0.5 && aiBody.velocity.y < 0.1;
+
+                // Update AI pathfinding
+                if (aiState.targetPath && aiState.pathIndex < aiState.targetPath.length) {
+                    const targetPoint = aiState.targetPath[aiState.pathIndex];
+                    const distToTarget = aiBody.position.distanceTo(targetPoint);
+
+                    if (distToTarget < 10) { // Reached current path point
+                        aiState.pathIndex++;
+                        if (aiState.pathIndex >= aiState.targetPath.length) {
+                            aiState.targetPath = null; // Path complete
+                            aiState.speed = 0;
+                            console.log("AI plane reached destination.");
+                        }
+                    } else {
+                        // Move towards target point
+                        const direction = new Vec3().copy(targetPoint).vsub(aiBody.position).normalize();
+                        aiBody.velocity.x = MathUtils.lerp(aiBody.velocity.x, direction.x * AI_TAXI_SPEED, 0.05);
+                        aiBody.velocity.z = MathUtils.lerp(aiBody.velocity.z, direction.z * AI_TAXI_SPEED, 0.05);
+
+                        // Orient towards target
+                        const targetHeading = Math.atan2(direction.x, direction.z);
+                        const currentHeading = new THREE.Euler().setFromQuaternion(aiBody.quaternion, 'YXZ').y;
+                        let angleDiff = targetHeading - currentHeading;
+                        if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+                        if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+                        aiBody.angularVelocity.y = MathUtils.lerp(aiBody.angularVelocity.y, angleDiff * 0.5, 0.1); // Adjust turn rate
+                    }
+                } else {
+                    // If no path, keep it still for now
+                    aiBody.velocity.set(0, 0, 0);
+                    aiBody.angularVelocity.set(0,0,0);
+                }
+
+                // Apply AI's physics updates
+                aiBody.velocity.scale(1 - AIRCRAFT_AIR_FRICTION_COEFF * delta);
+                if (aiState.isGrounded) {
+                    aiBody.velocity.x *= (1 - AIRCRAFT_GROUND_FRICTION_COEFF * delta);
+                    aiBody.velocity.z *= (1 - AIRCRAFT_GROUND_FRICTION_COEFF * delta);
+                }
+
+                aiMesh.position.copy(aiBody.position);
+                aiMesh.quaternion.copy(aiBody.quaternion);
+            });
+
+
+            // --- CRASH DETECTION ---
+            if (!gameOver) {
+                // Crash: excessive pitch/roll on ground/landing
+                const MAX_TILT_DEGREES = 30;
+                if ((playerState.isGrounded || playerState.altitude < 50) && (Math.abs(playerState.pitch) > MAX_TILT_DEGREES || Math.abs(playerState.roll) > MAX_TILT_DEGREES)) {
+                    endGame("crash");
+                }
+
+                // Crash: off-runway for too long (need to define runway surfaces properly)
+                // For now, simple check if too far from any runway center
+                let onRunway = false;
+                for (const runway of airportConfig.runways) {
+                    const runwayCenter = runway.position;
+                    const distToCenter = new Vector3(playerMesh.position.x, 0, playerMesh.position.z).distanceTo(runwayCenter);
+                    if (distToCenter < runway.length / 2 + 10 && Math.abs(playerMesh.position.y) < 2) { // Within runway bounds and near ground
+                        onRunway = true;
+                        break;
+                    }
+                }
+                // Need a timer for this condition, skipped for now to keep this short.
+                // For now, if player collides with ground/objects at high speed, assume crash
+
+                // Check for crash if player position drops significantly below ground
+                if (playerBody.position.y < -5) { // Fell through ground
+                    endGame("crash");
+                }
+            }
+
+
+            // --- UI UPDATES ---
+            updateHUD();
+            checkMissionObjective();
+            checkATCCompliance(delta);
+
+            // Render the scene
+            renderer.render(scene, currentCamera);
+
+            requestAnimationFrame(animate);
+        }
+
+        // Initialize the game
+        init();
+    </script>
+</body>
+</html>

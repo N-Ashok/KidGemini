@@ -227,10 +227,10 @@ describe("Claude + Kimi providers — prompt-only, doubly gated", () => {
 // without joining the default routing.
 describe("DeepSeek — prompt-only, doubly gated", () => {
   const withDeepSeek = (env: Record<string, string | undefined>) =>
-    chainFor({ primary: "gemini-3.5-flash", tier: "frontier", env: { ...env, MODEL_FALLBACK_CHAIN: "deepseek-reasoner,deepseek-chat" } });
+    chainFor({ primary: "gemini-3.5-flash", tier: "frontier", env: { ...env, MODEL_FALLBACK_CHAIN: "deepseek-v4-pro,deepseek-v4-flash" } });
 
   it("R.25 the catalog carries the DeepSeek ids, marked prompt-only", () => {
-    for (const id of ["deepseek-reasoner", "deepseek-chat"]) {
+    for (const id of ["deepseek-v4-pro", "deepseek-v4-flash"]) {
       expect(specFor(id), id).toBeDefined();
       expect(specFor(id)!.provider, id).toBe("deepseek");
       expect(specFor(id)!.safety, id).toBe("prompt-only");
@@ -247,11 +247,11 @@ describe("DeepSeek — prompt-only, doubly gated", () => {
 
   it("R.28 admitted only with BOTH the opt-in flag AND the key", () => {
     const chain = withDeepSeek({ GEMINI_API_KEY: "g", DEEPSEEK_API_KEY: "d", ALLOW_PROMPT_ONLY_SAFETY_MODELS: "1" });
-    expect(chain).toEqual(["deepseek-reasoner", "deepseek-chat"]);
+    expect(chain).toEqual(["deepseek-v4-pro", "deepseek-v4-flash"]);
   });
 
   it("R.29 never enters the AUTO chain without the flag, however cheap it is", () => {
-    // deepseek-chat undercuts every workhorse in the catalog, so if price could
+    // deepseek-v4-flash undercuts every workhorse in the catalog, so if price could
     // beat the safety gate this is the row that would prove it.
     const auto = chainFor({
       primary: "gemini-3.5-flash",

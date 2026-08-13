@@ -69,6 +69,21 @@ export function applyRecoveredReply(
   }));
 }
 
+/** Persists a successful self-heal patch (BUG-FIX-LOG 2026-08-13 — the
+ *  browser-only preview repair loop threw its own fix away on every
+ *  reload/reopen, so a kid saw the same broken game over and over). `target`
+ *  is the SAME { convoId, replyId } shape as recovery — `replyId` names the
+ *  game's own assistant message, not necessarily the newest one. Leaves the
+ *  message's text (and everything else) untouched — only the artifact
+ *  changes, same as a normal build never touches unrelated fields. */
+export function applyRepairedArtifact(
+  convos: Conversation[],
+  target: RecoveryTarget,
+  html: string,
+): { convos: Conversation[]; patched: boolean } {
+  return patchReply(convos, target, () => ({ artifactHtml: html }));
+}
+
 /** Tell the kid what's happening in the bubble itself, keeping whatever had
  *  already streamed. Idempotent: safe to call on every poll tick. */
 export function noteStillWorking(

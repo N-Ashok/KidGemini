@@ -154,6 +154,16 @@ export class PreviewVerifyController {
     this.interrupted = true;
   }
 
+  /** BUG-FIX-LOG 2026-08-13: a `start()` skipped for a hidden tab (V.10)
+   *  otherwise never got a second chance — the owner had to notice a broken
+   *  game themselves. Once the tab is visible again, rAF ticks normally, so a
+   *  real round can safely run. A no-op whenever the last outcome wasn't a
+   *  skip — never re-verifies an already-clean/repaired/failed generation. */
+  retryIfSkipped(html: string): void {
+    if (this.state.outcome !== "skipped") return;
+    this.beginRound(html);
+  }
+
   dispose(): void {
     this.disposed = true;
     if (this.timer !== null) this.deps.clearTimeout(this.timer);
@@ -181,6 +191,7 @@ export class PreviewVerifyController {
       probesEnabled: true,
       checks: [],
       kidLine: null,
+      outcome: null, // a fresh round is running — any prior "skipped" no longer applies
     });
   }
 

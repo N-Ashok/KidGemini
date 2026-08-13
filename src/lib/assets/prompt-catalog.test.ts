@@ -161,6 +161,18 @@ describe("modelsPromptSection — the catalog version-locks with the manifest (P
     expect(section).toMatch(/never\s+(use\s+)?await|placeholder/i);
   });
 
+  // BUG-FIX-LOG 2026-08-12 (a generated soccer game's placeholder ball read
+  // roughly beach-ball-sized next to its human-sized placeholder character):
+  // rule 4 already forbids guessing a CATALOG model's size once modelSize()
+  // can answer, but the PLACEHOLDER shape drawn before any model loads (rule
+  // 3) had no size guidance at all — the model just picked an arbitrary
+  // radius. A human-scale reference anchors every placeholder's size to the
+  // same real-world unit a kid would expect.
+  it("gives placeholder shapes a human-scale reference so a ball/prop doesn't come out arbitrarily huge or tiny", () => {
+    expect(section).toMatch(/human/i);
+    expect(section).toMatch(/1\.[5-8]\s*(units?|m\b|metres?|meters?)/i);
+  });
+
   it("teaches AnimationMixer for animated models (dino walks)", () => {
     expect(section).toContain("AnimationMixer");
   });

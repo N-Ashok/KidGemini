@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html>
+<head><!--ari-perf-probe--><script>(function () {
+  window.__arPerfProbeVersion = 4;
+  var buffer = [];
+  var ready = false;
+  function send(ev) {
+    try { parent.postMessage({ source: "ari-perf-probe", event: ev }, "*"); } catch (e) { /* parent gone */ }
+  }
+  function post(ev) { if (ready) send(ev); else buffer.push(ev); }
+  addEventListener("message", function (event) {
+    var d = event && event.data;
+    if (!d || d.source !== "ari-parent" || d.type !== "ready") return;
+    ready = true;
+    for (var i = 0; i < buffer.length; i++) send(buffer[i]);
+    buffer = [];
+  });
+
+  // GL draw-call counter (v4, 2026-08-10). snapshot.drawCalls was designed to
+  // read __arPerf.renderer.info — which NOTHING ever assigned, so it was null
+  // in every snapshot ever posted. Meanwhile the owner's AutoRicksaw game ran
+  // at 1,250 draws/frame from hand-built meshes the model accounting cannot
+  // see, and the slowdown hint blamed two static trees nine edits in a row.
+  // Count actual GL draw commands instead: engine-agnostic, needs nothing
+  // from the game, reaches stored games via the version re-floor.
+  var glDraws = 0;
+  function wrapGL(proto) {
+    if (!proto) return;
+    try {
+      var de = proto.drawElements;
+      if (de) proto.drawElements = function () { glDraws++; return de.apply(this, arguments); };
+      var da = proto.drawArrays;
+      if (da) proto.drawArrays = function () { glDraws++; return da.apply(this, arguments); };
+      var dei = proto.drawElementsInstanced;
+      if (dei) proto.drawElementsInstanced = function () { glDraws++; return dei.apply(this, arguments); };
+      var dai = proto.drawArraysInstanced;
+      if (dai) proto.drawArraysInstanced = function () { glDraws++; return dai.apply(this, arguments); };
+    } catch (e) { /* never break rendering for telemetry */ }
+  }
+  if (!window.__arGlDrawPatched) {
+    window.__arGlDrawPatched = 1;
+    wrapGL(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+    wrapGL(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+  }
+  var lastGlDraws = 0;
+
+  // FPS estimate: count rAF ticks in the last sample window. Stacks fine on
+  // top of the frame governor's own wrap (both call straight through).
+  var frames = 0;
+  var origRaf = window.requestAnimationFrame;
+  if (origRaf) {
+    window.requestAnimationFrame = function (cb) {
+      return origRaf.call(window, function (t) {
+        frames++;
+        return cb(t);
+      });
+    };
+  }
+
+  // "Playing" signal (v3, owner report 2026-08-06): frames alone can't tell
+  // "running slow" from "not running" — an unstarted game or idle lobby
+  // renders little/nothing by design. Track the last real input so the
+  // slowdown banner only trusts samples taken while the kid is actually
+  // playing. Capture phase: game code often stopPropagation()s.
+  var lastInput = 0;
+  var inputEvents = ["pointerdown", "keydown", "touchstart"];
+  for (var ie = 0; ie < inputEvents.length; ie++) {
+    addEventListener(inputEvents[ie], function () { lastInput = Date.now(); }, true);
+  }
+
+  function snapshot() {
+    // A hidden tab/panel genuinely renders zero frames — that's true, but it
+    // is NOT the same claim as "the game is running slow," which is what
+    // this snapshot exists to detect. Without this guard, every setInterval
+    // tick during a background gap (leaving Ari and coming back) posts a
+    // near-zero fps reading, which is enough on its own to satisfy the
+    // slowdown banner's "5 consecutive low samples" rule — so the banner
+    // flashes on return even though nothing was ever actually slow. Skip
+    // sampling entirely while hidden, and keep resetting the frame counter
+    // so no partial/corrupted count leaks into the first reading after the
+    // tab becomes visible again.
+    if (document.hidden) { frames = 0; return; }
+    var perf = window.__arPerf || {};
+    var reg = perf.models || {};
+    var animatedRoots = perf.animatedRoots;
+    var models = [];
+    for (var name in reg) {
+      if (!Object.prototype.hasOwnProperty.call(reg, name)) continue;
+      var entry = reg[name];
+      var roots = entry.instances || [];
+      // Live = still parented into a scene graph. A load()ed-but-never-added
+      // (or later removed) root reads parent as falsy — never a stale row.
+      var live = [];
+      for (var i = 0; i < roots.length; i++) {
+        if (roots[i] && roots[i].parent) live.push(roots[i]);
+      }
+      if (live.length === 0) continue;
+      var animated = false;
+      if (animatedRoots) {
+        for (var j = 0; j < live.length; j++) {
+          if (animatedRoots.has(live[j])) { animated = true; break; }
+        }
+      }
+      var triangles = entry.triangles || 0;
+      var load = triangles * live.length * (animated ? 2 : 1);
+      var bucket = load <= 20000 ? "green" : (load <= 150000 ? "yellow" : "red");
+      models.push({ name: name, triangles: triangles, instances: live.length, animated: animated, load: load, bucket: bucket });
+    }
+    var batches = perf.batches || {};
+    for (var bname in batches) {
+      if (!Object.prototype.hasOwnProperty.call(batches, bname)) continue;
+      var bentry = batches[bname];
+      var broots = bentry.roots || [];
+      var blive = false;
+      for (var bi = 0; bi < broots.length; bi++) { if (broots[bi] && broots[bi].parent) { blive = true; break; } }
+      if (!blive) continue;
+      var btriangles = bentry.triangles || 0;
+      var bdrawCalls = bentry.drawCalls || 1;
+      var bload = btriangles * bdrawCalls;
+      var bbucket = bload <= 20000 ? "green" : (bload <= 150000 ? "yellow" : "red");
+      models.push({ name: bentry.name, triangles: btriangles, instances: bentry.count || 0, animated: false, load: bload, bucket: bbucket, batched: true, drawCalls: bdrawCalls });
+    }
+    models.sort(function (a, b) { return b.load - a.load; });
+    var drawCalls = null, rendererTriangles = null;
+    // Per-frame average over this window from the GL counter — the value
+    // that actually distinguishes "a thousand tiny meshes" from "two trees".
+    var windowDraws = glDraws - lastGlDraws;
+    lastGlDraws = glDraws;
+    if (windowDraws > 0 && frames > 0) {
+      drawCalls = Math.round(windowDraws / frames);
+    } else if (perf.renderer && perf.renderer.info && perf.renderer.info.render) {
+      // Legacy fallback, kept for a game that registers its renderer.
+      drawCalls = perf.renderer.info.render.calls;
+      rendererTriangles = perf.renderer.info.render.triangles;
+    }
+    var playing = frames > 0 && lastInput > 0 && (Date.now() - lastInput) < 10000;
+    post({ type: "snapshot", snapshot: { fps: frames, playing: playing, drawCalls: drawCalls, rendererTriangles: rendererTriangles, models: models } });
+    frames = 0;
+  }
+  setInterval(snapshot, 1000);
+})();</script><script type="importmap">{"imports":{"three":"https://assets.ariantra.com/three.098b4c.js"}}</script><style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style><script>(function(){
+if (window.__arFrameGovernor) return;
+window.__arFrameGovernor = 1;
+var raf = window.requestAnimationFrame.bind(window);
+var seen = new WeakMap();
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    // Skipped frames ALWAYS re-request through the wrapper, so the loop can
+    // never die — that is the one failure mode that would break a live game.
+    if (document.hidden) { window.requestAnimationFrame(cb); return; }
+    var prev = (typeof cb === 'function' ? seen.get(cb) : 0) || 0;
+    if (prev && t - prev < 15) { window.requestAnimationFrame(cb); return; }
+    if (typeof cb === 'function') seen.set(cb, t);
+    return cb(t);
+  });
+};
+})();</script><script>(function(){
+if (window.__arGlGuard) return;
+window.__arGlGuard = 1;
+window.__arGlGuardVersion = 2;
+var get = HTMLCanvasElement.prototype.getContext;
+var live = [];
+var lostCount = 0;
+HTMLCanvasElement.prototype.getContext = function (type) {
+  var ctx = get.apply(this, arguments);
+  try {
+    if (ctx && /webgl/i.test(String(type)) && !this.__arGlGuarded) {
+      this.__arGlGuarded = 1;
+      var ext = null;
+      try { ext = ctx.getExtension('WEBGL_lose_context'); } catch (e2) { /* none */ }
+      live.push({ ctx: ctx, ext: ext });
+      this.addEventListener('webglcontextlost', function (e) {
+        // THE line that matters: without preventDefault the loss is final and
+        // the canvas stays blank for the rest of the document's life.
+        e.preventDefault();
+        lostCount++;
+        console.warn('[ari] WebGL context lost — restore requested');
+        // Watchdog (2026-08-10 №4, "it didnot regain"): browsers do not
+        // always volunteer webglcontextrestored, and a politely-held loop
+        // waits forever. The ladder is the automatic version of what fixed
+        // it for the owner by hand (code↔preview toggle = a remount):
+        // after 2s still lost → ask the driver; 3s more still lost → ask
+        // the parent to remount this frame.
+        setTimeout(function () {
+          var still = true;
+          try { still = ctx.isContextLost(); } catch (e3) { /* gone */ }
+          if (!still) return;
+          try { if (ext) ext.restoreContext(); } catch (e3) { /* refused */ }
+          setTimeout(function () {
+            var dead = true;
+            try { dead = ctx.isContextLost(); } catch (e4) { /* gone */ }
+            if (!dead) return;
+            console.warn('[ari] WebGL context is not coming back — asking the parent to reload the game');
+            try { parent.postMessage({ __ari: 'gl-dead' }, '*'); } catch (e4) { /* no parent */ }
+          }, 3000);
+        }, 2000);
+      }, false);
+      this.addEventListener('webglcontextrestored', function () {
+        if (lostCount > 0) lostCount--;
+        console.warn('[ari] WebGL context restored');
+      }, false);
+    }
+  } catch (e) { /* never break getContext */ }
+  return ctx;
+};
+// Restoring the CONTEXT is not enough — the game's LOOP must survive to see
+// it. While a context is lost, three.js's renderer throws mid-render (the GL
+// introspection APIs return null, and three calls .trim() on the result —
+// the exact stack the harness attributed on 2026-08-10). Games request their
+// next frame AFTER rendering (three's setAnimationLoop does too), so that
+// throw kills the loop for good: the context comes back, nothing draws, the
+// canvas stays blank, and no click can restart it. So: while any tracked
+// context is lost, hold rAF callbacks — always re-request, never run — the
+// same shape as the frame governor's document.hidden skip, and it resumes by
+// itself on webglcontextrestored. Composes with the governor's own wrapper
+// (this one runs outside it) — worst case a held frame is re-queued twice.
+// lostCount alone is NOT enough to gate on: webglcontextlost is dispatched
+// as a task, so there is a window after the actual loss (browser eviction or
+// our own release) where the event has not landed yet — one frame renders
+// against the dead context and three throws anyway. isContextLost() is
+// synchronous truth; the event counter only covers the fake-restore corner
+// (some drivers report isContextLost()=false again before firing restored).
+function anyLost() {
+  for (var i = 0; i < live.length; i++) {
+    try { if (live[i].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  for (var j = 0; j < released.length; j++) {
+    try { if (released[j].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  return false;
+}
+var raf = window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    if (lostCount > 0 || anyLost()) { window.requestAnimationFrame(cb); return; }
+    return cb(t);
+  });
+};
+var released = [];
+function release(why) {
+  // Hand the GPU back now rather than at GC, so the next preview iframe does
+  // not push the page over the context cap. Kept restorable (see pageshow):
+  // a release we believed was terminal must be reversible if the page comes
+  // back — 2026-08-10 second owner report, the pane-switch freeze.
+  for (var i = 0; i < live.length; i++) {
+    try {
+      if (live[i].ext) { live[i].ext.loseContext(); released.push(live[i]); }
+    } catch (e) { /* already gone */ }
+  }
+  live.length = 0;
+  // Observable from the parent page: this is how the harness proves the round
+  // was ASKED to release at unmount, rather than assuming it.
+  console.warn('[ari] WebGL contexts released (' + why + ')');
+}
+// Lets the harness assert that a torn-down round actually gave its context
+// back, instead of assuming pagehide fired.
+Object.defineProperty(window, '__arGlCount', { get: function () { return live.length; } });
+// The parent asks explicitly, immediately before it unmounts this frame.
+// pagehide alone is NOT enough: Chrome does not reliably fire it when an
+// iframe is detached from the DOM, which is precisely how every shadow round
+// ends — so without this the contexts pile up exactly as they did in the
+// owner's eleven-edit session.
+addEventListener('message', function (e) {
+  var d = e && e.data;
+  if (d && d.__ari === 'release-gl') release('asked');
+}, false);
+// Diagnostic-only (2026-08-11): a non-persisted pagehide fired mid-edit on
+// the STILL-PLAYING game, with no deliberate srcDoc/key change from React —
+// after shadow-verify was removed the same day, the explicit 'release-gl'
+// message (sent by the parent right before it unmounted the shadow frame)
+// went with it, leaving THIS listener as the only release trigger, carrying
+// more weight than "pagehide is kept as a backstop only" (the comment above
+// release()) ever assumed. This context string is what will tell us whether
+// it's a real backgrounding event (visibility/online state) or something
+// else entirely — never throws, so it can never break the guard itself.
+function diag() {
+  try {
+    return 'visibility=' + document.visibilityState + ' hidden=' + document.hidden +
+      ' online=' + navigator.onLine + ' at=' + Date.now();
+  } catch (e) { return 'diag-unavailable'; }
+}
+addEventListener('pagehide', function (e) {
+  // Safari/iOS fires pagehide when the page is merely BACKGROUNDED (app or
+  // tab switch, pane transitions) and will bring it back — persisted=true.
+  // Releasing there kills the LIVE game's context and the loop-hold freezes
+  // it: the owner's "froze, then turned blue when I clicked back"
+  // (2026-08-10, second report). Only a non-persisted pagehide — the actual
+  // teardown of a detached iframe — releases.
+  if (e && e.persisted) {
+    console.warn('[ari] pagehide (persisted, backgrounded — kept alive) ' + diag());
+    return;
+  }
+  console.warn('[ari] pagehide (NOT persisted — releasing) ' + diag());
+  release('pagehide');
+});
+addEventListener('pageshow', function () {
+  // The symmetric half: any release that turned out not to be terminal (the
+  // page came back anyway) is undone. restoreContext fires
+  // webglcontextrestored, which unwinds lostCount and resumes the held loop.
+  if (!released.length) return;
+  for (var i = 0; i < released.length; i++) {
+    try { released[i].ext.restoreContext(); live.push(released[i].ctx); } catch (e) { /* gone for real */ }
+  }
+  released.length = 0;
+  console.warn('[ari] WebGL contexts restored (pageshow)');
+});
+})();</script><script>window.AR_ASSETS={"chicken":"https://assets.ariantra.com/chicken.b7d3d1.glb","explorer":"https://assets.ariantra.com/explorer.67f871.glb","fish":"https://assets.ariantra.com/fish.a0b863.glb","coin_pickup":"https://assets.ariantra.com/coin_pickup.affa86.mp3","powerup":"https://assets.ariantra.com/powerup.81fe19.mp3","click":"https://assets.ariantra.com/click.ba0d40.mp3","pop":"https://assets.ariantra.com/pop.a0585f.mp3","whoosh":"https://assets.ariantra.com/whoosh.f5810c.mp3","bg_loop_playful":"https://assets.ariantra.com/bg_loop_playful.469994.mp3","jingle_win":"https://assets.ariantra.com/jingle_win.d4863c.mp3"};</script><script>window.AR_SIZES={"explorer":[1.6,2.7,0.8]};</script><script type="module">
+  import { GLTFLoader, MeshoptDecoder } from "three";
+  window.__arLoadModelVersion = 7;
+// modelSize (2026-08-08, the fragmented-track fix): the measured metres a model
+// renders at scale 1, available BEFORE loading so a game can plan a layout. The
+// "|| {}" guard means order-of-injection never matters, and an unknown or
+// skinned model answers null rather than a made-up number — a game that checks
+// for null degrades to eyeballing, which is exactly what it did before v4.
+window.AR_SIZES = window.AR_SIZES || {};
+window.modelSize = function (name) {
+  var s = window.AR_SIZES[name];
+  return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
+};
+// modelAxis (2026-08-08, the poorly-formed-track fix): which axis a PATH
+// piece's road runs along at rest — "x", "z", or "none" for a hub/corner. The
+// two road kits genuinely disagree (city road_straight runs along X, racing
+// race_track_straight along Z) and a 1x1 square tile's size cannot reveal it,
+// so before this a game had to guess and got it wrong every time. Unknown
+// answers null — then eyeball it, same as before.
+window.AR_AXES = window.AR_AXES || {};
+window.modelAxis = function (name) {
+  var a = window.AR_AXES[name];
+  return (a === "x" || a === "z" || a === "none") ? a : null;
+};
+// modelJoins (2026-08-09, the SECOND poorly-formed-track fix): which edges a
+// tile's road actually reaches, measured from a top-down render of the
+// published bytes. modelAxis() answers "none" for every corner — true, and
+// useless for placing one; with nothing else to reason from, generated tracks
+// guessed corner rotations and the curves never met the straights.
+//   .joins  ["-x","+z"]  edges the carriageway reaches at rest (no rotation)
+//   .lane   0.7          drivable width in METRES at scale 1
+//   .at     {"-x":0.5}   where each join sits, in metres from the piece's own
+//                        minimum on that edge's axis (matters on 2x2 pieces)
+// Unknown answers null — then eyeball it, exactly as before.
+window.AR_EDGES = window.AR_EDGES || {};
+window.modelJoins = function (name) {
+  var e = window.AR_EDGES[name];
+  return (e && e.joins && e.joins.length) ? e : null;
+};
+// rotateToJoin: the one calculation every track needs and no game got right by
+// hand. Returns the rotation.y IN RADIANS that carries a piece's "from" edge
+// onto the "to" edge — e.g. a corner joining ["+z","+x"] that must instead join
+// west and south is rotateToJoin("race_track_corner","+x","+z"). Quarter turns
+// only, which is all a square grid can use.
+// (No backticks anywhere in this block: it is inlined into a TEMPLATE LITERAL,
+// so one would end the helper string mid-function.)
+window.rotateToJoin = function (name, from, to) {
+  var order = ["-z", "+x", "+z", "-x"]; // clockwise seen from above
+  var a = order.indexOf(from), b = order.indexOf(to);
+  if (a < 0 || b < 0) return 0;
+  return ((b - a + 4) % 4) * (Math.PI / 2);
+};
+// fitTile (2026-08-09): say WHICH DIRECTIONS a grid cell must connect and get
+// the rotation.y that makes the piece do it. Added after three rounds of
+// teaching failed to land: a generated track chose the right kit and one scale
+// factor, then hardcoded all four corner rotations and got all four wrong,
+// because working out "this cell needs north and east, the piece joins +z and
+// +x at rest, so rotate 3pi/2" is four steps of reasoning under a token budget.
+// This is one call. Directions are where the ROAD LEAVES the cell:
+//   fitTile("race_track_corner", ["-z", "+x"])   // track to the north and east
+// Returns 0 for an unknown piece, and null when no quarter turn can satisfy the
+// request — which means the wrong PIECE was chosen (asking a corner to join two
+// opposite edges), so a game can detect that instead of silently drawing a gap.
+window.fitTile = function (name, need) {
+  var e = window.AR_EDGES[name];
+  if (!e || !e.joins || !need || !need.length) return 0;
+  var order = ["-z", "+x", "+z", "-x"];
+  var want = need.slice().sort().join(",");
+  for (var q = 0; q < 4; q++) {
+    var got = e.joins
+      .map(function (j) { return order[(order.indexOf(j) + q) % 4]; })
+      .sort()
+      .join(",");
+    if (got === want) return q * (Math.PI / 2);
+  }
+  return null;
+};
+  const __arLoader = new GLTFLoader();
+__arLoader.setMeshoptDecoder(MeshoptDecoder);
+window.__arPerf = window.__arPerf || { models: {}, rootNames: new WeakMap(), animatedRoots: new WeakSet(), renderer: null };
+var __arStaticTemplates = {};
+function __arCountTriangles(obj) {
+  var triangles = 0;
+  obj.traverse(function (child) {
+    if (!child.isMesh || !child.geometry) return;
+    var geo = child.geometry;
+    if (geo.index) triangles += geo.index.count / 3;
+    else if (geo.attributes && geo.attributes.position) triangles += geo.attributes.position.count / 3;
+  });
+  return Math.round(triangles);
+}
+async function __arLoadFresh(name) {
+  const url = (window.AR_ASSETS || {})[name];
+  if (!url) { console.warn("[ariantra] unknown model:", name); return null; }
+  const gltf = await __arLoader.loadAsync(url);
+  return { scene: gltf.scene, animations: gltf.animations || [] };
+}
+window.loadModel = async function (name) {
+  try {
+    var obj;
+    if (__arStaticTemplates[name]) {
+      // Cache only ever holds a STATIC (no-animation) template — see the
+      // loadModelHelper() doc comment for why animated models are excluded.
+      obj = __arStaticTemplates[name].scene.clone();
+      obj.animations = [];
+    } else {
+      const fresh = await __arLoadFresh(name);
+      if (!fresh) return null;
+      if (fresh.animations.length) {
+        obj = fresh.scene;
+        obj.animations = fresh.animations;
+      } else {
+        __arStaticTemplates[name] = fresh;
+        obj = fresh.scene.clone();
+        obj.animations = [];
+      }
+    }
+    // Same answer as modelSize(name), riding on the object — so code that
+    // already holds the loaded root can size it without re-quoting the name.
+    obj.userData.arSize = window.modelSize(name);
+    try {
+      var __arEntry = window.__arPerf.models[name] || { name: name, triangles: 0, instances: [] };
+      __arEntry.triangles = __arCountTriangles(obj);
+      __arEntry.instances.push(obj);
+      if (__arEntry.instances.length > 1000) __arEntry.instances.shift();
+      window.__arPerf.models[name] = __arEntry;
+      window.__arPerf.rootNames.set(obj, name);
+    } catch (e) { /* telemetry only — never blocks the load */ }
+    return obj;
+  } catch (e) {
+    console.warn("[ariantra] loadModel failed:", name, e);
+    return null;
+  }
+};
+</script><script>
+(function () {
+  var ctx = null, buffers = {}, currentMusic = null;
+  function context() {
+    if (!ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC();
+      var resume = function () { if (ctx.state === "suspended") ctx.resume(); };
+      addEventListener("pointerdown", resume, true);
+      addEventListener("keydown", resume, true);
+    }
+    return ctx;
+  }
+  function load(name) {
+    var url = (window.AR_ASSETS || {})[name];
+    if (!url) { console.warn("[ariantra] unknown sound:", name); return Promise.resolve(null); }
+    if (!buffers[name]) {
+      buffers[name] = fetch(url)
+        .then(function (r) { return r.arrayBuffer(); })
+        .then(function (ab) {
+          return new Promise(function (res, rej) { context().decodeAudioData(ab, res, rej); });
+        })
+        .catch(function (e) { console.warn("[ariantra] sound failed:", name, e); return null; });
+    }
+    return buffers[name];
+  }
+  function trimBounds(buf) {
+    var d = buf.getChannelData(0), t = 0.001, s = 0, e = d.length - 1;
+    while (s < e && Math.abs(d[s]) < t) s++;
+    while (e > s && Math.abs(d[e]) < t) e--;
+    return { start: s / buf.sampleRate, end: (e + 1) / buf.sampleRate };
+  }
+  window.playSound = function (name) {
+    try {
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        src.connect(context().destination);
+        src.start();
+      });
+    } catch (e) { /* a silent effect, never a broken game */ }
+  };
+  window.playMusic = function (name) {
+    var handle = { stop: function () {} };
+    try {
+      if (currentMusic) { try { currentMusic.stop(); } catch (e2) {} currentMusic = null; }
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        var b = trimBounds(buf);
+        src.loop = true;
+        src.loopStart = b.start;
+        src.loopEnd = b.end;
+        var gain = context().createGain();
+        gain.gain.value = 0.5;
+        src.connect(gain);
+        gain.connect(context().destination);
+        src.start(0, b.start);
+        currentMusic = src;
+        handle.stop = function () { try { src.stop(); } catch (e3) {} if (currentMusic === src) currentMusic = null; };
+      });
+    } catch (e) { /* silent */ }
+    return handle;
+  };
+})();
+</script>
+    <title>My Market Game</title>
+    <style>
+        /* --- BASIC PAGE SETUP --- */
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100dvh;
+            overflow: hidden;
+            background-color: #87CEEB; /* Sky blue */
+        }
+        #scene {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        /* --- UI AND OVERLAYS --- */
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            color: white;
+            font-family: Arial, sans-serif;
+            text-shadow: 2px 2px 4px #000000;
+        }
+        .top-ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #score {
+            font-size: 24px;
+            font-weight: bold;
+            background-color: rgba(0,0,0,0.5);
+            padding: 8px 16px;
+            border-radius: 12px;
+        }
+        .instructions {
+            background-color: rgba(0,0,0,0.5);
+            padding: 8px 16px;
+            border-radius: 12px;
+            font-size: 16px;
+            text-align: right;
+        }
+        .action-button {
+            position: absolute;
+            bottom: 80px; /* Position above movement controls */
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 15px 25px;
+            font-size: 20px;
+            font-weight: bold;
+            color: white;
+            background-color: #4CAF50; /* Green */
+            border: 2px solid white;
+            border-radius: 50px;
+            cursor: pointer;
+            pointer-events: auto;
+            display: none; /* Hidden by default */
+            z-index: 10;
+        }
+        /* --- ON-SCREEN CONTROLS --- */
+        #controls {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: space-around;
+            padding: 10px;
+            padding-bottom: max(12px, env(safe-area-inset-bottom));
+            box-sizing: border-box;
+            pointer-events: auto;
+        }
+        .control-button {
+            width: 50px;
+            height: 50px;
+            background-color: rgba(0, 0, 0, 0.5);
+            border: 2px solid white;
+            border-radius: 50%;
+            color: white;
+            font-size: 24px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            user-select: none;
+        }
+        #controls-move {
+            display: grid;
+            grid-template-areas: ". up ." "left . right";
+            grid-gap: 10px;
+            position: absolute;
+            left: 20px;
+            bottom: 20px;
+            padding-bottom: max(12px, env(safe-area-inset-bottom));
+        }
+        #btn-up { grid-area: up; }
+        #btn-left { grid-area: left; }
+        #btn-right { grid-area: right; }
+        /* --- UPGRADE MENU --- */
+        #upgrade-menu {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 50, 100, 0.9);
+            border: 3px solid #ffd700;
+            border-radius: 20px;
+            padding: 20px;
+            width: 80%;
+            max-width: 350px;
+            z-index: 20;
+            pointer-events: auto;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+        }
+        #upgrade-menu h2 {
+            margin: 0 0 15px 0;
+            color: #ffd700;
+        }
+        #upgrade-menu button {
+            width: 100%;
+            padding: 12px;
+            margin: 5px 0;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        #upgrade-menu button.close {
+            background-color: #f44336;
+            margin-top: 15px;
+        }
+        #upgrade-menu button:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+
+
+
+
+<canvas id="scene"></canvas>
+
+<div id="ui">
+    <!-- TOP UI -->
+    <div class="top-ui">
+        <div id="score">$0</div>
+        <div class="instructions">
+            Use WASD/Arrows to move<br>
+            Walk to zones to work
+        </div>
+    </div>
+    
+    <!-- ACTION BUTTON -->
+    <button id="action-btn" class="action-button">Action</button>
+
+    <!-- UPGRADE MENU -->
+    <div id="upgrade-menu">
+        <h2>Upgrades</h2>
+        <button id="upgrade-player-speed" data-cost="50">Faster movement (Cost: $50)</button>
+        <button id="upgrade-customer-rate" data-cost="100">More customers (Cost: $100)</button>
+        <button id="upgrade-capacity" data-cost="75">Bigger Basket (Cost: $75)</button>
+        <button class="close" onclick="document.getElementById('upgrade-menu').style.display = 'none';">Close</button>
+    </div>
+    
+    <!-- ON-SCREEN CONTROLS -->
+    <div id="controls">
+        <div id="controls-move">
+            <div id="btn-up" class="control-button">▲</div>
+            <div id="btn-left" class="control-button">◀</div>
+            <div id="btn-right" class="control-button">▶</div>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+// --- IMPORTS AND SETUP ---
+import { Scene, PerspectiveCamera, WebGLRenderer, Clock, Color, Fog, Group, Vector3, Box3, BoxGeometry, MeshStandardMaterial, Mesh, AmbientLight, DirectionalLight, AnimationMixer, Quaternion, PlaneGeometry, CylinderGeometry } from "three";
+const scene = new Scene();
+const camera = new PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new WebGLRenderer({ canvas: document.getElementById('scene'), antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const clock = new Clock();
+scene.fog = new Fog(0x87CEEB, 20, 50);
+scene.background = new Color(0x87CEEB);
+
+// --- LIGHTING ---
+const ambientLight = new AmbientLight(0xffffff, 0.7);
+scene.add(ambientLight);
+const dirLight = new DirectionalLight(0xffffff, 1.0);
+dirLight.position.set(5, 10, 7);
+scene.add(dirLight);
+
+// --- GAME STATE ---
+let score = 0;
+let player = null;
+let playerMixer = null;
+const playerVelocity = new Vector3();
+const moveState = { forward: false, backward: false, left: false, right: false };
+let playerSpeed = 3.5;
+let playerCapacity = 5;
+let tomatoCount = 0;
+let eggCount = 0;
+let jamCount = 0;
+const customers = [];
+let nextCustomerTime = 5; // First customer in 5 seconds
+const customerSpawnRate = 15;
+let customerSpeed = 1;
+const chickens = [];
+let actionZone = null;
+const zones = {};
+
+// --- SCORE AND UI ---
+const scoreEl = document.getElementById('score');
+const actionBtn = document.getElementById('action-btn');
+const upgradeMenu = document.getElementById('upgrade-menu');
+
+function updateScore(amount) {
+    score += amount;
+    scoreEl.textContent = '$' + score;
+    updateUpgradeButtons();
+    if (amount > 0) playSound("coin_pickup");
+}
+
+function updateUpgradeButtons() {
+    document.querySelectorAll('#upgrade-menu button[data-cost]').forEach(btn => {
+        const cost = parseInt(btn.dataset.cost);
+        btn.disabled = score < cost;
+    });
+}
+
+function showAction(text, callback) {
+    actionBtn.textContent = text;
+    actionBtn.style.display = 'block';
+    actionBtn.onclick = callback;
+}
+function hideAction() {
+    actionBtn.style.display = 'none';
+}
+
+// --- PLAYER AND CONTROLS ---
+loadModel("explorer").then((model) => {
+    if (model) {
+        player = model;
+        player.scale.set(0.7, 0.7, 0.7);
+        player.position.set(0, 0, 8);
+        scene.add(player);
+
+        const walkClip = model.animations.find(a => /walk/i.test(a.name));
+        const idleClip = model.animations.find(a => /idle/i.test(a.name));
+        if (walkClip && idleClip) {
+            playerMixer = new AnimationMixer(player);
+            playerMixer.idleAction = playerMixer.clipAction(idleClip);
+            playerMixer.walkAction = playerMixer.clipAction(walkClip);
+            playerMixer.idleAction.play();
+        }
+    }
+});
+
+function updatePlayerAnimation() {
+    if (!playerMixer) return;
+    const isMoving = moveState.forward || moveState.backward || moveState.left || moveState.right;
+    if (isMoving && !playerMixer.walkAction.isRunning()) {
+        playerMixer.walkAction.reset().play();
+        playerMixer.idleAction.stop();
+    } else if (!isMoving && !playerMixer.idleAction.isRunning()) {
+        playerMixer.idleAction.reset().play();
+        playerMixer.walkAction.stop();
+    }
+}
+
+document.addEventListener('keydown', (e) => {
+    switch(e.code) {
+        case 'ArrowUp': case 'KeyW': moveState.forward = true; break;
+        case 'ArrowDown': case 'KeyS': moveState.backward = true; break;
+        case 'ArrowLeft': case 'KeyA': moveState.left = true; break;
+        case 'ArrowRight': case 'KeyD': moveState.right = true; break;
+    }
+    updatePlayerAnimation();
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
+        e.preventDefault();
+    }
+});
+document.addEventListener('keyup', (e) => {
+    switch(e.code) {
+        case 'ArrowUp': case 'KeyW': moveState.forward = false; break;
+        case 'ArrowDown': case 'KeyS': moveState.backward = false; break;
+        case 'ArrowLeft': case 'KeyA': moveState.left = false; break;
+        case 'ArrowRight': case 'KeyD': moveState.right = false; break;
+    }
+    updatePlayerAnimation();
+});
+
+// --- ON-SCREEN BUTTONS ---
+function handlePointerDown(e) {
+    const id = e.target.id;
+    if (id === 'btn-up') moveState.forward = true;
+    if (id === 'btn-left') moveState.left = true;
+    if (id === 'btn-right') moveState.right = true;
+    updatePlayerAnimation();
+    e.preventDefault();
+}
+function handlePointerUp(e) {
+    moveState.forward = false; moveState.left = false; moveState.right = false;
+    updatePlayerAnimation();
+}
+
+['btn-up', 'btn-left', 'btn-right'].forEach(id => {
+    const btn = document.getElementById(id);
+    btn.addEventListener('pointerdown', handlePointerDown, {passive: false});
+    btn.addEventListener('touchstart', handlePointerDown, {passive: false});
+});
+document.addEventListener('pointerup', handlePointerUp);
+document.addEventListener('touchend', handlePointerUp);
+
+// --- WORLD CREATION ---
+// Ground
+const groundGeo = new PlaneGeometry(100, 100);
+const groundMat = new MeshStandardMaterial({ color: 0x55aa55 });
+const ground = new Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+// Market Stall
+const stall = new Group();
+const counterGeo = new BoxGeometry(5, 1, 1);
+const counterMat = new MeshStandardMaterial({ color: 0x8B4513 });
+const counter = new Mesh(counterGeo, counterMat);
+counter.position.y = 0.5;
+stall.add(counter);
+
+const roofSupportGeo = new CylinderGeometry(0.1, 0.1, 2.5);
+const roofSupportMat = new MeshStandardMaterial({ color: 0x5C3317 });
+const support1 = new Mesh(roofSupportGeo, roofSupportMat);
+support1.position.set(-2.3, 1.25, -0.3);
+stall.add(support1);
+const support2 = support1.clone();
+support2.position.x = 2.3;
+stall.add(support2);
+
+const roofGeo = new BoxGeometry(5.2, 0.2, 1.5);
+const roofMat = new MeshStandardMaterial({ color: 0xD2691E });
+const roof = new Mesh(roofGeo, roofMat);
+roof.position.y = 2.5;
+stall.add(roof);
+
+stall.position.set(0, 0, 0);
+scene.add(stall);
+
+// --- ACTION ZONES ---
+function createZone(name, position, size, color) {
+    const geo = new CylinderGeometry(size, size, 0.1, 16);
+    const mat = new MeshStandardMaterial({ color: color, transparent: true, opacity: 0.4 });
+    const mesh = new Mesh(geo, mat);
+    mesh.position.copy(position);
+    scene.add(mesh);
+    zones[name] = { mesh, name };
+}
+createZone('tomatoPatch', new Vector3(-8, 0.05, 5), 2, 0xff0000);
+createZone('chickenCoop', new Vector3(8, 0.05, 5), 2, 0xffff00);
+createZone('jamMachine', new Vector3(-3, 0.05, -2), 1.5, 0xff00ff);
+createZone('upgradeStation', new Vector3(3, 0.05, -2), 1.5, 0x00ffff);
+
+// --- ASSETS AND ITEMS ---
+// Tomato plants
+for (let i = 0; i < 5; i++) {
+    const bushGeo = new BoxGeometry(0.5, 1, 0.5);
+    const bushMat = new MeshStandardMaterial({ color: 0x228B22 });
+    const bush = new Mesh(bushGeo, bushMat);
+    const angle = (i/5) * Math.PI * 2;
+    bush.position.set(-8 + Math.sin(angle) * 1.5, 0.5, 5 + Math.cos(angle) * 1.5);
+    scene.add(bush);
+}
+
+// Chicken Coop
+const coop = new Group();
+const coopBox = new Mesh(new BoxGeometry(2,2,2), new MeshStandardMaterial({color: 0xD2B48C}));
+coopBox.position.y = 1;
+coop.add(coopBox);
+coop.position.set(8, 0, 5);
+scene.add(coop);
+
+// Chickens
+for(let i = 0; i < 3; i++) {
+    loadModel("chicken").then(model => {
+        if(model){
+            const chicken = model;
+            chicken.scale.set(0.4, 0.4, 0.4);
+            const angle = (i/3) * Math.PI * 2 + Math.random();
+            chicken.position.set(8 + Math.sin(angle) * 1.5, 0, 5 + Math.cos(angle) * 1.5);
+            chicken.rotation.y = Math.random() * Math.PI * 2;
+            scene.add(chicken);
+            chickens.push(chicken);
+        }
+    });
+}
+// Jam Machine
+const jamMachine = new Group();
+const machineBase = new Mesh(new CylinderGeometry(0.7, 0.7, 1, 16), new MeshStandardMaterial({color: 0x808080}));
+machineBase.position.y = 0.5;
+jamMachine.add(machineBase);
+jamMachine.position.set(-3, 0, -2);
+scene.add(jamMachine);
+
+// --- CUSTOMERS ---
+function createCustomer() {
+    loadModel("explorer").then(model => {
+        if (model) {
+            const customer = model;
+            customer.scale.set(0.7, 0.7, 0.7);
+            const side = Math.random() < 0.5 ? -1 : 1;
+            customer.position.set(side * 20, 0, 15); // Start off-screen
+            customer.lookAt(0, 0, 1); // Look towards the stall
+            customer.targetPos = new Vector3(Math.random() * 4 - 2, 0, 1);
+            customer.state = 'approaching';
+            scene.add(customer);
+            customers.push(customer);
+        }
+    });
+}
+
+function updateCustomers(delta) {
+    nextCustomerTime -= delta;
+    if (nextCustomerTime <= 0) {
+        createCustomer();
+        nextCustomerTime = customerSpawnRate / customerSpeed + Math.random() * 5;
+    }
+
+    customers.forEach((customer, index) => {
+        if (customer.state === 'approaching') {
+            const dir = customer.targetPos.clone().sub(customer.position).normalize();
+            customer.position.add(dir.multiplyScalar(customerSpeed * delta));
+            if (customer.position.distanceTo(customer.targetPos) < 0.1) {
+                customer.state = 'waiting';
+                customer.waitTime = 5 + Math.random() * 5; // Wait 5-10 seconds
+            }
+        } else if (customer.state === 'waiting') {
+            customer.waitTime -= delta;
+            // Try to buy something
+            if (jamCount > 0) {
+                jamCount--;
+                updateScore(15);
+                customer.state = 'leaving';
+            } else if (tomatoCount > 0) {
+                tomatoCount--;
+                updateScore(5);
+                customer.state = 'leaving';
+            } else if (eggCount > 0) {
+                eggCount--;
+                updateScore(8);
+                customer.state = 'leaving';
+            }
+            if (customer.waitTime <= 0) { // Leave if they waited too long
+                customer.state = 'leaving';
+            }
+        }
+        
+        if (customer.state === 'leaving') {
+            customer.position.z += 2 * delta; // Move away
+            if (customer.position.z > 20) {
+                scene.remove(customer);
+                customers.splice(index, 1);
+            }
+        }
+    });
+}
+
+// --- UPGRADE LOGIC ---
+document.getElementById('upgrade-player-speed').addEventListener('click', () => {
+    const cost = 50;
+    if (score >= cost) {
+        updateScore(-cost);
+        playerSpeed *= 1.2;
+        playSound("powerup");
+        upgradeMenu.style.display = 'none';
+    }
+});
+document.getElementById('upgrade-customer-rate').addEventListener('click', () => {
+    const cost = 100;
+    if (score >= cost) {
+        updateScore(-cost);
+        customerSpeed *= 1.25;
+        playSound("powerup");
+        upgradeMenu.style.display = 'none';
+    }
+});
+document.getElementById('upgrade-capacity').addEventListener('click', () => {
+    const cost = 75;
+    if (score >= cost) {
+        updateScore(-cost);
+        playerCapacity += 5;
+        playSound("powerup");
+        upgradeMenu.style.display = 'none';
+    }
+});
+
+// --- GAME LOOP ---
+function animate() {
+    requestAnimationFrame(animate);
+    const delta = Math.min(clock.getDelta(), 0.05);
+
+    if (player) {
+        // Player movement
+        const moveDirection = new Vector3();
+        if (moveState.forward) moveDirection.z -= 1;
+        if (moveState.left) moveDirection.x -= 1;
+        if (moveState.right) moveDirection.x += 1;
+        
+        if(moveDirection.lengthSq() > 0) {
+            moveDirection.normalize();
+            const targetRotation = Math.atan2(moveDirection.x, moveDirection.z);
+            player.rotation.y += (targetRotation - player.rotation.y) * 0.1;
+            player.position.add(moveDirection.multiplyScalar(playerSpeed * delta));
+        }
+
+        // Camera follow
+        const idealOffset = new Vector3(0, 5, 10);
+        const idealLookat = new Vector3(0, 2, 0);
+        const cameraPos = player.position.clone().add(idealOffset);
+        const lookatPos = player.position.clone().add(idealLookat);
+        camera.position.lerp(cameraPos, 0.05);
+        camera.lookAt(lookatPos);
+        
+        // Player animation
+        if (playerMixer) playerMixer.update(delta);
+
+        // Zone interaction
+        let inZone = false;
+        for (const zoneName in zones) {
+            const zone = zones[zoneName];
+            if (player.position.distanceTo(zone.mesh.position) < zone.mesh.geometry.parameters.radiusTop) {
+                inZone = true;
+                if (actionZone !== zone) {
+                    actionZone = zone;
+                    handleZoneEntry(zone.name);
+                }
+                break;
+            }
+        }
+        if (!inZone) {
+            if (actionZone) {
+                hideAction();
+                actionZone = null;
+            }
+        }
+    }
+    
+    updateCustomers(delta);
+
+    renderer.render(scene, camera);
+}
+
+// --- ZONE ACTIONS ---
+function handleZoneEntry(zoneName) {
+    if (zoneName === 'tomatoPatch') {
+        const canPick = tomatoCount + eggCount + jamCount < playerCapacity;
+        if (canPick) {
+            showAction('Pick Tomatoes', () => {
+                tomatoCount++;
+                playSound("pop");
+                hideAction(); // One action per entry
+                actionZone = null;
+            });
+        }
+    } else if (zoneName === 'chickenCoop') {
+        const canPick = tomatoCount + eggCount + jamCount < playerCapacity;
+        if (canPick) {
+            showAction('Collect Eggs', () => {
+                eggCount++;
+                playSound("pop");
+                hideAction();
+                actionZone = null;
+            });
+        }
+    } else if (zoneName === 'jamMachine') {
+        if (tomatoCount > 0) {
+            showAction('Make Jam', () => {
+                tomatoCount--;
+                jamCount++;
+                playSound("whoosh");
+                hideAction();
+                actionZone = null;
+            });
+        }
+    } else if (zoneName === 'upgradeStation') {
+        showAction('Open Upgrades', () => {
+            playSound("click");
+            upgradeMenu.style.display = 'flex';
+            updateUpgradeButtons();
+            hideAction();
+            actionZone = null;
+        });
+    }
+}
+
+// --- RESIZE ---
+function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+window.addEventListener('resize', onWindowResize);
+
+// --- START ---
+onWindowResize();
+playMusic("bg_loop_playful");
+animate();
+updateScore(0); // Initialize score display and upgrade buttons
+</script>
+</body>
+</html>

@@ -56,7 +56,7 @@ async function checkOpenAiCompatible(id) {
   const CONF = {
     openai: { keyName: "OPENAI_API_KEY", baseURL: undefined, model: "gpt-5.4-nano" },
     moonshot: { keyName: "MOONSHOT_API_KEY", baseURL: process.env.MOONSHOT_BASE_URL ?? "https://api.moonshot.ai/v1", model: "moonshot-v1-8k" },
-    deepseek: { keyName: "DEEPSEEK_API_KEY", baseURL: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1", model: "deepseek-chat" },
+    deepseek: { keyName: "DEEPSEEK_API_KEY", baseURL: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1", model: "deepseek-v4-flash" },
   }[id];
   if (!CONF) throw new Error(`unknown --provider ${id} (google | openai | moonshot | deepseek)`);
 

@@ -11,6 +11,214 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-13 — deterministic pre-delivery syntax check (owner ask, after the River Nomad self-heal chase)
+
+- **Context:** same investigation as the self-heal-persistence entry above. Once the real
+  bug was isolated (`pageerror: Invalid or unexpected token`), the owner asked whether a
+  deterministic lint could catch this class BEFORE it ever reaches a kid, instead of relying
+  entirely on the browser-based verify → repair loop — and whether it would add server load.
+- **Build:** new `src/lib/js-syntax-lint.ts` (`findJsSyntaxError`), using `acorn` (added as a
+  real dependency, not dev-only — it runs at request time). Parses every inline
+  `<script>` block whose `type` is genuinely JavaScript (absent, `text/javascript`,
+  `application/javascript`, or `module`) with `sourceType: "module"` so the bare `import {
+  ... } from "three"` every game carries parses correctly. Explicitly SKIPS non-JS script
+  types (`<script src=...>`, already caught elsewhere; `type="importmap"`) — caught in my own
+  testing before this shipped: an earlier version matched the importmap block regardless of
+  type and flagged its valid JSON as a syntax error, which would have blocked every 3D game.
+  Folded into the SAME corrective-retry path as the existing three-import/external-script
+  lints (`api/chat/route.ts`), not a second sequential retry (Calvin precedent, 2026-08-09),
+  and the retry's own output is now also required to pass this check before being accepted.
+- **Performance, measured (the owner's exact concern):** 1.9ms on the small original repro,
+  **15.8ms on the real 58KB broken River Nomad artifact** (10 script blocks including the
+  importmap) — negligible next to the multi-second model call already happening on every
+  build. Confirmed against real files, not synthetic ones: catches the actual bug
+  (`Unterminated string constant`, line 474) on the broken game, stays silent on a
+  known-clean generated game (the earlier football fix's output).
+- **Scope, deliberately narrow — documented in the module itself:** SYNTAX errors only
+  (malformed JS that fails to parse). Cannot see a hallucinated API call (valid syntax,
+  wrong method name — e.g. this same game's earlier, separate
+  `MathUtils.makeQuaternionFromEuler is not a function` bug) — that class needs actual
+  execution, which is what the browser-based self-heal probe already covers. The two are
+  complementary.
+- **A real regression caught mid-build, not shipped**: two existing route.ts tests
+  (`XS.1`/`XS.4`/`XS.3`) used a fixture with the literal bare text `CLEAN GAME` as a script
+  body — genuinely invalid JS syntax, correctly flagged by the new lint. Fixed the fixture
+  (wrapped in `/* CLEAN GAME */`, a comment) rather than weakening the check.
+- **Verify:** test-first (`js-syntax-lint.test.ts`, 8 cases including the importmap
+  false-positive regression). Full Game suite green (213 files / 2450 tests). Typecheck clean.
+
+---
+
+## 2026-08-13 — self-heal repairs never persisted: a fixed game reverted to broken on every reload
+
+- **Context:** owner UAT of "River Nomad 3D" — a screenshot showed the exhausted-repair banner
+  ("Tell me one thing to change — I'll rebuild it a different way"). Traced with real evidence:
+  pulled the stored game (58,224 chars) from the local dev DB and ran it through the actual
+  browser verifier (`scripts/verify-game-html.mjs`) myself — confirmed `pageerror: Invalid or
+  unexpected token`, a genuine JS syntax error. `logs/app.log` showed `/api/repair` had already
+  fired **5 separate times** across 2+ hours (12:09, 12:13, 16:02, 16:05, 16:07), each logging
+  `✓ patch` with a DIFFERENT-looking but same-length output (58217 chars) — yet the stored game
+  never changed size (still 58224, unpatched, every time).
+- **Root cause:** the self-healing preview (`usePreviewVerify.ts` /
+  `preview-verify-controller.ts`) already runs fully automatically — no button press needed —
+  but a successful patch only ever updated the CONTROLLER'S OWN in-memory `state.currentHtml`.
+  Nothing wrote it back to the stored conversation (`ChatPanel.container.tsx`'s `setConvos` /
+  `PUT /api/chats/:id`, confirmed by grepping every `artifactHtml:` assignment — only the
+  ordinary chat-reply path touches it). Every reload/reopen re-fetched the ORIGINAL, still-broken
+  artifact from the database, re-verified it, hit the same error, and re-repaired it from
+  scratch — silently discarding the fix each time.
+- **Fix:** new pure helper `applyRepairedArtifact` (`src/lib/turn-recovery.ts`, reuses the
+  existing `patchReply` internal already proven by `applyRecoveredReply`). New `onRepaired`
+  prop on `ArtifactFrame` (`src/components/ArtifactFrame.tsx`), fired once per generation ONLY
+  when the verify outcome is `"repaired"` (never on `"clean"` — nothing to save — or
+  `"failed"`/`"bailed"` — nothing worked). `ChatPanel.container.tsx` wires it to the SAME
+  pure-updater-then-fire-and-forget-PUT shape the existing write-through/recovery paths already
+  use (PUT never runs inside the `setConvos` updater — React may invoke a state updater more
+  than once for a single update).
+- **Verify:** test-first — `turn-recovery.test.ts` (3 new cases: replaces artifactHtml leaving
+  text untouched, targets the game's own chat not necessarily the active one, `patched: false`
+  when the message is gone/rewound). Full Game suite green (212 files / 2442 tests). Typecheck
+  clean.
+
+---
+
+## 2026-08-13 — spec compiler had zero fallback redundancy; a real regional outage proved it
+
+- **Context:** during the day's UAT, a spec-compile call failed outright:
+  `gemini-2.5-flash-lite failed (gemini.spec-compile): 404 — Publisher model ... was not
+  found ... in the specified region (asia-southeast1)` (this server runs `GEMINI_BACKEND=
+  vertex`). Pass 1 correctly failed open — Pass 2 built from the raw message, no turn was
+  blocked — but it exposed a real gap: `gemini-2.5-flash-lite` was the ONLY lite-tier Google
+  model in `MODEL_CATALOG`, so the compiler's fallback chain was always empty regardless of
+  `chainFor()` — one model down meant Pass 1 silently didn't run for that turn.
+- **Fix:** added two more lite-tier Google catalog entries to `model-registry.ts` —
+  `gemini-3.5-flash-lite` and `gemini-3.1-flash-lite` — prices verified against
+  ai.google.dev/gemini-api/docs/pricing, existence + shutdown status verified against
+  ai.google.dev/gemini-api/docs/deprecations (both 2026-08-13; `gemini-3.5-flash-lite` has
+  no announced shutdown, `gemini-3.1-flash-lite` is scheduled for 2027-05-07). Spec
+  compiler's default primary (`spec-compiler.ts`) moved to `gemini-3.5-flash-lite`, newest
+  first; `chainFor()` now automatically reaches `gemini-3.1-flash-lite` then
+  `gemini-2.5-flash-lite` as real cross-generation fallbacks. Widened the compiler's own
+  one-shot chain depth from the shared `ONESHOT_MAX_MODELS` (2, tuned for kid-facing chat
+  latency) to a dedicated `SPEC_COMPILE_MAX_MODELS` (3, `gemini.ts`) — Pass 1 already
+  tolerates 20s+ latency, so reliability matters more here than shaving a few more seconds
+  off a rare failure path.
+- **Side effect, expected and pinned:** the two new lite-tier entries are also valid
+  fallbacks for the ORDINARY chat/build model (any workhorse-or-richer primary can fall back
+  to a cheaper lite-tier model per the existing tier-then-price rule) — `gemini.fallback.test
+  .ts` F.3/F.16 pinned an exact 3-model "whole chain" for a `gemini-3-flash-preview` primary;
+  now correctly a 4-model chain (`gemini-2.5-flash` → `gemini-2.5-flash-lite` →
+  `gemini-3.1-flash-lite` → `gemini-3.5-flash-lite`, tier rung then cheapest-first). Updated
+  both pins.
+- **Separately flagged, NOT fixed here:** `gemini-2.5-flash` (the plain, non-lite workhorse
+  model — distinct from `gemini-2.5-flash-lite`) is scheduled to retire **2026-10-16** per
+  the same deprecations page. It's the SECOND entry in `.env.example`'s documented
+  `GEMINI_FALLBACK_MODELS` default and in the live `MODEL_CATALOG` workhorse tier — worth an
+  owner decision before October, out of scope for today's fix.
+- **Verify:** full Game suite green (212 files / 2437 tests) after the fix.
+
+---
+
+## 2026-08-13 — second UAT round: play-tested a compiled 3D football game for real, confirmed the §6 targeting fix worked, found 3 more real defects
+
+- **Context:** owner UAT of a fresh "3D football" build, `SPEC_COMPILER_ENABLED=1`. Real
+  browser verification this time (installed `playwright-core` against the already-cached
+  Chromium, `node scripts/verify-game-html.mjs`) plus a full read of the pulled game code
+  and compiled spec — not guessed.
+- **Confirmed win:** 2026-08-12's §6 spatial-constraint fix worked. This build's kick has an
+  explicit `KICK_RANGE = 75` check with a real miss-state (`"Aim at the ball!"`), and the kick
+  direction now comes from the player's facing quaternion, not raw screen coordinates —
+  yesterday's targeting AND camera-angle bugs are both gone in this generation.
+- **Bug C — scale ratio still off.** The ball came out at roughly a 1:2 diameter-to-player-
+  height ratio (a real soccer ball is closer to 1:8) — better than 2026-08-12's ~1:1.25
+  (genuinely beach-ball-sized) but still noticeably wrong. Root cause: the 2026-08-12 fixes
+  (both `prompt-catalog.ts`'s human-scale reference and this session's spec-compiler
+  addition) gave the model two SEPARATE absolute numbers ("human ~1.7, ball ~0.22") rather
+  than the ratio between them — a model can reference "a human" and still get the proportion
+  wrong. **Fix:** `spec-compiler.ts` §8 now requires an explicit ratio statement (e.g. "the
+  ball's diameter is about 1/8th of the player's height"), not two independent numbers.
+  Still behind `SPEC_COMPILER_ENABLED` (inert).
+- **Bug D — no multi-input support.** The same game moved the player ONLY via `mousemove` —
+  zero `keydown`/`keyup` listeners anywhere in the generated code, and the touch "KICK"
+  button had no matching touch-drag-to-move handler, so the game was very likely unplayable
+  on a phone (mobile-first is a standing design-system rule). **Fix:** `spec-compiler.ts` §6
+  now requires every core interactive mechanic be reachable by at least two input methods
+  (pointer AND keyboard), stated explicitly per mechanic. Still behind
+  `SPEC_COMPILER_ENABLED` (inert).
+- **Bug E — a SECOND NEXT_ASKS leak placement, LIVE.** Distinct from 2026-08-12's
+  leaked-inside-the-fence bug: this time the model put the `NEXT_ASKS:` line at the very
+  START of its reply, before the ```html fence even opens. The generated game itself was
+  clean (confirmed — `artifactHtml` never contained the sentinel), but the raw line
+  (`NEXT_ASKS: <idea one> | <idea two> | <idea three>`) rendered as ugly literal text in the
+  chat bubble, because both `parseNextAskLine` and the route's pre-strip guard only ever
+  check the TRAILING line. **Fix:** new `reclaimLeadingNextAsk()` (`next-ask-sentinel.ts`)
+  moves a leading sentinel to the end before the existing trailing-only machinery runs —
+  wired into `api/chat/route.ts` ahead of the existing `parseNextAskLine(full)` call. This
+  fix is LIVE (no flag), affects every fresh-build turn immediately.
+- **Verify:** test-first throughout (`spec-compiler.test.ts`, `next-ask-sentinel.test.ts` new
+  cases, each confirmed failing before its fix). Full Game suite green (212 files / 2437
+  tests).
+
+---
+
+## 2026-08-12 — a generated 3D football game was unplayable and mis-scaled; two live prompt gaps found and fixed
+
+- **Context:** owner UAT of a compiled "3D football game" (unrelated to whether the two-pass
+  pipeline was involved — both bugs live in the ordinary, already-shipped build/edit prompts).
+  Pulled the real generated HTML from the local dev SQLite (`data/kidgemini.db`) rather than
+  guessing, per global rule 12.
+- **Bug A — placeholder scale.** `Game/src/lib/assets/prompt-catalog.ts` item 3 tells the
+  model to draw a primitive placeholder shape before a catalog model loads, but gave no size
+  guidance — the generated ball placeholder (`SphereGeometry(0.8, ...)`) came out roughly
+  beach-ball-sized next to the human-sized placeholder character (`BoxGeometry(1, 2, 1)`).
+  **Fix:** added a human-scale reference (`a standing human is ~1.7 units tall; scale every
+  other placeholder against that`) to item 3. Confirmed still inside the tracked 2,525-token
+  ceiling (`TECH_DEBT.md` #97). Test-first: `prompt-catalog.test.ts` new case.
+- **Bug B — stale on-screen instructions survive a mechanic rewrite.** The original build's
+  kick control was broken (`onPointerDown` fired from ANY screen position, not just the
+  ball; the screen-to-world kick-angle math ignored the camera's actual angle) — a separate,
+  real Pass-2 defect, not yet fixed (relational-constraint gap in the spec compiler, see
+  platform PRD-GENRE-PLAYBOOK-PIPELINE §9 2026-08-12 second-UAT entry, still behind
+  `SPEC_COMPILER_ENABLED`). Over 4 rounds of chat edits the owner had the control scheme
+  rebuilt (WASD-move-then-click), but the on-screen instruction still read "Drag the ball to
+  aim and kick!" — actively wrong. Root cause: `GAME_EDIT_PROMPT_SECTION`'s "change only what
+  this request needs" rule reads instructional text as unrelated even when the mechanic it
+  describes changed. **Fix:** added a narrow exception — instructional text describing a
+  changed mechanic is part of the same change. Test-first: `game-edit.test.ts` new case; the
+  two exact-equality pins (`gemini.edit-config.test.ts:49`, `gemini.multiplayer-prompt.test.ts:19`)
+  still pass since the edit is inside the existing constant, not a new unconditional append.
+- **Still open:** the underlying kick-targeting/camera-angle defect itself (Bug B's root
+  cause) is a Pass-2 generation-quality issue, addressed at the spec level in the (still
+  inert) two-pass pipeline's §6 fix, not yet in the live single-pass build prompt.
+- **Verify:** full Game suite green (212 files / 2430 tests) after both fixes.
+
+---
+
+## 2026-08-12 — Pass 1 spec-compiler's DeepSeek-primary default stalled 30s before falling back (caught pre-launch, in first local UAT)
+
+- **Context:** same-day feature (`src/lib/spec-compiler.ts` — Pass 1 of the two-pass build
+  pipeline, PRD-GENRE-PLAYBOOK-PIPELINE Stage 0b in the platform repo), still behind
+  `SPEC_COMPILER_ENABLED` (off by default) — never reached a real kid. First local UAT run
+  (fresh chat, flag on, `SPEC_COMPILER_MODEL` unset → default `deepseek-v4-flash`) confirmed
+  the mechanism worked end to end (41-char request → 4,650-char spec → 16 KB game, vs. a
+  ~6.2 KB no-compile baseline) but `logs/app.log` showed the primary attempt running the
+  FULL `CHAT_TIMEOUT_MS` (30s) one-shot slot deadline before `runOneShotChain` walked to the
+  fallback (`gemini-2.5-flash`) — total turn time **97.5s**, for a step meant to be a cheap,
+  fast pre-pass ahead of the actual build.
+- **Root cause:** `SPEC_COMPILER_MODEL` defaulted to `deepseek-v4-flash` (owner ask, same
+  session) with no compiler-specific timeout — it reused the ordinary chat call's 30s slot
+  deadline, so an overloaded/slow DeepSeek response burned the entire deadline before the
+  chain moved on, rather than failing fast.
+- **Fix:** `specCompilerModel()` (`spec-compiler.ts`) now defaults to `gemini-2.5-flash-lite`;
+  DeepSeek is an explicit opt-in (`SPEC_COMPILER_MODEL=deepseek-v4-flash`) once its
+  reliability is proven, chosen over adding a shorter compiler-specific timeout or leaving
+  the default as-is (owner decision, shown the latency measurement).
+- **Verify:** `Game/src/lib/spec-compiler.test.ts` pins the new default; full suite green
+  (211 files / 2420 tests). Still flag-off; the next UAT pass should confirm Lite-primary
+  latency is materially better before considering `SPEC_COMPILER_ENABLED=1` for real traffic.
+
+---
+
 ## 2026-08-11 — the scalable fix for the chat-history size cap: recent artifacts stay inline, older ones are externalized and pulled on demand
 
 - **Context:** same-day follow-up to the entry immediately below (the 2MB→20MB stopgap). A

@@ -325,6 +325,7 @@ Rules:
   is much less likely to be mistyped than a large block of code copied from
   memory.
 - Change only what this request needs. Do not rename, restyle, reformat, or "improve" anything else — the child is proud of the game exactly as it plays right now.
+- EXCEPTION: if this change alters HOW the game is played or controlled, any on-screen instruction text describing the OLD way is no longer accurate and must be updated in the same patch — a text label is part of the change, not "something else", the moment it stops being true.
 - Everything you don't put in a REPLACE block must stay byte-for-byte identical.
 - No prose after the patch blocks, no markdown fences, no full HTML document.`;
 

@@ -1,0 +1,1501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><!--ari-perf-probe--><script>(function () {
+  window.__arPerfProbeVersion = 4;
+  var buffer = [];
+  var ready = false;
+  function send(ev) {
+    try { parent.postMessage({ source: "ari-perf-probe", event: ev }, "*"); } catch (e) { /* parent gone */ }
+  }
+  function post(ev) { if (ready) send(ev); else buffer.push(ev); }
+  addEventListener("message", function (event) {
+    var d = event && event.data;
+    if (!d || d.source !== "ari-parent" || d.type !== "ready") return;
+    ready = true;
+    for (var i = 0; i < buffer.length; i++) send(buffer[i]);
+    buffer = [];
+  });
+
+  // GL draw-call counter (v4, 2026-08-10). snapshot.drawCalls was designed to
+  // read __arPerf.renderer.info — which NOTHING ever assigned, so it was null
+  // in every snapshot ever posted. Meanwhile the owner's AutoRicksaw game ran
+  // at 1,250 draws/frame from hand-built meshes the model accounting cannot
+  // see, and the slowdown hint blamed two static trees nine edits in a row.
+  // Count actual GL draw commands instead: engine-agnostic, needs nothing
+  // from the game, reaches stored games via the version re-floor.
+  var glDraws = 0;
+  function wrapGL(proto) {
+    if (!proto) return;
+    try {
+      var de = proto.drawElements;
+      if (de) proto.drawElements = function () { glDraws++; return de.apply(this, arguments); };
+      var da = proto.drawArrays;
+      if (da) proto.drawArrays = function () { glDraws++; return da.apply(this, arguments); };
+      var dei = proto.drawElementsInstanced;
+      if (dei) proto.drawElementsInstanced = function () { glDraws++; return dei.apply(this, arguments); };
+      var dai = proto.drawArraysInstanced;
+      if (dai) proto.drawArraysInstanced = function () { glDraws++; return dai.apply(this, arguments); };
+    } catch (e) { /* never break rendering for telemetry */ }
+  }
+  if (!window.__arGlDrawPatched) {
+    window.__arGlDrawPatched = 1;
+    wrapGL(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+    wrapGL(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+  }
+  var lastGlDraws = 0;
+
+  // FPS estimate: count rAF ticks in the last sample window. Stacks fine on
+  // top of the frame governor's own wrap (both call straight through).
+  var frames = 0;
+  var origRaf = window.requestAnimationFrame;
+  if (origRaf) {
+    window.requestAnimationFrame = function (cb) {
+      return origRaf.call(window, function (t) {
+        frames++;
+        return cb(t);
+      });
+    };
+  }
+
+  // "Playing" signal (v3, owner report 2026-08-06): frames alone can't tell
+  // "running slow" from "not running" — an unstarted game or idle lobby
+  // renders little/nothing by design. Track the last real input so the
+  // slowdown banner only trusts samples taken while the kid is actually
+  // playing. Capture phase: game code often stopPropagation()s.
+  var lastInput = 0;
+  var inputEvents = ["pointerdown", "keydown", "touchstart"];
+  for (var ie = 0; ie < inputEvents.length; ie++) {
+    addEventListener(inputEvents[ie], function () { lastInput = Date.now(); }, true);
+  }
+
+  function snapshot() {
+    // A hidden tab/panel genuinely renders zero frames — that's true, but it
+    // is NOT the same claim as "the game is running slow," which is what
+    // this snapshot exists to detect. Without this guard, every setInterval
+    // tick during a background gap (leaving Ari and coming back) posts a
+    // near-zero fps reading, which is enough on its own to satisfy the
+    // slowdown banner's "5 consecutive low samples" rule — so the banner
+    // flashes on return even though nothing was ever actually slow. Skip
+    // sampling entirely while hidden, and keep resetting the frame counter
+    // so no partial/corrupted count leaks into the first reading after the
+    // tab becomes visible again.
+    if (document.hidden) { frames = 0; return; }
+    var perf = window.__arPerf || {};
+    var reg = perf.models || {};
+    var animatedRoots = perf.animatedRoots;
+    var models = [];
+    for (var name in reg) {
+      if (!Object.prototype.hasOwnProperty.call(reg, name)) continue;
+      var entry = reg[name];
+      var roots = entry.instances || [];
+      // Live = still parented into a scene graph. A load()ed-but-never-added
+      // (or later removed) root reads parent as falsy — never a stale row.
+      var live = [];
+      for (var i = 0; i < roots.length; i++) {
+        if (roots[i] && roots[i].parent) live.push(roots[i]);
+      }
+      if (live.length === 0) continue;
+      var animated = false;
+      if (animatedRoots) {
+        for (var j = 0; j < live.length; j++) {
+          if (animatedRoots.has(live[j])) { animated = true; break; }
+        }
+      }
+      var triangles = entry.triangles || 0;
+      var load = triangles * live.length * (animated ? 2 : 1);
+      var bucket = load <= 20000 ? "green" : (load <= 150000 ? "yellow" : "red");
+      models.push({ name: name, triangles: triangles, instances: live.length, animated: animated, load: load, bucket: bucket });
+    }
+    var batches = perf.batches || {};
+    for (var bname in batches) {
+      if (!Object.prototype.hasOwnProperty.call(batches, bname)) continue;
+      var bentry = batches[bname];
+      var broots = bentry.roots || [];
+      var blive = false;
+      for (var bi = 0; bi < broots.length; bi++) { if (broots[bi] && broots[bi].parent) { blive = true; break; } }
+      if (!blive) continue;
+      var btriangles = bentry.triangles || 0;
+      var bdrawCalls = bentry.drawCalls || 1;
+      var bload = btriangles * bdrawCalls;
+      var bbucket = bload <= 20000 ? "green" : (bload <= 150000 ? "yellow" : "red");
+      models.push({ name: bentry.name, triangles: btriangles, instances: bentry.count || 0, animated: false, load: bload, bucket: bbucket, batched: true, drawCalls: bdrawCalls });
+    }
+    models.sort(function (a, b) { return b.load - a.load; });
+    var drawCalls = null, rendererTriangles = null;
+    // Per-frame average over this window from the GL counter — the value
+    // that actually distinguishes "a thousand tiny meshes" from "two trees".
+    var windowDraws = glDraws - lastGlDraws;
+    lastGlDraws = glDraws;
+    if (windowDraws > 0 && frames > 0) {
+      drawCalls = Math.round(windowDraws / frames);
+    } else if (perf.renderer && perf.renderer.info && perf.renderer.info.render) {
+      // Legacy fallback, kept for a game that registers its renderer.
+      drawCalls = perf.renderer.info.render.calls;
+      rendererTriangles = perf.renderer.info.render.triangles;
+    }
+    var playing = frames > 0 && lastInput > 0 && (Date.now() - lastInput) < 10000;
+    post({ type: "snapshot", snapshot: { fps: frames, playing: playing, drawCalls: drawCalls, rendererTriangles: rendererTriangles, models: models } });
+    frames = 0;
+  }
+  setInterval(snapshot, 1000);
+})();</script><script type="importmap">{"imports":{"three":"https://assets.ariantra.com/three.098b4c.js"}}</script><style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style><script>(function(){
+if (window.__arFrameGovernor) return;
+window.__arFrameGovernor = 1;
+var raf = window.requestAnimationFrame.bind(window);
+var seen = new WeakMap();
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    // Skipped frames ALWAYS re-request through the wrapper, so the loop can
+    // never die — that is the one failure mode that would break a live game.
+    if (document.hidden) { window.requestAnimationFrame(cb); return; }
+    var prev = (typeof cb === 'function' ? seen.get(cb) : 0) || 0;
+    if (prev && t - prev < 15) { window.requestAnimationFrame(cb); return; }
+    if (typeof cb === 'function') seen.set(cb, t);
+    return cb(t);
+  });
+};
+})();</script><script>(function(){
+if (window.__arGlGuard) return;
+window.__arGlGuard = 1;
+window.__arGlGuardVersion = 2;
+var get = HTMLCanvasElement.prototype.getContext;
+var live = [];
+var lostCount = 0;
+HTMLCanvasElement.prototype.getContext = function (type) {
+  var ctx = get.apply(this, arguments);
+  try {
+    if (ctx && /webgl/i.test(String(type)) && !this.__arGlGuarded) {
+      this.__arGlGuarded = 1;
+      var ext = null;
+      try { ext = ctx.getExtension('WEBGL_lose_context'); } catch (e2) { /* none */ }
+      live.push({ ctx: ctx, ext: ext });
+      this.addEventListener('webglcontextlost', function (e) {
+        // THE line that matters: without preventDefault the loss is final and
+        // the canvas stays blank for the rest of the document's life.
+        e.preventDefault();
+        lostCount++;
+        console.warn('[ari] WebGL context lost — restore requested');
+        // Watchdog (2026-08-10 №4, "it didnot regain"): browsers do not
+        // always volunteer webglcontextrestored, and a politely-held loop
+        // waits forever. The ladder is the automatic version of what fixed
+        // it for the owner by hand (code↔preview toggle = a remount):
+        // after 2s still lost → ask the driver; 3s more still lost → ask
+        // the parent to remount this frame.
+        setTimeout(function () {
+          var still = true;
+          try { still = ctx.isContextLost(); } catch (e3) { /* gone */ }
+          if (!still) return;
+          try { if (ext) ext.restoreContext(); } catch (e3) { /* refused */ }
+          setTimeout(function () {
+            var dead = true;
+            try { dead = ctx.isContextLost(); } catch (e4) { /* gone */ }
+            if (!dead) return;
+            console.warn('[ari] WebGL context is not coming back — asking the parent to reload the game');
+            try { parent.postMessage({ __ari: 'gl-dead' }, '*'); } catch (e4) { /* no parent */ }
+          }, 3000);
+        }, 2000);
+      }, false);
+      this.addEventListener('webglcontextrestored', function () {
+        if (lostCount > 0) lostCount--;
+        console.warn('[ari] WebGL context restored');
+      }, false);
+    }
+  } catch (e) { /* never break getContext */ }
+  return ctx;
+};
+// Restoring the CONTEXT is not enough — the game's LOOP must survive to see
+// it. While a context is lost, three.js's renderer throws mid-render (the GL
+// introspection APIs return null, and three calls .trim() on the result —
+// the exact stack the harness attributed on 2026-08-10). Games request their
+// next frame AFTER rendering (three's setAnimationLoop does too), so that
+// throw kills the loop for good: the context comes back, nothing draws, the
+// canvas stays blank, and no click can restart it. So: while any tracked
+// context is lost, hold rAF callbacks — always re-request, never run — the
+// same shape as the frame governor's document.hidden skip, and it resumes by
+// itself on webglcontextrestored. Composes with the governor's own wrapper
+// (this one runs outside it) — worst case a held frame is re-queued twice.
+// lostCount alone is NOT enough to gate on: webglcontextlost is dispatched
+// as a task, so there is a window after the actual loss (browser eviction or
+// our own release) where the event has not landed yet — one frame renders
+// against the dead context and three throws anyway. isContextLost() is
+// synchronous truth; the event counter only covers the fake-restore corner
+// (some drivers report isContextLost()=false again before firing restored).
+function anyLost() {
+  for (var i = 0; i < live.length; i++) {
+    try { if (live[i].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  for (var j = 0; j < released.length; j++) {
+    try { if (released[j].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  return false;
+}
+var raf = window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    if (lostCount > 0 || anyLost()) { window.requestAnimationFrame(cb); return; }
+    return cb(t);
+  });
+};
+var released = [];
+function release(why) {
+  // Hand the GPU back now rather than at GC, so the next preview iframe does
+  // not push the page over the context cap. Kept restorable (see pageshow):
+  // a release we believed was terminal must be reversible if the page comes
+  // back — 2026-08-10 second owner report, the pane-switch freeze.
+  for (var i = 0; i < live.length; i++) {
+    try {
+      if (live[i].ext) { live[i].ext.loseContext(); released.push(live[i]); }
+    } catch (e) { /* already gone */ }
+  }
+  live.length = 0;
+  // Observable from the parent page: this is how the harness proves the round
+  // was ASKED to release at unmount, rather than assuming it.
+  console.warn('[ari] WebGL contexts released (' + why + ')');
+}
+// Lets the harness assert that a torn-down round actually gave its context
+// back, instead of assuming pagehide fired.
+Object.defineProperty(window, '__arGlCount', { get: function () { return live.length; } });
+// The parent asks explicitly, immediately before it unmounts this frame.
+// pagehide alone is NOT enough: Chrome does not reliably fire it when an
+// iframe is detached from the DOM, which is precisely how every shadow round
+// ends — so without this the contexts pile up exactly as they did in the
+// owner's eleven-edit session.
+addEventListener('message', function (e) {
+  var d = e && e.data;
+  if (d && d.__ari === 'release-gl') release('asked');
+}, false);
+// Diagnostic-only (2026-08-11): a non-persisted pagehide fired mid-edit on
+// the STILL-PLAYING game, with no deliberate srcDoc/key change from React —
+// after shadow-verify was removed the same day, the explicit 'release-gl'
+// message (sent by the parent right before it unmounted the shadow frame)
+// went with it, leaving THIS listener as the only release trigger, carrying
+// more weight than "pagehide is kept as a backstop only" (the comment above
+// release()) ever assumed. This context string is what will tell us whether
+// it's a real backgrounding event (visibility/online state) or something
+// else entirely — never throws, so it can never break the guard itself.
+function diag() {
+  try {
+    return 'visibility=' + document.visibilityState + ' hidden=' + document.hidden +
+      ' online=' + navigator.onLine + ' at=' + Date.now();
+  } catch (e) { return 'diag-unavailable'; }
+}
+addEventListener('pagehide', function (e) {
+  // Safari/iOS fires pagehide when the page is merely BACKGROUNDED (app or
+  // tab switch, pane transitions) and will bring it back — persisted=true.
+  // Releasing there kills the LIVE game's context and the loop-hold freezes
+  // it: the owner's "froze, then turned blue when I clicked back"
+  // (2026-08-10, second report). Only a non-persisted pagehide — the actual
+  // teardown of a detached iframe — releases.
+  if (e && e.persisted) {
+    console.warn('[ari] pagehide (persisted, backgrounded — kept alive) ' + diag());
+    return;
+  }
+  console.warn('[ari] pagehide (NOT persisted — releasing) ' + diag());
+  release('pagehide');
+});
+addEventListener('pageshow', function () {
+  // The symmetric half: any release that turned out not to be terminal (the
+  // page came back anyway) is undone. restoreContext fires
+  // webglcontextrestored, which unwinds lostCount and resumes the held loop.
+  if (!released.length) return;
+  for (var i = 0; i < released.length; i++) {
+    try { released[i].ext.restoreContext(); live.push(released[i].ctx); } catch (e) { /* gone for real */ }
+  }
+  released.length = 0;
+  console.warn('[ari] WebGL contexts restored (pageshow)');
+});
+})();</script><script>window.AR_ASSETS={"helicopter":"https://assets.ariantra.com/helicopter.38b1ea.glb","car":"https://assets.ariantra.com/car.710895.glb","star":"https://assets.ariantra.com/star.9f50cb.glb","cat":"https://assets.ariantra.com/cat.83c223.glb","coin":"https://assets.ariantra.com/coin.46ec4e.glb","coin_pickup":"https://assets.ariantra.com/coin_pickup.affa86.mp3","explosion":"https://assets.ariantra.com/explosion.d84e0a.mp3","game_over":"https://assets.ariantra.com/game_over.2866a9.mp3","win":"https://assets.ariantra.com/win.820154.mp3","bg_loop_playful":"https://assets.ariantra.com/bg_loop_playful.469994.mp3"};</script><script>window.AR_SIZES={"helicopter":[3.517,1.385,4.632],"car":[1.3,0.733,2.56],"star":[0.365,0.363,0.239],"coin":[0.4,0.4,0.175]};</script><script type="module">
+  import { GLTFLoader, MeshoptDecoder, ConeGeometry, CapsuleGeometry, InstancedMesh } from "three";
+  window.__arLoadModelVersion = 7;
+// modelSize (2026-08-08, the fragmented-track fix): the measured metres a model
+// renders at scale 1, available BEFORE loading so a game can plan a layout. The
+// "|| {}" guard means order-of-injection never matters, and an unknown or
+// skinned model answers null rather than a made-up number — a game that checks
+// for null degrades to eyeballing, which is exactly what it did before v4.
+window.AR_SIZES = window.AR_SIZES || {};
+window.modelSize = function (name) {
+  var s = window.AR_SIZES[name];
+  return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
+};
+// modelAxis (2026-08-08, the poorly-formed-track fix): which axis a PATH
+// piece's road runs along at rest — "x", "z", or "none" for a hub/corner. The
+// two road kits genuinely disagree (city road_straight runs along X, racing
+// race_track_straight along Z) and a 1x1 square tile's size cannot reveal it,
+// so before this a game had to guess and got it wrong every time. Unknown
+// answers null — then eyeball it, same as before.
+window.AR_AXES = window.AR_AXES || {};
+window.modelAxis = function (name) {
+  var a = window.AR_AXES[name];
+  return (a === "x" || a === "z" || a === "none") ? a : null;
+};
+// modelJoins (2026-08-09, the SECOND poorly-formed-track fix): which edges a
+// tile's road actually reaches, measured from a top-down render of the
+// published bytes. modelAxis() answers "none" for every corner — true, and
+// useless for placing one; with nothing else to reason from, generated tracks
+// guessed corner rotations and the curves never met the straights.
+//   .joins  ["-x","+z"]  edges the carriageway reaches at rest (no rotation)
+//   .lane   0.7          drivable width in METRES at scale 1
+//   .at     {"-x":0.5}   where each join sits, in metres from the piece's own
+//                        minimum on that edge's axis (matters on 2x2 pieces)
+// Unknown answers null — then eyeball it, exactly as before.
+window.AR_EDGES = window.AR_EDGES || {};
+window.modelJoins = function (name) {
+  var e = window.AR_EDGES[name];
+  return (e && e.joins && e.joins.length) ? e : null;
+};
+// rotateToJoin: the one calculation every track needs and no game got right by
+// hand. Returns the rotation.y IN RADIANS that carries a piece's "from" edge
+// onto the "to" edge — e.g. a corner joining ["+z","+x"] that must instead join
+// west and south is rotateToJoin("race_track_corner","+x","+z"). Quarter turns
+// only, which is all a square grid can use.
+// (No backticks anywhere in this block: it is inlined into a TEMPLATE LITERAL,
+// so one would end the helper string mid-function.)
+window.rotateToJoin = function (name, from, to) {
+  var order = ["-z", "+x", "+z", "-x"]; // clockwise seen from above
+  var a = order.indexOf(from), b = order.indexOf(to);
+  if (a < 0 || b < 0) return 0;
+  return ((b - a + 4) % 4) * (Math.PI / 2);
+};
+// fitTile (2026-08-09): say WHICH DIRECTIONS a grid cell must connect and get
+// the rotation.y that makes the piece do it. Added after three rounds of
+// teaching failed to land: a generated track chose the right kit and one scale
+// factor, then hardcoded all four corner rotations and got all four wrong,
+// because working out "this cell needs north and east, the piece joins +z and
+// +x at rest, so rotate 3pi/2" is four steps of reasoning under a token budget.
+// This is one call. Directions are where the ROAD LEAVES the cell:
+//   fitTile("race_track_corner", ["-z", "+x"])   // track to the north and east
+// Returns 0 for an unknown piece, and null when no quarter turn can satisfy the
+// request — which means the wrong PIECE was chosen (asking a corner to join two
+// opposite edges), so a game can detect that instead of silently drawing a gap.
+window.fitTile = function (name, need) {
+  var e = window.AR_EDGES[name];
+  if (!e || !e.joins || !need || !need.length) return 0;
+  var order = ["-z", "+x", "+z", "-x"];
+  var want = need.slice().sort().join(",");
+  for (var q = 0; q < 4; q++) {
+    var got = e.joins
+      .map(function (j) { return order[(order.indexOf(j) + q) % 4]; })
+      .sort()
+      .join(",");
+    if (got === want) return q * (Math.PI / 2);
+  }
+  return null;
+};
+  const __arLoader = new GLTFLoader();
+__arLoader.setMeshoptDecoder(MeshoptDecoder);
+window.__arPerf = window.__arPerf || { models: {}, rootNames: new WeakMap(), animatedRoots: new WeakSet(), renderer: null };
+var __arStaticTemplates = {};
+function __arCountTriangles(obj) {
+  var triangles = 0;
+  obj.traverse(function (child) {
+    if (!child.isMesh || !child.geometry) return;
+    var geo = child.geometry;
+    if (geo.index) triangles += geo.index.count / 3;
+    else if (geo.attributes && geo.attributes.position) triangles += geo.attributes.position.count / 3;
+  });
+  return Math.round(triangles);
+}
+async function __arLoadFresh(name) {
+  const url = (window.AR_ASSETS || {})[name];
+  if (!url) { console.warn("[ariantra] unknown model:", name); return null; }
+  const gltf = await __arLoader.loadAsync(url);
+  return { scene: gltf.scene, animations: gltf.animations || [] };
+}
+window.loadModel = async function (name) {
+  try {
+    var obj;
+    if (__arStaticTemplates[name]) {
+      // Cache only ever holds a STATIC (no-animation) template — see the
+      // loadModelHelper() doc comment for why animated models are excluded.
+      obj = __arStaticTemplates[name].scene.clone();
+      obj.animations = [];
+    } else {
+      const fresh = await __arLoadFresh(name);
+      if (!fresh) return null;
+      if (fresh.animations.length) {
+        obj = fresh.scene;
+        obj.animations = fresh.animations;
+      } else {
+        __arStaticTemplates[name] = fresh;
+        obj = fresh.scene.clone();
+        obj.animations = [];
+      }
+    }
+    // Same answer as modelSize(name), riding on the object — so code that
+    // already holds the loaded root can size it without re-quoting the name.
+    obj.userData.arSize = window.modelSize(name);
+    try {
+      var __arEntry = window.__arPerf.models[name] || { name: name, triangles: 0, instances: [] };
+      __arEntry.triangles = __arCountTriangles(obj);
+      __arEntry.instances.push(obj);
+      if (__arEntry.instances.length > 1000) __arEntry.instances.shift();
+      window.__arPerf.models[name] = __arEntry;
+      window.__arPerf.rootNames.set(obj, name);
+    } catch (e) { /* telemetry only — never blocks the load */ }
+    return obj;
+  } catch (e) {
+    console.warn("[ariantra] loadModel failed:", name, e);
+    return null;
+  }
+};
+</script><script>
+(function () {
+  var ctx = null, buffers = {}, currentMusic = null;
+  function context() {
+    if (!ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC();
+      var resume = function () { if (ctx.state === "suspended") ctx.resume(); };
+      addEventListener("pointerdown", resume, true);
+      addEventListener("keydown", resume, true);
+    }
+    return ctx;
+  }
+  function load(name) {
+    var url = (window.AR_ASSETS || {})[name];
+    if (!url) { console.warn("[ariantra] unknown sound:", name); return Promise.resolve(null); }
+    if (!buffers[name]) {
+      buffers[name] = fetch(url)
+        .then(function (r) { return r.arrayBuffer(); })
+        .then(function (ab) {
+          return new Promise(function (res, rej) { context().decodeAudioData(ab, res, rej); });
+        })
+        .catch(function (e) { console.warn("[ariantra] sound failed:", name, e); return null; });
+    }
+    return buffers[name];
+  }
+  function trimBounds(buf) {
+    var d = buf.getChannelData(0), t = 0.001, s = 0, e = d.length - 1;
+    while (s < e && Math.abs(d[s]) < t) s++;
+    while (e > s && Math.abs(d[e]) < t) e--;
+    return { start: s / buf.sampleRate, end: (e + 1) / buf.sampleRate };
+  }
+  window.playSound = function (name) {
+    try {
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        src.connect(context().destination);
+        src.start();
+      });
+    } catch (e) { /* a silent effect, never a broken game */ }
+  };
+  window.playMusic = function (name) {
+    var handle = { stop: function () {} };
+    try {
+      if (currentMusic) { try { currentMusic.stop(); } catch (e2) {} currentMusic = null; }
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        var b = trimBounds(buf);
+        src.loop = true;
+        src.loopStart = b.start;
+        src.loopEnd = b.end;
+        var gain = context().createGain();
+        gain.gain.value = 0.5;
+        src.connect(gain);
+        gain.connect(context().destination);
+        src.start(0, b.start);
+        currentMusic = src;
+        handle.stop = function () { try { src.stop(); } catch (e3) {} if (currentMusic === src) currentMusic = null; };
+      });
+    } catch (e) { /* silent */ }
+    return handle;
+  };
+})();
+</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Helicopter City Explorer</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Arial', sans-serif;
+            color: white;
+            background-color: #000;
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            height: 100dvh; /* Dynamic viewport height for mobile safety */
+            -webkit-user-select: none; /* Disable text selection */
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            touch-action: none; /* Prevent browser touch actions like pull-to-refresh */
+        }
+        #scene {
+            display: block;
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 0;
+        }
+        #hud {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 10px;
+            box-sizing: border-box;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            z-index: 10;
+            pointer-events: none; /* Allow clicks to pass through to canvas */
+        }
+        .hud-item {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 1.2em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px 30px;
+            border-radius: 10px;
+            font-size: 2em;
+            text-align: center;
+            z-index: 20;
+            display: none;
+            pointer-events: none;
+        }
+        #controls {
+            position: absolute;
+            bottom: max(12px, env(safe-area-inset-bottom)); /* Breathing room for buttons */
+            left: 0;
+            width: 100%;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            padding: 10px;
+            box-sizing: border-box;
+            z-index: 10;
+        }
+        .control-row {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            grid-column: 1 / -1; /* Span all columns */
+        }
+        .control-button {
+            background: rgba(70, 130, 180, 0.7); /* SteelBlue */
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 70px;
+            height: 70px;
+            font-size: 1.5em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: background 0.2s;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            flex-shrink: 0;
+            touch-action: manipulation; /* Improves touch responsiveness */
+        }
+        .control-button.wide {
+            width: 150px; /* Wider button for Spacebar */
+            border-radius: 35px; /* Half of height to keep rounded ends */
+        }
+        .control-button:active {
+            background: rgba(100, 149, 237, 0.9); /* CornflowerBlue */
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+        }
+        #fuel-bar-container {
+            width: 120px;
+            height: 20px;
+            background-color: rgba(100, 100, 100, 0.5);
+            border-radius: 10px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            padding: 2px;
+            box-sizing: border-box;
+        }
+        #fuel-bar {
+            height: 100%;
+            width: 100%; /* Will be set by JS */
+            background-color: #ffc107; /* Amber */
+            border-radius: 8px;
+            transition: width 0.1s linear;
+        }
+        #stars-icon {
+            font-size: 1.5em;
+            color: gold;
+        }
+
+        @media (max-width: 600px) {
+            .control-button {
+                width: 60px;
+                height: 60px;
+                font-size: 1.2em;
+            }
+            .control-button.wide {
+                width: 120px;
+            }
+            .hud-item {
+                padding: 6px 10px;
+                font-size: 1em;
+            }
+        }
+    </style>
+</head>
+<body>
+    
+    
+    
+
+    <canvas id="scene"></canvas>
+
+    <div id="hud">
+        <div class="hud-item">
+            ⭐ <span id="score">0</span> / 5
+        </div>
+        <div class="hud-item">
+            Fuel:
+            <div id="fuel-bar-container">
+                <div id="fuel-bar"></div>
+            </div>
+        </div>
+        <div class="hud-item">
+            Time: <span id="timer">15:00</span>
+        </div>
+    </div>
+
+    <div id="message"></div>
+
+    <div id="controls">
+        <div class="control-row">
+            <button class="control-button" id="btn-ascend" data-action="ascend">⬆️</button>
+        </div>
+        <div class="control-row">
+            <button class="control-button" id="btn-strafe-left" data-action="strafeLeft">⬅️</button>
+            <button class="control-button" id="btn-interact" data-action="interact">📦</button>
+            <button class="control-button" id="btn-strafe-right" data-action="strafeRight">➡️</button>
+        </div>
+        <div class="control-row">
+            <button class="control-button" id="btn-descend" data-action="descend">⬇️</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import {
+            Scene, PerspectiveCamera, WebGLRenderer, Clock, Color, Fog, Group, Vector3, Box3,
+            BoxGeometry, SphereGeometry, CylinderGeometry, PlaneGeometry, MeshStandardMaterial,
+            MeshBasicMaterial, Mesh, AmbientLight, DirectionalLight, Quaternion, Matrix4, MathUtils
+        } from "three";
+
+        // --- GLOBAL SETUP ---
+        const scene = new Scene();
+        const camera = new PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new WebGLRenderer({ canvas: document.getElementById('scene'), antialias: true, preserveDrawingBuffer: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        scene.fog = new Fog(0xadd8e6, 1, 300); // Light blue fog for distance
+
+        const clock = new Clock();
+        let gameActive = true;
+        let lastTimestamp = 0;
+        const FPS_CAP = 1000 / 60; // Cap to 60 FPS
+
+        // Pause/Resume game when tab is hidden
+        let gameRunning = true;
+        const setGameRunning = (v) => {
+            if (v === gameRunning) return;
+            gameRunning = v;
+            if (v) {
+                clock.getDelta(); // Reset delta to avoid large jump after pause
+                animate();
+            }
+        };
+        document.addEventListener('visibilitychange', () => setGameRunning(!document.hidden));
+        addEventListener('blur', () => setGameRunning(false));
+        addEventListener('focus', () => setGameRunning(true));
+
+
+        // --- LIGHTING ---
+        const ambientLight = new AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
+        const directionalLight = new DirectionalLight(0xffffff, 0.6);
+        directionalLight.position.set(50, 200, 100);
+        directionalLight.target.position.set(0, 0, 0);
+        scene.add(directionalLight);
+        scene.add(directionalLight.target);
+
+
+        // --- PLAYER (HELICOPTER) ---
+        let player;
+        let playerBody;
+        const playerSpeed = 10; // units per second
+        const playerVerticalSpeed = 7;
+        const playerStrafeSpeed = 8;
+        const playerRotationSpeed = 0.5; // radians per second
+        let velocity = new Vector3();
+        let targetVelocity = new Vector3();
+        let playerGroup = new Group(); // Group for player mesh + rotor
+        scene.add(playerGroup);
+
+        // Placeholder for helicopter
+        const bodyGeometry = new CapsuleGeometry(0.8, 2.5, 8, 16);
+        const bodyMaterial = new MeshStandardMaterial({ color: 0x87ceeb }); // Sky Blue
+        player = new Mesh(bodyGeometry, bodyMaterial);
+        player.position.y = 10; // Start high up
+        playerGroup.add(player);
+        playerBody = player; // Reference for collision checks
+
+        // Rotor (simple cylinder for now)
+        const rotorGeometry = new CylinderGeometry(0.1, 0.1, 4, 16);
+        const rotorMaterial = new MeshBasicMaterial({ color: 0x333333 });
+        const mainRotor = new Mesh(rotorGeometry, rotorMaterial);
+        mainRotor.rotation.x = Math.PI / 2; // Make it horizontal
+        mainRotor.position.y = 1.8;
+        playerGroup.add(mainRotor);
+        let rotorSpeed = 50; // rotations per second
+
+        // Load actual helicopter model
+        loadModel("helicopter").then(model => {
+            if (model) {
+                playerGroup.remove(player); // Remove placeholder
+                player = model;
+                player.scale.set(0.015, 0.015, 0.015); // Adjust scale
+                player.rotation.y = Math.PI; // Face forward initially
+                playerGroup.add(player);
+                playerBody = player; // Update reference
+            }
+        });
+
+
+        // --- CAMERA ---
+        const cameraOffset = new Vector3(0, 5, -15); // Slightly above and behind
+        let mouseX = 0, mouseY = 0;
+        let mouseSensitivity = 0.002;
+        let cameraTargetEuler = new Vector3(0, 0, 0); // yaw, pitch, roll
+        let cameraQuaternion = new Quaternion();
+        let isMouseDown = false;
+
+        document.addEventListener('mousemove', (event) => {
+            if (isMouseDown) {
+                const deltaX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
+                const deltaY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
+                cameraTargetEuler.y -= deltaX * mouseSensitivity; // Yaw
+                cameraTargetEuler.x -= deltaY * mouseSensitivity; // Pitch
+
+                // Clamp pitch to avoid flipping upside down
+                cameraTargetEuler.x = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, cameraTargetEuler.x));
+            }
+        });
+
+        document.addEventListener('mousedown', (event) => {
+            if (event.button === 0) { // Left mouse button
+                isMouseDown = true;
+            }
+        });
+
+        document.addEventListener('mouseup', (event) => {
+            if (event.button === 0) {
+                isMouseDown = false;
+            }
+        });
+
+        // --- CONTROLS ---
+        const keys = {
+            w: false, a: false, s: false, d: false,
+            arrowup: false, arrowdown: false, arrowleft: false, arrowright: false,
+            space: false
+        };
+        const activeButtons = {}; // Track active on-screen buttons
+
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (keys.hasOwnProperty(key)) {
+                keys[key] = true;
+                e.preventDefault(); // Prevent scrolling for arrow/space keys
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (keys.hasOwnProperty(key)) {
+                keys[key] = false;
+            }
+        });
+
+        // On-screen buttons
+        document.querySelectorAll('.control-button').forEach(button => {
+            const action = button.dataset.action;
+            button.addEventListener('pointerdown', (e) => {
+                activeButtons[action] = true;
+                e.preventDefault();
+                button.setPointerCapture(e.pointerId); // Keep active while dragging off button
+            });
+            button.addEventListener('pointerup', (e) => {
+                activeButtons[action] = false;
+                button.releasePointerCapture(e.pointerId);
+            });
+            button.addEventListener('pointerleave', (e) => {
+                if (activeButtons[action]) { // Only if pointer was down on button
+                    activeButtons[action] = false;
+                }
+            });
+        });
+
+
+        // --- GAME STATE ---
+        let score = 0;
+        const maxStars = 5;
+        let fuel = 1.0; // 1.0 = full, 0.0 = empty
+        const fuelDrainRate = 1.0 / (15 * 60); // Drains completely in 15 minutes
+        let gameTimer = 15 * 60; // 15 minutes in seconds
+        let currentItem = null; // The item currently picked up
+        let currentObjective = { type: 'collect', target: null }; // 'collect' or 'dropoff'
+        const hudScore = document.getElementById('score');
+        const hudFuelBar = document.getElementById('fuel-bar');
+        const hudTimer = document.getElementById('timer');
+        const messageDisplay = document.getElementById('message');
+
+        // --- CITY ENVIRONMENT ---
+        const groundSize = 500;
+        const groundMaterial = new MeshStandardMaterial({ color: 0x8fbc8f }); // DarkSeaGreen
+        const ground = new Mesh(new PlaneGeometry(groundSize, groundSize), groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        scene.add(ground);
+
+        // Building geometry templates
+        const buildingMaterials = [
+            new MeshStandardMaterial({ color: 0xffa07a }), // LightSalmon
+            new MeshStandardMaterial({ color: 0x87cefa }), // LightSkyBlue
+            new MeshStandardMaterial({ color: 0x90ee90 }), // LightGreen
+            new MeshStandardMaterial({ color: 0xffd700 }), // Gold
+            new MeshStandardMaterial({ color: 0xdda0dd }), // Plum
+            new MeshStandardMaterial({ color: 0xdeb887 }), // BurlyWood
+            new MeshStandardMaterial({ color: 0x8470ff }), // LightSlateBlue
+            new MeshStandardMaterial({ color: 0xb0c4de }), // LightSteelBlue
+            new MeshStandardMaterial({ color: 0xff6347 }), // Tomato
+            new MeshStandardMaterial({ color: 0x6a5acd })  // SlateBlue
+        ];
+        const buildingHeightRange = [10, 80];
+        const buildingWidthRange = [10, 30];
+
+        const buildings = [];
+        const numBuildings = 150;
+        const buildCity = () => {
+            const buildingGeo = new BoxGeometry(1, 1, 1); // Unit box
+            const instancedBuildings = new InstancedMesh(buildingGeo, buildingMaterials[0], numBuildings);
+            scene.add(instancedBuildings);
+
+            for (let i = 0; i < numBuildings; i++) {
+                const width = MathUtils.randFloat(buildingWidthRange[0], buildingWidthRange[1]);
+                const depth = MathUtils.randFloat(buildingWidthRange[0], buildingWidthRange[1]);
+                const height = MathUtils.randFloat(buildingHeightRange[0], buildingHeightRange[1]);
+
+                const x = MathUtils.randFloat(-groundSize / 2 + width / 2, groundSize / 2 - width / 2);
+                const z = MathUtils.randFloat(-groundSize / 2 + depth / 2, groundSize / 2 - depth / 2);
+
+                const matrix = new Matrix4();
+                matrix.compose(
+                    new Vector3(x, height / 2, z),
+                    new Quaternion(),
+                    new Vector3(width, height, depth)
+                );
+                instancedBuildings.setMatrixAt(i, matrix);
+                instancedBuildings.setColorAt(i, buildingMaterials[Math.floor(Math.random() * buildingMaterials.length)].color);
+            }
+            instancedBuildings.instanceMatrix.needsUpdate = true;
+            instancedBuildings.instanceColor.needsUpdate = true;
+        };
+        buildCity();
+
+
+        // --- ROADS & CARS ---
+        const roads = [];
+        const cars = [];
+        const roadWidth = 8;
+        const roadLength = 50;
+        const numCars = 30;
+
+        const roadMaterial = new MeshStandardMaterial({ color: 0x404040 }); // Dark Grey
+        const laneMaterial = new MeshStandardMaterial({ color: 0xffff00 }); // Yellow for lines
+
+        // A simple road piece
+        function createRoadSegment(x, z, rotationY, isJunction = false) {
+            const roadPiece = new Mesh(new BoxGeometry(roadWidth, 0.1, roadLength), roadMaterial);
+            roadPiece.position.set(x, 0.05, z);
+            roadPiece.rotation.y = rotationY;
+            scene.add(roadPiece);
+            roads.push(roadPiece);
+
+            // Add simple lane lines
+            if (!isJunction) {
+                const laneLineGeo = new BoxGeometry(0.5, 0.11, roadLength * 0.8);
+                const laneLine1 = new Mesh(laneLineGeo, laneMaterial);
+                laneLine1.position.copy(roadPiece.position);
+                laneLine1.position.x += Math.sin(rotationY) * (roadWidth / 4);
+                laneLine1.position.z += Math.cos(rotationY) * (roadWidth / 4);
+                laneLine1.rotation.copy(roadPiece.rotation);
+                scene.add(laneLine1);
+
+                const laneLine2 = new Mesh(laneLineGeo, laneMaterial);
+                laneLine2.position.copy(roadPiece.position);
+                laneLine2.position.x -= Math.sin(rotationY) * (roadWidth / 4);
+                laneLine2.position.z -= Math.cos(rotationY) * (roadWidth / 4);
+                laneLine2.rotation.copy(roadPiece.rotation);
+                scene.add(laneLine2);
+            }
+        }
+
+        // Layout variations - simple grid
+        const gridStep = 40;
+        const gridExtent = Math.floor(groundSize / 2 / gridStep);
+        for (let i = -gridExtent; i <= gridExtent; i++) {
+            for (let j = -gridExtent; j <= gridExtent; j++) {
+                const x = i * gridStep;
+                const z = j * gridStep;
+
+                // Horizontal roads
+                createRoadSegment(x, z, 0);
+                // Vertical roads
+                createRoadSegment(x, z, Math.PI / 2);
+                // Junctions (just wider road material)
+                // if (i % 2 === 0 && j % 2 === 0) {
+                //     const junction = new Mesh(new BoxGeometry(roadWidth * 1.5, 0.1, roadWidth * 1.5), roadMaterial);
+                //     junction.position.set(x, 0.05, z);
+                //     scene.add(junction);
+                //     roads.push(junction);
+                // }
+            }
+        }
+
+        // Cars
+        const carGeo = new BoxGeometry(2, 1, 4); // Placeholder
+        const carMat = new MeshStandardMaterial({ color: 0xff0000 });
+        let instancedCars;
+        loadModel("car").then(model => {
+            if (model) {
+                instancedCars = new InstancedMesh(model.geometry, model.material, numCars);
+                instancedCars.scale.set(0.1,0.1,0.1); // Adjust model scale
+            } else {
+                instancedCars = new InstancedMesh(carGeo, carMat, numCars);
+            }
+            scene.add(instancedCars);
+            for (let i = 0; i < numCars; i++) {
+                const roadIndex = Math.floor(Math.random() * roads.length);
+                const road = roads[roadIndex];
+                const car = {
+                    position: new Vector3().copy(road.position),
+                    rotation: road.rotation.y,
+                    speed: MathUtils.randFloat(2, 5),
+                    pathOffset: MathUtils.randFloat(-roadLength / 2 + 5, roadLength / 2 - 5)
+                };
+                cars.push(car);
+            }
+            // Update instance matrices for initial positions
+            updateCarInstances();
+        });
+
+        function updateCarInstances() {
+            if (!instancedCars) return;
+            cars.forEach((car, i) => {
+                const x = car.position.x + Math.sin(car.rotation) * car.pathOffset;
+                const z = car.position.z + Math.cos(car.rotation) * car.pathOffset;
+                const matrix = new Matrix4();
+                matrix.compose(
+                    new Vector3(x, 0.5, z),
+                    new Quaternion().setFromEuler(new Vector3(0, car.rotation + Math.PI / 2, 0)), // Cars face +Z by default
+                    new Vector3(0.1, 0.1, 0.1) // Car model scaling
+                );
+                instancedCars.setMatrixAt(i, matrix);
+            });
+            instancedCars.instanceMatrix.needsUpdate = true;
+        }
+
+        // --- PARKS ---
+        const parkMaterial = new MeshStandardMaterial({ color: 0x228b22 }); // ForestGreen
+        const treeTrunkMaterial = new MeshStandardMaterial({ color: 0x8b4513 }); // SaddleBrown
+        const treeLeafMaterial = new MeshStandardMaterial({ color: 0x3cb371 }); // MediumSeaGreen
+
+        const numParks = 10;
+        const parkSizeRange = [30, 60];
+        const numTreesPerPark = 15;
+
+        for (let i = 0; i < numParks; i++) {
+            const size = MathUtils.randFloat(parkSizeRange[0], parkSizeRange[1]);
+            const park = new Mesh(new PlaneGeometry(size, size), parkMaterial);
+            park.rotation.x = -Math.PI / 2;
+            park.position.set(MathUtils.randFloat(-groundSize / 2, groundSize / 2), 0.01, MathUtils.randFloat(-groundSize / 2, groundSize / 2));
+            scene.add(park);
+
+            // Add trees
+            for (let j = 0; j < numTreesPerPark; j++) {
+                const treeGroup = new Group();
+                const trunkHeight = MathUtils.randFloat(5, 15);
+                const trunkRadius = MathUtils.randFloat(0.5, 1.5);
+                const trunk = new Mesh(new CylinderGeometry(trunkRadius, trunkRadius, trunkHeight, 8), treeTrunkMaterial);
+                trunk.position.y = trunkHeight / 2;
+                treeGroup.add(trunk);
+
+                const leavesRadius = trunkRadius * MathUtils.randFloat(2, 3);
+                const leavesHeight = trunkHeight * MathUtils.randFloat(1.2, 1.5);
+                const leaves = new Mesh(new ConeGeometry(leavesRadius, leavesHeight, 16), treeLeafMaterial);
+                leaves.position.y = trunkHeight + leavesHeight * 0.6; // Place cone on top of trunk
+                treeGroup.add(leaves);
+
+                const treeX = park.position.x + MathUtils.randFloat(-size / 2, size / 2);
+                const treeZ = park.position.z + MathUtils.randFloat(-size / 2, size / 2);
+                treeGroup.position.set(treeX, 0, treeZ);
+                scene.add(treeGroup);
+            }
+        }
+
+        // --- SKYBOX (SKY & CLOUDS) ---
+        const skyMaterial = new MeshBasicMaterial({ color: 0x87ceeb, side: DoubleSide }); // Light Sky Blue
+        const skySphere = new Mesh(new SphereGeometry(groundSize * 1.5, 32, 32), skyMaterial);
+        skySphere.position.y = 0; // Center around the world
+        scene.add(skySphere);
+
+        const cloudMaterial = new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
+        const numClouds = 20;
+        const cloudHeight = 150;
+        for (let i = 0; i < numClouds; i++) {
+            const cloudGroup = new Group();
+            const numPuffs = MathUtils.randInt(3, 7);
+            for (let j = 0; j < numPuffs; j++) {
+                const puffSize = MathUtils.randFloat(8, 15);
+                const puff = new Mesh(new SphereGeometry(puffSize, 8, 8), cloudMaterial);
+                puff.position.set(MathUtils.randFloat(-10, 10), MathUtils.randFloat(-5, 5), MathUtils.randFloat(-10, 10));
+                cloudGroup.add(puff);
+            }
+            cloudGroup.position.set(
+                MathUtils.randFloat(-groundSize, groundSize),
+                cloudHeight + MathUtils.randFloat(-20, 20),
+                MathUtils.randFloat(-groundSize, groundSize)
+            );
+            scene.add(cloudGroup);
+        }
+
+        // --- COLLECTIBLE ITEMS ---
+        const collectibleTypes = [
+            { name: 'package', model: null, material: new MeshStandardMaterial({ color: 0x8b4513 }) }, // Brown box
+            { name: 'balloon', model: null, material: new MeshStandardMaterial({ color: 0xff69b4 }) }, // HotPink sphere
+            { name: 'cat', model: null, material: new MeshStandardMaterial({ color: 0xa9a9a9 }) } // DarkGray cat
+        ];
+        let collectibles = [];
+        const numCollectibles = 10;
+        const itemHoverHeight = 10; // Height above ground
+        const bobbingSpeed = 2; // oscillations per second
+        const bobbingAmount = 0.5; // +- this much from itemHoverHeight
+
+        const packageGeo = new BoxGeometry(2, 2, 2);
+        const balloonGeo = new SphereGeometry(1.5, 16, 16);
+
+        // Load models for collectibles
+        loadModel("cat").then(model => {
+            if (model) {
+                model.scale.set(0.015, 0.015, 0.015);
+                model.rotation.y = Math.PI; // Correct model orientation
+                collectibleTypes[2].model = model;
+            }
+            generateCollectibles(); // Generate after models might be loaded
+        });
+        // Package and balloon use primitives for now
+
+        function generateCollectibles() {
+            for (let i = 0; i < numCollectibles; i++) {
+                const typeIndex = Math.floor(Math.random() * collectibleTypes.length);
+                const type = collectibleTypes[typeIndex];
+
+                let itemMesh;
+                if (type.model) {
+                    itemMesh = type.model.clone();
+                } else if (type.name === 'package') {
+                    itemMesh = new Mesh(packageGeo, type.material);
+                } else if (type.name === 'balloon') {
+                    itemMesh = new Mesh(balloonGeo, type.material);
+                } else { // Fallback
+                    itemMesh = new Mesh(new SphereGeometry(1, 16, 16), type.material);
+                }
+
+                itemMesh.position.set(
+                    MathUtils.randFloat(-groundSize / 2 + 20, groundSize / 2 - 20),
+                    itemHoverHeight,
+                    MathUtils.randFloat(-groundSize / 2 + 20, groundSize / 2 - 20)
+                );
+                scene.add(itemMesh);
+                collectibles.push({ mesh: itemMesh, type: type.name, collected: false });
+            }
+            setupNextMission(); // Start the first mission
+        }
+
+
+        // --- DROP-OFF ZONES ---
+        let dropOffZones = [];
+        const numDropOffZones = 5;
+        const dropOffMarkerColor = 0x00ff00; // Green
+        const dropOffMarkerRadius = 5;
+
+        const dropOffGeo = new CylinderGeometry(dropOffMarkerRadius, dropOffMarkerRadius, 0.2, 32);
+        const dropOffMat = new MeshBasicMaterial({ color: dropOffMarkerColor, transparent: true, opacity: 0.5 });
+        for (let i = 0; i < numDropOffZones; i++) {
+            const zone = new Mesh(dropOffGeo, dropOffMat);
+            zone.position.set(
+                MathUtils.randFloat(-groundSize / 2 + 20, groundSize / 2 - 20),
+                0.1,
+                MathUtils.randFloat(-groundSize / 2 + 20, groundSize / 2 - 20)
+            );
+            scene.add(zone);
+            dropOffZones.push(zone);
+        }
+
+
+        // --- OBJECTIVE MARKER ---
+        let objectiveMarker;
+        let objectiveStar; // The actual star mesh
+        const markerHeight = 15;
+        const markerBobbingSpeed = 3;
+        const markerBobbingAmount = 1;
+
+        loadModel("star").then(model => {
+            if (model) {
+                objectiveStar = model;
+                objectiveStar.scale.set(0.5, 0.5, 0.5); // Adjust star size
+            } else {
+                objectiveStar = new Mesh(new ConeGeometry(2, 4, 8), new MeshBasicMaterial({ color: 0xffd700 })); // Yellow cone fallback
+            }
+            objectiveMarker = new Group();
+            objectiveMarker.add(objectiveStar);
+            objectiveMarker.position.y = markerHeight; // Initial height
+            scene.add(objectiveMarker);
+        });
+
+
+        // --- INTERACTION / MISSION LOGIC ---
+        let carryingItem = null;
+        const pickupRadius = 10;
+        const dropOffRadius = 8;
+
+        function showMessage(text, duration = 2000) {
+            messageDisplay.innerText = text;
+            messageDisplay.style.display = 'block';
+            setTimeout(() => {
+                messageDisplay.style.display = 'none';
+            }, duration);
+        }
+
+        function setupNextMission() {
+            if (score >= maxStars) {
+                winGame();
+                return;
+            }
+
+            // Find a non-collected item
+            let uncollectedItems = collectibles.filter(item => !item.collected);
+            if (uncollectedItems.length === 0) {
+                // Regenerate collectibles if all collected
+                collectibles.forEach(item => { scene.remove(item.mesh); });
+                collectibles = [];
+                generateCollectibles();
+                uncollectedItems = collectibles.filter(item => !item.collected);
+            }
+
+            const targetItem = uncollectedItems[Math.floor(Math.random() * uncollectedItems.length)];
+            currentObjective = { type: 'collect', target: targetItem };
+
+            // Update marker
+            if (objectiveMarker) {
+                objectiveMarker.position.copy(targetItem.mesh.position);
+                objectiveMarker.position.y = targetItem.mesh.position.y + markerHeight;
+            }
+            showMessage(`New Mission: Collect the ${targetItem.type}!`);
+        }
+
+        function handleInteraction() {
+            if (!gameActive) return;
+
+            const playerPos = playerGroup.position;
+
+            if (carryingItem) {
+                // Try to drop off
+                if (currentObjective.type === 'dropoff') {
+                    const dropZonePos = currentObjective.target.position;
+                    if (playerPos.distanceTo(dropZonePos) < dropOffRadius) {
+                        // Successfully dropped off!
+                        scene.remove(carryingItem.mesh);
+                        carryingItem.mesh.position.copy(dropZonePos); // Visually place on zone
+                        carryingItem.mesh.position.y = 0.5;
+                        scene.add(carryingItem.mesh);
+                        // Temporarily show it, then remove for a clean game loop
+                        setTimeout(() => {
+                            scene.remove(carryingItem.mesh);
+                        }, 1000);
+
+                        carryingItem.collected = true;
+                        carryingItem = null;
+                        objectiveMarker.visible = false; // Hide until next collect mission
+
+                        score++;
+                        hudScore.innerText = score;
+                        playSound("coin_pickup"); // Use coin pickup for mission complete
+                        showMessage(`Mission Complete! Stars: ${score}/${maxStars}`);
+
+                        if (score >= maxStars) {
+                            winGame();
+                        } else {
+                            // Find a new collectible for the next mission
+                            setupNextMission();
+                        }
+                    } else {
+                        showMessage("Find the drop-off zone!", 1500);
+                    }
+                } else {
+                    showMessage("You're already carrying an item! Find the drop-off zone.", 2000);
+                }
+            } else {
+                // Try to pick up
+                if (currentObjective.type === 'collect') {
+                    const itemMesh = currentObjective.target.mesh;
+                    if (playerPos.distanceTo(itemMesh.position) < pickupRadius) {
+                        carryingItem = currentObjective.target;
+                        scene.remove(itemMesh); // Remove from world, will be re-parented to helicopter
+                        // Maybe temporarily attach to helicopter for visual feedback?
+                        // playerGroup.add(itemMesh); // Re-parenting to show it attached
+                        // itemMesh.position.set(0, -2, 0); // Position relative to player
+                        playSound("coin_pickup");
+                        showMessage(`Picked up the ${carryingItem.type}! Now find a drop-off zone.`, 2000);
+
+                        // Set next objective to a drop-off zone
+                        const targetDropZone = dropOffZones[Math.floor(Math.random() * dropOffZones.length)];
+                        currentObjective = { type: 'dropoff', target: targetDropZone };
+                        if (objectiveMarker) {
+                            objectiveMarker.position.copy(targetDropZone.position);
+                            objectiveMarker.position.y = targetDropZone.position.y + markerHeight;
+                        }
+                    } else {
+                        showMessage(`Fly closer to the ${currentObjective.target.type} to pick it up!`, 1500);
+                    }
+                } else {
+                    // This state shouldn't happen if missions are correctly chained.
+                    showMessage("Nothing to pick up right now!", 1500);
+                }
+            }
+        }
+
+
+        // --- WIN / LOSE CONDITIONS ---
+        function winGame() {
+            gameActive = false;
+            displayMessage("🎉 YOU WIN! 🎉\nGreat job exploring the city!", true);
+            playSound("win");
+            playMusic("jingle_win"); // Play win jingle
+            celebrate(); // Trigger celebration animation
+        }
+
+        function loseGame() {
+            gameActive = false;
+            displayMessage("GAME OVER!\nOut of fuel. Better luck next time!", true);
+            playSound("game_over");
+            // No new music needed if bg music ends
+        }
+
+        function displayMessage(text, isFinal = false) {
+            messageDisplay.innerHTML = text;
+            messageDisplay.style.display = 'block';
+            if (isFinal) {
+                // For final messages, keep it displayed
+                messageDisplay.style.pointerEvents = 'auto'; // Allow interaction to close/restart
+            }
+        }
+
+        // --- CELEBRATION ANIMATION (for 5 stars) ---
+        function celebrate() {
+            // Make player float up and spin
+            if (playerGroup) {
+                const initialY = playerGroup.position.y;
+                let duration = 3; // seconds
+                let startTime = clock.getElapsedTime();
+
+                function animateCelebration() {
+                    if (!gameActive) return; // Stop if game is not active
+                    const elapsed = clock.getElapsedTime() - startTime;
+                    const progress = Math.min(elapsed / duration, 1);
+
+                    if (progress < 1) {
+                        playerGroup.position.y = initialY + Math.sin(progress * Math.PI) * 20; // Float up then down slightly
+                        playerGroup.rotation.y += 0.1; // Spin
+                        requestAnimationFrame(animateCelebration);
+                    } else {
+                        playerGroup.rotation.y = 0; // Reset rotation
+                    }
+                }
+                animateCelebration();
+            }
+        }
+
+
+        // --- RESIZE HANDLING ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        window.addEventListener('resize', onWindowResize);
+
+        // --- GAME INITIALIZATION ---
+        function initializeGame() {
+            playerGroup.position.set(0, 50, 0); // Start player in a good spot
+            // Start background music
+            playMusic("bg_loop_playful");
+            setupNextMission(); // Set up the very first mission
+        }
+
+        // --- GAME LOOP ---
+        function animate(timestamp) {
+            if (!gameRunning) return;
+
+            requestAnimationFrame(animate);
+
+            const now = performance.now();
+            const elapsed = now - lastTimestamp;
+
+            if (elapsed < FPS_CAP) {
+                return;
+            }
+            lastTimestamp = now;
+
+            const delta = Math.min(clock.getDelta(), 0.05); // Cap delta to prevent jump after lag
+
+            if (!gameActive) return;
+
+            // --- HELICOPTER MOVEMENT ---
+            mainRotor.rotation.y += rotorSpeed * delta; // Spin rotor
+
+            // Reset target velocity
+            targetVelocity.set(0, 0, 0);
+
+            // Handle forward movement (default)
+            let forwardMove = true;
+
+            // Strafe controls
+            if (keys.a || keys.arrowleft || activeButtons['strafeLeft']) {
+                targetVelocity.x = -playerStrafeSpeed;
+                forwardMove = false;
+            }
+            if (keys.d || keys.arrowright || activeButtons['strafeRight']) {
+                targetVelocity.x = playerStrafeSpeed;
+                forwardMove = false;
+            }
+
+            // Vertical controls
+            if (keys.w || keys.arrowup || activeButtons['ascend']) {
+                targetVelocity.y = playerVerticalSpeed;
+                forwardMove = false; // Ascending/descending can stop forward 'drift'
+            }
+            if (keys.s || keys.arrowdown || activeButtons['descend']) {
+                targetVelocity.y = -playerVerticalSpeed;
+                forwardMove = false;
+            }
+
+            // Apply forward movement if not strafing or moving vertically
+            if (forwardMove) {
+                targetVelocity.z = playerSpeed; // Default forward speed
+            }
+
+            // Smooth velocity changes
+            velocity.lerp(targetVelocity, 0.1); // Adjust 0.1 for responsiveness
+
+            // Apply movement based on player's current orientation
+            let moveVector = velocity.clone().applyQuaternion(playerGroup.quaternion);
+            playerGroup.position.addScaledVector(moveVector, delta);
+
+            // Ensure player doesn't go below ground
+            playerGroup.position.y = Math.max(playerGroup.position.y, 2);
+
+            // Rotate player slightly based on horizontal movement
+            // Lerp helicopter roll for a more natural feel
+            const targetRoll = -moveVector.x * 0.05; // Tilt for strafing
+            player.rotation.z = MathUtils.lerp(player.rotation.z, targetRoll, 0.1);
+
+
+            // --- CAMERA UPDATE ---
+            // Smoothly interpolate camera's rotation towards target
+            cameraQuaternion.setFromEuler(new Vector3(cameraTargetEuler.x, cameraTargetEuler.y, 0)); // Only yaw and pitch
+            
+            // Calculate relative camera position based on player's orientation and camera's own look direction
+            // Rotate the camera offset by the player's quaternion first, then by the camera's local rotation
+            const tempOffset = cameraOffset.clone().applyQuaternion(cameraQuaternion);
+            
+            camera.position.copy(playerGroup.position).add(tempOffset);
+            camera.lookAt(playerGroup.position);
+
+
+            // --- CARS MOVEMENT ---
+            cars.forEach(car => {
+                car.pathOffset += car.speed * delta;
+                if (car.pathOffset > roadLength / 2) car.pathOffset = -roadLength / 2;
+                if (car.pathOffset < -roadLength / 2) car.pathOffset = roadLength / 2;
+            });
+            updateCarInstances();
+
+
+            // --- COLLECTIBLE BOBBING ---
+            collectibles.forEach(item => {
+                if (!item.collected && item.mesh) {
+                    item.mesh.position.y = itemHoverHeight + Math.sin(clock.getElapsedTime() * bobbingSpeed) * bobbingAmount;
+                }
+            });
+
+            // --- OBJECTIVE MARKER ANIMATION ---
+            if (objectiveMarker && objectiveMarker.visible) {
+                objectiveMarker.position.y = currentObjective.target.position.y + markerHeight + Math.sin(clock.getElapsedTime() * markerBobbingSpeed) * markerBobbingAmount;
+                if (objectiveStar) {
+                    objectiveStar.rotation.y += delta * Math.PI; // Spin the star
+                }
+            }
+
+
+            // --- FUEL & TIMER ---
+            fuel -= fuelDrainRate * delta;
+            fuel = Math.max(0, fuel); // Don't go below zero
+            hudFuelBar.style.width = `${fuel * 100}%`;
+            if (fuel < 0.2) { // Less than 20% fuel, warn player
+                 hudFuelBar.style.backgroundColor = '#dc3545'; // Red
+            } else {
+                 hudFuelBar.style.backgroundColor = '#ffc107'; // Amber
+            }
+
+            gameTimer -= delta;
+            gameTimer = Math.max(0, gameTimer);
+            const minutes = Math.floor(gameTimer / 60);
+            const seconds = Math.floor(gameTimer % 60);
+            hudTimer.innerText = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+
+            if (fuel <= 0 || gameTimer <= 0) {
+                loseGame();
+            }
+
+            // --- INTERACTION ---
+            if (keys.space || activeButtons['interact']) {
+                keys.space = false; // Prevent multiple interactions on single press
+                activeButtons['interact'] = false; // Same for button
+                handleInteraction();
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        initializeGame();
+        animate();
+    </script>
+</body>
+</html>

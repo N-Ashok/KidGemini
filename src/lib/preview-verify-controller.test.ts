@@ -229,6 +229,33 @@ describe("PreviewVerifyController — probe-click reload & guards", () => {
     expect(h.last().probesEnabled).toBe(false);
   });
 
+  // BUG-FIX-LOG 2026-08-13: a skipped verify (tab backgrounded at generation
+  // time, e.g. a long 3D build) never got a second chance — the owner had to
+  // notice a broken game themselves and paste a manual error report. Once the
+  // tab comes back into view, a real round can safely run (rAF ticks again).
+  it("retryIfSkipped starts a real round once the tab is visible again after a skip", () => {
+    const h = harness({});
+    h.controller.start("<html>game</html>", "a game", true);
+    expect(h.last().outcome).toBe("skipped");
+
+    h.controller.retryIfSkipped("<html>game</html>");
+    expect(h.last().phase).toBe("testing");
+    expect(h.last().probesEnabled).toBe(true);
+    expect(h.last().outcome).toBe(null); // no longer "skipped" — a real round is running
+  });
+
+  it("retryIfSkipped is a no-op when the last outcome wasn't a skip (never double-verifies)", async () => {
+    const h = harness({});
+    h.controller.start("<html>game</html>", "a game", false);
+    h.controller.handleMessage(CLEAN_RESULT);
+    await flush();
+    expect(h.last().outcome).toBe("clean");
+    const before = h.last();
+
+    h.controller.retryIfSkipped("<html>game</html>");
+    expect(h.last()).toBe(before); // unchanged — no new round, no re-verify
+  });
+
   it("V.11 — interrupted (tab backgrounded) no-loop reads pass through, no repair", async () => {
     const h = harness({ repair: () => ({ patchedHtml: "<html>p</html>", mode: "patch" }) });
     h.controller.start("<html>game</html>", "a game", false);

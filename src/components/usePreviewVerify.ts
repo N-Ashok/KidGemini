@@ -79,7 +79,15 @@ export function usePreviewVerify(html: string, originalRequest: string) {
     controllerRef.current = controller;
     const onMessage = (event: MessageEvent) => controller.handleMessage(event.data);
     const onVisibility = () => {
-      if (document.hidden) controller.markInterrupted(); // V.11
+      if (document.hidden) {
+        controller.markInterrupted(); // V.11
+      } else {
+        // BUG-FIX-LOG 2026-08-13: a generation whose verify was SKIPPED
+        // because the tab was hidden at start() (V.10) otherwise never got a
+        // second chance — the kid/owner had to notice a broken game
+        // themselves. rAF ticks normally again now, so a real round is safe.
+        controller.retryIfSkipped(html);
+      }
     };
     window.addEventListener("message", onMessage);
     document.addEventListener("visibilitychange", onVisibility);

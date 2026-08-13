@@ -14,7 +14,7 @@
 // (unset DEEPSEEK_API_KEY) until a privacy/compliance review of sending a
 // child's prompts there — see model-registry.ts and docs/DATA_HANDLING.md.
 //
-// DeepSeek-specific vs Moonshot: `deepseek-reasoner` streams chain-of-thought in
+// DeepSeek-specific vs Moonshot: DeepSeek's reasoning models stream chain-of-thought in
 // a separate `reasoning_content` delta field, and reports cache hits under
 // prompt_cache_hit_tokens rather than prompt_tokens_details.cached_tokens.
 // Both are handled below; getting the first wrong would print the model's
@@ -66,6 +66,47 @@ function toUsage(u: SseChunk["usage"]): NormalizedUsage | undefined {
   };
 }
 
+/** DeepSeek's own effort ladder. `medium`/`xhigh` are documented as aliases onto
+ *  these, so they are deliberately NOT accepted — an operator who types one
+ *  should see it ignored rather than silently resolve to something else.
+ *  NOTE: v4-flash supports all three; v4-pro currently accepts only high/max. */
+const EFFORTS = new Set(["low", "high", "max"]);
+
+/**
+ * Thinking controls — the ONLY lever DeepSeek gives us, and the reason it
+ * matters: on the 2026-08-12 rocket build turn v4-flash spent 45,411 of 53,530
+ * output tokens (85%) thinking, which is what put a 24KB game 5.9x over
+ * BUILD_TIMEOUT_MS. Gemini solves the same problem with `thinkingBudget`
+ * (builder-mode.ts); DeepSeek exposes `reasoning_effort` and an on/off switch
+ * instead, so those are what we expose.
+ *
+ * Both default to UNSET — no field is sent, the provider default (effort
+ * "high") stands, and behaviour is identical to before this existed. A junk
+ * value is dropped rather than forwarded: an unknown enum is a 400, and the
+ * chain classifies 400s as real defects that throw instead of walking, so a
+ * typo'd env var could otherwise dead-end a child's turn.
+ */
+export function thinkingControls(env: Record<string, string | undefined>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const effort = env.DEEPSEEK_REASONING_EFFORT?.trim().toLowerCase();
+  if (effort && EFFORTS.has(effort)) out.reasoning_effort = effort;
+  const thinking = env.DEEPSEEK_THINKING?.trim().toLowerCase();
+  if (thinking === "disabled" || thinking === "enabled") out.thinking = { type: thinking };
+
+  // Temperature rides ONLY in non-thinking mode. DeepSeek documents that
+  // thinking mode does not support temperature/top_p/penalties, so sending it
+  // alongside thinking would be a 400 — which the chain treats as a real defect
+  // and throws on rather than walking. Their own guidance is 0.2 for code.
+  // `Number("")` is 0 — a perfectly valid temperature — so an unset/blank var
+  // would otherwise pin the model to fully deterministic sampling by accident.
+  const rawTemp = env.DEEPSEEK_TEMPERATURE?.trim();
+  const temp = rawTemp ? Number(rawTemp) : NaN;
+  if (out.thinking && (out.thinking as { type: string }).type === "disabled" && Number.isFinite(temp) && temp >= 0 && temp <= 2) {
+    out.temperature = temp;
+  }
+  return out;
+}
+
 export class DeepSeekGenerator implements ProviderGenerator {
   private readonly createStream: CreateStream;
   private readonly env: Record<string, string | undefined>;
@@ -77,13 +118,17 @@ export class DeepSeekGenerator implements ProviderGenerator {
       if (!apiKey) throw new Error("DEEPSEEK_API_KEY is not set");
       const { default: OpenAI } = await import("openai");
       const client = new OpenAI({ apiKey, baseURL: this.env.DEEPSEEK_BASE_URL ?? DEFAULT_BASE_URL });
+      const { messages, max_completion_tokens, ...extra } = body;
       return (await client.chat.completions.create({
         model,
-        messages: body.messages as never,
-        max_completion_tokens: body.max_completion_tokens as number,
+        messages: messages as never,
+        max_completion_tokens: max_completion_tokens as number,
         stream: true,
         stream_options: { include_usage: true },
-      })) as unknown as AsyncIterable<SseChunk>;
+        // reasoning_effort / thinking — DeepSeek extensions the OpenAI SDK's
+        // types don't know about, forwarded verbatim.
+        ...extra,
+      } as never)) as unknown as AsyncIterable<SseChunk>;
     });
   }
 
@@ -91,6 +136,7 @@ export class DeepSeekGenerator implements ProviderGenerator {
     const stream = await this.createStream(model, {
       messages: buildMessages(req),
       max_completion_tokens: req.maxOutputTokens,
+      ...thinkingControls(this.env),
     });
     return (async function* (): AsyncGenerator<ProviderChunk> {
       let usage: NormalizedUsage | undefined;

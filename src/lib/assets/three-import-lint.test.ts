@@ -293,14 +293,35 @@ describe("ensureThreeImports (used-but-not-imported heal)", () => {
     expect(ensureThreeImports(html)).toBe(html);
   });
 
-  it("collects bindings across ALL three import statements, healing only the first", () => {
+  it("heals EACH module script against its OWN usage — module scripts do not share scope", () => {
+    // 2026-08-12 genre-pilot finding: injectAssets inserts its own asset-
+    // loader shim as an earlier, separate `<script type="module">`. The old
+    // behaviour here ("collect bindings across ALL scripts, heal only the
+    // first") patched the WRONG script whenever a later script used a name
+    // the first script's import didn't have — the healed name landed in a
+    // sibling module that can never see it at runtime, so the game still
+    // threw "X is not defined" even though the healer reported nothing wrong.
+    // 7 of 15 pipeline games and 2 of 5 Pro games in that pilot broke this
+    // exact way. Each script must be healed against its OWN usage only.
     const html = `<html><body>
 <script type="module">import { Scene } from "three"; window.a = new Scene();</script>
 <script type="module">import { Mesh } from "three"; window.b = new Mesh(); window.c = new HemisphereLight(1);</script>
 </body></html>`;
     const out = ensureThreeImports(html);
-    expect(out).toContain('import { Scene, HemisphereLight } from "three"');
-    expect(out).toContain('import { Mesh } from "three"');
+    expect(out).toContain('import { Scene } from "three"'); // untouched — Scene alone is used here
+    expect(out).toContain('import { Mesh, HemisphereLight } from "three"'); // healed — HemisphereLight is used HERE
+  });
+
+  it("a name used only in script A is never healed into script B's import, even though B also imports from three", () => {
+    const html = `<html><body>
+<script type="module">import { GLTFLoader, CylinderGeometry } from "three"; window.loadModel = () => new GLTFLoader();</script>
+<script type="module">import { Scene, WebGLRenderer } from "three"; const s = new Scene(); const c = new CylinderGeometry(1, 1, 2);</script>
+</body></html>`;
+    const out = ensureThreeImports(html);
+    // Script 1 already has CylinderGeometry (unused there, but present) — untouched.
+    expect(out).toContain('import { GLTFLoader, CylinderGeometry } from "three"');
+    // Script 2 actually USES CylinderGeometry but never imported it — must be healed HERE.
+    expect(out).toContain('import { Scene, WebGLRenderer, CylinderGeometry } from "three"');
   });
 
   it("handles single-quoted specifiers and multi-line import lists", () => {

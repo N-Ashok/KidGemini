@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html>
+<head><!--ari-perf-probe--><script>(function () {
+  window.__arPerfProbeVersion = 4;
+  var buffer = [];
+  var ready = false;
+  function send(ev) {
+    try { parent.postMessage({ source: "ari-perf-probe", event: ev }, "*"); } catch (e) { /* parent gone */ }
+  }
+  function post(ev) { if (ready) send(ev); else buffer.push(ev); }
+  addEventListener("message", function (event) {
+    var d = event && event.data;
+    if (!d || d.source !== "ari-parent" || d.type !== "ready") return;
+    ready = true;
+    for (var i = 0; i < buffer.length; i++) send(buffer[i]);
+    buffer = [];
+  });
+
+  // GL draw-call counter (v4, 2026-08-10). snapshot.drawCalls was designed to
+  // read __arPerf.renderer.info — which NOTHING ever assigned, so it was null
+  // in every snapshot ever posted. Meanwhile the owner's AutoRicksaw game ran
+  // at 1,250 draws/frame from hand-built meshes the model accounting cannot
+  // see, and the slowdown hint blamed two static trees nine edits in a row.
+  // Count actual GL draw commands instead: engine-agnostic, needs nothing
+  // from the game, reaches stored games via the version re-floor.
+  var glDraws = 0;
+  function wrapGL(proto) {
+    if (!proto) return;
+    try {
+      var de = proto.drawElements;
+      if (de) proto.drawElements = function () { glDraws++; return de.apply(this, arguments); };
+      var da = proto.drawArrays;
+      if (da) proto.drawArrays = function () { glDraws++; return da.apply(this, arguments); };
+      var dei = proto.drawElementsInstanced;
+      if (dei) proto.drawElementsInstanced = function () { glDraws++; return dei.apply(this, arguments); };
+      var dai = proto.drawArraysInstanced;
+      if (dai) proto.drawArraysInstanced = function () { glDraws++; return dai.apply(this, arguments); };
+    } catch (e) { /* never break rendering for telemetry */ }
+  }
+  if (!window.__arGlDrawPatched) {
+    window.__arGlDrawPatched = 1;
+    wrapGL(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+    wrapGL(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+  }
+  var lastGlDraws = 0;
+
+  // FPS estimate: count rAF ticks in the last sample window. Stacks fine on
+  // top of the frame governor's own wrap (both call straight through).
+  var frames = 0;
+  var origRaf = window.requestAnimationFrame;
+  if (origRaf) {
+    window.requestAnimationFrame = function (cb) {
+      return origRaf.call(window, function (t) {
+        frames++;
+        return cb(t);
+      });
+    };
+  }
+
+  // "Playing" signal (v3, owner report 2026-08-06): frames alone can't tell
+  // "running slow" from "not running" — an unstarted game or idle lobby
+  // renders little/nothing by design. Track the last real input so the
+  // slowdown banner only trusts samples taken while the kid is actually
+  // playing. Capture phase: game code often stopPropagation()s.
+  var lastInput = 0;
+  var inputEvents = ["pointerdown", "keydown", "touchstart"];
+  for (var ie = 0; ie < inputEvents.length; ie++) {
+    addEventListener(inputEvents[ie], function () { lastInput = Date.now(); }, true);
+  }
+
+  function snapshot() {
+    // A hidden tab/panel genuinely renders zero frames — that's true, but it
+    // is NOT the same claim as "the game is running slow," which is what
+    // this snapshot exists to detect. Without this guard, every setInterval
+    // tick during a background gap (leaving Ari and coming back) posts a
+    // near-zero fps reading, which is enough on its own to satisfy the
+    // slowdown banner's "5 consecutive low samples" rule — so the banner
+    // flashes on return even though nothing was ever actually slow. Skip
+    // sampling entirely while hidden, and keep resetting the frame counter
+    // so no partial/corrupted count leaks into the first reading after the
+    // tab becomes visible again.
+    if (document.hidden) { frames = 0; return; }
+    var perf = window.__arPerf || {};
+    var reg = perf.models || {};
+    var animatedRoots = perf.animatedRoots;
+    var models = [];
+    for (var name in reg) {
+      if (!Object.prototype.hasOwnProperty.call(reg, name)) continue;
+      var entry = reg[name];
+      var roots = entry.instances || [];
+      // Live = still parented into a scene graph. A load()ed-but-never-added
+      // (or later removed) root reads parent as falsy — never a stale row.
+      var live = [];
+      for (var i = 0; i < roots.length; i++) {
+        if (roots[i] && roots[i].parent) live.push(roots[i]);
+      }
+      if (live.length === 0) continue;
+      var animated = false;
+      if (animatedRoots) {
+        for (var j = 0; j < live.length; j++) {
+          if (animatedRoots.has(live[j])) { animated = true; break; }
+        }
+      }
+      var triangles = entry.triangles || 0;
+      var load = triangles * live.length * (animated ? 2 : 1);
+      var bucket = load <= 20000 ? "green" : (load <= 150000 ? "yellow" : "red");
+      models.push({ name: name, triangles: triangles, instances: live.length, animated: animated, load: load, bucket: bucket });
+    }
+    var batches = perf.batches || {};
+    for (var bname in batches) {
+      if (!Object.prototype.hasOwnProperty.call(batches, bname)) continue;
+      var bentry = batches[bname];
+      var broots = bentry.roots || [];
+      var blive = false;
+      for (var bi = 0; bi < broots.length; bi++) { if (broots[bi] && broots[bi].parent) { blive = true; break; } }
+      if (!blive) continue;
+      var btriangles = bentry.triangles || 0;
+      var bdrawCalls = bentry.drawCalls || 1;
+      var bload = btriangles * bdrawCalls;
+      var bbucket = bload <= 20000 ? "green" : (bload <= 150000 ? "yellow" : "red");
+      models.push({ name: bentry.name, triangles: btriangles, instances: bentry.count || 0, animated: false, load: bload, bucket: bbucket, batched: true, drawCalls: bdrawCalls });
+    }
+    models.sort(function (a, b) { return b.load - a.load; });
+    var drawCalls = null, rendererTriangles = null;
+    // Per-frame average over this window from the GL counter — the value
+    // that actually distinguishes "a thousand tiny meshes" from "two trees".
+    var windowDraws = glDraws - lastGlDraws;
+    lastGlDraws = glDraws;
+    if (windowDraws > 0 && frames > 0) {
+      drawCalls = Math.round(windowDraws / frames);
+    } else if (perf.renderer && perf.renderer.info && perf.renderer.info.render) {
+      // Legacy fallback, kept for a game that registers its renderer.
+      drawCalls = perf.renderer.info.render.calls;
+      rendererTriangles = perf.renderer.info.render.triangles;
+    }
+    var playing = frames > 0 && lastInput > 0 && (Date.now() - lastInput) < 10000;
+    post({ type: "snapshot", snapshot: { fps: frames, playing: playing, drawCalls: drawCalls, rendererTriangles: rendererTriangles, models: models } });
+    frames = 0;
+  }
+  setInterval(snapshot, 1000);
+})();</script><script type="importmap">{"imports":{"three":"https://assets.ariantra.com/three.098b4c.js"}}</script><style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style><script>(function(){
+if (window.__arFrameGovernor) return;
+window.__arFrameGovernor = 1;
+var raf = window.requestAnimationFrame.bind(window);
+var seen = new WeakMap();
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    // Skipped frames ALWAYS re-request through the wrapper, so the loop can
+    // never die — that is the one failure mode that would break a live game.
+    if (document.hidden) { window.requestAnimationFrame(cb); return; }
+    var prev = (typeof cb === 'function' ? seen.get(cb) : 0) || 0;
+    if (prev && t - prev < 15) { window.requestAnimationFrame(cb); return; }
+    if (typeof cb === 'function') seen.set(cb, t);
+    return cb(t);
+  });
+};
+})();</script><script>(function(){
+if (window.__arGlGuard) return;
+window.__arGlGuard = 1;
+window.__arGlGuardVersion = 2;
+var get = HTMLCanvasElement.prototype.getContext;
+var live = [];
+var lostCount = 0;
+HTMLCanvasElement.prototype.getContext = function (type) {
+  var ctx = get.apply(this, arguments);
+  try {
+    if (ctx && /webgl/i.test(String(type)) && !this.__arGlGuarded) {
+      this.__arGlGuarded = 1;
+      var ext = null;
+      try { ext = ctx.getExtension('WEBGL_lose_context'); } catch (e2) { /* none */ }
+      live.push({ ctx: ctx, ext: ext });
+      this.addEventListener('webglcontextlost', function (e) {
+        // THE line that matters: without preventDefault the loss is final and
+        // the canvas stays blank for the rest of the document's life.
+        e.preventDefault();
+        lostCount++;
+        console.warn('[ari] WebGL context lost — restore requested');
+        // Watchdog (2026-08-10 №4, "it didnot regain"): browsers do not
+        // always volunteer webglcontextrestored, and a politely-held loop
+        // waits forever. The ladder is the automatic version of what fixed
+        // it for the owner by hand (code↔preview toggle = a remount):
+        // after 2s still lost → ask the driver; 3s more still lost → ask
+        // the parent to remount this frame.
+        setTimeout(function () {
+          var still = true;
+          try { still = ctx.isContextLost(); } catch (e3) { /* gone */ }
+          if (!still) return;
+          try { if (ext) ext.restoreContext(); } catch (e3) { /* refused */ }
+          setTimeout(function () {
+            var dead = true;
+            try { dead = ctx.isContextLost(); } catch (e4) { /* gone */ }
+            if (!dead) return;
+            console.warn('[ari] WebGL context is not coming back — asking the parent to reload the game');
+            try { parent.postMessage({ __ari: 'gl-dead' }, '*'); } catch (e4) { /* no parent */ }
+          }, 3000);
+        }, 2000);
+      }, false);
+      this.addEventListener('webglcontextrestored', function () {
+        if (lostCount > 0) lostCount--;
+        console.warn('[ari] WebGL context restored');
+      }, false);
+    }
+  } catch (e) { /* never break getContext */ }
+  return ctx;
+};
+// Restoring the CONTEXT is not enough — the game's LOOP must survive to see
+// it. While a context is lost, three.js's renderer throws mid-render (the GL
+// introspection APIs return null, and three calls .trim() on the result —
+// the exact stack the harness attributed on 2026-08-10). Games request their
+// next frame AFTER rendering (three's setAnimationLoop does too), so that
+// throw kills the loop for good: the context comes back, nothing draws, the
+// canvas stays blank, and no click can restart it. So: while any tracked
+// context is lost, hold rAF callbacks — always re-request, never run — the
+// same shape as the frame governor's document.hidden skip, and it resumes by
+// itself on webglcontextrestored. Composes with the governor's own wrapper
+// (this one runs outside it) — worst case a held frame is re-queued twice.
+// lostCount alone is NOT enough to gate on: webglcontextlost is dispatched
+// as a task, so there is a window after the actual loss (browser eviction or
+// our own release) where the event has not landed yet — one frame renders
+// against the dead context and three throws anyway. isContextLost() is
+// synchronous truth; the event counter only covers the fake-restore corner
+// (some drivers report isContextLost()=false again before firing restored).
+function anyLost() {
+  for (var i = 0; i < live.length; i++) {
+    try { if (live[i].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  for (var j = 0; j < released.length; j++) {
+    try { if (released[j].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  return false;
+}
+var raf = window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    if (lostCount > 0 || anyLost()) { window.requestAnimationFrame(cb); return; }
+    return cb(t);
+  });
+};
+var released = [];
+function release(why) {
+  // Hand the GPU back now rather than at GC, so the next preview iframe does
+  // not push the page over the context cap. Kept restorable (see pageshow):
+  // a release we believed was terminal must be reversible if the page comes
+  // back — 2026-08-10 second owner report, the pane-switch freeze.
+  for (var i = 0; i < live.length; i++) {
+    try {
+      if (live[i].ext) { live[i].ext.loseContext(); released.push(live[i]); }
+    } catch (e) { /* already gone */ }
+  }
+  live.length = 0;
+  // Observable from the parent page: this is how the harness proves the round
+  // was ASKED to release at unmount, rather than assuming it.
+  console.warn('[ari] WebGL contexts released (' + why + ')');
+}
+// Lets the harness assert that a torn-down round actually gave its context
+// back, instead of assuming pagehide fired.
+Object.defineProperty(window, '__arGlCount', { get: function () { return live.length; } });
+// The parent asks explicitly, immediately before it unmounts this frame.
+// pagehide alone is NOT enough: Chrome does not reliably fire it when an
+// iframe is detached from the DOM, which is precisely how every shadow round
+// ends — so without this the contexts pile up exactly as they did in the
+// owner's eleven-edit session.
+addEventListener('message', function (e) {
+  var d = e && e.data;
+  if (d && d.__ari === 'release-gl') release('asked');
+}, false);
+// Diagnostic-only (2026-08-11): a non-persisted pagehide fired mid-edit on
+// the STILL-PLAYING game, with no deliberate srcDoc/key change from React —
+// after shadow-verify was removed the same day, the explicit 'release-gl'
+// message (sent by the parent right before it unmounted the shadow frame)
+// went with it, leaving THIS listener as the only release trigger, carrying
+// more weight than "pagehide is kept as a backstop only" (the comment above
+// release()) ever assumed. This context string is what will tell us whether
+// it's a real backgrounding event (visibility/online state) or something
+// else entirely — never throws, so it can never break the guard itself.
+function diag() {
+  try {
+    return 'visibility=' + document.visibilityState + ' hidden=' + document.hidden +
+      ' online=' + navigator.onLine + ' at=' + Date.now();
+  } catch (e) { return 'diag-unavailable'; }
+}
+addEventListener('pagehide', function (e) {
+  // Safari/iOS fires pagehide when the page is merely BACKGROUNDED (app or
+  // tab switch, pane transitions) and will bring it back — persisted=true.
+  // Releasing there kills the LIVE game's context and the loop-hold freezes
+  // it: the owner's "froze, then turned blue when I clicked back"
+  // (2026-08-10, second report). Only a non-persisted pagehide — the actual
+  // teardown of a detached iframe — releases.
+  if (e && e.persisted) {
+    console.warn('[ari] pagehide (persisted, backgrounded — kept alive) ' + diag());
+    return;
+  }
+  console.warn('[ari] pagehide (NOT persisted — releasing) ' + diag());
+  release('pagehide');
+});
+addEventListener('pageshow', function () {
+  // The symmetric half: any release that turned out not to be terminal (the
+  // page came back anyway) is undone. restoreContext fires
+  // webglcontextrestored, which unwinds lostCount and resumes the held loop.
+  if (!released.length) return;
+  for (var i = 0; i < released.length; i++) {
+    try { released[i].ext.restoreContext(); live.push(released[i].ctx); } catch (e) { /* gone for real */ }
+  }
+  released.length = 0;
+  console.warn('[ari] WebGL contexts restored (pageshow)');
+});
+})();</script><script>window.AR_ASSETS={"tank":"https://assets.ariantra.com/tank.b0a38b.glb","tank_desert":"https://assets.ariantra.com/tank_desert.81e27f.glb","laser":"https://assets.ariantra.com/laser.24e908.mp3","explosion":"https://assets.ariantra.com/explosion.d84e0a.mp3","jingle_win":"https://assets.ariantra.com/jingle_win.d4863c.mp3","bg_loop_playful":"https://assets.ariantra.com/bg_loop_playful.469994.mp3"};</script><script>window.AR_SIZES={"tank":[14.746,6.75,10.543],"tank_desert":[17.679,4.62,10.092]};</script><script type="module">
+  import { GLTFLoader, MeshoptDecoder } from "three";
+  window.__arLoadModelVersion = 7;
+// modelSize (2026-08-08, the fragmented-track fix): the measured metres a model
+// renders at scale 1, available BEFORE loading so a game can plan a layout. The
+// "|| {}" guard means order-of-injection never matters, and an unknown or
+// skinned model answers null rather than a made-up number — a game that checks
+// for null degrades to eyeballing, which is exactly what it did before v4.
+window.AR_SIZES = window.AR_SIZES || {};
+window.modelSize = function (name) {
+  var s = window.AR_SIZES[name];
+  return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
+};
+// modelAxis (2026-08-08, the poorly-formed-track fix): which axis a PATH
+// piece's road runs along at rest — "x", "z", or "none" for a hub/corner. The
+// two road kits genuinely disagree (city road_straight runs along X, racing
+// race_track_straight along Z) and a 1x1 square tile's size cannot reveal it,
+// so before this a game had to guess and got it wrong every time. Unknown
+// answers null — then eyeball it, same as before.
+window.AR_AXES = window.AR_AXES || {};
+window.modelAxis = function (name) {
+  var a = window.AR_AXES[name];
+  return (a === "x" || a === "z" || a === "none") ? a : null;
+};
+// modelJoins (2026-08-09, the SECOND poorly-formed-track fix): which edges a
+// tile's road actually reaches, measured from a top-down render of the
+// published bytes. modelAxis() answers "none" for every corner — true, and
+// useless for placing one; with nothing else to reason from, generated tracks
+// guessed corner rotations and the curves never met the straights.
+//   .joins  ["-x","+z"]  edges the carriageway reaches at rest (no rotation)
+//   .lane   0.7          drivable width in METRES at scale 1
+//   .at     {"-x":0.5}   where each join sits, in metres from the piece's own
+//                        minimum on that edge's axis (matters on 2x2 pieces)
+// Unknown answers null — then eyeball it, exactly as before.
+window.AR_EDGES = window.AR_EDGES || {};
+window.modelJoins = function (name) {
+  var e = window.AR_EDGES[name];
+  return (e && e.joins && e.joins.length) ? e : null;
+};
+// rotateToJoin: the one calculation every track needs and no game got right by
+// hand. Returns the rotation.y IN RADIANS that carries a piece's "from" edge
+// onto the "to" edge — e.g. a corner joining ["+z","+x"] that must instead join
+// west and south is rotateToJoin("race_track_corner","+x","+z"). Quarter turns
+// only, which is all a square grid can use.
+// (No backticks anywhere in this block: it is inlined into a TEMPLATE LITERAL,
+// so one would end the helper string mid-function.)
+window.rotateToJoin = function (name, from, to) {
+  var order = ["-z", "+x", "+z", "-x"]; // clockwise seen from above
+  var a = order.indexOf(from), b = order.indexOf(to);
+  if (a < 0 || b < 0) return 0;
+  return ((b - a + 4) % 4) * (Math.PI / 2);
+};
+// fitTile (2026-08-09): say WHICH DIRECTIONS a grid cell must connect and get
+// the rotation.y that makes the piece do it. Added after three rounds of
+// teaching failed to land: a generated track chose the right kit and one scale
+// factor, then hardcoded all four corner rotations and got all four wrong,
+// because working out "this cell needs north and east, the piece joins +z and
+// +x at rest, so rotate 3pi/2" is four steps of reasoning under a token budget.
+// This is one call. Directions are where the ROAD LEAVES the cell:
+//   fitTile("race_track_corner", ["-z", "+x"])   // track to the north and east
+// Returns 0 for an unknown piece, and null when no quarter turn can satisfy the
+// request — which means the wrong PIECE was chosen (asking a corner to join two
+// opposite edges), so a game can detect that instead of silently drawing a gap.
+window.fitTile = function (name, need) {
+  var e = window.AR_EDGES[name];
+  if (!e || !e.joins || !need || !need.length) return 0;
+  var order = ["-z", "+x", "+z", "-x"];
+  var want = need.slice().sort().join(",");
+  for (var q = 0; q < 4; q++) {
+    var got = e.joins
+      .map(function (j) { return order[(order.indexOf(j) + q) % 4]; })
+      .sort()
+      .join(",");
+    if (got === want) return q * (Math.PI / 2);
+  }
+  return null;
+};
+  const __arLoader = new GLTFLoader();
+__arLoader.setMeshoptDecoder(MeshoptDecoder);
+window.__arPerf = window.__arPerf || { models: {}, rootNames: new WeakMap(), animatedRoots: new WeakSet(), renderer: null };
+var __arStaticTemplates = {};
+function __arCountTriangles(obj) {
+  var triangles = 0;
+  obj.traverse(function (child) {
+    if (!child.isMesh || !child.geometry) return;
+    var geo = child.geometry;
+    if (geo.index) triangles += geo.index.count / 3;
+    else if (geo.attributes && geo.attributes.position) triangles += geo.attributes.position.count / 3;
+  });
+  return Math.round(triangles);
+}
+async function __arLoadFresh(name) {
+  const url = (window.AR_ASSETS || {})[name];
+  if (!url) { console.warn("[ariantra] unknown model:", name); return null; }
+  const gltf = await __arLoader.loadAsync(url);
+  return { scene: gltf.scene, animations: gltf.animations || [] };
+}
+window.loadModel = async function (name) {
+  try {
+    var obj;
+    if (__arStaticTemplates[name]) {
+      // Cache only ever holds a STATIC (no-animation) template — see the
+      // loadModelHelper() doc comment for why animated models are excluded.
+      obj = __arStaticTemplates[name].scene.clone();
+      obj.animations = [];
+    } else {
+      const fresh = await __arLoadFresh(name);
+      if (!fresh) return null;
+      if (fresh.animations.length) {
+        obj = fresh.scene;
+        obj.animations = fresh.animations;
+      } else {
+        __arStaticTemplates[name] = fresh;
+        obj = fresh.scene.clone();
+        obj.animations = [];
+      }
+    }
+    // Same answer as modelSize(name), riding on the object — so code that
+    // already holds the loaded root can size it without re-quoting the name.
+    obj.userData.arSize = window.modelSize(name);
+    try {
+      var __arEntry = window.__arPerf.models[name] || { name: name, triangles: 0, instances: [] };
+      __arEntry.triangles = __arCountTriangles(obj);
+      __arEntry.instances.push(obj);
+      if (__arEntry.instances.length > 1000) __arEntry.instances.shift();
+      window.__arPerf.models[name] = __arEntry;
+      window.__arPerf.rootNames.set(obj, name);
+    } catch (e) { /* telemetry only — never blocks the load */ }
+    return obj;
+  } catch (e) {
+    console.warn("[ariantra] loadModel failed:", name, e);
+    return null;
+  }
+};
+</script><script>
+(function () {
+  var ctx = null, buffers = {}, currentMusic = null;
+  function context() {
+    if (!ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC();
+      var resume = function () { if (ctx.state === "suspended") ctx.resume(); };
+      addEventListener("pointerdown", resume, true);
+      addEventListener("keydown", resume, true);
+    }
+    return ctx;
+  }
+  function load(name) {
+    var url = (window.AR_ASSETS || {})[name];
+    if (!url) { console.warn("[ariantra] unknown sound:", name); return Promise.resolve(null); }
+    if (!buffers[name]) {
+      buffers[name] = fetch(url)
+        .then(function (r) { return r.arrayBuffer(); })
+        .then(function (ab) {
+          return new Promise(function (res, rej) { context().decodeAudioData(ab, res, rej); });
+        })
+        .catch(function (e) { console.warn("[ariantra] sound failed:", name, e); return null; });
+    }
+    return buffers[name];
+  }
+  function trimBounds(buf) {
+    var d = buf.getChannelData(0), t = 0.001, s = 0, e = d.length - 1;
+    while (s < e && Math.abs(d[s]) < t) s++;
+    while (e > s && Math.abs(d[e]) < t) e--;
+    return { start: s / buf.sampleRate, end: (e + 1) / buf.sampleRate };
+  }
+  window.playSound = function (name) {
+    try {
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        src.connect(context().destination);
+        src.start();
+      });
+    } catch (e) { /* a silent effect, never a broken game */ }
+  };
+  window.playMusic = function (name) {
+    var handle = { stop: function () {} };
+    try {
+      if (currentMusic) { try { currentMusic.stop(); } catch (e2) {} currentMusic = null; }
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        var b = trimBounds(buf);
+        src.loop = true;
+        src.loopStart = b.start;
+        src.loopEnd = b.end;
+        var gain = context().createGain();
+        gain.gain.value = 0.5;
+        src.connect(gain);
+        gain.connect(context().destination);
+        src.start(0, b.start);
+        currentMusic = src;
+        handle.stop = function () { try { src.stop(); } catch (e3) {} if (currentMusic === src) currentMusic = null; };
+      });
+    } catch (e) { /* silent */ }
+    return handle;
+  };
+})();
+</script>
+    <title>3D Tank Battle</title>
+    <style>
+        /* --- BASIC SETUP --- */
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100dvh; /* Use dynamic viewport height */
+            overflow: hidden;
+            background-color: #333;
+            color: white;
+            font-family: 'Arial', sans-serif;
+        }
+
+        /* --- THE 3D SCENE --- */
+        #scene {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        /* --- ON-SCREEN UI --- */
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Let clicks pass through to the canvas */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* --- SCORING --- */
+        #score-container {
+            width: 100%;
+            text-align: center;
+            padding-top: 20px;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+        }
+
+        /* --- WIN MESSAGE --- */
+        #win-message {
+            display: none; /* Hidden by default */
+            font-size: 48px;
+            font-weight: bold;
+            color: #ffeb3b;
+            text-shadow: 3px 3px 6px rgba(0,0,0,0.8);
+            animation: bounce 1s infinite;
+        }
+
+        @keyframes bounce {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+
+        /* --- GAME CONTROLS --- */
+        #controls {
+            width: 100%;
+            padding: 20px;
+            padding-bottom: max(20px, env(safe-area-inset-bottom));
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            box-sizing: border-box;
+            pointer-events: auto; /* Buttons are clickable */
+        }
+
+        .button-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 10px;
+            width: 180px;
+            height: 120px;
+        }
+        
+        #fire-button {
+             grid-column: 1 / -1; /* Span all columns */
+             height: 60px;
+        }
+
+        .button {
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            border: 2px solid rgba(255, 255, 255, 0.7);
+            border-radius: 15px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            color: white;
+            user-select: none;
+            -webkit-user-select: none; /* For Safari */
+        }
+        
+        .button:active {
+            background-color: rgba(255, 255, 255, 0.4);
+        }
+
+        #up-button { grid-column: 2; grid-row: 1; }
+        #left-button { grid-column: 1; grid-row: 2; }
+        #down-button { grid-column: 2; grid-row: 2; }
+        #right-button { grid-column: 3; grid-row: 2; }
+    </style>
+</head>
+<body>
+    
+    
+    
+
+    <canvas id="scene"></canvas>
+
+    <!-- UI OVERLAY -->
+    <div id="ui">
+        <!-- SCORING -->
+        <div id="score-container">
+            TANKS LEFT: <span id="score">0</span>
+        </div>
+
+        <!-- WIN MESSAGE -->
+        <div id="win-message">YOU WIN!</div>
+
+        <!-- GAME CONTROLS -->
+        <div id="controls">
+            <div class="button-grid">
+                <div id="up-button" class="button">▲</div>
+                <div id="left-button" class="button">◀</div>
+                <div id="down-button" class="button">▼</div>
+                <div id="right-button" class="button">▶</div>
+            </div>
+            <div id="fire-button" class="button">FIRE</div>
+        </div>
+    </div>
+
+    <script type="module">
+        import {
+            Scene, PerspectiveCamera, WebGLRenderer, Clock, Color, Vector3, Box3,
+            BoxGeometry, SphereGeometry, PlaneGeometry, MeshStandardMaterial, Mesh,
+            AmbientLight, DirectionalLight, Raycaster, Vector2, Quaternion, Group, MathUtils
+        } from "three";
+
+        // --- GAME SETUP ---
+        const scene = new Scene();
+        scene.background = new Color(0x87CEEB); // Sky blue
+
+        const camera = new PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 15, 12);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new WebGLRenderer({
+            canvas: document.getElementById('scene'),
+            antialias: true,
+            preserveDrawingBuffer: true
+        });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+        const clock = new Clock();
+        
+        let player, playerTurret, playerBarrel;
+        const playerSpeed = { forward: 0, turn: 0 };
+        const MAX_SPEED = 10;
+        const TURN_SPEED = 1.5;
+        
+        const bullets = [];
+        const enemies = [];
+        const obstacles = [];
+        let totalEnemies = 0;
+
+        const scoreElement = document.getElementById('score');
+
+        // --- LIGHTING ---
+        const ambientLight = new AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
+        const dirLight = new DirectionalLight(0xffffff, 1.0);
+        dirLight.position.set(10, 20, 5);
+        scene.add(dirLight);
+
+        // --- GROUND ---
+        const groundGeo = new PlaneGeometry(100, 100);
+        const groundMat = new MeshStandardMaterial({ color: 0x997950 }); // Sandy color
+        const ground = new Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2;
+        scene.add(ground);
+
+        // --- PLAYER TANK ---
+        const playerGroup = new Group();
+        scene.add(playerGroup);
+
+        loadModel("tank").then(model => {
+            if (model) {
+                player = model;
+                player.scale.set(1.2, 1.2, 1.2);
+                player.rotation.y = Math.PI; // Face away from camera
+                playerGroup.add(player);
+                
+                // Find turret and barrel parts if they exist
+                player.traverse(child => {
+                    if (child.isMesh) {
+                         if (/turret/i.test(child.name)) playerTurret = child;
+                         if (/cannon|barrel/i.test(child.name)) playerBarrel = child;
+                    }
+                });
+            }
+        });
+        playerGroup.position.set(0, 0, 5); // Start away from center
+
+        // --- ENEMY TANKS ---
+        function spawnEnemies() {
+            const enemyPositions = [
+                new Vector3(-20, 0, -20),
+                new Vector3(20, 0, -15),
+                new Vector3(-15, 0, 20),
+                new Vector3(25, 0, 10),
+                new Vector3(0, 0, -30),
+            ];
+            totalEnemies = enemyPositions.length;
+
+            enemyPositions.forEach(pos => {
+                loadModel("tank_desert").then(model => {
+                    if (model) {
+                        model.position.copy(pos);
+                        model.rotation.y = Math.random() * Math.PI * 2;
+                        model.scale.set(1.2, 1.2, 1.2);
+                        
+                        const enemy = {
+                            mesh: model,
+                            box: new Box3().setFromObject(model)
+                        };
+                        enemies.push(enemy);
+                        scene.add(model);
+                    }
+                });
+            });
+            updateScore();
+        }
+
+        // --- OBSTACLES ---
+        function createObstacles() {
+            const obstacleData = [
+                { pos: new Vector3(10, 0, 0), size: new Vector3(4, 5, 10) },
+                { pos: new Vector3(-12, 0, -10), size: new Vector3(12, 5, 4) },
+                { pos: new Vector3(15, 0, -25), size: new Vector3(5, 5, 5) },
+                { pos: new Vector3(-20, 0, 10), size: new Vector3(5, 5, 5) },
+                { pos: new Vector3(0, 0, 20), size: new Vector3(20, 5, 4) },
+                { pos: new Vector3(-25, 0, -5), size: new Vector3(4, 5, 15) }
+            ];
+
+            const obstacleMat = new MeshStandardMaterial({ color: 0xaaaaaa });
+            obstacleData.forEach(data => {
+                const geo = new BoxGeometry(data.size.x, data.size.y, data.size.z);
+                const mesh = new Mesh(geo, obstacleMat);
+                mesh.position.set(data.pos.x, data.size.y / 2, data.pos.z);
+                
+                const obstacle = {
+                    mesh: mesh,
+                    box: new Box3().setFromObject(mesh)
+                };
+                obstacles.push(obstacle);
+                scene.add(mesh);
+            });
+        }
+        
+        // --- CONTROLS ---
+        const keys = {};
+        const buttons = { up: false, down: false, left: false, right: false, fire: false };
+        
+        window.addEventListener('keydown', (e) => {
+            keys[e.code] = true;
+            if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
+        });
+        window.addEventListener('keyup', (e) => {
+            keys[e.code] = false;
+        });
+
+        function handlePointerDown(e) {
+            const id = e.currentTarget.id;
+            if (id === 'up-button') buttons.up = true;
+            if (id === 'down-button') buttons.down = true;
+            if (id === 'left-button') buttons.left = true;
+            if (id === 'right-button') buttons.right = true;
+            if (id === 'fire-button') handleFire();
+        }
+        function handlePointerUp(e) {
+            const id = e.currentTarget.id.replace('-up', '').replace('-down','');
+            if (id.includes('up')) buttons.up = false;
+            if (id.includes('down')) buttons.down = false;
+            if (id.includes('left')) buttons.left = false;
+            if (id.includes('right')) buttons.right = false;
+        }
+
+        ['up', 'down', 'left', 'right', 'fire'].forEach(id => {
+            const btn = document.getElementById(id + '-button');
+            btn.addEventListener('pointerdown', handlePointerDown);
+            // Listen for pointerup on the whole window, so it works if finger slides off
+            window.addEventListener('pointerup', () => {
+                buttons.up = buttons.down = buttons.left = buttons.right = false;
+            });
+        });
+
+        // --- AIMING ---
+        const raycaster = new Raycaster();
+        const pointer = new Vector2();
+        const aimTarget = new Vector3();
+
+        function onPointerMove(event) {
+            pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+            pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        }
+        window.addEventListener('pointermove', onPointerMove);
+
+        // --- SHOOTING ---
+        let lastShotTime = 0;
+        const fireRate = 0.75; // seconds between shots
+
+        function handleFire() {
+            const now = clock.getElapsedTime();
+            if (now - lastShotTime < fireRate) return;
+            lastShotTime = now;
+            
+            playSound("laser");
+            
+            const bulletGeo = new SphereGeometry(0.2, 8, 8);
+            const bulletMat = new MeshStandardMaterial({ color: 0xffff00, emissive: 0xffff00 });
+            const bullet = new Mesh(bulletGeo, bulletMat);
+
+            const startPos = new Vector3();
+            // Try to get barrel's world position, fallback to tank center
+            if(playerBarrel) {
+                playerBarrel.getWorldPosition(startPos);
+            } else {
+                playerGroup.getWorldPosition(startPos);
+            }
+
+            const direction = new Vector3();
+            aimTarget.y = startPos.y; // Aim flat
+            direction.subVectors(aimTarget, startPos).normalize();
+            
+            bullet.position.copy(startPos);
+            bullet.velocity = direction.multiplyScalar(50);
+            bullet.box = new Box3().setFromObject(bullet);
+            bullets.push(bullet);
+            scene.add(bullet);
+        }
+        
+        window.addEventListener('pointerdown', (e) => {
+            // Fire if clicking not on a button
+            if (e.target.tagName === 'CANVAS') {
+                handleFire();
+            }
+        });
+        
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') handleFire();
+        });
+
+
+        // --- PLAYER MOVEMENT ---
+        function updatePlayer(delta) {
+            // Keyboard input
+            const forward = (keys['ArrowUp'] || keys['KeyW'] || buttons.up) ? 1 : 0;
+            const backward = (keys['ArrowDown'] || keys['KeyS'] || buttons.down) ? -1 : 0;
+            const left = (keys['ArrowLeft'] || keys['KeyA'] || buttons.left) ? 1 : 0;
+            const right = (keys['ArrowRight'] || keys['KeyD'] || buttons.right) ? -1 : 0;
+            
+            playerSpeed.forward = (forward + backward) * MAX_SPEED;
+            playerSpeed.turn = (left + right) * TURN_SPEED;
+
+            const oldPosition = playerGroup.position.clone();
+            const oldRotation = playerGroup.rotation.clone();
+
+            playerGroup.rotation.y += playerSpeed.turn * delta;
+            playerGroup.translateZ(playerSpeed.forward * delta);
+
+            // Boundary check
+            const worldBoundary = 48;
+            playerGroup.position.x = Math.max(-worldBoundary, Math.min(worldBoundary, playerGroup.position.x));
+            playerGroup.position.z = Math.max(-worldBoundary, Math.min(worldBoundary, playerGroup.position.z));
+            
+            // Collision with obstacles
+            if (player) {
+                const playerBox = new Box3().setFromObject(playerGroup);
+                for (const obstacle of obstacles) {
+                    if (playerBox.intersectsBox(obstacle.box)) {
+                        // Simple collision response: revert position
+                        playerGroup.position.copy(oldPosition);
+                        playerGroup.rotation.copy(oldRotation);
+                        break; 
+                    }
+                }
+            }
+        }
+        
+        // --- AIMING LOGIC ---
+        function updateAiming() {
+            if (!playerTurret) return;
+
+            raycaster.setFromCamera(pointer, camera);
+            const intersects = raycaster.intersectObject(ground);
+
+            if (intersects.length > 0) {
+                aimTarget.copy(intersects[0].point);
+                
+                // Get the world position and quaternion of the player tank's body
+                const worldQuaternion = new Quaternion();
+                playerGroup.getWorldQuaternion(worldQuaternion);
+                
+                // We want the turret to point towards the aimTarget.
+                // We need to calculate the desired rotation in the *local* space of the tank body.
+                const localTarget = playerGroup.worldToLocal(aimTarget.clone());
+                const angle = Math.atan2(localTarget.x, localTarget.z);
+                
+                // Smoothly rotate the turret towards the target angle
+                playerTurret.rotation.y = MathUtils.lerp(playerTurret.rotation.y, angle, 0.1);
+            }
+        }
+
+        // --- BULLET LOGIC ---
+        function updateBullets(delta) {
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const bullet = bullets[i];
+                bullet.position.add(bullet.velocity.clone().multiplyScalar(delta));
+                bullet.box.setFromObject(bullet);
+
+                let hit = false;
+                
+                // Check collision with enemies
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    const enemy = enemies[j];
+                    if (bullet.box.intersectsBox(enemy.box)) {
+                        playSound("explosion");
+                        scene.remove(enemy.mesh);
+                        enemies.splice(j, 1);
+                        hit = true;
+                        updateScore();
+                        break;
+                    }
+                }
+                
+                // Check collision with obstacles
+                if (!hit) {
+                    for (const obstacle of obstacles) {
+                        if (bullet.box.intersectsBox(obstacle.box)) {
+                            hit = true;
+                            break;
+                        }
+                    }
+                }
+
+                // Remove bullet if it hits something or goes too far
+                const dist = bullet.position.length();
+                if (hit || dist > 100) {
+                    scene.remove(bullet);
+                    bullets.splice(i, 1);
+                }
+            }
+        }
+        
+        // --- SCORING & WIN CONDITION ---
+        function updateScore() {
+            const tanksLeft = enemies.length;
+            scoreElement.innerText = tanksLeft;
+
+            if (tanksLeft === 0 && totalEnemies > 0) {
+                document.getElementById('win-message').style.display = 'block';
+                playSound("jingle_win");
+            }
+        }
+
+        // --- RESPONSIVE RESIZE ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        window.addEventListener('resize', onWindowResize);
+        
+        // --- PAUSE WHEN NOT VISIBLE ---
+        let on = true;
+        const setOn = (v) => { 
+            if (v === on) return;
+            on = v;
+            if (v) {
+                clock.getDelta(); // Reset clock to avoid huge jump
+                animate();
+            }
+        };
+        document.addEventListener('visibilitychange', () => setOn(!document.hidden));
+        window.addEventListener('blur', () => setOn(false));
+        window.addEventListener('focus', () => setOn(true));
+
+        // --- GAME LOOP ---
+        function animate() {
+            if (!on) return;
+            
+            requestAnimationFrame(animate);
+
+            const delta = Math.min(clock.getDelta(), 0.05);
+
+            updatePlayer(delta);
+            updateAiming();
+            updateBullets(delta);
+
+            // Make camera follow player
+            const offset = new Vector3(0, 20, 15);
+            const cameraTargetPos = playerGroup.position.clone().add(offset);
+            camera.position.lerp(cameraTargetPos, 0.05);
+            camera.lookAt(playerGroup.position);
+
+            renderer.render(scene, camera);
+        }
+
+        // --- START GAME ---
+        onWindowResize();
+        createObstacles();
+        spawnEnemies();
+        playMusic("bg_loop_playful");
+        animate();
+    </script>
+</body>
+</html>

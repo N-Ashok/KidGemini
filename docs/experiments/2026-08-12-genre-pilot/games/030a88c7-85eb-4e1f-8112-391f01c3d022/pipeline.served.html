@@ -1,0 +1,1446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><!--ari-perf-probe--><script>(function () {
+  window.__arPerfProbeVersion = 4;
+  var buffer = [];
+  var ready = false;
+  function send(ev) {
+    try { parent.postMessage({ source: "ari-perf-probe", event: ev }, "*"); } catch (e) { /* parent gone */ }
+  }
+  function post(ev) { if (ready) send(ev); else buffer.push(ev); }
+  addEventListener("message", function (event) {
+    var d = event && event.data;
+    if (!d || d.source !== "ari-parent" || d.type !== "ready") return;
+    ready = true;
+    for (var i = 0; i < buffer.length; i++) send(buffer[i]);
+    buffer = [];
+  });
+
+  // GL draw-call counter (v4, 2026-08-10). snapshot.drawCalls was designed to
+  // read __arPerf.renderer.info — which NOTHING ever assigned, so it was null
+  // in every snapshot ever posted. Meanwhile the owner's AutoRicksaw game ran
+  // at 1,250 draws/frame from hand-built meshes the model accounting cannot
+  // see, and the slowdown hint blamed two static trees nine edits in a row.
+  // Count actual GL draw commands instead: engine-agnostic, needs nothing
+  // from the game, reaches stored games via the version re-floor.
+  var glDraws = 0;
+  function wrapGL(proto) {
+    if (!proto) return;
+    try {
+      var de = proto.drawElements;
+      if (de) proto.drawElements = function () { glDraws++; return de.apply(this, arguments); };
+      var da = proto.drawArrays;
+      if (da) proto.drawArrays = function () { glDraws++; return da.apply(this, arguments); };
+      var dei = proto.drawElementsInstanced;
+      if (dei) proto.drawElementsInstanced = function () { glDraws++; return dei.apply(this, arguments); };
+      var dai = proto.drawArraysInstanced;
+      if (dai) proto.drawArraysInstanced = function () { glDraws++; return dai.apply(this, arguments); };
+    } catch (e) { /* never break rendering for telemetry */ }
+  }
+  if (!window.__arGlDrawPatched) {
+    window.__arGlDrawPatched = 1;
+    wrapGL(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+    wrapGL(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+  }
+  var lastGlDraws = 0;
+
+  // FPS estimate: count rAF ticks in the last sample window. Stacks fine on
+  // top of the frame governor's own wrap (both call straight through).
+  var frames = 0;
+  var origRaf = window.requestAnimationFrame;
+  if (origRaf) {
+    window.requestAnimationFrame = function (cb) {
+      return origRaf.call(window, function (t) {
+        frames++;
+        return cb(t);
+      });
+    };
+  }
+
+  // "Playing" signal (v3, owner report 2026-08-06): frames alone can't tell
+  // "running slow" from "not running" — an unstarted game or idle lobby
+  // renders little/nothing by design. Track the last real input so the
+  // slowdown banner only trusts samples taken while the kid is actually
+  // playing. Capture phase: game code often stopPropagation()s.
+  var lastInput = 0;
+  var inputEvents = ["pointerdown", "keydown", "touchstart"];
+  for (var ie = 0; ie < inputEvents.length; ie++) {
+    addEventListener(inputEvents[ie], function () { lastInput = Date.now(); }, true);
+  }
+
+  function snapshot() {
+    // A hidden tab/panel genuinely renders zero frames — that's true, but it
+    // is NOT the same claim as "the game is running slow," which is what
+    // this snapshot exists to detect. Without this guard, every setInterval
+    // tick during a background gap (leaving Ari and coming back) posts a
+    // near-zero fps reading, which is enough on its own to satisfy the
+    // slowdown banner's "5 consecutive low samples" rule — so the banner
+    // flashes on return even though nothing was ever actually slow. Skip
+    // sampling entirely while hidden, and keep resetting the frame counter
+    // so no partial/corrupted count leaks into the first reading after the
+    // tab becomes visible again.
+    if (document.hidden) { frames = 0; return; }
+    var perf = window.__arPerf || {};
+    var reg = perf.models || {};
+    var animatedRoots = perf.animatedRoots;
+    var models = [];
+    for (var name in reg) {
+      if (!Object.prototype.hasOwnProperty.call(reg, name)) continue;
+      var entry = reg[name];
+      var roots = entry.instances || [];
+      // Live = still parented into a scene graph. A load()ed-but-never-added
+      // (or later removed) root reads parent as falsy — never a stale row.
+      var live = [];
+      for (var i = 0; i < roots.length; i++) {
+        if (roots[i] && roots[i].parent) live.push(roots[i]);
+      }
+      if (live.length === 0) continue;
+      var animated = false;
+      if (animatedRoots) {
+        for (var j = 0; j < live.length; j++) {
+          if (animatedRoots.has(live[j])) { animated = true; break; }
+        }
+      }
+      var triangles = entry.triangles || 0;
+      var load = triangles * live.length * (animated ? 2 : 1);
+      var bucket = load <= 20000 ? "green" : (load <= 150000 ? "yellow" : "red");
+      models.push({ name: name, triangles: triangles, instances: live.length, animated: animated, load: load, bucket: bucket });
+    }
+    var batches = perf.batches || {};
+    for (var bname in batches) {
+      if (!Object.prototype.hasOwnProperty.call(batches, bname)) continue;
+      var bentry = batches[bname];
+      var broots = bentry.roots || [];
+      var blive = false;
+      for (var bi = 0; bi < broots.length; bi++) { if (broots[bi] && broots[bi].parent) { blive = true; break; } }
+      if (!blive) continue;
+      var btriangles = bentry.triangles || 0;
+      var bdrawCalls = bentry.drawCalls || 1;
+      var bload = btriangles * bdrawCalls;
+      var bbucket = bload <= 20000 ? "green" : (bload <= 150000 ? "yellow" : "red");
+      models.push({ name: bentry.name, triangles: btriangles, instances: bentry.count || 0, animated: false, load: bload, bucket: bbucket, batched: true, drawCalls: bdrawCalls });
+    }
+    models.sort(function (a, b) { return b.load - a.load; });
+    var drawCalls = null, rendererTriangles = null;
+    // Per-frame average over this window from the GL counter — the value
+    // that actually distinguishes "a thousand tiny meshes" from "two trees".
+    var windowDraws = glDraws - lastGlDraws;
+    lastGlDraws = glDraws;
+    if (windowDraws > 0 && frames > 0) {
+      drawCalls = Math.round(windowDraws / frames);
+    } else if (perf.renderer && perf.renderer.info && perf.renderer.info.render) {
+      // Legacy fallback, kept for a game that registers its renderer.
+      drawCalls = perf.renderer.info.render.calls;
+      rendererTriangles = perf.renderer.info.render.triangles;
+    }
+    var playing = frames > 0 && lastInput > 0 && (Date.now() - lastInput) < 10000;
+    post({ type: "snapshot", snapshot: { fps: frames, playing: playing, drawCalls: drawCalls, rendererTriangles: rendererTriangles, models: models } });
+    frames = 0;
+  }
+  setInterval(snapshot, 1000);
+})();</script><script type="importmap">{"imports":{"three":"https://assets.ariantra.com/three.098b4c.js"}}</script><style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style><script>(function(){
+if (window.__arFrameGovernor) return;
+window.__arFrameGovernor = 1;
+var raf = window.requestAnimationFrame.bind(window);
+var seen = new WeakMap();
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    // Skipped frames ALWAYS re-request through the wrapper, so the loop can
+    // never die — that is the one failure mode that would break a live game.
+    if (document.hidden) { window.requestAnimationFrame(cb); return; }
+    var prev = (typeof cb === 'function' ? seen.get(cb) : 0) || 0;
+    if (prev && t - prev < 15) { window.requestAnimationFrame(cb); return; }
+    if (typeof cb === 'function') seen.set(cb, t);
+    return cb(t);
+  });
+};
+})();</script><script>(function(){
+if (window.__arGlGuard) return;
+window.__arGlGuard = 1;
+window.__arGlGuardVersion = 2;
+var get = HTMLCanvasElement.prototype.getContext;
+var live = [];
+var lostCount = 0;
+HTMLCanvasElement.prototype.getContext = function (type) {
+  var ctx = get.apply(this, arguments);
+  try {
+    if (ctx && /webgl/i.test(String(type)) && !this.__arGlGuarded) {
+      this.__arGlGuarded = 1;
+      var ext = null;
+      try { ext = ctx.getExtension('WEBGL_lose_context'); } catch (e2) { /* none */ }
+      live.push({ ctx: ctx, ext: ext });
+      this.addEventListener('webglcontextlost', function (e) {
+        // THE line that matters: without preventDefault the loss is final and
+        // the canvas stays blank for the rest of the document's life.
+        e.preventDefault();
+        lostCount++;
+        console.warn('[ari] WebGL context lost — restore requested');
+        // Watchdog (2026-08-10 №4, "it didnot regain"): browsers do not
+        // always volunteer webglcontextrestored, and a politely-held loop
+        // waits forever. The ladder is the automatic version of what fixed
+        // it for the owner by hand (code↔preview toggle = a remount):
+        // after 2s still lost → ask the driver; 3s more still lost → ask
+        // the parent to remount this frame.
+        setTimeout(function () {
+          var still = true;
+          try { still = ctx.isContextLost(); } catch (e3) { /* gone */ }
+          if (!still) return;
+          try { if (ext) ext.restoreContext(); } catch (e3) { /* refused */ }
+          setTimeout(function () {
+            var dead = true;
+            try { dead = ctx.isContextLost(); } catch (e4) { /* gone */ }
+            if (!dead) return;
+            console.warn('[ari] WebGL context is not coming back — asking the parent to reload the game');
+            try { parent.postMessage({ __ari: 'gl-dead' }, '*'); } catch (e4) { /* no parent */ }
+          }, 3000);
+        }, 2000);
+      }, false);
+      this.addEventListener('webglcontextrestored', function () {
+        if (lostCount > 0) lostCount--;
+        console.warn('[ari] WebGL context restored');
+      }, false);
+    }
+  } catch (e) { /* never break getContext */ }
+  return ctx;
+};
+// Restoring the CONTEXT is not enough — the game's LOOP must survive to see
+// it. While a context is lost, three.js's renderer throws mid-render (the GL
+// introspection APIs return null, and three calls .trim() on the result —
+// the exact stack the harness attributed on 2026-08-10). Games request their
+// next frame AFTER rendering (three's setAnimationLoop does too), so that
+// throw kills the loop for good: the context comes back, nothing draws, the
+// canvas stays blank, and no click can restart it. So: while any tracked
+// context is lost, hold rAF callbacks — always re-request, never run — the
+// same shape as the frame governor's document.hidden skip, and it resumes by
+// itself on webglcontextrestored. Composes with the governor's own wrapper
+// (this one runs outside it) — worst case a held frame is re-queued twice.
+// lostCount alone is NOT enough to gate on: webglcontextlost is dispatched
+// as a task, so there is a window after the actual loss (browser eviction or
+// our own release) where the event has not landed yet — one frame renders
+// against the dead context and three throws anyway. isContextLost() is
+// synchronous truth; the event counter only covers the fake-restore corner
+// (some drivers report isContextLost()=false again before firing restored).
+function anyLost() {
+  for (var i = 0; i < live.length; i++) {
+    try { if (live[i].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  for (var j = 0; j < released.length; j++) {
+    try { if (released[j].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  return false;
+}
+var raf = window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    if (lostCount > 0 || anyLost()) { window.requestAnimationFrame(cb); return; }
+    return cb(t);
+  });
+};
+var released = [];
+function release(why) {
+  // Hand the GPU back now rather than at GC, so the next preview iframe does
+  // not push the page over the context cap. Kept restorable (see pageshow):
+  // a release we believed was terminal must be reversible if the page comes
+  // back — 2026-08-10 second owner report, the pane-switch freeze.
+  for (var i = 0; i < live.length; i++) {
+    try {
+      if (live[i].ext) { live[i].ext.loseContext(); released.push(live[i]); }
+    } catch (e) { /* already gone */ }
+  }
+  live.length = 0;
+  // Observable from the parent page: this is how the harness proves the round
+  // was ASKED to release at unmount, rather than assuming it.
+  console.warn('[ari] WebGL contexts released (' + why + ')');
+}
+// Lets the harness assert that a torn-down round actually gave its context
+// back, instead of assuming pagehide fired.
+Object.defineProperty(window, '__arGlCount', { get: function () { return live.length; } });
+// The parent asks explicitly, immediately before it unmounts this frame.
+// pagehide alone is NOT enough: Chrome does not reliably fire it when an
+// iframe is detached from the DOM, which is precisely how every shadow round
+// ends — so without this the contexts pile up exactly as they did in the
+// owner's eleven-edit session.
+addEventListener('message', function (e) {
+  var d = e && e.data;
+  if (d && d.__ari === 'release-gl') release('asked');
+}, false);
+// Diagnostic-only (2026-08-11): a non-persisted pagehide fired mid-edit on
+// the STILL-PLAYING game, with no deliberate srcDoc/key change from React —
+// after shadow-verify was removed the same day, the explicit 'release-gl'
+// message (sent by the parent right before it unmounted the shadow frame)
+// went with it, leaving THIS listener as the only release trigger, carrying
+// more weight than "pagehide is kept as a backstop only" (the comment above
+// release()) ever assumed. This context string is what will tell us whether
+// it's a real backgrounding event (visibility/online state) or something
+// else entirely — never throws, so it can never break the guard itself.
+function diag() {
+  try {
+    return 'visibility=' + document.visibilityState + ' hidden=' + document.hidden +
+      ' online=' + navigator.onLine + ' at=' + Date.now();
+  } catch (e) { return 'diag-unavailable'; }
+}
+addEventListener('pagehide', function (e) {
+  // Safari/iOS fires pagehide when the page is merely BACKGROUNDED (app or
+  // tab switch, pane transitions) and will bring it back — persisted=true.
+  // Releasing there kills the LIVE game's context and the loop-hold freezes
+  // it: the owner's "froze, then turned blue when I clicked back"
+  // (2026-08-10, second report). Only a non-persisted pagehide — the actual
+  // teardown of a detached iframe — releases.
+  if (e && e.persisted) {
+    console.warn('[ari] pagehide (persisted, backgrounded — kept alive) ' + diag());
+    return;
+  }
+  console.warn('[ari] pagehide (NOT persisted — releasing) ' + diag());
+  release('pagehide');
+});
+addEventListener('pageshow', function () {
+  // The symmetric half: any release that turned out not to be terminal (the
+  // page came back anyway) is undone. restoreContext fires
+  // webglcontextrestored, which unwinds lostCount and resumes the held loop.
+  if (!released.length) return;
+  for (var i = 0; i < released.length; i++) {
+    try { released[i].ext.restoreContext(); live.push(released[i].ctx); } catch (e) { /* gone for real */ }
+  }
+  released.length = 0;
+  console.warn('[ari] WebGL contexts restored (pageshow)');
+});
+})();</script><script>window.AR_ASSETS={"explorer":"https://assets.ariantra.com/explorer.67f871.glb","car":"https://assets.ariantra.com/car.710895.glb","coin":"https://assets.ariantra.com/coin.46ec4e.glb","jump":"https://assets.ariantra.com/jump.086d79.mp3","coin_pickup":"https://assets.ariantra.com/coin_pickup.affa86.mp3","hit":"https://assets.ariantra.com/hit.8a79a3.mp3","game_over":"https://assets.ariantra.com/game_over.2866a9.mp3","bg_loop_playful":"https://assets.ariantra.com/bg_loop_playful.469994.mp3","whoosh":"https://assets.ariantra.com/whoosh.f5810c.mp3"};</script><script>window.AR_SIZES={"explorer":[1.6,2.7,0.8],"car":[1.3,0.733,2.56],"coin":[0.4,0.4,0.175]};</script><script type="module">
+  import { GLTFLoader, MeshoptDecoder, SphereGeometry, MeshBasicMaterial } from "three";
+  window.__arLoadModelVersion = 7;
+// modelSize (2026-08-08, the fragmented-track fix): the measured metres a model
+// renders at scale 1, available BEFORE loading so a game can plan a layout. The
+// "|| {}" guard means order-of-injection never matters, and an unknown or
+// skinned model answers null rather than a made-up number — a game that checks
+// for null degrades to eyeballing, which is exactly what it did before v4.
+window.AR_SIZES = window.AR_SIZES || {};
+window.modelSize = function (name) {
+  var s = window.AR_SIZES[name];
+  return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
+};
+// modelAxis (2026-08-08, the poorly-formed-track fix): which axis a PATH
+// piece's road runs along at rest — "x", "z", or "none" for a hub/corner. The
+// two road kits genuinely disagree (city road_straight runs along X, racing
+// race_track_straight along Z) and a 1x1 square tile's size cannot reveal it,
+// so before this a game had to guess and got it wrong every time. Unknown
+// answers null — then eyeball it, same as before.
+window.AR_AXES = window.AR_AXES || {};
+window.modelAxis = function (name) {
+  var a = window.AR_AXES[name];
+  return (a === "x" || a === "z" || a === "none") ? a : null;
+};
+// modelJoins (2026-08-09, the SECOND poorly-formed-track fix): which edges a
+// tile's road actually reaches, measured from a top-down render of the
+// published bytes. modelAxis() answers "none" for every corner — true, and
+// useless for placing one; with nothing else to reason from, generated tracks
+// guessed corner rotations and the curves never met the straights.
+//   .joins  ["-x","+z"]  edges the carriageway reaches at rest (no rotation)
+//   .lane   0.7          drivable width in METRES at scale 1
+//   .at     {"-x":0.5}   where each join sits, in metres from the piece's own
+//                        minimum on that edge's axis (matters on 2x2 pieces)
+// Unknown answers null — then eyeball it, exactly as before.
+window.AR_EDGES = window.AR_EDGES || {};
+window.modelJoins = function (name) {
+  var e = window.AR_EDGES[name];
+  return (e && e.joins && e.joins.length) ? e : null;
+};
+// rotateToJoin: the one calculation every track needs and no game got right by
+// hand. Returns the rotation.y IN RADIANS that carries a piece's "from" edge
+// onto the "to" edge — e.g. a corner joining ["+z","+x"] that must instead join
+// west and south is rotateToJoin("race_track_corner","+x","+z"). Quarter turns
+// only, which is all a square grid can use.
+// (No backticks anywhere in this block: it is inlined into a TEMPLATE LITERAL,
+// so one would end the helper string mid-function.)
+window.rotateToJoin = function (name, from, to) {
+  var order = ["-z", "+x", "+z", "-x"]; // clockwise seen from above
+  var a = order.indexOf(from), b = order.indexOf(to);
+  if (a < 0 || b < 0) return 0;
+  return ((b - a + 4) % 4) * (Math.PI / 2);
+};
+// fitTile (2026-08-09): say WHICH DIRECTIONS a grid cell must connect and get
+// the rotation.y that makes the piece do it. Added after three rounds of
+// teaching failed to land: a generated track chose the right kit and one scale
+// factor, then hardcoded all four corner rotations and got all four wrong,
+// because working out "this cell needs north and east, the piece joins +z and
+// +x at rest, so rotate 3pi/2" is four steps of reasoning under a token budget.
+// This is one call. Directions are where the ROAD LEAVES the cell:
+//   fitTile("race_track_corner", ["-z", "+x"])   // track to the north and east
+// Returns 0 for an unknown piece, and null when no quarter turn can satisfy the
+// request — which means the wrong PIECE was chosen (asking a corner to join two
+// opposite edges), so a game can detect that instead of silently drawing a gap.
+window.fitTile = function (name, need) {
+  var e = window.AR_EDGES[name];
+  if (!e || !e.joins || !need || !need.length) return 0;
+  var order = ["-z", "+x", "+z", "-x"];
+  var want = need.slice().sort().join(",");
+  for (var q = 0; q < 4; q++) {
+    var got = e.joins
+      .map(function (j) { return order[(order.indexOf(j) + q) % 4]; })
+      .sort()
+      .join(",");
+    if (got === want) return q * (Math.PI / 2);
+  }
+  return null;
+};
+  const __arLoader = new GLTFLoader();
+__arLoader.setMeshoptDecoder(MeshoptDecoder);
+window.__arPerf = window.__arPerf || { models: {}, rootNames: new WeakMap(), animatedRoots: new WeakSet(), renderer: null };
+var __arStaticTemplates = {};
+function __arCountTriangles(obj) {
+  var triangles = 0;
+  obj.traverse(function (child) {
+    if (!child.isMesh || !child.geometry) return;
+    var geo = child.geometry;
+    if (geo.index) triangles += geo.index.count / 3;
+    else if (geo.attributes && geo.attributes.position) triangles += geo.attributes.position.count / 3;
+  });
+  return Math.round(triangles);
+}
+async function __arLoadFresh(name) {
+  const url = (window.AR_ASSETS || {})[name];
+  if (!url) { console.warn("[ariantra] unknown model:", name); return null; }
+  const gltf = await __arLoader.loadAsync(url);
+  return { scene: gltf.scene, animations: gltf.animations || [] };
+}
+window.loadModel = async function (name) {
+  try {
+    var obj;
+    if (__arStaticTemplates[name]) {
+      // Cache only ever holds a STATIC (no-animation) template — see the
+      // loadModelHelper() doc comment for why animated models are excluded.
+      obj = __arStaticTemplates[name].scene.clone();
+      obj.animations = [];
+    } else {
+      const fresh = await __arLoadFresh(name);
+      if (!fresh) return null;
+      if (fresh.animations.length) {
+        obj = fresh.scene;
+        obj.animations = fresh.animations;
+      } else {
+        __arStaticTemplates[name] = fresh;
+        obj = fresh.scene.clone();
+        obj.animations = [];
+      }
+    }
+    // Same answer as modelSize(name), riding on the object — so code that
+    // already holds the loaded root can size it without re-quoting the name.
+    obj.userData.arSize = window.modelSize(name);
+    try {
+      var __arEntry = window.__arPerf.models[name] || { name: name, triangles: 0, instances: [] };
+      __arEntry.triangles = __arCountTriangles(obj);
+      __arEntry.instances.push(obj);
+      if (__arEntry.instances.length > 1000) __arEntry.instances.shift();
+      window.__arPerf.models[name] = __arEntry;
+      window.__arPerf.rootNames.set(obj, name);
+    } catch (e) { /* telemetry only — never blocks the load */ }
+    return obj;
+  } catch (e) {
+    console.warn("[ariantra] loadModel failed:", name, e);
+    return null;
+  }
+};
+</script><script>
+(function () {
+  var ctx = null, buffers = {}, currentMusic = null;
+  function context() {
+    if (!ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC();
+      var resume = function () { if (ctx.state === "suspended") ctx.resume(); };
+      addEventListener("pointerdown", resume, true);
+      addEventListener("keydown", resume, true);
+    }
+    return ctx;
+  }
+  function load(name) {
+    var url = (window.AR_ASSETS || {})[name];
+    if (!url) { console.warn("[ariantra] unknown sound:", name); return Promise.resolve(null); }
+    if (!buffers[name]) {
+      buffers[name] = fetch(url)
+        .then(function (r) { return r.arrayBuffer(); })
+        .then(function (ab) {
+          return new Promise(function (res, rej) { context().decodeAudioData(ab, res, rej); });
+        })
+        .catch(function (e) { console.warn("[ariantra] sound failed:", name, e); return null; });
+    }
+    return buffers[name];
+  }
+  function trimBounds(buf) {
+    var d = buf.getChannelData(0), t = 0.001, s = 0, e = d.length - 1;
+    while (s < e && Math.abs(d[s]) < t) s++;
+    while (e > s && Math.abs(d[e]) < t) e--;
+    return { start: s / buf.sampleRate, end: (e + 1) / buf.sampleRate };
+  }
+  window.playSound = function (name) {
+    try {
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        src.connect(context().destination);
+        src.start();
+      });
+    } catch (e) { /* a silent effect, never a broken game */ }
+  };
+  window.playMusic = function (name) {
+    var handle = { stop: function () {} };
+    try {
+      if (currentMusic) { try { currentMusic.stop(); } catch (e2) {} currentMusic = null; }
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        var b = trimBounds(buf);
+        src.loop = true;
+        src.loopStart = b.start;
+        src.loopEnd = b.end;
+        var gain = context().createGain();
+        gain.gain.value = 0.5;
+        src.connect(gain);
+        gain.connect(context().destination);
+        src.start(0, b.start);
+        currentMusic = src;
+        handle.stop = function () { try { src.stop(); } catch (e3) {} if (currentMusic === src) currentMusic = null; };
+      });
+    } catch (e) { /* silent */ }
+    return handle;
+  };
+})();
+</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teleport Runner</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Comic Sans MS', cursive, sans-serif;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;
+            background-color: #333;
+            height: 100dvh;
+            -webkit-user-select: none; /* Safari */
+            -moz-user-select: none; /* Firefox */
+            -ms-user-select: none; /* IE10+/Edge */
+            user-select: none; /* Standard */
+        }
+        #game-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 0;
+        }
+        #game-ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 1;
+            padding: 10px;
+            box-sizing: border-box;
+            pointer-events: none; /* Allow canvas interaction through UI elements */
+        }
+        #top-info {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        #score, #lives {
+            font-size: clamp(1.2rem, 5vw, 2.5rem);
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+        }
+        #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            font-size: clamp(1.5rem, 7vw, 4rem);
+            font-weight: bold;
+            z-index: 2;
+            pointer-events: all;
+            visibility: hidden; /* Hidden by default */
+        }
+        #game-over-screen.visible {
+            visibility: visible;
+        }
+        #game-over-screen button {
+            margin-top: 20px;
+            padding: 15px 30px;
+            font-size: clamp(1rem, 4vw, 2rem);
+            font-weight: bold;
+            border: none;
+            border-radius: 15px;
+            background-color: #4CAF50;
+            color: white;
+            cursor: pointer;
+            box-shadow: 0 5px 0 #388E3C;
+            transition: all 0.1s ease;
+        }
+        #game-over-screen button:active {
+            background-color: #388E3C;
+            box-shadow: 0 2px 0 #2E7D32;
+            transform: translateY(3px);
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 5px;
+            width: 100%;
+            max-width: 400px; /* Limit width on very wide screens */
+            padding: 10px;
+            box-sizing: border-box;
+            align-items: end;
+            pointer-events: all;
+        }
+        .control-button {
+            background-color: rgba(0, 123, 255, 0.7);
+            border: none;
+            color: white;
+            padding: clamp(15px, 6vw, 30px) 0;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: clamp(1rem, 4vw, 2rem);
+            font-weight: bold;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 10px;
+            box-shadow: 0 4px 0 rgba(0, 86, 179, 0.7);
+            transition: all 0.1s ease;
+            touch-action: manipulation; /* Prevent scrolling/zooming */
+            -webkit-tap-highlight-color: transparent; /* Remove tap highlight */
+        }
+        .control-button.disabled {
+            background-color: rgba(150, 150, 150, 0.7);
+            box-shadow: 0 4px 0 rgba(100, 100, 100, 0.7);
+            cursor: not-allowed;
+        }
+        .control-button:active:not(.disabled) {
+            background-color: rgba(0, 86, 179, 0.7);
+            box-shadow: 0 2px 0 rgba(0, 50, 100, 0.7);
+            transform: translateY(2px);
+        }
+        #left-btn, #right-btn { grid-row: 2; }
+        #jump-btn { grid-row: 1; grid-column: 2; }
+        #teleport-btn { grid-row: 1; grid-column: 3; }
+        #slide-btn { grid-row: 2; grid-column: 1; } /* Placeholder for slide button */
+        #left-btn { grid-column: 1; }
+        #right-btn { grid-column: 3; }
+        #teleport-btn {
+            background-color: rgba(255, 165, 0, 0.8);
+            box-shadow: 0 4px 0 rgba(200, 130, 0, 0.8);
+        }
+        #teleport-btn:active:not(.disabled) {
+            background-color: rgba(200, 130, 0, 0.8);
+            box-shadow: 0 2px 0 rgba(150, 90, 0, 0.8);
+        }
+
+        /* Adjust button grid for optimal layout */
+        .controls {
+            grid-template-areas:
+                ". jump teleport"
+                "left . right";
+            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-rows: auto auto;
+            align-items: center;
+            justify-content: center;
+            padding-bottom: max(12px, env(safe-area-inset-bottom)); /* Breathing room */
+        }
+        #left-btn { grid-area: left; }
+        #right-btn { grid-area: right; }
+        #jump-btn { grid-area: jump; }
+        #teleport-btn { grid-area: teleport; }
+
+        /* Small screen adjustments */
+        @media (max-width: 480px) {
+            .controls {
+                grid-template-areas:
+                    "left jump teleport"
+                    ". . right";
+                grid-template-columns: 1fr 1fr 1fr;
+                grid-template-rows: auto auto;
+            }
+            #right-btn { grid-area: right; }
+        }
+    </style>
+</head>
+<body>
+    
+    
+    
+
+    <div id="game-container">
+        <canvas id="scene"></canvas>
+        <div id="game-ui">
+            <div id="top-info">
+                <div id="lives">Lives: 💖💖💖</div>
+                <div id="score">Score: 0</div>
+            </div>
+            <div id="game-over-screen">
+                <h2>Game Over!</h2>
+                <p>Final Score: <span id="final-score">0</span></p>
+                <button id="restart-button">Play Again!</button>
+            </div>
+            <div class="controls">
+                <button id="left-btn" class="control-button">⬅️</button>
+                <button id="jump-btn" class="control-button">⬆️ JUMP</button>
+                <button id="teleport-btn" class="control-button">⚡ TELEPORT</button>
+                <button id="right-btn" class="control-button">➡️</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import {
+            Scene, PerspectiveCamera, WebGLRenderer, Clock, Color, Fog, Group, Vector3, Box3,
+            BoxGeometry, CylinderGeometry, MeshStandardMaterial, Mesh,
+            AmbientLight, DirectionalLight, AnimationMixer, Quaternion,
+            Matrix4, Vector2, MathUtils
+        } from "three";
+
+        // --- GAME STATE ---
+        let scene, camera, renderer, clock, mixer;
+        let player, playerModel, playerCollider;
+        let playerSpeed = 5.0; // meters per second
+        let currentLaneIndex = 1; // 0: left, 1: center, 2: right
+        const laneXPositions = [-2.5, 0, 2.5]; // X coordinates for each lane
+        const laneSwitchDuration = 0.2; // seconds
+        let laneSwitchTimer = 0;
+        let targetLaneX = 0;
+        let isSwitchingLane = false;
+
+        let lives = 3;
+        let score = 0;
+        let distanceTraveled = 0;
+        let lastScoreDistance = 0;
+
+        let obstacles = [];
+        let coins = [];
+        let platforms = []; // For the ground segments
+        const obstacleSpawnDistance = -50; // Z distance ahead of player to spawn obstacles
+        const obstacleDespawnDistance = 10; // Z distance behind player to despawn
+        let lastObstacleSpawnTime = 0;
+        const obstacleSpawnIntervalMin = 1.0;
+        const obstacleSpawnIntervalMax = 5.0;
+        let nextObstacleSpawnAt = 0;
+
+        let gameOver = false;
+        let lastTimestamp = 0;
+
+        // Teleport ability
+        const teleportDistance = 5.0;
+        const teleportCooldown = 3.0; // seconds
+        let teleportCooldownTimer = 0;
+        let canTeleport = true;
+        let isTeleporting = false;
+        const teleportEffectDuration = 0.3; // How long the visual effect lasts
+        let teleportEffectTimer = 0;
+        let teleportEffectMesh;
+
+        // Player physics/animation state
+        let velocityY = 0;
+        const gravity = -20; // Increased for faster fall
+        const jumpPower = 9;
+        let isJumping = false;
+        let isGrounded = true; // Player starts on the ground
+        let coyoteTime = 0; // Small window to jump after leaving platform
+        const coyoteTimeDuration = 0.1;
+
+        const INVINCIBILITY_DURATION = 1.0; // seconds after a hit
+        let invincibilityTimer = 0;
+        let isInvincible = false;
+
+        // UI Elements
+        const scoreElement = document.getElementById('score');
+        const livesElement = document.getElementById('lives');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const finalScoreElement = document.getElementById('final-score');
+        const restartButton = document.getElementById('restart-button');
+        const teleportButton = document.getElementById('teleport-btn');
+        const jumpButton = document.getElementById('jump-btn');
+        const leftButton = document.getElementById('left-btn');
+        const rightButton = document.getElementById('right-btn');
+
+        // --- INITIAL SETUP ---
+        function init() {
+            // Scene
+            scene = new Scene();
+            scene.background = new Color(0x87CEEB); // Sky blue
+            scene.fog = new Fog(0x87CEEB, 1, 100);
+
+            // Camera
+            camera = new PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 6, 10);
+            camera.lookAt(0, 2, 0);
+
+            // Renderer
+            renderer = new WebGLRenderer({ canvas: document.getElementById('scene'), antialias: true, preserveDrawingBuffer: true });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            window.addEventListener('resize', onWindowResize);
+
+            // Clock
+            clock = new Clock();
+
+            // Lighting
+            const ambientLight = new AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+            const directionalLight = new DirectionalLight(0xffffff, 0.5);
+            directionalLight.position.set(0, 10, 5);
+            scene.add(directionalLight);
+
+            // --- PLAYER ---
+            const playerGeometry = new CylinderGeometry(0.8, 0.8, 1.8, 16);
+            const playerMaterial = new MeshStandardMaterial({ color: 0x00ff00 });
+            player = new Group();
+            playerModel = new Mesh(playerGeometry, playerMaterial); // Placeholder
+            playerModel.position.y = 0.9; // Base of cylinder at y=0
+            player.add(playerModel);
+            player.position.set(laneXPositions[currentLaneIndex], 0, 5);
+            scene.add(player);
+
+            playerCollider = new Box3().setFromObject(playerModel); // Initial bounding box
+
+            // Load character model
+            loadModel("explorer").then(model => {
+                if (model) {
+                    playerModel.visible = false; // Hide placeholder
+                    model.scale.set(1.2, 1.2, 1.2);
+                    model.position.y = -0.05; // Adjust model to stand on ground
+                    player.add(model);
+                    playerModel = model; // Replace placeholder with actual model
+                    mixer = new AnimationMixer(playerModel);
+                    playPlayerAnimation("walk", 0.5); // Start with a walk animation
+                }
+            });
+
+            // Teleport effect mesh
+            const teleportEffectGeo = new SphereGeometry(2, 32, 32);
+            const teleportEffectMat = new MeshBasicMaterial({ color: 0x00FFFF, transparent: true, opacity: 0.5 });
+            teleportEffectMesh = new Mesh(teleportEffectGeo, teleportEffectMat);
+            teleportEffectMesh.visible = false;
+            scene.add(teleportEffectMesh);
+
+            // Initial track platforms
+            for (let i = 0; i < 10; i++) {
+                addPlatform(i * -10);
+            }
+
+            // Game loop
+            restartGame();
+            animate();
+        }
+
+        // --- ANIMATION MIXER HELPER ---
+        let currentClipAction;
+        function playPlayerAnimation(name, speed = 1.0) {
+            if (!mixer || !playerModel.animations) return;
+
+            let clip = playerModel.animations.find(a => a.name.toLowerCase().includes(name.toLowerCase()));
+            // Fallback for run/walk/idle
+            if (!clip) {
+                if (name === "run" || name === "walk") {
+                    clip = playerModel.animations.find(a => a.name.toLowerCase().includes("sprint"));
+                }
+                if (!clip) {
+                    clip = playerModel.animations.find(a => a.name.toLowerCase().includes("idle"));
+                }
+            }
+
+            if (clip) {
+                const action = mixer.clipAction(clip);
+                action.setEffectiveTimeScale(speed);
+                action.loop = 2200; // THREE.LoopRepeat
+
+                if (currentClipAction !== action) {
+                    if (currentClipAction) {
+                        currentClipAction.fadeOut(0.2);
+                    }
+                    action.reset().fadeIn(0.2).play();
+                    currentClipAction = action;
+                }
+            }
+        }
+
+
+        // --- GAME LOOP ---
+        function animate(timestamp) {
+            if (!gameOver) {
+                requestAnimationFrame(animate);
+            } else {
+                // Game over, stop requesting frames
+                return;
+            }
+
+            const delta = Math.min(0.05, clock.getDelta()); // Clamp delta to avoid massive jumps
+
+            // Update mixer for animations
+            if (mixer) {
+                mixer.update(delta);
+            }
+
+            // --- PLAYER MOVEMENT ---
+            // Forward movement
+            if (!isTeleporting) {
+                 player.position.z -= playerSpeed * delta;
+                 distanceTraveled += playerSpeed * delta;
+            }
+
+
+            // Lane switching animation
+            if (isSwitchingLane) {
+                laneSwitchTimer += delta;
+                const progress = Math.min(1, laneSwitchTimer / laneSwitchDuration);
+                player.position.x = MathUtils.lerp(player.position.x, targetLaneX, progress);
+                if (progress >= 1) {
+                    isSwitchingLane = false;
+                    player.position.x = targetLaneX; // Ensure it snaps to target
+                }
+            }
+
+            // Jumping/Falling
+            if (!isGrounded) {
+                velocityY += gravity * delta;
+                // Variable jump height: if jump key released while rising, reduce jump power
+                if (velocityY > 0 && !isJumping) {
+                    velocityY *= 0.5; // Halve velocity if jump key released
+                }
+                // Fall faster than rise
+                if (velocityY < 0) {
+                    velocityY += gravity * delta * 0.8; // 1.8x gravity while falling
+                }
+            }
+            player.position.y += velocityY * delta;
+
+            // Ground collision (simple for now)
+            if (player.position.y <= 0) {
+                player.position.y = 0;
+                if (!isGrounded) { // Just landed
+                    isGrounded = true;
+                    velocityY = 0;
+                    playPlayerAnimation("run", 0.5 + score * 0.0005); // Resume run animation
+                }
+                coyoteTime = 0; // Reset coyote time on ground
+            } else {
+                if (isGrounded) { // Just left the ground
+                    coyoteTime = coyoteTimeDuration;
+                }
+                isGrounded = false;
+            }
+
+            if (!isGrounded && coyoteTime > 0) {
+                coyoteTime -= delta;
+            }
+
+            // Invincibility Timer
+            if (isInvincible) {
+                invincibilityTimer -= delta;
+                // Flash player
+                playerModel.traverse(child => {
+                    if (child.isMesh) {
+                        child.visible = Math.floor(invincibilityTimer * 10) % 2 === 0;
+                    }
+                });
+                if (invincibilityTimer <= 0) {
+                    isInvincible = false;
+                    playerModel.traverse(child => { if (child.isMesh) child.visible = true; });
+                }
+            }
+
+            // Teleport cooldown
+            if (!canTeleport) {
+                teleportCooldownTimer -= delta;
+                if (teleportCooldownTimer <= 0) {
+                    canTeleport = true;
+                    teleportButton.classList.remove('disabled');
+                }
+            }
+
+            // Teleport visual effect
+            if (isTeleporting) {
+                teleportEffectTimer -= delta;
+                if (teleportEffectMesh) {
+                    teleportEffectMesh.position.copy(player.position);
+                    teleportEffectMesh.material.opacity = Math.max(0, teleportEffectTimer / teleportEffectDuration) * 0.5;
+                    teleportEffectMesh.visible = teleportEffectTimer > 0;
+                }
+                if (teleportEffectTimer <= 0) {
+                    isTeleporting = false;
+                }
+            }
+
+
+            // Update camera position to follow player
+            camera.position.z = player.position.z + 10;
+            camera.lookAt(player.position.x, player.position.y + 2, player.position.z);
+
+
+            // --- OBSTACLE / COIN LOGIC ---
+            // Spawn new platforms
+            while (platforms.length > 0 && platforms[0].position.z > player.position.z + obstacleDespawnDistance) {
+                const oldPlatform = platforms.shift();
+                scene.remove(oldPlatform);
+                addPlatform(platforms[platforms.length - 1].position.z - 10);
+            }
+
+            // Spawn obstacles and coins
+            const currentTime = clock.elapsedTime;
+            if (currentTime - lastObstacleSpawnTime > nextObstacleSpawnAt) {
+                spawnObstacle();
+                spawnCoin();
+                lastObstacleSpawnTime = currentTime;
+                nextObstacleSpawnAt = MathUtils.randFloat(obstacleSpawnIntervalMin, obstacleSpawnIntervalMax);
+            }
+
+            // Update obstacles
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const obstacle = obstacles[i];
+                if (obstacle.position.z > player.position.z + obstacleDespawnDistance) {
+                    scene.remove(obstacle);
+                    obstacles.splice(i, 1);
+                } else {
+                    // Obstacle movement (if any, simple cubes are stationary)
+                    // If obstacles were moving, update their position here
+                }
+            }
+
+            // Update coins
+            for (let i = coins.length - 1; i >= 0; i--) {
+                const coin = coins[i];
+                // Make coins spin!
+                if (coin.isMesh) {
+                    coin.rotation.y += Math.PI * delta;
+                }
+                if (coin.position.z > player.position.z + obstacleDespawnDistance) {
+                    scene.remove(coin);
+                    coins.splice(i, 1);
+                }
+            }
+
+            // --- COLLISION DETECTION ---
+            playerCollider.setFromObject(playerModel).expandByScalar(-0.3); // Shrink slightly for more forgiving collisions
+            playerCollider.translate(player.position); // Move player collider with player group
+
+            // Obstacle collision
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const obstacle = obstacles[i];
+                const obstacleBox = new Box3().setFromObject(obstacle);
+                obstacleBox.translate(obstacle.position); // Adjust obstacle's collider to its world position
+
+                if (playerCollider.intersectsBox(obstacleBox)) {
+                    if (!isInvincible) {
+                        playSound("hit");
+                        lives--;
+                        updateLivesUI();
+                        isInvincible = true;
+                        invincibilityTimer = INVINCIBILITY_DURATION;
+
+                        if (lives <= 0) {
+                            endGame();
+                            return; // Stop processing further frames
+                        }
+                    }
+                    // Remove obstacle on collision
+                    scene.remove(obstacle);
+                    obstacles.splice(i, 1);
+                }
+            }
+
+            // Coin collision
+            for (let i = coins.length - 1; i >= 0; i--) {
+                const coin = coins[i];
+                const coinBox = new Box3().setFromObject(coin).expandByScalar(-0.1); // Make coin collider smaller
+                coinBox.translate(coin.position);
+
+                if (playerCollider.intersectsBox(coinBox)) {
+                    playSound("coin_pickup");
+                    score += 10;
+                    updateScoreUI();
+                    scene.remove(coin);
+                    coins.splice(i, 1);
+                }
+            }
+
+
+            // --- SCORING ---
+            // Add score based on distance
+            if (distanceTraveled - lastScoreDistance >= 10) {
+                score += Math.floor((distanceTraveled - lastScoreDistance) / 10);
+                lastScoreDistance = distanceTraveled;
+                updateScoreUI();
+            }
+
+            // --- RENDERING ---
+            renderer.render(scene, camera);
+        }
+
+        // --- GAME MANAGEMENT ---
+        function startGame() {
+            if (gameOver) {
+                restartGame();
+            }
+            if (currentClipAction) {
+                currentClipAction.stop(); // Stop any initial idle animation
+            }
+            playPlayerAnimation("run", 0.5 + score * 0.0005); // Start running animation
+            playMusic("bg_loop_playful"); // Start background music
+        }
+
+        function restartGame() {
+            gameOver = false;
+            lives = 3;
+            score = 0;
+            distanceTraveled = 0;
+            lastScoreDistance = 0;
+            playerSpeed = 5.0; // Reset speed
+            teleportCooldownTimer = 0;
+            canTeleport = true;
+            teleportButton.classList.remove('disabled');
+
+            player.position.set(laneXPositions[1], 0, 5); // Reset player position
+            currentLaneIndex = 1;
+            isSwitchingLane = false;
+            isJumping = false;
+            isGrounded = true;
+            velocityY = 0;
+            coyoteTime = 0;
+            isInvincible = false;
+            invincibilityTimer = 0;
+            playerModel.traverse(child => { if (child.isMesh) child.visible = true; });
+
+            // Clear all obstacles and coins
+            obstacles.forEach(o => scene.remove(o));
+            obstacles = [];
+            coins.forEach(c => scene.remove(c));
+            coins = [];
+
+            // Clear platforms and regenerate
+            platforms.forEach(p => scene.remove(p));
+            platforms = [];
+            for (let i = 0; i < 10; i++) {
+                addPlatform(i * -10);
+            }
+
+            lastObstacleSpawnTime = clock.elapsedTime;
+            nextObstacleSpawnAt = MathUtils.randFloat(obstacleSpawnIntervalMin, obstacleSpawnIntervalMax);
+
+            updateLivesUI();
+            updateScoreUI();
+            gameOverScreen.classList.remove('visible');
+            animate(); // Restart the animation loop
+        }
+
+        function endGame() {
+            gameOver = true;
+            playSound("game_over");
+            finalScoreElement.textContent = score;
+            gameOverScreen.classList.add('visible');
+            if (currentClipAction) {
+                currentClipAction.stop(); // Stop running animation
+                playPlayerAnimation("idle", 0.5); // Play idle animation
+            }
+        }
+
+        // --- UI UPDATES ---
+        function updateLivesUI() {
+            livesElement.textContent = `Lives: ${'💖'.repeat(lives)}`;
+        }
+
+        function updateScoreUI() {
+            scoreElement.textContent = `Score: ${score}`;
+        }
+
+        // --- GAME OBJECTS ---
+        function addPlatform(zPos) {
+            const platformGeometry = new BoxGeometry(10, 0.1, 10);
+            const platformMaterial = new MeshStandardMaterial({ color: 0x55aa55 }); // Green track
+            const platform = new Mesh(platformGeometry, platformMaterial);
+            platform.position.set(0, -0.05, zPos);
+            scene.add(platform);
+            platforms.push(platform);
+        }
+
+        function spawnObstacle() {
+            // Ensure first 3 seconds are safe
+            if (clock.elapsedTime < 3) return;
+
+            const lane = Math.floor(Math.random() * 3);
+            const xPos = laneXPositions[lane];
+            const zPos = player.position.z + obstacleSpawnDistance;
+
+            const obstacleType = Math.random();
+            let obstacleMesh;
+
+            if (obstacleType < 0.5) { // Simple box obstacle
+                const obstacleGeometry = new BoxGeometry(1.5, 1.5, 1.5);
+                const obstacleMaterial = new MeshStandardMaterial({ color: 0xff0000 });
+                obstacleMesh = new Mesh(obstacleGeometry, obstacleMaterial);
+                obstacleMesh.position.set(xPos, 0.75, zPos); // Half height for y
+            } else { // Car obstacle
+                loadModel("car").then(model => {
+                    if (model) {
+                        model.scale.set(0.8, 0.8, 0.8);
+                        model.position.set(xPos, 0.1, zPos); // Adjust car to sit on track
+                        model.rotation.y = Math.PI; // Face towards player
+                        scene.add(model);
+                        obstacles.push(model);
+                    } else { // Fallback to box if model fails
+                        const obstacleGeometry = new BoxGeometry(2, 1, 3);
+                        const obstacleMaterial = new MeshStandardMaterial({ color: 0xffa500 }); // Orange
+                        obstacleMesh = new Mesh(obstacleGeometry, obstacleMaterial);
+                        obstacleMesh.position.set(xPos, 0.5, zPos);
+                        scene.add(obstacleMesh);
+                        obstacles.push(obstacleMesh);
+                    }
+                });
+                return; // Car model will be added asynchronously
+            }
+            scene.add(obstacleMesh);
+            obstacles.push(obstacleMesh);
+        }
+
+        function spawnCoin() {
+             // Ensure first 3 seconds are safe
+             if (clock.elapsedTime < 3) return;
+
+            const lane = Math.floor(Math.random() * 3);
+            const xPos = laneXPositions[lane];
+            const zPos = player.position.z + obstacleSpawnDistance - MathUtils.randFloat(5, 15); // Spawn a bit further than obstacles
+
+            // Only spawn if there's no obstacle nearby
+            let tooCloseToObstacle = obstacles.some(obs =>
+                Math.abs(obs.position.x - xPos) < 1.5 && Math.abs(obs.position.z - zPos) < 5
+            );
+            if (tooCloseToObstacle) return;
+
+            loadModel("coin").then(model => {
+                if (model) {
+                    model.scale.set(0.5, 0.5, 0.5);
+                    model.position.set(xPos, 1, zPos); // Float above the track
+                    scene.add(model);
+                    coins.push(model);
+                } else { // Fallback to simple cylinder if model fails
+                    const coinGeometry = new CylinderGeometry(0.5, 0.5, 0.1, 16);
+                    const coinMaterial = new MeshStandardMaterial({ color: 0xffd700 }); // Gold
+                    const coinMesh = new Mesh(coinGeometry, coinMaterial);
+                    coinMesh.position.set(xPos, 1, zPos);
+                    scene.add(coinMesh);
+                    coins.push(coinMesh);
+                }
+            });
+        }
+
+
+        // --- CONTROLS ---
+        function switchLane(direction) {
+            if (gameOver || isSwitchingLane || !isGrounded) return; // Can't switch lanes mid-air
+
+            let newLaneIndex = currentLaneIndex + direction;
+            if (newLaneIndex >= 0 && newLaneIndex < laneXPositions.length) {
+                currentLaneIndex = newLaneIndex;
+                targetLaneX = laneXPositions[currentLaneIndex];
+                isSwitchingLane = true;
+                laneSwitchTimer = 0;
+            }
+        }
+
+        function jump() {
+            if (gameOver) return;
+
+            if (isGrounded || coyoteTime > 0) { // Allow jump from ground or within coyote time
+                playSound("jump");
+                velocityY = jumpPower;
+                isJumping = true;
+                isGrounded = false; // Player is now airborne
+                coyoteTime = 0; // Consume coyote time
+                playPlayerAnimation("idle", 1.0); // Simple idle during jump for now
+            }
+        }
+
+        function releaseJump() {
+            isJumping = false;
+        }
+
+        function useTeleport() {
+            if (gameOver || !canTeleport) return;
+
+            playSound("whoosh");
+            player.position.z -= teleportDistance;
+            distanceTraveled += teleportDistance; // Count teleport distance towards score
+            score += Math.floor(teleportDistance / 10); // Directly add teleport distance to score
+            updateScoreUI();
+
+            canTeleport = false;
+            teleportCooldownTimer = teleportCooldown;
+            teleportButton.classList.add('disabled');
+
+            isTeleporting = true;
+            teleportEffectTimer = teleportEffectDuration;
+        }
+
+
+        // --- EVENT LISTENERS ---
+        // Keyboard controls
+        window.addEventListener('keydown', (event) => {
+            if (gameOver) {
+                if (event.key === ' ' || event.key === 'Enter') {
+                    restartGame();
+                }
+                return;
+            }
+            switch (event.key) {
+                case 'ArrowLeft':
+                case 'a':
+                    switchLane(-1);
+                    event.preventDefault();
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                    switchLane(1);
+                    event.preventDefault();
+                    break;
+                case 'ArrowUp':
+                case 'w':
+                case ' ': // Space bar for jump
+                    jump();
+                    event.preventDefault();
+                    break;
+                case 't': // 't' for teleport
+                    useTeleport();
+                    event.preventDefault();
+                    break;
+            }
+        });
+
+        window.addEventListener('keyup', (event) => {
+            switch (event.key) {
+                case 'ArrowUp':
+                case 'w':
+                case ' ':
+                    releaseJump();
+                    break;
+            }
+        });
+
+
+        // On-screen buttons
+        leftButton.addEventListener('pointerdown', (e) => { e.preventDefault(); switchLane(-1); });
+        rightButton.addEventListener('pointerdown', (e) => { e.preventDefault(); switchLane(1); });
+        jumpButton.addEventListener('pointerdown', (e) => { e.preventDefault(); jump(); });
+        jumpButton.addEventListener('pointerup', (e) => { e.preventDefault(); releaseJump(); });
+        teleportButton.addEventListener('pointerdown', (e) => { e.preventDefault(); useTeleport(); });
+        restartButton.addEventListener('pointerdown', (e) => { e.preventDefault(); restartGame(); });
+
+
+        // Swipe controls (for lane switching and jump)
+        let touchStartX = 0;
+        let touchStartY = 0;
+        let touchMoveX = 0;
+        let touchMoveY = 0;
+        let isSwiping = false;
+
+        window.addEventListener('touchstart', (event) => {
+            if (event.touches.length === 1) {
+                touchStartX = event.touches[0].clientX;
+                touchStartY = event.touches[0].clientY;
+                isSwiping = true;
+            }
+        }, { passive: false }); // Passive false to allow preventDefault
+
+        window.addEventListener('touchmove', (event) => {
+            if (isSwiping && event.touches.length === 1) {
+                touchMoveX = event.touches[0].clientX;
+                touchMoveY = event.touches[0].clientY;
+            }
+        }, { passive: false });
+
+        window.addEventListener('touchend', (event) => {
+            if (isSwiping) {
+                const deltaX = touchMoveX - touchStartX;
+                const deltaY = touchMoveY - touchStartY;
+                const swipeThreshold = 50; // Pixels
+
+                if (Math.abs(deltaX) > swipeThreshold || Math.abs(deltaY) > swipeThreshold) {
+                    if (Math.abs(deltaX) > Math.abs(deltaY)) { // Horizontal swipe
+                        if (deltaX > 0) {
+                            switchLane(1); // Swipe right
+                        } else {
+                            switchLane(-1); // Swipe left
+                        }
+                    } else { // Vertical swipe
+                        if (deltaY < 0) {
+                            jump(); // Swipe up for jump
+                        }
+                    }
+                }
+                isSwiping = false;
+                // If jump was triggered by a swipe, release it now
+                if (Math.abs(deltaY) > Math.abs(deltaX) && deltaY < 0) {
+                    releaseJump();
+                }
+            }
+            isSwiping = false; // Reset regardless
+        });
+
+
+        // --- WINDOW RESIZE ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- VISIBILITY / FOCUS HANDLING ---
+        let gameOn = true;
+        const setGameOn = (v) => {
+            if (v === gameOn) return;
+            gameOn = v;
+            if (v) {
+                clock.getDelta(); // Reset delta to prevent teleportation after pause
+                if (!gameOver) animate();
+                playMusic("bg_loop_playful"); // Resume music
+            } else {
+                 // Pause logic (handled by stopping requestAnimationFrame and checking gameOver)
+            }
+        };
+        document.addEventListener('visibilitychange', () => setGameOn(!document.hidden));
+        addEventListener('blur', () => setGameOn(false));
+        addEventListener('focus', () => setGameOn(true));
+
+        // Start everything!
+        init();
+        startGame(); // Start the game immediately
+
+    </script>
+</body>
+</html>

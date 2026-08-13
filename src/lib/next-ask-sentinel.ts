@@ -108,6 +108,28 @@ export function parseNextAskLine(text: string): ParsedNextAsk | null {
   return { ideas, cleanedText };
 }
 
+/** Recovers a NEXT_ASKS line the model placed at the very START of its reply
+ *  instead of the end (BUG-FIX-LOG 2026-08-13 — a second placement failure,
+ *  distinct from 2026-08-12's leaked-inside-the-fence bug: this time before
+ *  the fence even opens). `parseNextAskLine` and the route's pre-strip guard
+ *  both only ever look at the TRAILING line, so a leading sentinel sailed
+ *  straight into the chat bubble as raw text. Moving it to the end lets the
+ *  existing trailing-only machinery recover it exactly as if the model had
+ *  followed the instruction — no separate leading-case handling needed
+ *  anywhere else. A no-op (returns `text` unchanged) whenever the first line
+ *  isn't the sentinel, or the sentinel is the only line (nothing to move it
+ *  ahead of). */
+export function reclaimLeadingNextAsk(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return text;
+  const newlineIdx = trimmed.indexOf("\n");
+  if (newlineIdx === -1) return text;
+  const firstLine = trimmed.slice(0, newlineIdx).trim();
+  if (!firstLine.startsWith(NEXT_ASKS_PREFIX)) return text;
+  const rest = trimmed.slice(newlineIdx + 1).trim();
+  return `${rest}\n${firstLine}`;
+}
+
 /** Hides a NEXT_ASKS line while it's still streaming in, token by token.
  *  Without this, the raw sentinel (ideas separated by pipes) flashes live in
  *  the chat bubble for the second or two it takes to stream in, before the

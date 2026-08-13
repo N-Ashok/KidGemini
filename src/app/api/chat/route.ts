@@ -21,9 +21,10 @@ import { applyPatch } from "@/lib/repair-prompt";
 import { injectAssets } from "@/lib/assets/inject";
 import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
 import { danglingModuleSpecifiers, ensureThreeImports, externalScriptSrcs, newDanglingModuleSpecifiers, newExternalScriptSrcs, newUnknownThreeImports, unknownThreeImports, stripRuntimeGlobalImports } from "@/lib/assets/three-import-lint";
+import { findJsSyntaxError } from "@/lib/js-syntax-lint";
 import { CURATED_IMPORT_NAMES } from "@/lib/assets/prompt-catalog";
 import { ensureMultiplayerMarker } from "@/lib/multiplayer-gate";
-import { parseNextAskLine } from "@/lib/next-ask-sentinel";
+import { parseNextAskLine, reclaimLeadingNextAsk } from "@/lib/next-ask-sentinel";
 import { buildFallbackNextAskHints, kidHintsEnabled } from "@/lib/next-ask-hints";
 import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
@@ -928,7 +929,13 @@ export async function POST(req: NextRequest) {
       // reply is left completely untouched).
       let workingFull = full;
       if (kidHintsEnabled()) {
-        const parsed = parseNextAskLine(full);
+        // BUG-FIX-LOG 2026-08-13: a second placement failure — the model can
+        // also put the sentinel at the very START of the reply, before the
+        // fence opens. Move it to the end FIRST (no-op when it's already
+        // trailing, or absent) so the trailing-only logic below recovers it
+        // exactly as if the model had followed the instruction the first time.
+        const normalizedFull = reclaimLeadingNextAsk(full);
+        const parsed = parseNextAskLine(normalizedFull);
         if (parsed && extractArtifact(parsed.cleanedText).wasFenced) {
           workingFull = parsed.cleanedText;
           nextAskHints = parsed.ideas;
@@ -987,7 +994,17 @@ export async function POST(req: NextRequest) {
       const badImports = artifactHtml ? unknownThreeImports(artifactHtml) : [];
       const badScripts = artifactHtml ? externalScriptSrcs(artifactHtml) : [];
       const badModules = artifactHtml ? danglingModuleSpecifiers(artifactHtml) : [];
-      if ((badImports.length || badScripts.length || badModules.length) && artifactHtml) {
+      // Deterministic pre-delivery syntax check (owner ask 2026-08-13, after a
+      // real generated game crashed on load with `Invalid or unexpected
+      // token` — nothing in the pipeline caught it before the kid saw a
+      // broken game). A parse costs single-digit milliseconds (measured:
+      // ~16ms on a real 58KB game) — negligible next to the model call
+      // already happening. Folded into the SAME corrective retry as the
+      // import/script lints above, not a separate sequential one (Calvin
+      // precedent, 2026-08-09) — the kid has already waited through a full
+      // generation by this point.
+      const syntaxError = artifactHtml ? findJsSyntaxError(artifactHtml) : null;
+      if ((badImports.length || badScripts.length || badModules.length || syntaxError) && artifactHtml) {
         if (badImports.length) {
           console.warn(`[api/chat] ⛔ unknown three imports: ${badImports.join(", ")} — corrective retry @${ms()}ms`);
         }
@@ -996,6 +1013,9 @@ export async function POST(req: NextRequest) {
         }
         if (badModules.length) {
           console.warn(`[api/chat] ⛔ dangling module imports (pipeline bypass): ${badModules.join(", ")} — corrective retry @${ms()}ms`);
+        }
+        if (syntaxError) {
+          console.warn(`[api/chat] ⛔ JS syntax error: ${syntaxError.message} — corrective retry @${ms()}ms`);
         }
         // Is this actually a 3D game? A bad three-import proves it; otherwise
         // look for the marker or a three usage in the artifact. A 2D game that
@@ -1011,6 +1031,9 @@ export async function POST(req: NextRequest) {
             : "",
           badModules.length
             ? `it imported ${badModules.join(", ")} — those files do not exist; a game is ONE self-contained HTML document, and the ONLY module specifier that resolves is the bare "three"`
+            : "",
+          syntaxError
+            ? `it has a JavaScript syntax error and never even parses: ${syntaxError.message}${syntaxError.line ? ` (around line ${syntaxError.line})` : ""} — check every string is closed, every brace/paren is matched, and no statement was cut off mid-way`
             : "",
         ].filter(Boolean);
         try {
@@ -1042,7 +1065,8 @@ export async function POST(req: NextRequest) {
             corrective.artifactHtml &&
             unknownThreeImports(corrective.artifactHtml).length === 0 &&
             externalScriptSrcs(corrective.artifactHtml).length === 0 &&
-            danglingModuleSpecifiers(corrective.artifactHtml).length === 0
+            danglingModuleSpecifiers(corrective.artifactHtml).length === 0 &&
+            !findJsSyntaxError(corrective.artifactHtml)
           ) {
             console.log(`[api/chat] ✓ import-lint corrective retry @${ms()}ms`);
             displayText = !corrective.wasFenced

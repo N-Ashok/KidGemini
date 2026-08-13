@@ -65,6 +65,7 @@ import { shouldAutoRetry } from "@/lib/stream-recovery";
 import { pollTurnResult, pollTurnOutcome } from "@/lib/turn-resume";
 import {
   applyRecoveredReply,
+  applyRepairedArtifact,
   noteStillWorking,
   keepBookmark,
   RECOVERY_WORKING_NOTE,
@@ -2091,6 +2092,31 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
               ) : undefined
             }
             onDiagnostics={setHelpDiagnostics}
+            // Persist a successful self-heal patch (BUG-FIX-LOG 2026-08-13):
+            // without this, the fix only ever lived in ArtifactFrame's own
+            // in-tab state and vanished on the next reload/reopen — confirmed
+            // live, the same game auto-"repaired" 5 times over 2+ hours and
+            // was still broken every time. Same pure-updater-then-PUT shape
+            // as the write-through effect below (never PUT from inside the
+            // updater — React may invoke it more than once for one update).
+            onRepaired={(html) => {
+              const messageId = currentGameMessage(active.messages)?.id;
+              if (!messageId) return;
+              let persistConvo: Conversation | undefined;
+              setConvos((list) => {
+                const { convos: next, patched } = applyRepairedArtifact(list, { convoId: active.id, replyId: messageId }, html);
+                if (!patched) return list;
+                persistConvo = next.find((c) => c.id === active.id);
+                return next;
+              });
+              if (persistConvo) {
+                void fetch(`/api/chats/${encodeURIComponent(persistConvo.id)}`, {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ convo: persistConvo }),
+                }).catch((err) => console.warn("[chat] self-heal repair persist failed", err));
+              }
+            }}
             // 🐢 "Make it faster" (docs/2026-07-30_PRD_PreviewPerfPanel.md
             // addendum): the hint string already carries the real technical
             // context (heaviest model, instance count, animated) built in

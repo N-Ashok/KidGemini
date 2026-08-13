@@ -615,7 +615,10 @@ describe("POST /api/chat — a game must never load a library from an external C
     `<script>const g = new THREE.CapsuleGeometry(1.5, 3, 4, 8);</script></body></html>`;
   const CLEAN_GAME =
     `<!doctype html><html><body><!--USES_THREE--><canvas id="scene"></canvas>\n` +
-    `<script type="module">import { Scene, CapsuleGeometry } from "three";\nCLEAN GAME</script></body></html>`;
+    // A comment, not bare text — valid JS syntax (BUG-FIX-LOG 2026-08-13's
+    // js-syntax-lint correctly flagged the old bare "CLEAN GAME" as a real
+    // syntax error; the marker just needs to still be a substring of the doc).
+    `<script type="module">import { Scene, CapsuleGeometry } from "three";\n/* CLEAN GAME */</script></body></html>`;
 
   const doneOf = (text: string) => JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
 

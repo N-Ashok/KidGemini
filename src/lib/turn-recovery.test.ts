@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   applyRecoveredReply,
+  applyRepairedArtifact,
   noteStillWorking,
   RECOVERY_WORKING_NOTE,
   RECOVERY_LOST_NOTE,
@@ -58,6 +59,40 @@ describe("applyRecoveredReply — the server's finished reply lands in the waiti
       { text: "final", artifactHtml: null },
     );
     expect(withNote.convos[0]!.messages[1]!.text).toBe("final");
+  });
+});
+
+// BUG-FIX-LOG 2026-08-13: the browser self-heals a broken generation
+// automatically (usePreviewVerify/PreviewVerifyController), but the patched
+// HTML only ever lived in that in-tab controller's own state — nothing wrote
+// it back to the stored conversation. Every reload/reopen started over from
+// the ORIGINAL, still-broken artifact, re-verified, re-repaired, and threw
+// the fix away again — confirmed live: the same River Nomad game was
+// auto-"repaired" 5 times across 2+ hours and was still broken every time.
+describe("applyRepairedArtifact — a successful self-heal patch lands in the stored game", () => {
+  it("replaces the message's artifactHtml, leaving its text untouched", () => {
+    const out = applyRepairedArtifact(
+      [convo("c1", "Here's your game!")],
+      { convoId: "c1", replyId: "r1" },
+      "<html>fixed</html>",
+    );
+    expect(out.patched).toBe(true);
+    expect(out.convos[0]!.messages[1]).toMatchObject({ text: "Here's your game!", artifactHtml: "<html>fixed</html>" });
+  });
+
+  it("targets the game's own chat, not necessarily the active one", () => {
+    const out = applyRepairedArtifact(
+      [convo("c-other", "unrelated", "r9"), convo("c1", "…", "r1")],
+      { convoId: "c1", replyId: "r1" },
+      "<html>fixed</html>",
+    );
+    expect(out.convos[0]!.messages[1]!.artifactHtml).toBeUndefined();
+    expect(out.convos[1]!.messages[1]!.artifactHtml).toBe("<html>fixed</html>");
+  });
+
+  it("reports patched=false when the message no longer exists (deleted/rewound) — never invents one", () => {
+    const out = applyRepairedArtifact([convo("c1", "x", "r-different")], { convoId: "c1", replyId: "r1" }, "<html>fixed</html>");
+    expect(out.patched).toBe(false);
   });
 });
 

@@ -1,0 +1,1380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><!--ari-perf-probe--><script>(function () {
+  window.__arPerfProbeVersion = 4;
+  var buffer = [];
+  var ready = false;
+  function send(ev) {
+    try { parent.postMessage({ source: "ari-perf-probe", event: ev }, "*"); } catch (e) { /* parent gone */ }
+  }
+  function post(ev) { if (ready) send(ev); else buffer.push(ev); }
+  addEventListener("message", function (event) {
+    var d = event && event.data;
+    if (!d || d.source !== "ari-parent" || d.type !== "ready") return;
+    ready = true;
+    for (var i = 0; i < buffer.length; i++) send(buffer[i]);
+    buffer = [];
+  });
+
+  // GL draw-call counter (v4, 2026-08-10). snapshot.drawCalls was designed to
+  // read __arPerf.renderer.info — which NOTHING ever assigned, so it was null
+  // in every snapshot ever posted. Meanwhile the owner's AutoRicksaw game ran
+  // at 1,250 draws/frame from hand-built meshes the model accounting cannot
+  // see, and the slowdown hint blamed two static trees nine edits in a row.
+  // Count actual GL draw commands instead: engine-agnostic, needs nothing
+  // from the game, reaches stored games via the version re-floor.
+  var glDraws = 0;
+  function wrapGL(proto) {
+    if (!proto) return;
+    try {
+      var de = proto.drawElements;
+      if (de) proto.drawElements = function () { glDraws++; return de.apply(this, arguments); };
+      var da = proto.drawArrays;
+      if (da) proto.drawArrays = function () { glDraws++; return da.apply(this, arguments); };
+      var dei = proto.drawElementsInstanced;
+      if (dei) proto.drawElementsInstanced = function () { glDraws++; return dei.apply(this, arguments); };
+      var dai = proto.drawArraysInstanced;
+      if (dai) proto.drawArraysInstanced = function () { glDraws++; return dai.apply(this, arguments); };
+    } catch (e) { /* never break rendering for telemetry */ }
+  }
+  if (!window.__arGlDrawPatched) {
+    window.__arGlDrawPatched = 1;
+    wrapGL(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+    wrapGL(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+  }
+  var lastGlDraws = 0;
+
+  // FPS estimate: count rAF ticks in the last sample window. Stacks fine on
+  // top of the frame governor's own wrap (both call straight through).
+  var frames = 0;
+  var origRaf = window.requestAnimationFrame;
+  if (origRaf) {
+    window.requestAnimationFrame = function (cb) {
+      return origRaf.call(window, function (t) {
+        frames++;
+        return cb(t);
+      });
+    };
+  }
+
+  // "Playing" signal (v3, owner report 2026-08-06): frames alone can't tell
+  // "running slow" from "not running" — an unstarted game or idle lobby
+  // renders little/nothing by design. Track the last real input so the
+  // slowdown banner only trusts samples taken while the kid is actually
+  // playing. Capture phase: game code often stopPropagation()s.
+  var lastInput = 0;
+  var inputEvents = ["pointerdown", "keydown", "touchstart"];
+  for (var ie = 0; ie < inputEvents.length; ie++) {
+    addEventListener(inputEvents[ie], function () { lastInput = Date.now(); }, true);
+  }
+
+  function snapshot() {
+    // A hidden tab/panel genuinely renders zero frames — that's true, but it
+    // is NOT the same claim as "the game is running slow," which is what
+    // this snapshot exists to detect. Without this guard, every setInterval
+    // tick during a background gap (leaving Ari and coming back) posts a
+    // near-zero fps reading, which is enough on its own to satisfy the
+    // slowdown banner's "5 consecutive low samples" rule — so the banner
+    // flashes on return even though nothing was ever actually slow. Skip
+    // sampling entirely while hidden, and keep resetting the frame counter
+    // so no partial/corrupted count leaks into the first reading after the
+    // tab becomes visible again.
+    if (document.hidden) { frames = 0; return; }
+    var perf = window.__arPerf || {};
+    var reg = perf.models || {};
+    var animatedRoots = perf.animatedRoots;
+    var models = [];
+    for (var name in reg) {
+      if (!Object.prototype.hasOwnProperty.call(reg, name)) continue;
+      var entry = reg[name];
+      var roots = entry.instances || [];
+      // Live = still parented into a scene graph. A load()ed-but-never-added
+      // (or later removed) root reads parent as falsy — never a stale row.
+      var live = [];
+      for (var i = 0; i < roots.length; i++) {
+        if (roots[i] && roots[i].parent) live.push(roots[i]);
+      }
+      if (live.length === 0) continue;
+      var animated = false;
+      if (animatedRoots) {
+        for (var j = 0; j < live.length; j++) {
+          if (animatedRoots.has(live[j])) { animated = true; break; }
+        }
+      }
+      var triangles = entry.triangles || 0;
+      var load = triangles * live.length * (animated ? 2 : 1);
+      var bucket = load <= 20000 ? "green" : (load <= 150000 ? "yellow" : "red");
+      models.push({ name: name, triangles: triangles, instances: live.length, animated: animated, load: load, bucket: bucket });
+    }
+    var batches = perf.batches || {};
+    for (var bname in batches) {
+      if (!Object.prototype.hasOwnProperty.call(batches, bname)) continue;
+      var bentry = batches[bname];
+      var broots = bentry.roots || [];
+      var blive = false;
+      for (var bi = 0; bi < broots.length; bi++) { if (broots[bi] && broots[bi].parent) { blive = true; break; } }
+      if (!blive) continue;
+      var btriangles = bentry.triangles || 0;
+      var bdrawCalls = bentry.drawCalls || 1;
+      var bload = btriangles * bdrawCalls;
+      var bbucket = bload <= 20000 ? "green" : (bload <= 150000 ? "yellow" : "red");
+      models.push({ name: bentry.name, triangles: btriangles, instances: bentry.count || 0, animated: false, load: bload, bucket: bbucket, batched: true, drawCalls: bdrawCalls });
+    }
+    models.sort(function (a, b) { return b.load - a.load; });
+    var drawCalls = null, rendererTriangles = null;
+    // Per-frame average over this window from the GL counter — the value
+    // that actually distinguishes "a thousand tiny meshes" from "two trees".
+    var windowDraws = glDraws - lastGlDraws;
+    lastGlDraws = glDraws;
+    if (windowDraws > 0 && frames > 0) {
+      drawCalls = Math.round(windowDraws / frames);
+    } else if (perf.renderer && perf.renderer.info && perf.renderer.info.render) {
+      // Legacy fallback, kept for a game that registers its renderer.
+      drawCalls = perf.renderer.info.render.calls;
+      rendererTriangles = perf.renderer.info.render.triangles;
+    }
+    var playing = frames > 0 && lastInput > 0 && (Date.now() - lastInput) < 10000;
+    post({ type: "snapshot", snapshot: { fps: frames, playing: playing, drawCalls: drawCalls, rendererTriangles: rendererTriangles, models: models } });
+    frames = 0;
+  }
+  setInterval(snapshot, 1000);
+})();</script><script type="importmap">{"imports":{"three":"https://assets.ariantra.com/three.098b4c.js"}}</script><style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style><script>(function(){
+if (window.__arFrameGovernor) return;
+window.__arFrameGovernor = 1;
+var raf = window.requestAnimationFrame.bind(window);
+var seen = new WeakMap();
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    // Skipped frames ALWAYS re-request through the wrapper, so the loop can
+    // never die — that is the one failure mode that would break a live game.
+    if (document.hidden) { window.requestAnimationFrame(cb); return; }
+    var prev = (typeof cb === 'function' ? seen.get(cb) : 0) || 0;
+    if (prev && t - prev < 15) { window.requestAnimationFrame(cb); return; }
+    if (typeof cb === 'function') seen.set(cb, t);
+    return cb(t);
+  });
+};
+})();</script><script>(function(){
+if (window.__arGlGuard) return;
+window.__arGlGuard = 1;
+window.__arGlGuardVersion = 2;
+var get = HTMLCanvasElement.prototype.getContext;
+var live = [];
+var lostCount = 0;
+HTMLCanvasElement.prototype.getContext = function (type) {
+  var ctx = get.apply(this, arguments);
+  try {
+    if (ctx && /webgl/i.test(String(type)) && !this.__arGlGuarded) {
+      this.__arGlGuarded = 1;
+      var ext = null;
+      try { ext = ctx.getExtension('WEBGL_lose_context'); } catch (e2) { /* none */ }
+      live.push({ ctx: ctx, ext: ext });
+      this.addEventListener('webglcontextlost', function (e) {
+        // THE line that matters: without preventDefault the loss is final and
+        // the canvas stays blank for the rest of the document's life.
+        e.preventDefault();
+        lostCount++;
+        console.warn('[ari] WebGL context lost — restore requested');
+        // Watchdog (2026-08-10 №4, "it didnot regain"): browsers do not
+        // always volunteer webglcontextrestored, and a politely-held loop
+        // waits forever. The ladder is the automatic version of what fixed
+        // it for the owner by hand (code↔preview toggle = a remount):
+        // after 2s still lost → ask the driver; 3s more still lost → ask
+        // the parent to remount this frame.
+        setTimeout(function () {
+          var still = true;
+          try { still = ctx.isContextLost(); } catch (e3) { /* gone */ }
+          if (!still) return;
+          try { if (ext) ext.restoreContext(); } catch (e3) { /* refused */ }
+          setTimeout(function () {
+            var dead = true;
+            try { dead = ctx.isContextLost(); } catch (e4) { /* gone */ }
+            if (!dead) return;
+            console.warn('[ari] WebGL context is not coming back — asking the parent to reload the game');
+            try { parent.postMessage({ __ari: 'gl-dead' }, '*'); } catch (e4) { /* no parent */ }
+          }, 3000);
+        }, 2000);
+      }, false);
+      this.addEventListener('webglcontextrestored', function () {
+        if (lostCount > 0) lostCount--;
+        console.warn('[ari] WebGL context restored');
+      }, false);
+    }
+  } catch (e) { /* never break getContext */ }
+  return ctx;
+};
+// Restoring the CONTEXT is not enough — the game's LOOP must survive to see
+// it. While a context is lost, three.js's renderer throws mid-render (the GL
+// introspection APIs return null, and three calls .trim() on the result —
+// the exact stack the harness attributed on 2026-08-10). Games request their
+// next frame AFTER rendering (three's setAnimationLoop does too), so that
+// throw kills the loop for good: the context comes back, nothing draws, the
+// canvas stays blank, and no click can restart it. So: while any tracked
+// context is lost, hold rAF callbacks — always re-request, never run — the
+// same shape as the frame governor's document.hidden skip, and it resumes by
+// itself on webglcontextrestored. Composes with the governor's own wrapper
+// (this one runs outside it) — worst case a held frame is re-queued twice.
+// lostCount alone is NOT enough to gate on: webglcontextlost is dispatched
+// as a task, so there is a window after the actual loss (browser eviction or
+// our own release) where the event has not landed yet — one frame renders
+// against the dead context and three throws anyway. isContextLost() is
+// synchronous truth; the event counter only covers the fake-restore corner
+// (some drivers report isContextLost()=false again before firing restored).
+function anyLost() {
+  for (var i = 0; i < live.length; i++) {
+    try { if (live[i].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  for (var j = 0; j < released.length; j++) {
+    try { if (released[j].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  return false;
+}
+var raf = window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    if (lostCount > 0 || anyLost()) { window.requestAnimationFrame(cb); return; }
+    return cb(t);
+  });
+};
+var released = [];
+function release(why) {
+  // Hand the GPU back now rather than at GC, so the next preview iframe does
+  // not push the page over the context cap. Kept restorable (see pageshow):
+  // a release we believed was terminal must be reversible if the page comes
+  // back — 2026-08-10 second owner report, the pane-switch freeze.
+  for (var i = 0; i < live.length; i++) {
+    try {
+      if (live[i].ext) { live[i].ext.loseContext(); released.push(live[i]); }
+    } catch (e) { /* already gone */ }
+  }
+  live.length = 0;
+  // Observable from the parent page: this is how the harness proves the round
+  // was ASKED to release at unmount, rather than assuming it.
+  console.warn('[ari] WebGL contexts released (' + why + ')');
+}
+// Lets the harness assert that a torn-down round actually gave its context
+// back, instead of assuming pagehide fired.
+Object.defineProperty(window, '__arGlCount', { get: function () { return live.length; } });
+// The parent asks explicitly, immediately before it unmounts this frame.
+// pagehide alone is NOT enough: Chrome does not reliably fire it when an
+// iframe is detached from the DOM, which is precisely how every shadow round
+// ends — so without this the contexts pile up exactly as they did in the
+// owner's eleven-edit session.
+addEventListener('message', function (e) {
+  var d = e && e.data;
+  if (d && d.__ari === 'release-gl') release('asked');
+}, false);
+// Diagnostic-only (2026-08-11): a non-persisted pagehide fired mid-edit on
+// the STILL-PLAYING game, with no deliberate srcDoc/key change from React —
+// after shadow-verify was removed the same day, the explicit 'release-gl'
+// message (sent by the parent right before it unmounted the shadow frame)
+// went with it, leaving THIS listener as the only release trigger, carrying
+// more weight than "pagehide is kept as a backstop only" (the comment above
+// release()) ever assumed. This context string is what will tell us whether
+// it's a real backgrounding event (visibility/online state) or something
+// else entirely — never throws, so it can never break the guard itself.
+function diag() {
+  try {
+    return 'visibility=' + document.visibilityState + ' hidden=' + document.hidden +
+      ' online=' + navigator.onLine + ' at=' + Date.now();
+  } catch (e) { return 'diag-unavailable'; }
+}
+addEventListener('pagehide', function (e) {
+  // Safari/iOS fires pagehide when the page is merely BACKGROUNDED (app or
+  // tab switch, pane transitions) and will bring it back — persisted=true.
+  // Releasing there kills the LIVE game's context and the loop-hold freezes
+  // it: the owner's "froze, then turned blue when I clicked back"
+  // (2026-08-10, second report). Only a non-persisted pagehide — the actual
+  // teardown of a detached iframe — releases.
+  if (e && e.persisted) {
+    console.warn('[ari] pagehide (persisted, backgrounded — kept alive) ' + diag());
+    return;
+  }
+  console.warn('[ari] pagehide (NOT persisted — releasing) ' + diag());
+  release('pagehide');
+});
+addEventListener('pageshow', function () {
+  // The symmetric half: any release that turned out not to be terminal (the
+  // page came back anyway) is undone. restoreContext fires
+  // webglcontextrestored, which unwinds lostCount and resumes the held loop.
+  if (!released.length) return;
+  for (var i = 0; i < released.length; i++) {
+    try { released[i].ext.restoreContext(); live.push(released[i].ctx); } catch (e) { /* gone for real */ }
+  }
+  released.length = 0;
+  console.warn('[ari] WebGL contexts restored (pageshow)');
+});
+})();</script><script>window.AR_ASSETS={"boat":"https://assets.ariantra.com/boat.9118c6.glb","crocodile":"https://assets.ariantra.com/crocodile.455d50.glb","tree":"https://assets.ariantra.com/tree.663ac6.glb","cactus":"https://assets.ariantra.com/cactus.83c0b8.glb","rock":"https://assets.ariantra.com/rock.0be2ac.glb","mountain":"https://assets.ariantra.com/mountain.455316.glb","mountain_range":"https://assets.ariantra.com/mountain_range.625725.glb","mountain_small":"https://assets.ariantra.com/mountain_small.801d45.glb","game_over":"https://assets.ariantra.com/game_over.2866a9.mp3","jingle_win":"https://assets.ariantra.com/jingle_win.d4863c.mp3","bg_loop_playful":"https://assets.ariantra.com/bg_loop_playful.469994.mp3"};</script><script>window.AR_SIZES={"boat":[0.403,0.855,0.989],"crocodile":[1.243,0.652,4.5],"tree":[1.089,1.931,1.109],"cactus":[0.396,0.75,0.339],"rock":[0.785,0.26,1.015],"mountain":[1.079,1.911,1.103],"mountain_range":[4.591,2.488,3.844],"mountain_small":[1.496,1.37,1.117]};</script><script type="module">
+  import { GLTFLoader, MeshoptDecoder } from "three";
+  window.__arLoadModelVersion = 7;
+// modelSize (2026-08-08, the fragmented-track fix): the measured metres a model
+// renders at scale 1, available BEFORE loading so a game can plan a layout. The
+// "|| {}" guard means order-of-injection never matters, and an unknown or
+// skinned model answers null rather than a made-up number — a game that checks
+// for null degrades to eyeballing, which is exactly what it did before v4.
+window.AR_SIZES = window.AR_SIZES || {};
+window.modelSize = function (name) {
+  var s = window.AR_SIZES[name];
+  return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
+};
+// modelAxis (2026-08-08, the poorly-formed-track fix): which axis a PATH
+// piece's road runs along at rest — "x", "z", or "none" for a hub/corner. The
+// two road kits genuinely disagree (city road_straight runs along X, racing
+// race_track_straight along Z) and a 1x1 square tile's size cannot reveal it,
+// so before this a game had to guess and got it wrong every time. Unknown
+// answers null — then eyeball it, same as before.
+window.AR_AXES = window.AR_AXES || {};
+window.modelAxis = function (name) {
+  var a = window.AR_AXES[name];
+  return (a === "x" || a === "z" || a === "none") ? a : null;
+};
+// modelJoins (2026-08-09, the SECOND poorly-formed-track fix): which edges a
+// tile's road actually reaches, measured from a top-down render of the
+// published bytes. modelAxis() answers "none" for every corner — true, and
+// useless for placing one; with nothing else to reason from, generated tracks
+// guessed corner rotations and the curves never met the straights.
+//   .joins  ["-x","+z"]  edges the carriageway reaches at rest (no rotation)
+//   .lane   0.7          drivable width in METRES at scale 1
+//   .at     {"-x":0.5}   where each join sits, in metres from the piece's own
+//                        minimum on that edge's axis (matters on 2x2 pieces)
+// Unknown answers null — then eyeball it, exactly as before.
+window.AR_EDGES = window.AR_EDGES || {};
+window.modelJoins = function (name) {
+  var e = window.AR_EDGES[name];
+  return (e && e.joins && e.joins.length) ? e : null;
+};
+// rotateToJoin: the one calculation every track needs and no game got right by
+// hand. Returns the rotation.y IN RADIANS that carries a piece's "from" edge
+// onto the "to" edge — e.g. a corner joining ["+z","+x"] that must instead join
+// west and south is rotateToJoin("race_track_corner","+x","+z"). Quarter turns
+// only, which is all a square grid can use.
+// (No backticks anywhere in this block: it is inlined into a TEMPLATE LITERAL,
+// so one would end the helper string mid-function.)
+window.rotateToJoin = function (name, from, to) {
+  var order = ["-z", "+x", "+z", "-x"]; // clockwise seen from above
+  var a = order.indexOf(from), b = order.indexOf(to);
+  if (a < 0 || b < 0) return 0;
+  return ((b - a + 4) % 4) * (Math.PI / 2);
+};
+// fitTile (2026-08-09): say WHICH DIRECTIONS a grid cell must connect and get
+// the rotation.y that makes the piece do it. Added after three rounds of
+// teaching failed to land: a generated track chose the right kit and one scale
+// factor, then hardcoded all four corner rotations and got all four wrong,
+// because working out "this cell needs north and east, the piece joins +z and
+// +x at rest, so rotate 3pi/2" is four steps of reasoning under a token budget.
+// This is one call. Directions are where the ROAD LEAVES the cell:
+//   fitTile("race_track_corner", ["-z", "+x"])   // track to the north and east
+// Returns 0 for an unknown piece, and null when no quarter turn can satisfy the
+// request — which means the wrong PIECE was chosen (asking a corner to join two
+// opposite edges), so a game can detect that instead of silently drawing a gap.
+window.fitTile = function (name, need) {
+  var e = window.AR_EDGES[name];
+  if (!e || !e.joins || !need || !need.length) return 0;
+  var order = ["-z", "+x", "+z", "-x"];
+  var want = need.slice().sort().join(",");
+  for (var q = 0; q < 4; q++) {
+    var got = e.joins
+      .map(function (j) { return order[(order.indexOf(j) + q) % 4]; })
+      .sort()
+      .join(",");
+    if (got === want) return q * (Math.PI / 2);
+  }
+  return null;
+};
+  const __arLoader = new GLTFLoader();
+__arLoader.setMeshoptDecoder(MeshoptDecoder);
+window.__arPerf = window.__arPerf || { models: {}, rootNames: new WeakMap(), animatedRoots: new WeakSet(), renderer: null };
+var __arStaticTemplates = {};
+function __arCountTriangles(obj) {
+  var triangles = 0;
+  obj.traverse(function (child) {
+    if (!child.isMesh || !child.geometry) return;
+    var geo = child.geometry;
+    if (geo.index) triangles += geo.index.count / 3;
+    else if (geo.attributes && geo.attributes.position) triangles += geo.attributes.position.count / 3;
+  });
+  return Math.round(triangles);
+}
+async function __arLoadFresh(name) {
+  const url = (window.AR_ASSETS || {})[name];
+  if (!url) { console.warn("[ariantra] unknown model:", name); return null; }
+  const gltf = await __arLoader.loadAsync(url);
+  return { scene: gltf.scene, animations: gltf.animations || [] };
+}
+window.loadModel = async function (name) {
+  try {
+    var obj;
+    if (__arStaticTemplates[name]) {
+      // Cache only ever holds a STATIC (no-animation) template — see the
+      // loadModelHelper() doc comment for why animated models are excluded.
+      obj = __arStaticTemplates[name].scene.clone();
+      obj.animations = [];
+    } else {
+      const fresh = await __arLoadFresh(name);
+      if (!fresh) return null;
+      if (fresh.animations.length) {
+        obj = fresh.scene;
+        obj.animations = fresh.animations;
+      } else {
+        __arStaticTemplates[name] = fresh;
+        obj = fresh.scene.clone();
+        obj.animations = [];
+      }
+    }
+    // Same answer as modelSize(name), riding on the object — so code that
+    // already holds the loaded root can size it without re-quoting the name.
+    obj.userData.arSize = window.modelSize(name);
+    try {
+      var __arEntry = window.__arPerf.models[name] || { name: name, triangles: 0, instances: [] };
+      __arEntry.triangles = __arCountTriangles(obj);
+      __arEntry.instances.push(obj);
+      if (__arEntry.instances.length > 1000) __arEntry.instances.shift();
+      window.__arPerf.models[name] = __arEntry;
+      window.__arPerf.rootNames.set(obj, name);
+    } catch (e) { /* telemetry only — never blocks the load */ }
+    return obj;
+  } catch (e) {
+    console.warn("[ariantra] loadModel failed:", name, e);
+    return null;
+  }
+};
+</script><script>
+(function () {
+  var ctx = null, buffers = {}, currentMusic = null;
+  function context() {
+    if (!ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC();
+      var resume = function () { if (ctx.state === "suspended") ctx.resume(); };
+      addEventListener("pointerdown", resume, true);
+      addEventListener("keydown", resume, true);
+    }
+    return ctx;
+  }
+  function load(name) {
+    var url = (window.AR_ASSETS || {})[name];
+    if (!url) { console.warn("[ariantra] unknown sound:", name); return Promise.resolve(null); }
+    if (!buffers[name]) {
+      buffers[name] = fetch(url)
+        .then(function (r) { return r.arrayBuffer(); })
+        .then(function (ab) {
+          return new Promise(function (res, rej) { context().decodeAudioData(ab, res, rej); });
+        })
+        .catch(function (e) { console.warn("[ariantra] sound failed:", name, e); return null; });
+    }
+    return buffers[name];
+  }
+  function trimBounds(buf) {
+    var d = buf.getChannelData(0), t = 0.001, s = 0, e = d.length - 1;
+    while (s < e && Math.abs(d[s]) < t) s++;
+    while (e > s && Math.abs(d[e]) < t) e--;
+    return { start: s / buf.sampleRate, end: (e + 1) / buf.sampleRate };
+  }
+  window.playSound = function (name) {
+    try {
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        src.connect(context().destination);
+        src.start();
+      });
+    } catch (e) { /* a silent effect, never a broken game */ }
+  };
+  window.playMusic = function (name) {
+    var handle = { stop: function () {} };
+    try {
+      if (currentMusic) { try { currentMusic.stop(); } catch (e2) {} currentMusic = null; }
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        var b = trimBounds(buf);
+        src.loop = true;
+        src.loopStart = b.start;
+        src.loopEnd = b.end;
+        var gain = context().createGain();
+        gain.gain.value = 0.5;
+        src.connect(gain);
+        gain.connect(context().destination);
+        src.start(0, b.start);
+        currentMusic = src;
+        handle.stop = function () { try { src.stop(); } catch (e3) {} if (currentMusic === src) currentMusic = null; };
+      });
+    } catch (e) { /* silent */ }
+    return handle;
+  };
+})();
+</script><script>
+(function () {
+  function mount() {
+    try {
+      var credits = [{"name":"crocodile","author":"Poly by Google","sourceUrl":"https://poly.pizza/m/2an6E2WjW3z"}];
+      if (!credits.length || document.getElementById("ar-credits")) return;
+      var chip = document.createElement("div");
+      chip.id = "ar-credits";
+      chip.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:99999;font:11px/1.4 system-ui,sans-serif;";
+      var btn = document.createElement("button");
+      btn.textContent = "\uD83C\uDFA8 art";
+      btn.setAttribute("aria-label", "Art credits");
+      btn.style.cssText = "border:0;border-radius:10px;padding:3px 8px;background:rgba(0,0,0,.45);color:#fff;cursor:pointer;font:inherit;";
+      var panel = document.createElement("div");
+      panel.style.cssText = "display:none;margin-top:4px;background:rgba(0,0,0,.75);color:#fff;border-radius:8px;padding:6px 10px;max-width:75vw;";
+      for (var i = 0; i < credits.length; i++) {
+        var c = credits[i], row = document.createElement("div");
+        var a = document.createElement("a");
+        a.href = c.sourceUrl; a.target = "_blank"; a.rel = "noopener";
+        a.style.cssText = "color:#9cf;text-decoration:underline;";
+        a.textContent = "\"" + c.name.replace(/_/g, " ") + "\" by " + c.author;
+        row.appendChild(a);
+        row.appendChild(document.createTextNode(" (CC BY 3.0)"));
+        panel.appendChild(row);
+      }
+      btn.addEventListener("click", function () {
+        panel.style.display = panel.style.display === "none" ? "block" : "none";
+      });
+      chip.appendChild(btn); chip.appendChild(panel);
+      document.body.appendChild(chip);
+    } catch (e) { /* credits must never break a game */ }
+  }
+  if (document.body) mount();
+  else addEventListener("DOMContentLoaded", mount);
+})();
+</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>River Adventure!</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            font-family: 'Comic Sans MS', cursive, sans-serif;
+            color: #fff;
+            background-color: #333;
+            user-select: none; /* Prevent text selection */
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            touch-action: manipulation; /* Prevent browser gestures interfering with controls */
+        }
+        #ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            box-sizing: border-box;
+            pointer-events: none; /* Allow clicks to pass through to canvas if needed, but not on UI elements */
+            z-index: 10;
+        }
+        #score-display, #lives-display {
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 8px 15px;
+            border-radius: 15px;
+            font-size: 1.8em;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border: 2px solid #aaddff;
+        }
+        #lives-display img {
+            height: 30px;
+            vertical-align: middle;
+        }
+        #controls {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: space-around;
+            padding: max(12px, env(safe-area-inset-bottom));
+            box-sizing: border-box;
+            z-index: 10;
+            pointer-events: auto; /* Buttons should be clickable */
+        }
+        .control-button {
+            background-color: rgba(0, 150, 255, 0.7);
+            color: white;
+            border: 3px solid #0099ff;
+            border-radius: 50%;
+            width: 80px;
+            height: 80px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 2.5em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.1s;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
+        .control-button:active {
+            background-color: rgba(0, 100, 200, 0.9);
+            border-color: #0077cc;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        #push-button {
+            background-color: rgba(255, 100, 0, 0.7);
+            border-color: #ff8800;
+        }
+        #push-button:active {
+            background-color: rgba(200, 80, 0, 0.9);
+            border-color: #cc6600;
+        }
+        #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            font-size: 2em;
+            text-align: center;
+            z-index: 100;
+            gap: 20px;
+            animation: fadeIn 0.5s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        #game-over-screen button {
+            padding: 15px 30px;
+            font-size: 0.8em;
+            background-color: #0099ff;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
+        #game-over-screen button:hover {
+            background-color: #0077cc;
+        }
+        #canvas {
+            display: block;
+            width: 100%;
+            flex-grow: 1; /* Make canvas fill remaining space */
+            background-color: #87ceeb; /* Sky blue background */
+        }
+        @media (max-width: 480px) {
+            .control-button {
+                width: 65px;
+                height: 65px;
+                font-size: 2em;
+            }
+            #score-display, #lives-display {
+                font-size: 1.4em;
+            }
+            #lives-display img {
+                height: 25px;
+            }
+        }
+    </style>
+</head>
+<body>
+    
+    
+    
+
+    <div id="ui-overlay">
+        <div id="score-display">Strength: <span id="score">0</span></div>
+        <div id="lives-display">
+            <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9va2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgY2xhc3M9ImZlYXRoZXIgZmVhdGhlci1oZWFydCI+PHBhdGggZD0iTTE5IDFuLTIgMi03IDcgLTctNy0yLTItMiA3IDcgNyA3IDcgNy0yIDJ6Ii8+PC9zdmc+" alt="heart">
+            <span id="lives">3</span>
+        </div>
+    </div>
+
+    <canvas id="scene"></canvas>
+
+    <div id="controls">
+        <div class="control-button" id="left-button">&lt;</div>
+        <div class="control-button" id="push-button">PUSH!</div>
+        <div class="control-button" id="right-button">&gt;</div>
+    </div>
+
+    <div id="game-over-screen" style="display: none;">
+        <h2 id="game-over-message"></h2>
+        <button onclick="window.location.reload()">Play Again!</button>
+    </div>
+
+    <script type="module">
+        import { Scene, PerspectiveCamera, WebGLRenderer, Clock, Color, Fog, Group, Vector3, Box3, BoxGeometry, SphereGeometry, ConeGeometry, PlaneGeometry, MeshStandardMaterial, MeshBasicMaterial, Mesh, AmbientLight, DirectionalLight, Quaternion, Matrix4, MathUtils, InstancedMesh } from "three";
+
+        // --- GAME STATE ---
+        const GAME_STATES = {
+            PLAYING: 'playing',
+            WIN: 'win',
+            LOSE: 'lose'
+        };
+        let gameState = GAME_STATES.PLAYING;
+        let score = 0;
+        let lives = 3;
+        const maxLives = 3;
+        const winScore = 1000;
+        let gameStartTime = 0;
+        const initialSafeTime = 3000; // 3 seconds of safety
+
+        // --- THREE.JS SETUP ---
+        const scene = new Scene();
+        const camera = new PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new WebGLRenderer({ canvas: document.getElementById('scene'), antialias: true, preserveDrawingBuffer: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        scene.background = new Color(0x87ceeb); // Sky blue
+        scene.fog = new Fog(0x87ceeb, 50, 200); // Light fog for depth
+
+        const clock = new Clock();
+        let animationFrameId = null;
+
+        // --- LIGHTS ---
+        const ambientLight = new AmbientLight(0xffffff, 0.8);
+        scene.add(ambientLight);
+        const directionalLight = new DirectionalLight(0xffffff, 0.6);
+        directionalLight.position.set(5, 10, 5);
+        directionalLight.target.position.set(0, 0, 0);
+        scene.add(directionalLight);
+        scene.add(directionalLight.target);
+
+        // --- MATERIALS ---
+        const waterMaterial = new MeshStandardMaterial({ color: 0x66ccff, metalness: 0.1, roughness: 0.4 });
+        const bankMaterial = new MeshStandardMaterial({ color: 0x4CAF50, roughness: 0.8 }); // Lush green
+
+        // --- RIVER PATH GENERATION ---
+        const riverPathPoints = [];
+        const pathLength = 500; // How long the river is
+        const segmentLength = 5; // Length of each straight segment
+        const numSegments = pathLength / segmentLength;
+        let currentPos = new Vector3(0, 0, 0);
+        let currentDir = new Vector3(0, 0, -1); // Start moving along -Z
+        let riverWidth = 10; // Starting width
+
+        // Generate a winding path
+        for (let i = 0; i < numSegments; i++) {
+            riverPathPoints.push(currentPos.clone());
+
+            // Randomly adjust direction for winding path
+            const turnAngle = (Math.random() - 0.5) * 0.4; // Small random turn
+            currentDir.applyAxisAngle(new Vector3(0, 1, 0), turnAngle);
+            currentDir.normalize();
+
+            // Vary river width gradually
+            riverWidth = Math.max(8, Math.min(20, riverWidth + (Math.random() - 0.5) * 0.5));
+
+            currentPos.add(currentDir.clone().multiplyScalar(segmentLength));
+        }
+
+        // --- RIVER AND BANKS MESH ---
+        const riverGeometry = new PlaneGeometry(1, segmentLength, 1, 1); // Basic segment
+        const riverGroup = new Group();
+        scene.add(riverGroup);
+
+        const bankGeometry = new PlaneGeometry(1, segmentLength, 1, 1); // Basic segment
+        const bankGroup = new Group();
+        scene.add(bankGroup);
+
+        const decorationCount = 200; // Number of trees/rocks/bushes
+        const decorationMeshes = {
+            tree: null, cactus: null, rock: null, mountain: null, mountain_range: null, mountain_small: null
+        };
+        const decorationTypes = ['tree', 'cactus', 'rock', 'mountain', 'mountain_small'];
+        const instancedDecorations = {}; // Store InstancedMesh objects
+
+        // Load decoration models and setup InstancedMesh
+        async function setupDecorations() {
+            for (const type of decorationTypes) {
+                const model = await loadModel(type);
+                if (model) {
+                    decorationMeshes[type] = model;
+                    const geometry = model.children[0].geometry.clone(); // Assuming simple model with one mesh
+                    const material = model.children[0].material.clone();
+                    instancedDecorations[type] = new InstancedMesh(geometry, material, decorationCount);
+                    instancedDecorations[type].name = type + "_instances";
+                    scene.add(instancedDecorations[type]);
+                } else {
+                    console.warn(`Failed to load model: ${type}, using placeholder.`);
+                    // Fallback to simple geometries if model fails to load
+                    let geometry;
+                    let material = new MeshStandardMaterial({ color: 0x8B4513 }); // Brown for tree trunk
+                    if (type === 'tree') {
+                        geometry = new ConeGeometry(1, 2, 8); material = new MeshStandardMaterial({ color: 0x228B22 }); // Green for tree top
+                    } else if (type === 'cactus') {
+                        geometry = new BoxGeometry(0.5, 2, 0.5); material = new MeshStandardMaterial({ color: 0x006400 });
+                    } else if (type === 'rock') {
+                        geometry = new SphereGeometry(0.8, 8, 8); material = new MeshStandardMaterial({ color: 0x808080 });
+                    } else { // mountain, mountain_small
+                        geometry = new ConeGeometry(5, 10, 8); material = new MeshStandardMaterial({ color: 0x556B2F });
+                    }
+                    instancedDecorations[type] = new InstancedMesh(geometry, material, decorationCount);
+                    instancedDecorations[type].name = type + "_instances";
+                    scene.add(instancedDecorations[type]);
+                }
+            }
+            placeDecorations(); // Place them after all are potentially loaded or fallbacked
+        }
+
+        function placeDecorations() {
+            for (let i = 0; i < numSegments - 1; i++) {
+                const p1 = riverPathPoints[i];
+                const p2 = riverPathPoints[i + 1];
+
+                // River Segment
+                const riverSegment = new Mesh(riverGeometry, waterMaterial);
+                riverSegment.position.lerpVectors(p1, p2, 0.5);
+                riverSegment.lookAt(p2);
+                riverSegment.rotation.x = -Math.PI / 2; // Make it flat
+                const currentRiverWidth = MathUtils.lerp(8, 20, i / numSegments); // Simple width variation
+                riverSegment.scale.set(currentRiverWidth, 1, 1); // Width, height, depth
+                riverGroup.add(riverSegment);
+
+                // Bank Segments
+                const segmentDirection = new Vector3().subVectors(p2, p1).normalize();
+                const perpendicular = new Vector3(0, 1, 0).cross(segmentDirection).normalize();
+
+                const bankWidth = 10; // Width of each bank
+
+                // Left bank
+                const leftBankPos = p1.clone().add(perpendicular.clone().multiplyScalar(currentRiverWidth / 2 + bankWidth / 2));
+                const leftBankMesh = new Mesh(bankGeometry, bankMaterial);
+                leftBankMesh.position.lerpVectors(leftBankPos, leftBankPos.clone().add(segmentDirection.clone().multiplyScalar(segmentLength)), 0.5);
+                leftBankMesh.position.y = -0.5; // Slightly lower than water
+                leftBankMesh.lookAt(leftBankPos.clone().add(segmentDirection));
+                leftBankMesh.rotation.x = -Math.PI / 2;
+                leftBankMesh.scale.set(bankWidth, 1, 1);
+                bankGroup.add(leftBankMesh);
+
+                // Right bank
+                const rightBankPos = p1.clone().add(perpendicular.clone().multiplyScalar(-(currentRiverWidth / 2 + bankWidth / 2)));
+                const rightBankMesh = new Mesh(bankGeometry, bankMaterial);
+                rightBankMesh.position.lerpVectors(rightBankPos, rightBankPos.clone().add(segmentDirection.clone().multiplyScalar(segmentLength)), 0.5);
+                rightBankMesh.position.y = -0.5;
+                rightBankMesh.lookAt(rightBankPos.clone().add(segmentDirection));
+                rightBankMesh.rotation.x = -Math.PI / 2;
+                rightBankMesh.scale.set(bankWidth, 1, 1);
+                bankGroup.add(rightBankMesh);
+
+                // Decorations on banks
+                if (i % 2 === 0) { // Place decorations every other segment
+                    const decType = decorationTypes[Math.floor(Math.random() * decorationTypes.length)];
+                    const instancedMesh = instancedDecorations[decType];
+                    if (instancedMesh) {
+                        const randomOffset = (Math.random() - 0.5) * (bankWidth - 2); // Place within bank
+                        const decX = perpendicular.x * (currentRiverWidth / 2 + bankWidth / 2 + randomOffset);
+                        const decZ = perpendicular.z * (currentRiverWidth / 2 + bankWidth / 2 + randomOffset);
+
+                        const pos = p1.clone().add(new Vector3(decX, 0, decZ));
+                        pos.y = Math.random() * 0.5; // Slight height variation
+
+                        const scale = 1 + Math.random() * 0.5;
+                        const rotation = Math.random() * Math.PI * 2;
+
+                        const matrix = new Matrix4();
+                        matrix.compose(pos, new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), rotation), new Vector3(scale, scale, scale));
+
+                        let instanceIndex = 0;
+                        // Find an available instance index, or just use `i` if it's within bounds
+                        // For simplicity in this example, we'll just set it.
+                        // In a more complex game, you'd manage an array of available instances.
+                        if (instancedMesh.instanceMatrix.needsUpdate) { // Find an empty slot
+                            for (let k = 0; k < instancedMesh.count; k++) {
+                                // This is a bit of a hack: if matrix is default, it's empty. Not robust.
+                                // For simplicity, we just use i as an index and hope we don't exceed count.
+                                instanceIndex = k;
+                                break;
+                            }
+                        } else {
+                            instanceIndex = i; // Just use i for now
+                        }
+                        if (instanceIndex < instancedMesh.count) {
+                             instancedMesh.setMatrixAt(instanceIndex, matrix);
+                        }
+                    }
+                }
+            }
+             for (const type in instancedDecorations) {
+                if (instancedDecorations[type]) {
+                    instancedDecorations[type].instanceMatrix.needsUpdate = true;
+                }
+            }
+        }
+
+
+        // --- PLAYER BOAT ---
+        let playerBoat;
+        let boatModelLoaded = false;
+        const playerSpeed = 10;
+        const playerTurnSpeed = 0.05; // radians per frame when steering
+        const playerMaxTurnAngle = Math.PI / 4; // Max angle boat can turn relative to forward direction
+        let currentSteerAmount = 0; // -1 to 1 for left/right
+        let boatForward = new Vector3(0, 0, -1); // Initial forward direction
+
+        // Load boat model
+        loadModel("boat").then((model) => {
+            if (model) {
+                playerBoat = model;
+                playerBoat.scale.set(0.5, 0.5, 0.5); // Adjust size
+                playerBoat.position.set(0, 0, 0); // Start at river beginning
+                playerBoat.rotation.y = Math.PI; // Make it face along -Z initially (model might face +Z)
+                scene.add(playerBoat);
+                boatModelLoaded = true;
+                console.log("Boat model loaded!");
+            } else {
+                console.warn("Boat model failed to load, using placeholder.");
+                playerBoat = new Mesh(new BoxGeometry(2, 1, 4), new MeshStandardMaterial({ color: 0x8B4513 })); // Brown boat
+                playerBoat.position.set(0, 0, 0);
+                scene.add(playerBoat);
+            }
+            playerBoat.position.y = 0.5; // Start slightly above water
+            playerBoat.userData.bbox = new Box3().setFromObject(playerBoat); // For collision
+            playerBoat.name = "PlayerBoat";
+        });
+
+        // --- CROCODILES ---
+        const activeCrocodiles = [];
+        let crocodileModel;
+        let crocodileModelLoaded = false;
+        const crocodileSpeed = 5;
+        let lastCrocodileSpawnTime = 0;
+        let nextCrocodileSpawnInterval = 0; // Will be set randomly
+        let spawnDelay = 15000; // Max delay, will decrease with score
+
+        // Load crocodile model
+        loadModel("crocodile").then((model) => {
+            if (model) {
+                crocodileModel = model;
+                crocodileModel.scale.set(0.5, 0.5, 0.5); // Adjust size
+                crocodileModelLoaded = true;
+            } else {
+                console.warn("Crocodile model failed to load, using placeholder.");
+                crocodileModel = new Mesh(new BoxGeometry(1.5, 0.5, 3), new MeshStandardMaterial({ color: 0x006400 })); // Green box
+            }
+            // To ensure we don't block, generate a placeholder if not loaded yet
+        });
+
+        function spawnCrocodile() {
+            if (!playerBoat || gameState !== GAME_STATES.PLAYING) return;
+
+            const playerSegmentIndex = Math.floor(Math.abs(playerBoat.position.z) / segmentLength);
+            const spawnSegmentIndex = Math.min(numSegments - 1, playerSegmentIndex + Math.floor(Math.random() * 5) + 10); // Spawn 10-15 segments ahead
+            if (spawnSegmentIndex >= numSegments - 1) return; // Don't spawn past the end
+
+            const spawnPointCenter = riverPathPoints[spawnSegmentIndex];
+            const segmentDir = new Vector3().subVectors(riverPathPoints[spawnSegmentIndex + 1], riverPathPoints[spawnSegmentIndex]).normalize();
+            const perpendicular = new Vector3(0, 1, 0).cross(segmentDir).normalize();
+
+            // Randomly choose left or right bank
+            const side = Math.random() > 0.5 ? 1 : -1;
+            const spawnDistance = MathUtils.lerp(8, 20, spawnSegmentIndex / numSegments) / 2 + 3; // Spawn on bank
+            const spawnOffset = perpendicular.clone().multiplyScalar(side * spawnDistance);
+            const spawnPos = spawnPointCenter.clone().add(spawnOffset);
+            spawnPos.y = 0.2; // At water level
+
+            let crocodile;
+            if (crocodileModelLoaded) {
+                crocodile = crocodileModel.clone();
+            } else {
+                crocodile = new Mesh(new BoxGeometry(1.5, 0.5, 3), new MeshStandardMaterial({ color: 0x006400 }));
+            }
+            crocodile.position.copy(spawnPos);
+            crocodile.lookAt(playerBoat.position); // Look towards the player initially
+            crocodile.rotation.x = 0; // Keep flat
+            crocodile.userData.originalRotation = crocodile.rotation.clone(); // Store original rotation
+            crocodile.userData.targetPosition = playerBoat.position.clone(); // Target player's current position
+            crocodile.userData.spawnPoint = spawnPos.clone();
+            crocodile.userData.hit = false; // To prevent multiple hits
+            crocodile.name = "Crocodile";
+            scene.add(crocodile);
+            activeCrocodiles.push(crocodile);
+
+            nextCrocodileSpawnInterval = Math.random() * (spawnDelay - 5000) + 5000; // 5 to 15 seconds
+            lastCrocodileSpawnTime = Date.now();
+        }
+
+        // --- STICK ATTACK ---
+        const attackRange = 2 * 4; // 2 boat lengths (boat is 4 units long)
+        let isAttacking = false;
+        let attackTimer = 0;
+        const attackDuration = 0.2; // seconds
+
+        function performStickAttack() {
+            if (!playerBoat || isAttacking || gameState !== GAME_STATES.PLAYING) return;
+
+            isAttacking = true;
+            attackTimer = 0;
+            // Visual feedback: simple "swish" box
+            const swishMesh = new Mesh(new BoxGeometry(0.5, 0.1, attackRange), new MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.5 }));
+            const stickTipOffset = new Vector3(0, 0, -attackRange / 2 - 2); // Position in front of boat
+            swishMesh.position.copy(playerBoat.position).add(stickTipOffset.applyQuaternion(playerBoat.quaternion));
+            swishMesh.quaternion.copy(playerBoat.quaternion);
+            scene.add(swishMesh);
+
+            playSound("swish"); // Play swish sound
+
+            setTimeout(() => {
+                scene.remove(swishMesh);
+            }, attackDuration * 1000);
+
+            for (let i = activeCrocodiles.length - 1; i >= 0; i--) {
+                const croco = activeCrocodiles[i];
+                if (croco.userData.hit) continue; // Already hit
+
+                const distance = playerBoat.position.distanceTo(croco.position);
+                if (distance < attackRange) {
+                    // Check if croco is in front of the boat
+                    const toCroco = new Vector3().subVectors(croco.position, playerBoat.position).normalize();
+                    const angle = boatForward.angleTo(toCroco);
+                    if (Math.abs(angle) < Math.PI / 4) { // Within 45 degrees in front
+                        croco.userData.hit = true; // Mark as hit
+                        playSound("boop"); // Play boink sound
+                        addScore(50);
+
+                        // Push crocodile back to its spawn point or shore
+                        // For simplicity, let's just reset to spawn point for now
+                        croco.position.copy(croco.userData.spawnPoint);
+                        croco.rotation.copy(croco.userData.originalRotation); // Reset its rotation
+                        croco.userData.hit = false; // Can be hit again
+                        croco.userData.targetPosition = playerBoat.position.clone(); // Recalculate target
+                    }
+                }
+            }
+        }
+
+        // --- SCORE AND LIVES ---
+        const scoreElement = document.getElementById('score');
+        const livesElement = document.getElementById('lives');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const gameOverMessage = document.getElementById('game-over-message');
+
+        function updateScoreDisplay() {
+            scoreElement.textContent = score;
+        }
+
+        function updateLivesDisplay() {
+            livesElement.textContent = lives;
+        }
+
+        function addScore(points) {
+            score += points;
+            updateScoreDisplay();
+            if (score >= winScore) {
+                endGame(GAME_STATES.WIN);
+            }
+            // Decrease spawn delay slightly as score increases, making it harder
+            spawnDelay = Math.max(5000, 15000 - score * 5);
+        }
+
+        function loseLife() {
+            if (gameState !== GAME_STATES.PLAYING) return;
+            lives--;
+            updateLivesDisplay();
+            if (lives <= 0) {
+                endGame(GAME_STATES.LOSE);
+            }
+        }
+
+        // --- GAME END ---
+        function endGame(state) {
+            gameState = state;
+            gameOverScreen.style.display = 'flex';
+            if (state === GAME_STATES.WIN) {
+                gameOverMessage.textContent = `You reached the end of the river and collected ${score} strength points! You Win!`;
+                playMusic("jingle_win");
+            } else {
+                gameOverMessage.textContent = `Oh no! You lost all your lives. Game Over!`;
+                playSound("game_over");
+            }
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            document.removeEventListener('pointerdown', handlePointerDown);
+            document.removeEventListener('pointermove', handlePointerMove);
+            document.removeEventListener('pointerup', handlePointerUp);
+            document.removeEventListener('contextmenu', handleContextMenu);
+            document.removeEventListener('keydown', handleKeyDown);
+            document.removeEventListener('keyup', handleKeyUp);
+            currentMusic.stop();
+        }
+
+        // --- CONTROLS ---
+        let pointerDown = false;
+        let startPointerX = 0;
+        let lastPointerX = 0;
+
+        const keyState = {
+            ArrowLeft: false,
+            ArrowRight: false,
+            KeyA: false,
+            KeyD: false,
+            Space: false,
+            KeyJ: false // For joystick/touch push button
+        };
+
+        function handlePointerDown(event) {
+            if (gameState !== GAME_STATES.PLAYING) return;
+            if (event.target.closest('.control-button')) {
+                // Handle button click directly
+                if (event.target.id === 'left-button') keyState.ArrowLeft = true;
+                if (event.target.id === 'right-button') keyState.ArrowRight = true;
+                if (event.target.id === 'push-button') performStickAttack(); // Push on button press
+                return; // Don't process as drag
+            }
+            if (event.button === 0 || event.pointerType === 'touch') { // Left click or touch
+                pointerDown = true;
+                startPointerX = event.clientX || event.touches[0].clientX;
+                lastPointerX = startPointerX;
+            }
+        }
+
+        function handlePointerMove(event) {
+            if (!pointerDown || gameState !== GAME_STATES.PLAYING) return;
+            const currentX = event.clientX || event.touches[0].clientX;
+            const deltaX = currentX - lastPointerX;
+
+            // Map deltaX to currentSteerAmount (-1 to 1)
+            // A simple mapping: 200 pixels drag across screen width results in full steer
+            const screenWidth = window.innerWidth;
+            currentSteerAmount = MathUtils.clamp(deltaX / (screenWidth * 0.1), -1, 1); // Sensitivity
+            lastPointerX = currentX;
+        }
+
+        function handlePointerUp(event) {
+            if (gameState !== GAME_STATES.PLAYING) return;
+            pointerDown = false;
+            currentSteerAmount = 0; // Stop steering
+            // Release key states for buttons
+            keyState.ArrowLeft = false;
+            keyState.ArrowRight = false;
+        }
+
+        function handleContextMenu(event) {
+            if (gameState !== GAME_STATES.PLAYING) return;
+            event.preventDefault(); // Prevent right-click context menu
+            performStickAttack();
+        }
+
+        function handleKeyDown(event) {
+            if (gameState !== GAME_STATES.PLAYING) return;
+            if (keyState.hasOwnProperty(event.code)) {
+                keyState[event.code] = true;
+                if (event.code === 'ArrowLeft' || event.code === 'ArrowRight' || event.code === 'Space') {
+                    event.preventDefault(); // Prevent page scrolling
+                }
+            }
+            if (event.code === 'Space') {
+                performStickAttack();
+            }
+        }
+
+        function handleKeyUp(event) {
+            if (gameState !== GAME_STATES.PLAYING) return;
+            if (keyState.hasOwnProperty(event.code)) {
+                keyState[event.code] = false;
+            }
+        }
+
+        // On-screen control listeners (using pointerdown/up for responsiveness)
+        document.getElementById('left-button').addEventListener('pointerdown', (e) => { e.preventDefault(); keyState.ArrowLeft = true; });
+        document.getElementById('left-button').addEventListener('pointerup', () => { keyState.ArrowLeft = false; });
+        document.getElementById('left-button').addEventListener('pointerleave', () => { keyState.ArrowLeft = false; }); // For when pointer leaves button while held
+
+        document.getElementById('right-button').addEventListener('pointerdown', (e) => { e.preventDefault(); keyState.ArrowRight = true; });
+        document.getElementById('right-button').addEventListener('pointerup', () => { keyState.ArrowRight = false; });
+        document.getElementById('right-button').addEventListener('pointerleave', () => { keyState.ArrowRight = false; });
+
+        document.getElementById('push-button').addEventListener('pointerdown', (e) => { e.preventDefault(); performStickAttack(); });
+
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        document.addEventListener('pointerdown', handlePointerDown);
+        document.addEventListener('pointermove', handlePointerMove);
+        document.addEventListener('pointerup', handlePointerUp);
+        document.addEventListener('contextmenu', handleContextMenu); // For right-click attack
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+
+        // --- GAME LOOP ---
+        let on = true;
+        const setOn = (v) => {
+            if (v === on) return;
+            on = v;
+            if (v) {
+                clock.getDelta(); // Reset delta after pause
+                animate();
+            }
+        };
+        document.addEventListener('visibilitychange', () => setOn(!document.hidden));
+        addEventListener('blur', () => setOn(false));
+        addEventListener('focus', () => setOn(true));
+
+        let lastFrameTime = 0;
+        const maxFps = 60;
+        const frameInterval = 1000 / maxFps;
+
+        let currentMusic;
+
+        function animate() {
+            animationFrameId = requestAnimationFrame(animate);
+
+            if (!on || gameState !== GAME_STATES.PLAYING) return;
+
+            const now = performance.now();
+            if (now - lastFrameTime < frameInterval) {
+                return; // Skip frame to cap FPS
+            }
+            const delta = (now - lastFrameTime) / 1000; // Convert to seconds
+            lastFrameTime = now;
+
+            if (gameStartTime === 0) gameStartTime = now;
+            const elapsedTime = now - gameStartTime;
+
+            // --- PLAYER MOVEMENT ---
+            if (playerBoat) {
+                // Handle keyboard steering
+                let keyboardSteer = 0;
+                if (keyState.ArrowLeft || keyState.KeyA) keyboardSteer = 1;
+                else if (keyState.ArrowRight || keyState.KeyD) keyboardSteer = -1;
+
+                // Combine touch/mouse steering with keyboard (keyboard overrides if both)
+                let actualSteer = keyboardSteer !== 0 ? keyboardSteer : currentSteerAmount;
+
+                playerBoat.rotation.y += actualSteer * playerTurnSpeed * delta;
+
+                // Update boat's forward direction based on its rotation
+                boatForward.set(0, 0, -1).applyQuaternion(playerBoat.quaternion).normalize();
+
+                // Move boat forward
+                playerBoat.position.add(boatForward.clone().multiplyScalar(playerSpeed * delta));
+
+                // Bobbing effect
+                playerBoat.position.y = 0.5 + Math.sin(now * 0.005) * 0.1;
+
+                // Collision detection (simple check with banks)
+                const playerWidth = 2; // Approximate width of boat
+                const playerZ = playerBoat.position.z;
+                const playerX = playerBoat.position.x;
+
+                const playerSegmentIndex = Math.floor(Math.abs(playerZ) / segmentLength);
+                const currentPathPoint = riverPathPoints[Math.min(numSegments - 1, playerSegmentIndex)];
+                const nextPathPoint = riverPathPoints[Math.min(numSegments - 1, playerSegmentIndex + 1)];
+
+                if (currentPathPoint && nextPathPoint) {
+                    const segmentCenter = new Vector3().lerpVectors(currentPathPoint, nextPathPoint, 0.5);
+                    const segmentDir = new Vector3().subVectors(nextPathPoint, currentPathPoint).normalize();
+                    const perpendicular = new Vector3(0, 1, 0).cross(segmentDir).normalize();
+                    const currentRiverWidth = MathUtils.lerp(8, 20, playerSegmentIndex / numSegments);
+
+                    // Project player position onto the segment line to find closest point on center path
+                    const relativePlayerPos = new Vector3().subVectors(playerBoat.position, segmentCenter);
+                    const distAlongSegment = relativePlayerPos.dot(segmentDir);
+                    const closestPointOnPath = segmentCenter.clone().add(segmentDir.clone().multiplyScalar(distAlongSegment));
+
+                    const distanceToPath = playerBoat.position.distanceTo(closestPointOnPath);
+
+                    if (distanceToPath > currentRiverWidth / 2 - playerWidth / 2) {
+                        // If outside river boundaries, push back towards center
+                        const normal = new Vector3().subVectors(playerBoat.position, closestPointOnPath).normalize();
+                        playerBoat.position.sub(normal.multiplyScalar(distanceToPath - (currentRiverWidth / 2 - playerWidth / 2)));
+                    }
+                }
+            }
+
+            // --- CROCODILE MOVEMENT AND SPWANING ---
+            if (elapsedTime > initialSafeTime) {
+                if (Date.now() - lastCrocodileSpawnTime > nextCrocodileSpawnInterval) {
+                    spawnCrocodile();
+                }
+            }
+
+            for (let i = activeCrocodiles.length - 1; i >= 0; i--) {
+                const croco = activeCrocodiles[i];
+
+                if (croco && playerBoat) {
+                    // Make croco move towards the player
+                    const targetDir = new Vector3().subVectors(playerBoat.position, croco.position).normalize();
+                    croco.position.add(targetDir.multiplyScalar(crocodileSpeed * delta));
+
+                    // Keep croco above water
+                    croco.position.y = 0.2 + Math.sin(now * 0.007 + i) * 0.05;
+
+                    // Croco collision with boat
+                    const crocoBbox = new Box3().setFromObject(croco);
+                    const playerBbox = new Box3().setFromObject(playerBoat);
+
+                    if (crocoBbox.intersectsBox(playerBbox)) {
+                        if (!croco.userData.hit) { // Only hit if not already processing a hit
+                            croco.userData.hit = true;
+                            playSound("water_splash");
+                            loseLife();
+
+                            // Bounce effect: move crocodile back away from player
+                            const bounceDir = new Vector3().subVectors(croco.position, playerBoat.position).normalize();
+                            croco.position.add(bounceDir.multiplyScalar(10)); // Push away forcefully
+
+                            setTimeout(() => {
+                                croco.userData.hit = false; // Allow it to hit again after a short delay
+                            }, 1000); // 1 second invulnerability
+                        }
+                    }
+
+                    // Remove crocodiles if they go too far behind or off course
+                    if (croco.position.z > playerBoat.position.z + 20 || croco.position.distanceTo(playerBoat.position) > 100) {
+                        scene.remove(croco);
+                        activeCrocodiles.splice(i, 1);
+                    }
+                }
+            }
+
+            // --- ATTACK LOGIC ---
+            if (isAttacking) {
+                attackTimer += delta;
+                if (attackTimer >= attackDuration) {
+                    isAttacking = false;
+                }
+            }
+
+            // --- CAMERA UPDATE ---
+            if (playerBoat) {
+                const cameraOffset = new Vector3(0, 15, 20); // Slightly behind and above
+                cameraOffset.applyQuaternion(playerBoat.quaternion);
+                camera.position.copy(playerBoat.position).add(cameraOffset);
+                camera.lookAt(playerBoat.position.clone().add(boatForward.clone().multiplyScalar(5))); // Look slightly ahead of the boat
+            }
+
+            // Win condition: reach end of river path
+            if (playerBoat && playerBoat.position.z < riverPathPoints[riverPathPoints.length - 1].z + 10) { // +10 buffer
+                endGame(GAME_STATES.WIN);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // --- INITIALIZE GAME ---
+        updateScoreDisplay();
+        updateLivesDisplay();
+        currentMusic = playMusic("bg_loop_playful"); // Start background music
+        setupDecorations().then(() => {
+            // Wait for decorations to be set up before starting main animation
+            // This prevents rendering an empty scene for a moment
+            animate();
+        });
+    </script>
+</body>
+</html>

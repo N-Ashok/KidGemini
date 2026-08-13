@@ -275,6 +275,10 @@ what you need and use the names you are given.
    \`loadModel("${models[0]!.name}").then((m) => { if (m) { m.scale.set(2, 2, 2); scene.add(m); player = m; } });\`
    If \`m\` is null, simply keep the placeholder — the game must keep working
    without the model.
+   SIZE THE PLACEHOLDER to a HUMAN reference, never an arbitrary number — a
+   standing human is ~1.7 units tall; scale every other placeholder against
+   that (a ball ≈0.22, a car ≈1.5 tall × 4.5 long, a house ≈3-6 tall). A
+   placeholder that looks right next to a human placeholder looks right.
 4. \`modelSize(name)\` gives REAL metres \`{x, y, z}\` before you load (null =
    unknown, eyeball it). NEVER guess a size or spacing — a road piece is ~1 m,
    not 10. Scale by want ÷ actual; tile edge-to-edge by stepping the footprint:

@@ -87,10 +87,17 @@ describe("GeminiChatModel — 4-deep fallback chain", () => {
     generateContentStream.mockRejectedValue(overloadErr());
 
     await expect(collect(new GeminiChatModel())).rejects.toThrow(/chat stream failed/);
+    // 2026-08-13: gemini-3.1-flash-lite / gemini-3.5-flash-lite joined the
+    // catalog (model-registry.ts) — MAX_CHAIN=4 now fills with all 4 eligible
+    // Google fallbacks instead of just 2, workhorse rung first then lite rung
+    // cheapest-first (gemini-2.5-flash-lite $0.1/$0.4 < gemini-3.1-flash-lite
+    // $0.25/$1.5 < gemini-3.5-flash-lite $0.30/$2.50).
     expect(calledModels()).toEqual([
       "gemini-3-flash-preview",
       "gemini-2.5-flash",
       "gemini-2.5-flash-lite",
+      "gemini-3.1-flash-lite",
+      "gemini-3.5-flash-lite",
     ]);
   });
 
@@ -332,6 +339,8 @@ describe("empty-completion handling", () => {
       "gemini-3-flash-preview",
       "gemini-2.5-flash",
       "gemini-2.5-flash-lite",
+      "gemini-3.1-flash-lite",
+      "gemini-3.5-flash-lite",
     ]);
   });
 });

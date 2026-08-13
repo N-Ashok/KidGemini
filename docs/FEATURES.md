@@ -23,6 +23,39 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 
 ## Chat (home `/`)
 - Gemini-powered kids chat: text + voice (TTS playback, regenerate last answer)
+- **Two-pass build pipeline — Pass 1 spec compiler** (2026-08-12, owner ask;
+  `src/lib/spec-compiler.ts`, wired into `GeminiChatModel.replyStream` in
+  `gemini.ts`). **OFF by default** (`SPEC_COMPILER_ENABLED=1`) —
+  `docs/2026-08-12_PRD_GenrePlaybookPipeline.md` is still unapproved for live
+  traffic. When on: a fresh build turn (not an edit, not a 3D conversion, not
+  a forced in-place rebuild, no image) first goes through Pass 1 — a compiler
+  model turns the child's one-line request into a numbered build spec (§2.3
+  of the PRD: measured 6.2 KB → 41.6 KB, 3/11 → 11/11 features, for
+  $0.041) — and Pass 2 (the ordinary builder call, unchanged) builds from
+  that spec instead of the raw words. Every safety/gating decision
+  (`configFor`'s catalog gates, `buildContents`'s child-safety context) still
+  runs on the child's ORIGINAL message; only the text handed to the builder
+  changes. Pass 1's model (`SPEC_COMPILER_MODEL`) defaults to
+  `gemini-2.5-flash-lite` — revised 2026-08-12 from an initial DeepSeek
+  default after a local UAT run measured DeepSeek stalling the full 30s
+  one-shot timeout before falling back (~30-60s added per build). DeepSeek
+  stays available as an explicit opt-in (`SPEC_COMPILER_MODEL=
+  deepseek-v4-flash`) once its reliability is proven — `model-registry.ts`'s
+  `chainFor()` still drops it to lite-tier Google/other models whenever
+  `DEEPSEEK_API_KEY` / `ALLOW_PROMPT_ONLY_SAFETY_MODELS` are unset. Pass 1
+  failing outright never blocks a build (fails open to the raw message).
+  UAT confirmed 2026-08-12: 41-char request → 4,650-char spec → 16 KB game
+  (vs a ~6.2 KB no-compile baseline); total turn time on the DeepSeek-primary
+  config was 97.5s, which is why the default moved to Lite. Same-day owner
+  feedback on that first run's art direction/scene ("pathetic... generic")
+  led to rewriting §7/§8 of the compiler prompt to demand a bespoke,
+  per-game visual identity (a named illustration style + an invented,
+  setting-specific colour story) instead of checklist-style generic output
+  — the validated structural rules (padding-bottom, transition timing, no
+  `alert()`) are unchanged. `Game/logs/last-spec-compile.md` is now
+  overwritten with the full compiled spec on every Pass 1 success (debug
+  aid, `SPEC_COMPILER_DUMP_FILE` to relocate) so a run's actual output is
+  reviewable without scraping terminal scrollback.
 - **Server-side chat history** (2026-07-13, TECH_DEBT #26 shipped): every
   conversation (messages + generated game HTML) persists in SQLite keyed by
   the account (signed-in) or the guest device cookie — chats survive cleared

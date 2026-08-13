@@ -2,6 +2,8 @@
 // Knows nothing about safety or persistence. Server-only.
 
 import "server-only";
+import fs from "node:fs";
+import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
 import type { ChatMessage, ChatModel, ImageAttachment, StreamChunk, TokenUsage } from "@/types/chat.types";
 import type { ChainSummary } from "@/types/model-ledger.types";
@@ -19,10 +21,11 @@ import {
   GAME_EDIT_STRICT_RETRY_SECTION, REPEATED_REQUEST_SECTION, FRESH_GAME_LINE,
 } from "./game-edit";
 import { PERSONAS, type PersonaId } from "./persona/persona";
-import { NEXT_ASK_EDIT_PROMPT_SECTION, NEXT_ASK_PROMPT_SECTION, resolveNextAsk } from "./next-ask-sentinel";
+import { NEXT_ASK_EDIT_PROMPT_SECTION, NEXT_ASK_PROMPT_SECTION, NEXT_ASKS_PREFIX, resolveNextAsk } from "./next-ask-sentinel";
 import { fallbackChain, isModelGone, shouldTryNextModel } from "./model-fallback";
 import { runOneShotChain, runStreamChain, type ProviderChunk, type FinishReason, type ProviderGenerator } from "./model-runner";
 import { chainFor, specFor } from "./model-registry";
+import { specCompilerEnabled, specCompilerModel, shouldCompileSpec, SPEC_COMPILER_SYSTEM_PROMPT, SPEC_COMPILER_MAX_OUTPUT_TOKENS } from "./spec-compiler";
 import { openaiAdapter } from "./providers/openai-adapter";
 import { anthropicAdapter } from "./providers/anthropic-adapter";
 import { moonshotAdapter } from "./providers/moonshot-adapter";
@@ -82,6 +85,14 @@ const BUILD_TIMEOUT_MS = 60_000;
  */
 export const ONESHOT_MAX_MODELS = 2;
 export const ONESHOT_TOTAL_BUDGET_MS = 150_000;
+
+/** Deeper than ONESHOT_MAX_MODELS on purpose (owner ask 2026-08-13, after the
+ *  spec compiler's single lite-tier model 404'd in the asia-southeast1 Vertex
+ *  region with nothing to fall back to): Pass 1 already tolerates 20s+
+ *  latency, so reliability matters more here than shaving a few more seconds
+ *  off a rare failure path — 3 gives it a real shot at reaching all three
+ *  lite-generation fallbacks (spec-compiler.ts's specCompilerModel doc). */
+export const SPEC_COMPILE_MAX_MODELS = 3;
 
 export function oneShotBudgetMs(env: Record<string, string | undefined> = process.env): number {
   const override = Number(env.GEMINI_ONESHOT_BUDGET_MS);
@@ -429,30 +440,57 @@ export class GeminiError extends Error {
  * (api/chat/route.ts) must re-fence it before rendering, or the raw code's own
  * indentation gets misparsed as CommonMark indented code blocks (BUG-FIX-LOG 2026-07-14).
  */
+/** Recovers a `NEXT_ASKS:` sentinel the model leaked INSIDE the closing
+ *  fence instead of after it (BUG-FIX-LOG 2026-08-12, TECH_DEBT #101 —
+ *  confirmed live twice: production, 2026-08-10, and the first two-pass-
+ *  pipeline UAT turn, 2026-08-12). Without this, the line becomes part of
+ *  `artifactHtml` — rendering as stray visible text in the kid's game — and
+ *  `parseNextAskLine` (which only ever sees the PROSE outside the fence)
+ *  never finds it, so the suggestion chips silently don't show either.
+ *  Truncating at the first `</html>` also cleans up a doubled closing tag
+ *  seen in the same production incident. A safe no-op on well-formed output
+ *  — the discarded trailer is normally empty — and anything that isn't
+ *  recognizably a NEXT_ASKS line is dropped rather than risked as bogus
+ *  chat prose. */
+function reclaimLeakedNextAsk(html: string): { html: string; sentinel: string | null } {
+  const close = html.match(/<\/html\s*>/i);
+  if (!close || close.index === undefined) return { html, sentinel: null };
+  const cut = close.index + close[0].length;
+  const trailer = html.slice(cut).trim();
+  if (!trailer) return { html, sentinel: null };
+  const cleaned = html.slice(0, cut).trim();
+  const sentinel = trailer.toUpperCase().startsWith(NEXT_ASKS_PREFIX.toUpperCase()) ? trailer : null;
+  return { html: cleaned, sentinel };
+}
+
 export function extractArtifact(text: string): { text: string; artifactHtml?: string; wasFenced?: boolean } {
   // Shared with game-edit.ts so the route can RECOGNIZE this default: fine on
   // a fresh build, misleading on a turn that replaced an existing game.
   const done = FRESH_GAME_LINE;
+  const withSentinel = (prose: string, sentinel: string | null) => (sentinel ? `${prose}\n${sentinel}`.trim() : prose);
 
   const closed = text.match(/```html\s*([\s\S]*?)```/i);
   if (closed) {
-    return { text: text.replace(closed[0], "").trim() || done, artifactHtml: closed[1]?.trim(), wasFenced: true };
+    const { html, sentinel } = reclaimLeakedNextAsk((closed[1] ?? "").trim());
+    return { text: withSentinel(text.replace(closed[0], "").trim(), sentinel) || done, artifactHtml: html, wasFenced: true };
   }
 
   const openOnly = text.match(/```html\s*([\s\S]*)$/i);
   if (openOnly && /<\w+[\s>/]/.test(openOnly[1] ?? "")) {
+    const { html, sentinel } = reclaimLeakedNextAsk((openOnly[1] ?? "").trim());
     return {
-      text: text.slice(0, openOnly.index).trim() || done,
-      artifactHtml: (openOnly[1] ?? "").trim(),
+      text: withSentinel(text.slice(0, openOnly.index).trim(), sentinel) || done,
+      artifactHtml: html,
       wasFenced: false,
     };
   }
 
   const docIdx = text.search(/<!doctype html|<html[\s>]/i);
   if (docIdx !== -1) {
+    const { html, sentinel } = reclaimLeakedNextAsk(text.slice(docIdx).replace(/```\s*$/, "").trim());
     return {
-      text: text.slice(0, docIdx).trim() || done,
-      artifactHtml: text.slice(docIdx).replace(/```\s*$/, "").trim(),
+      text: withSentinel(text.slice(0, docIdx).trim(), sentinel) || done,
+      artifactHtml: html,
       wasFenced: false,
     };
   }
@@ -547,6 +585,15 @@ export class GeminiChatModel implements ChatModel {
     ? chainFor({ primary: this.model, tier: specFor(this.model)!.tier, env: process.env })
     : fallbackChain(this.model, process.env);
 
+  // Pass 1 of the two-pass pipeline (spec-compiler.ts) — its own primary +
+  // chain, independent of the builder model above. DeepSeek-primary by
+  // default; chainFor() drops it back to lite-tier Google/other models
+  // whenever its key or safety gate is closed, same as every other slot.
+  private compilerModel = specCompilerModel(process.env);
+  private compilerFallbacks = specFor(this.compilerModel)
+    ? chainFor({ primary: this.compilerModel, tier: specFor(this.compilerModel)!.tier, env: process.env })
+    : chainFor({ primary: "gemini-2.5-flash-lite", tier: "lite", env: process.env });
+
   // Non-Google generation adapters, keyed by provider. Google stays the native
   // path (buildContents/configFor) — it isn't in here. Each generator owns its
   // SDK/transport + request translation; the runner never sees a provider SDK.
@@ -577,12 +624,12 @@ export class GeminiChatModel implements ChatModel {
    *  GenerationRequest and back would only lose fidelity (thinking budgets,
    *  harm thresholds) that Gemini alone supports. */
   private toGenerationRequest(
-    input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean; activeGameMessageId?: string; persona?: PersonaId },
+    input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean; activeGameMessageId?: string; persona?: PersonaId; compiledSpec?: string },
   ): GenerationRequest {
     const config = this.configFor(input) as { systemInstruction: string; maxOutputTokens?: number };
     return {
       history: input.history.map((m) => ({ role: m.role === "child" ? "child" : "assistant", text: m.text })),
-      message: input.message,
+      message: input.compiledSpec ?? input.message,
       ...(input.image ? { image: { mimeType: input.image.mimeType, data: input.image.data } } : {}),
       systemInstruction: config.systemInstruction,
       maxOutputTokens: config.maxOutputTokens ?? 8192,
@@ -607,7 +654,7 @@ export class GeminiChatModel implements ChatModel {
    *  (BUG-FIX-LOG 2026-07-27, see the constant's comment) — the bible-teacher
    *  persona is a verified adult with its own relaxed thresholds and doesn't
    *  need it; ordinary (non-build) chat never needs it. */
-  private buildContents(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; persona?: PersonaId }) {
+  private buildContents(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; persona?: PersonaId; compiledSpec?: string }) {
     const isChild = (PERSONAS[input.persona ?? "default"] ?? PERSONAS.default).id === "default";
     // An error-report paste gets the more specific fix framing; every other
     // build turn keeps the battle framing verified live 2026-07-27.
@@ -628,6 +675,10 @@ export class GeminiChatModel implements ChatModel {
       : "";
     return buildChatContents({
       ...input,
+      // Pass 1's output replaces the TEXT sent to the model only — every
+      // gate above (safetyContext, catalog gates) was computed off the
+      // child's own words, so a compiled spec can never smuggle past them.
+      message: input.compiledSpec ?? input.message,
       ...(safetyContext ? { safetyContext } : {}),
       ...(modelNames ? { modelNames } : {}),
     });
@@ -853,11 +904,98 @@ export class GeminiChatModel implements ChatModel {
     }
   }
 
+  /** Debug aid (owner ask 2026-08-12) — overwrites ONE file with the most
+   *  recently compiled spec so it can be read back after a UAT run instead
+   *  of scraping terminal scrollback or the (preview-only) console log
+   *  above. Best-effort: a write failure must never affect the turn. */
+  private dumpCompiledSpec(message: string, spec: string): void {
+    if (process.env.VITEST) return; // never let a test run touch the real file
+    try {
+      const file = process.env.SPEC_COMPILER_DUMP_FILE || path.join(process.cwd(), "logs", "last-spec-compile.md");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `<!-- request: ${message.replace(/\n/g, " ")} -->\n<!-- compiled: ${new Date().toISOString()} -->\n\n${spec}\n`);
+    } catch (err) {
+      console.warn(`[gemini] spec-compile dump failed (non-fatal): ${(err as Error).message}`);
+    }
+  }
+
+  /** Pass 1 of the two-pass build pipeline (owner ask 2026-08-12) — see
+   *  spec-compiler.ts for the prompt and the eligibility predicate. Returns
+   *  undefined (never throws) whenever Pass 1 doesn't apply or fails
+   *  outright: a broken compiler must never block a build, so the caller
+   *  always has the raw message to fall back to — same fail-open posture
+   *  as the Sparks gate. */
+  private async maybeCompileSpec(input: {
+    message: string;
+    history: ChatMessage[];
+    activeGameMessageId?: string;
+    forceRebuild?: boolean;
+    image?: ImageAttachment;
+  }): Promise<string | undefined> {
+    if (!specCompilerEnabled(process.env) || !shouldCompileSpec(input)) return undefined;
+    const ai = getClient();
+    const chain = [this.compilerModel, ...this.compilerFallbacks].slice(0, SPEC_COMPILE_MAX_MODELS);
+    try {
+      const res = await runOneShotChain<OneShotResult>({
+        chain,
+        totalBudgetMs: oneShotBudgetMs(),
+        label: "gemini.spec-compile",
+        primaryRetries: 1,
+        call: (model, retries) =>
+          withRetry(() => {
+            const provider = this.nonGoogleProvider(model);
+            if (provider) {
+              return this.generators[provider]!.generateOnce(model, {
+                history: [],
+                message: input.message,
+                systemInstruction: SPEC_COMPILER_SYSTEM_PROMPT,
+                maxOutputTokens: SPEC_COMPILER_MAX_OUTPUT_TOKENS,
+              });
+            }
+            return ai.models
+              .generateContent({
+                model,
+                contents: [{ role: "user", parts: [{ text: input.message }] }],
+                config: { systemInstruction: SPEC_COMPILER_SYSTEM_PROMPT, maxOutputTokens: SPEC_COMPILER_MAX_OUTPUT_TOKENS },
+              })
+              .then((r) => this.normalizeGoogle(r));
+          }, { label: "gemini.spec-compile", retries }),
+        slotDeadlineMs: CHAT_TIMEOUT_MS,
+        ...this.chainPolicy,
+        // No onLedger here on purpose: the caller's ledger sink (route.ts's
+        // mkLedger("chat")) records the BUILDER chain's decision — piping this
+        // chain's summary through the same sink would double-write a "chat"
+        // row per build turn under a different model, corrupting per-model
+        // chat stats. Pass 1 gets its own console instrumentation below
+        // instead; wire a dedicated ledger `kind` later if this needs a
+        // queryable history.
+      });
+      const spec = res.text.trim();
+      if (spec.length === 0) {
+        console.warn("[gemini] spec-compile (Pass 1) returned empty — falling back to the raw message");
+        return undefined;
+      }
+      console.log(`[gemini] spec-compile (Pass 1) ✓ ${input.message.length} chars → ${spec.length} chars — preview: ${spec.slice(0, 160).replace(/\n/g, " ")}…`);
+      this.dumpCompiledSpec(input.message, spec);
+      return spec;
+    } catch (err) {
+      console.warn(`[gemini] spec-compile (Pass 1) failed, falling back to the raw message: ${(err as Error).message}`);
+      return undefined;
+    }
+  }
+
   /** Streaming reply — yields answer deltas AND thought summaries as they're
    *  generated. Thought parts (part.thought, includeThoughts in builder mode)
    *  become the kid-facing planning line; they are NOT part of the answer. */
   async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; activeGameMessageId?: string; forceRebuild?: boolean; preferAlternateModel?: boolean; persona?: PersonaId; onLedger?: (summary: ChainSummary) => void; nextAsk?: boolean }): AsyncGenerator<StreamChunk> {
     const ai = getClient();
+    // Pass 1 (spec-compiler.ts): on a fresh build turn, with the flag on,
+    // compile the child's request into a build spec BEFORE Pass 2 below
+    // builds it. Every gating decision downstream (configFor's isEdit/gates,
+    // buildContents's safetyContext) still runs on the ORIGINAL message —
+    // only the text actually sent to the builder model changes.
+    const compiledSpec = await this.maybeCompileSpec(input);
+    const promptInput = compiledSpec ? { ...input, compiledSpec } : input;
     // "🔄 Different one" (PRD-INSTANT-ALTERNATE, on-demand option): lead the
     // chain with the FALLBACK model so the regeneration is a genuinely different
     // model's take, not the same primary re-rolled. Falls back to normal order
@@ -880,7 +1018,7 @@ export class GeminiChatModel implements ChatModel {
         // translation + the SDK/transport. OpenAI additionally moderates
         // (option A); Anthropic/Moonshot are prompt-only and stream directly.
         const provider = this.nonGoogleProvider(model);
-        if (provider) return this.generators[provider]!.openStream(model, this.toGenerationRequest({ ...input, forceFullRegen: input.forceRebuild }));
+        if (provider) return this.generators[provider]!.openStream(model, this.toGenerationRequest({ ...promptInput, forceFullRegen: input.forceRebuild }));
         // forceRebuild ("Change this one" after a new-game prompt, PRD §11):
         // suppress the edit/new-game prompt clause so the model builds the new
         // game fresh in place rather than re-asking or trying to patch.
@@ -892,7 +1030,7 @@ export class GeminiChatModel implements ChatModel {
           await withRetry(
             () => ai.models.generateContentStream({
               model,
-              contents: this.buildContents(input),
+              contents: this.buildContents(promptInput),
               config: finalConfig,
             }),
             { label: "gemini.chat.stream", retries },

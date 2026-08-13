@@ -1,7 +1,7 @@
 // DeepSeek generation: OpenAI-compatible SSE → ProviderChunks. Transport
 // injected — no network. Shares buildMessages with OpenAI.
 //
-// The DeepSeek-specific risk these cover is `reasoning_content`: deepseek-reasoner
+// The DeepSeek-specific risk these cover is `reasoning_content`: a reasoning model
 // streams its chain-of-thought in a SEPARATE delta field. Treating it as text
 // would print the model's private reasoning straight into a child's chat, and
 // would corrupt every artifact by wrapping the game HTML in thinking prose.
@@ -24,7 +24,7 @@ const gen = (chunks: Array<Record<string, unknown>>) =>
 
 async function collect(g: DeepSeekGenerator) {
   const out: { text?: string; usage?: unknown; finishReason?: string }[] = [];
-  for await (const c of await g.openStream("deepseek-chat", REQ)) out.push(c);
+  for await (const c of await g.openStream("deepseek-v4-flash", REQ)) out.push(c);
   return out;
 }
 
@@ -85,7 +85,63 @@ describe("DeepSeekGenerator.openStream", () => {
       { choices: [{ delta: { content: "x" } }] },
       { choices: [{ delta: { content: "y" }, finish_reason: "stop" }] },
     ]);
-    expect((await g.generateOnce("deepseek-chat", REQ)).text).toBe("xy");
+    expect((await g.generateOnce("deepseek-v4-flash", REQ)).text).toBe("xy");
+  });
+
+  // Thinking control (2026-08-12). DeepSeek's own measurements on the rocket
+  // build turn: v4-flash spent 45,411 of 53,530 output tokens (85%) thinking,
+  // which is what put it 5.9x over BUILD_TIMEOUT_MS. Unlike Gemini's
+  // thinkingBudget these are the only knobs, so they are the whole lever.
+  async function bodyFor(env: Record<string, string | undefined>) {
+    let seen: Record<string, unknown> = {};
+    const g = new DeepSeekGenerator({
+      env: { DEEPSEEK_API_KEY: "k", ...env },
+      createStream: async (_m, body) => { seen = body; return sse({ choices: [{ delta: { content: "x" }, finish_reason: "stop" }] }); },
+    });
+    for await (const _ of await g.openStream("deepseek-v4-flash", REQ)) { /* drain */ }
+    return seen;
+  }
+
+  it("DS.7 sends NO thinking fields by default — the provider default is untouched", async () => {
+    const body = await bodyFor({});
+    expect(body).not.toHaveProperty("reasoning_effort");
+    expect(body).not.toHaveProperty("thinking");
+  });
+
+  it("DS.8 DEEPSEEK_REASONING_EFFORT sets reasoning_effort", async () => {
+    expect(await bodyFor({ DEEPSEEK_REASONING_EFFORT: "low" })).toMatchObject({ reasoning_effort: "low" });
+  });
+
+  it("DS.9 an invalid effort is DROPPED, never forwarded as a 400", async () => {
+    // The chain treats a 400 as a real defect and throws rather than walking,
+    // so a typo'd env value must not be able to dead-end a child's turn.
+    for (const v of ["", "medium-ish", "LOWEST", "1"]) {
+      expect(await bodyFor({ DEEPSEEK_REASONING_EFFORT: v }), v).not.toHaveProperty("reasoning_effort");
+    }
+  });
+
+  it("DS.10 DEEPSEEK_THINKING=disabled turns thinking off entirely", async () => {
+    expect(await bodyFor({ DEEPSEEK_THINKING: "disabled" })).toMatchObject({ thinking: { type: "disabled" } });
+  });
+
+  it("DS.11 both knobs can ride together", async () => {
+    const body = await bodyFor({ DEEPSEEK_THINKING: "enabled", DEEPSEEK_REASONING_EFFORT: "high" });
+    expect(body).toMatchObject({ thinking: { type: "enabled" }, reasoning_effort: "high" });
+  });
+
+  it("DS.12 temperature rides ONLY with thinking disabled — thinking mode rejects it", async () => {
+    // DeepSeek documents that thinking mode does not support temperature; a 400
+    // is classified as a real defect and THROWS instead of walking the chain,
+    // so this pairing must be impossible to configure by accident.
+    expect(await bodyFor({ DEEPSEEK_THINKING: "disabled", DEEPSEEK_TEMPERATURE: "0.2" })).toMatchObject({ temperature: 0.2 });
+    expect(await bodyFor({ DEEPSEEK_TEMPERATURE: "0.2" })).not.toHaveProperty("temperature");
+    expect(await bodyFor({ DEEPSEEK_THINKING: "enabled", DEEPSEEK_TEMPERATURE: "0.2" })).not.toHaveProperty("temperature");
+  });
+
+  it("DS.13 an out-of-range or junk temperature is dropped", async () => {
+    for (const v of ["", "hot", "-1", "9"]) {
+      expect(await bodyFor({ DEEPSEEK_THINKING: "disabled", DEEPSEEK_TEMPERATURE: v }), v).not.toHaveProperty("temperature");
+    }
   });
 
   it("DS.6 generateOnce drops reasoning_content too", async () => {
@@ -93,6 +149,6 @@ describe("DeepSeekGenerator.openStream", () => {
       { choices: [{ delta: { reasoning_content: "hmm" } }] },
       { choices: [{ delta: { content: "answer" }, finish_reason: "stop" }] },
     ]);
-    expect((await g.generateOnce("deepseek-reasoner", REQ)).text).toBe("answer");
+    expect((await g.generateOnce("deepseek-v4-pro", REQ)).text).toBe("answer");
   });
 });

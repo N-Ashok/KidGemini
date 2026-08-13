@@ -1,0 +1,1881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><!--ari-perf-probe--><script>(function () {
+  window.__arPerfProbeVersion = 4;
+  var buffer = [];
+  var ready = false;
+  function send(ev) {
+    try { parent.postMessage({ source: "ari-perf-probe", event: ev }, "*"); } catch (e) { /* parent gone */ }
+  }
+  function post(ev) { if (ready) send(ev); else buffer.push(ev); }
+  addEventListener("message", function (event) {
+    var d = event && event.data;
+    if (!d || d.source !== "ari-parent" || d.type !== "ready") return;
+    ready = true;
+    for (var i = 0; i < buffer.length; i++) send(buffer[i]);
+    buffer = [];
+  });
+
+  // GL draw-call counter (v4, 2026-08-10). snapshot.drawCalls was designed to
+  // read __arPerf.renderer.info — which NOTHING ever assigned, so it was null
+  // in every snapshot ever posted. Meanwhile the owner's AutoRicksaw game ran
+  // at 1,250 draws/frame from hand-built meshes the model accounting cannot
+  // see, and the slowdown hint blamed two static trees nine edits in a row.
+  // Count actual GL draw commands instead: engine-agnostic, needs nothing
+  // from the game, reaches stored games via the version re-floor.
+  var glDraws = 0;
+  function wrapGL(proto) {
+    if (!proto) return;
+    try {
+      var de = proto.drawElements;
+      if (de) proto.drawElements = function () { glDraws++; return de.apply(this, arguments); };
+      var da = proto.drawArrays;
+      if (da) proto.drawArrays = function () { glDraws++; return da.apply(this, arguments); };
+      var dei = proto.drawElementsInstanced;
+      if (dei) proto.drawElementsInstanced = function () { glDraws++; return dei.apply(this, arguments); };
+      var dai = proto.drawArraysInstanced;
+      if (dai) proto.drawArraysInstanced = function () { glDraws++; return dai.apply(this, arguments); };
+    } catch (e) { /* never break rendering for telemetry */ }
+  }
+  if (!window.__arGlDrawPatched) {
+    window.__arGlDrawPatched = 1;
+    wrapGL(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+    wrapGL(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+  }
+  var lastGlDraws = 0;
+
+  // FPS estimate: count rAF ticks in the last sample window. Stacks fine on
+  // top of the frame governor's own wrap (both call straight through).
+  var frames = 0;
+  var origRaf = window.requestAnimationFrame;
+  if (origRaf) {
+    window.requestAnimationFrame = function (cb) {
+      return origRaf.call(window, function (t) {
+        frames++;
+        return cb(t);
+      });
+    };
+  }
+
+  // "Playing" signal (v3, owner report 2026-08-06): frames alone can't tell
+  // "running slow" from "not running" — an unstarted game or idle lobby
+  // renders little/nothing by design. Track the last real input so the
+  // slowdown banner only trusts samples taken while the kid is actually
+  // playing. Capture phase: game code often stopPropagation()s.
+  var lastInput = 0;
+  var inputEvents = ["pointerdown", "keydown", "touchstart"];
+  for (var ie = 0; ie < inputEvents.length; ie++) {
+    addEventListener(inputEvents[ie], function () { lastInput = Date.now(); }, true);
+  }
+
+  function snapshot() {
+    // A hidden tab/panel genuinely renders zero frames — that's true, but it
+    // is NOT the same claim as "the game is running slow," which is what
+    // this snapshot exists to detect. Without this guard, every setInterval
+    // tick during a background gap (leaving Ari and coming back) posts a
+    // near-zero fps reading, which is enough on its own to satisfy the
+    // slowdown banner's "5 consecutive low samples" rule — so the banner
+    // flashes on return even though nothing was ever actually slow. Skip
+    // sampling entirely while hidden, and keep resetting the frame counter
+    // so no partial/corrupted count leaks into the first reading after the
+    // tab becomes visible again.
+    if (document.hidden) { frames = 0; return; }
+    var perf = window.__arPerf || {};
+    var reg = perf.models || {};
+    var animatedRoots = perf.animatedRoots;
+    var models = [];
+    for (var name in reg) {
+      if (!Object.prototype.hasOwnProperty.call(reg, name)) continue;
+      var entry = reg[name];
+      var roots = entry.instances || [];
+      // Live = still parented into a scene graph. A load()ed-but-never-added
+      // (or later removed) root reads parent as falsy — never a stale row.
+      var live = [];
+      for (var i = 0; i < roots.length; i++) {
+        if (roots[i] && roots[i].parent) live.push(roots[i]);
+      }
+      if (live.length === 0) continue;
+      var animated = false;
+      if (animatedRoots) {
+        for (var j = 0; j < live.length; j++) {
+          if (animatedRoots.has(live[j])) { animated = true; break; }
+        }
+      }
+      var triangles = entry.triangles || 0;
+      var load = triangles * live.length * (animated ? 2 : 1);
+      var bucket = load <= 20000 ? "green" : (load <= 150000 ? "yellow" : "red");
+      models.push({ name: name, triangles: triangles, instances: live.length, animated: animated, load: load, bucket: bucket });
+    }
+    var batches = perf.batches || {};
+    for (var bname in batches) {
+      if (!Object.prototype.hasOwnProperty.call(batches, bname)) continue;
+      var bentry = batches[bname];
+      var broots = bentry.roots || [];
+      var blive = false;
+      for (var bi = 0; bi < broots.length; bi++) { if (broots[bi] && broots[bi].parent) { blive = true; break; } }
+      if (!blive) continue;
+      var btriangles = bentry.triangles || 0;
+      var bdrawCalls = bentry.drawCalls || 1;
+      var bload = btriangles * bdrawCalls;
+      var bbucket = bload <= 20000 ? "green" : (bload <= 150000 ? "yellow" : "red");
+      models.push({ name: bentry.name, triangles: btriangles, instances: bentry.count || 0, animated: false, load: bload, bucket: bbucket, batched: true, drawCalls: bdrawCalls });
+    }
+    models.sort(function (a, b) { return b.load - a.load; });
+    var drawCalls = null, rendererTriangles = null;
+    // Per-frame average over this window from the GL counter — the value
+    // that actually distinguishes "a thousand tiny meshes" from "two trees".
+    var windowDraws = glDraws - lastGlDraws;
+    lastGlDraws = glDraws;
+    if (windowDraws > 0 && frames > 0) {
+      drawCalls = Math.round(windowDraws / frames);
+    } else if (perf.renderer && perf.renderer.info && perf.renderer.info.render) {
+      // Legacy fallback, kept for a game that registers its renderer.
+      drawCalls = perf.renderer.info.render.calls;
+      rendererTriangles = perf.renderer.info.render.triangles;
+    }
+    var playing = frames > 0 && lastInput > 0 && (Date.now() - lastInput) < 10000;
+    post({ type: "snapshot", snapshot: { fps: frames, playing: playing, drawCalls: drawCalls, rendererTriangles: rendererTriangles, models: models } });
+    frames = 0;
+  }
+  setInterval(snapshot, 1000);
+})();</script><script type="importmap">{"imports":{"three":"https://assets.ariantra.com/three.098b4c.js"}}</script><style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style><script>(function(){
+if (window.__arFrameGovernor) return;
+window.__arFrameGovernor = 1;
+var raf = window.requestAnimationFrame.bind(window);
+var seen = new WeakMap();
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    // Skipped frames ALWAYS re-request through the wrapper, so the loop can
+    // never die — that is the one failure mode that would break a live game.
+    if (document.hidden) { window.requestAnimationFrame(cb); return; }
+    var prev = (typeof cb === 'function' ? seen.get(cb) : 0) || 0;
+    if (prev && t - prev < 15) { window.requestAnimationFrame(cb); return; }
+    if (typeof cb === 'function') seen.set(cb, t);
+    return cb(t);
+  });
+};
+})();</script><script>(function(){
+if (window.__arGlGuard) return;
+window.__arGlGuard = 1;
+window.__arGlGuardVersion = 2;
+var get = HTMLCanvasElement.prototype.getContext;
+var live = [];
+var lostCount = 0;
+HTMLCanvasElement.prototype.getContext = function (type) {
+  var ctx = get.apply(this, arguments);
+  try {
+    if (ctx && /webgl/i.test(String(type)) && !this.__arGlGuarded) {
+      this.__arGlGuarded = 1;
+      var ext = null;
+      try { ext = ctx.getExtension('WEBGL_lose_context'); } catch (e2) { /* none */ }
+      live.push({ ctx: ctx, ext: ext });
+      this.addEventListener('webglcontextlost', function (e) {
+        // THE line that matters: without preventDefault the loss is final and
+        // the canvas stays blank for the rest of the document's life.
+        e.preventDefault();
+        lostCount++;
+        console.warn('[ari] WebGL context lost — restore requested');
+        // Watchdog (2026-08-10 №4, "it didnot regain"): browsers do not
+        // always volunteer webglcontextrestored, and a politely-held loop
+        // waits forever. The ladder is the automatic version of what fixed
+        // it for the owner by hand (code↔preview toggle = a remount):
+        // after 2s still lost → ask the driver; 3s more still lost → ask
+        // the parent to remount this frame.
+        setTimeout(function () {
+          var still = true;
+          try { still = ctx.isContextLost(); } catch (e3) { /* gone */ }
+          if (!still) return;
+          try { if (ext) ext.restoreContext(); } catch (e3) { /* refused */ }
+          setTimeout(function () {
+            var dead = true;
+            try { dead = ctx.isContextLost(); } catch (e4) { /* gone */ }
+            if (!dead) return;
+            console.warn('[ari] WebGL context is not coming back — asking the parent to reload the game');
+            try { parent.postMessage({ __ari: 'gl-dead' }, '*'); } catch (e4) { /* no parent */ }
+          }, 3000);
+        }, 2000);
+      }, false);
+      this.addEventListener('webglcontextrestored', function () {
+        if (lostCount > 0) lostCount--;
+        console.warn('[ari] WebGL context restored');
+      }, false);
+    }
+  } catch (e) { /* never break getContext */ }
+  return ctx;
+};
+// Restoring the CONTEXT is not enough — the game's LOOP must survive to see
+// it. While a context is lost, three.js's renderer throws mid-render (the GL
+// introspection APIs return null, and three calls .trim() on the result —
+// the exact stack the harness attributed on 2026-08-10). Games request their
+// next frame AFTER rendering (three's setAnimationLoop does too), so that
+// throw kills the loop for good: the context comes back, nothing draws, the
+// canvas stays blank, and no click can restart it. So: while any tracked
+// context is lost, hold rAF callbacks — always re-request, never run — the
+// same shape as the frame governor's document.hidden skip, and it resumes by
+// itself on webglcontextrestored. Composes with the governor's own wrapper
+// (this one runs outside it) — worst case a held frame is re-queued twice.
+// lostCount alone is NOT enough to gate on: webglcontextlost is dispatched
+// as a task, so there is a window after the actual loss (browser eviction or
+// our own release) where the event has not landed yet — one frame renders
+// against the dead context and three throws anyway. isContextLost() is
+// synchronous truth; the event counter only covers the fake-restore corner
+// (some drivers report isContextLost()=false again before firing restored).
+function anyLost() {
+  for (var i = 0; i < live.length; i++) {
+    try { if (live[i].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  for (var j = 0; j < released.length; j++) {
+    try { if (released[j].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  return false;
+}
+var raf = window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    if (lostCount > 0 || anyLost()) { window.requestAnimationFrame(cb); return; }
+    return cb(t);
+  });
+};
+var released = [];
+function release(why) {
+  // Hand the GPU back now rather than at GC, so the next preview iframe does
+  // not push the page over the context cap. Kept restorable (see pageshow):
+  // a release we believed was terminal must be reversible if the page comes
+  // back — 2026-08-10 second owner report, the pane-switch freeze.
+  for (var i = 0; i < live.length; i++) {
+    try {
+      if (live[i].ext) { live[i].ext.loseContext(); released.push(live[i]); }
+    } catch (e) { /* already gone */ }
+  }
+  live.length = 0;
+  // Observable from the parent page: this is how the harness proves the round
+  // was ASKED to release at unmount, rather than assuming it.
+  console.warn('[ari] WebGL contexts released (' + why + ')');
+}
+// Lets the harness assert that a torn-down round actually gave its context
+// back, instead of assuming pagehide fired.
+Object.defineProperty(window, '__arGlCount', { get: function () { return live.length; } });
+// The parent asks explicitly, immediately before it unmounts this frame.
+// pagehide alone is NOT enough: Chrome does not reliably fire it when an
+// iframe is detached from the DOM, which is precisely how every shadow round
+// ends — so without this the contexts pile up exactly as they did in the
+// owner's eleven-edit session.
+addEventListener('message', function (e) {
+  var d = e && e.data;
+  if (d && d.__ari === 'release-gl') release('asked');
+}, false);
+// Diagnostic-only (2026-08-11): a non-persisted pagehide fired mid-edit on
+// the STILL-PLAYING game, with no deliberate srcDoc/key change from React —
+// after shadow-verify was removed the same day, the explicit 'release-gl'
+// message (sent by the parent right before it unmounted the shadow frame)
+// went with it, leaving THIS listener as the only release trigger, carrying
+// more weight than "pagehide is kept as a backstop only" (the comment above
+// release()) ever assumed. This context string is what will tell us whether
+// it's a real backgrounding event (visibility/online state) or something
+// else entirely — never throws, so it can never break the guard itself.
+function diag() {
+  try {
+    return 'visibility=' + document.visibilityState + ' hidden=' + document.hidden +
+      ' online=' + navigator.onLine + ' at=' + Date.now();
+  } catch (e) { return 'diag-unavailable'; }
+}
+addEventListener('pagehide', function (e) {
+  // Safari/iOS fires pagehide when the page is merely BACKGROUNDED (app or
+  // tab switch, pane transitions) and will bring it back — persisted=true.
+  // Releasing there kills the LIVE game's context and the loop-hold freezes
+  // it: the owner's "froze, then turned blue when I clicked back"
+  // (2026-08-10, second report). Only a non-persisted pagehide — the actual
+  // teardown of a detached iframe — releases.
+  if (e && e.persisted) {
+    console.warn('[ari] pagehide (persisted, backgrounded — kept alive) ' + diag());
+    return;
+  }
+  console.warn('[ari] pagehide (NOT persisted — releasing) ' + diag());
+  release('pagehide');
+});
+addEventListener('pageshow', function () {
+  // The symmetric half: any release that turned out not to be terminal (the
+  // page came back anyway) is undone. restoreContext fires
+  // webglcontextrestored, which unwinds lostCount and resumes the held loop.
+  if (!released.length) return;
+  for (var i = 0; i < released.length; i++) {
+    try { released[i].ext.restoreContext(); live.push(released[i].ctx); } catch (e) { /* gone for real */ }
+  }
+  released.length = 0;
+  console.warn('[ari] WebGL contexts restored (pageshow)');
+});
+})();</script><script>window.AR_ASSETS={"cricketer":"https://assets.ariantra.com/cricketer.e16900.glb","bat":"https://assets.ariantra.com/bat.bbb9a7.glb","fence":"https://assets.ariantra.com/fence.f3e10b.glb","wicket":"https://assets.ariantra.com/wicket.3100cd.glb","mountain":"https://assets.ariantra.com/mountain.455316.glb","mountain_range":"https://assets.ariantra.com/mountain_range.625725.glb","mountain_small":"https://assets.ariantra.com/mountain_small.801d45.glb","coin_pickup":"https://assets.ariantra.com/coin_pickup.affa86.mp3","hit":"https://assets.ariantra.com/hit.8a79a3.mp3","game_over":"https://assets.ariantra.com/game_over.2866a9.mp3","pop":"https://assets.ariantra.com/pop.a0585f.mp3"};</script><script>window.AR_SIZES={"cricketer":[1.6,2.7,0.8],"fence":[0.475,0.27,0.075],"wicket":[0.225,0.748,0.032],"mountain":[1.079,1.911,1.103],"mountain_range":[4.591,2.488,3.844],"mountain_small":[1.496,1.37,1.117]};</script><script type="module">
+  import { GLTFLoader, MeshoptDecoder, RingGeometry } from "three";
+  window.__arLoadModelVersion = 7;
+// modelSize (2026-08-08, the fragmented-track fix): the measured metres a model
+// renders at scale 1, available BEFORE loading so a game can plan a layout. The
+// "|| {}" guard means order-of-injection never matters, and an unknown or
+// skinned model answers null rather than a made-up number — a game that checks
+// for null degrades to eyeballing, which is exactly what it did before v4.
+window.AR_SIZES = window.AR_SIZES || {};
+window.modelSize = function (name) {
+  var s = window.AR_SIZES[name];
+  return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
+};
+// modelAxis (2026-08-08, the poorly-formed-track fix): which axis a PATH
+// piece's road runs along at rest — "x", "z", or "none" for a hub/corner. The
+// two road kits genuinely disagree (city road_straight runs along X, racing
+// race_track_straight along Z) and a 1x1 square tile's size cannot reveal it,
+// so before this a game had to guess and got it wrong every time. Unknown
+// answers null — then eyeball it, same as before.
+window.AR_AXES = window.AR_AXES || {};
+window.modelAxis = function (name) {
+  var a = window.AR_AXES[name];
+  return (a === "x" || a === "z" || a === "none") ? a : null;
+};
+// modelJoins (2026-08-09, the SECOND poorly-formed-track fix): which edges a
+// tile's road actually reaches, measured from a top-down render of the
+// published bytes. modelAxis() answers "none" for every corner — true, and
+// useless for placing one; with nothing else to reason from, generated tracks
+// guessed corner rotations and the curves never met the straights.
+//   .joins  ["-x","+z"]  edges the carriageway reaches at rest (no rotation)
+//   .lane   0.7          drivable width in METRES at scale 1
+//   .at     {"-x":0.5}   where each join sits, in metres from the piece's own
+//                        minimum on that edge's axis (matters on 2x2 pieces)
+// Unknown answers null — then eyeball it, exactly as before.
+window.AR_EDGES = window.AR_EDGES || {};
+window.modelJoins = function (name) {
+  var e = window.AR_EDGES[name];
+  return (e && e.joins && e.joins.length) ? e : null;
+};
+// rotateToJoin: the one calculation every track needs and no game got right by
+// hand. Returns the rotation.y IN RADIANS that carries a piece's "from" edge
+// onto the "to" edge — e.g. a corner joining ["+z","+x"] that must instead join
+// west and south is rotateToJoin("race_track_corner","+x","+z"). Quarter turns
+// only, which is all a square grid can use.
+// (No backticks anywhere in this block: it is inlined into a TEMPLATE LITERAL,
+// so one would end the helper string mid-function.)
+window.rotateToJoin = function (name, from, to) {
+  var order = ["-z", "+x", "+z", "-x"]; // clockwise seen from above
+  var a = order.indexOf(from), b = order.indexOf(to);
+  if (a < 0 || b < 0) return 0;
+  return ((b - a + 4) % 4) * (Math.PI / 2);
+};
+// fitTile (2026-08-09): say WHICH DIRECTIONS a grid cell must connect and get
+// the rotation.y that makes the piece do it. Added after three rounds of
+// teaching failed to land: a generated track chose the right kit and one scale
+// factor, then hardcoded all four corner rotations and got all four wrong,
+// because working out "this cell needs north and east, the piece joins +z and
+// +x at rest, so rotate 3pi/2" is four steps of reasoning under a token budget.
+// This is one call. Directions are where the ROAD LEAVES the cell:
+//   fitTile("race_track_corner", ["-z", "+x"])   // track to the north and east
+// Returns 0 for an unknown piece, and null when no quarter turn can satisfy the
+// request — which means the wrong PIECE was chosen (asking a corner to join two
+// opposite edges), so a game can detect that instead of silently drawing a gap.
+window.fitTile = function (name, need) {
+  var e = window.AR_EDGES[name];
+  if (!e || !e.joins || !need || !need.length) return 0;
+  var order = ["-z", "+x", "+z", "-x"];
+  var want = need.slice().sort().join(",");
+  for (var q = 0; q < 4; q++) {
+    var got = e.joins
+      .map(function (j) { return order[(order.indexOf(j) + q) % 4]; })
+      .sort()
+      .join(",");
+    if (got === want) return q * (Math.PI / 2);
+  }
+  return null;
+};
+  const __arLoader = new GLTFLoader();
+__arLoader.setMeshoptDecoder(MeshoptDecoder);
+window.__arPerf = window.__arPerf || { models: {}, rootNames: new WeakMap(), animatedRoots: new WeakSet(), renderer: null };
+var __arStaticTemplates = {};
+function __arCountTriangles(obj) {
+  var triangles = 0;
+  obj.traverse(function (child) {
+    if (!child.isMesh || !child.geometry) return;
+    var geo = child.geometry;
+    if (geo.index) triangles += geo.index.count / 3;
+    else if (geo.attributes && geo.attributes.position) triangles += geo.attributes.position.count / 3;
+  });
+  return Math.round(triangles);
+}
+async function __arLoadFresh(name) {
+  const url = (window.AR_ASSETS || {})[name];
+  if (!url) { console.warn("[ariantra] unknown model:", name); return null; }
+  const gltf = await __arLoader.loadAsync(url);
+  return { scene: gltf.scene, animations: gltf.animations || [] };
+}
+window.loadModel = async function (name) {
+  try {
+    var obj;
+    if (__arStaticTemplates[name]) {
+      // Cache only ever holds a STATIC (no-animation) template — see the
+      // loadModelHelper() doc comment for why animated models are excluded.
+      obj = __arStaticTemplates[name].scene.clone();
+      obj.animations = [];
+    } else {
+      const fresh = await __arLoadFresh(name);
+      if (!fresh) return null;
+      if (fresh.animations.length) {
+        obj = fresh.scene;
+        obj.animations = fresh.animations;
+      } else {
+        __arStaticTemplates[name] = fresh;
+        obj = fresh.scene.clone();
+        obj.animations = [];
+      }
+    }
+    // Same answer as modelSize(name), riding on the object — so code that
+    // already holds the loaded root can size it without re-quoting the name.
+    obj.userData.arSize = window.modelSize(name);
+    try {
+      var __arEntry = window.__arPerf.models[name] || { name: name, triangles: 0, instances: [] };
+      __arEntry.triangles = __arCountTriangles(obj);
+      __arEntry.instances.push(obj);
+      if (__arEntry.instances.length > 1000) __arEntry.instances.shift();
+      window.__arPerf.models[name] = __arEntry;
+      window.__arPerf.rootNames.set(obj, name);
+    } catch (e) { /* telemetry only — never blocks the load */ }
+    return obj;
+  } catch (e) {
+    console.warn("[ariantra] loadModel failed:", name, e);
+    return null;
+  }
+};
+</script><script type="module">
+  import { InstancedMesh, Matrix4, Box3, Group, Vector3, Quaternion, Euler } from "three";
+window.loadModelBatch = async function (name, count) {
+  try {
+    if (typeof window.loadModel !== "function") { console.warn("[ariantra] loadModelBatch needs loadModel loaded first"); return null; }
+    const template = await (async function () {
+      // Piggyback on loadModel's own template cache — reach it via a single
+      // real load if nothing has cached this name yet, then discard that
+      // instance (its geometry/material are shared with the cache either way).
+      const probe = await window.loadModel(name);
+      return probe ? { scene: probe, animations: probe.animations || [] } : null;
+    })();
+    if (!template) return null;
+    if (template.animations.length) { console.warn("[ariantra] loadModelBatch does not support animated models:", name); return null; }
+    const container = new Group();
+    const parts = [];
+    template.scene.traverse(function (child) {
+      if (!child.isMesh || !child.geometry || !child.material) return;
+      parts.push(child);
+    });
+    const meshes = parts.map(function (part) {
+      const im = new InstancedMesh(part.geometry, part.material, count);
+      im.count = count;
+      container.add(im);
+      if (!part.geometry.boundingBox) part.geometry.computeBoundingBox();
+      return im;
+    });
+    try {
+      var __arTriangles = 0;
+      for (var __p = 0; __p < parts.length; __p++) {
+        var __geo = parts[__p].geometry;
+        if (__geo.index) __arTriangles += __geo.index.count / 3;
+        else if (__geo.attributes && __geo.attributes.position) __arTriangles += __geo.attributes.position.count / 3;
+      }
+      window.__arPerf = window.__arPerf || { models: {} };
+      window.__arPerf.batches = window.__arPerf.batches || {};
+      window.__arPerf.batches[name] = { name: name, triangles: Math.round(__arTriangles), drawCalls: meshes.length, count: count, roots: [container] };
+    } catch (e) { /* telemetry only — never blocks the batch */ }
+    var matrix = new Matrix4();
+    var box = new Box3();
+    var __arPos = new Vector3();
+    var __arQuat = new Quaternion();
+    var __arEuler = new Euler();
+    var __arScale = new Vector3();
+    return {
+      mesh: container,
+      setInstance: function (i, transform) {
+        var pos = (transform && transform.position) || {};
+        var scl = (transform && transform.scale) || {};
+        var rot = (transform && transform.rotation) || {};
+        __arPos.set(pos.x || 0, pos.y || 0, pos.z || 0);
+        __arEuler.set(rot.x || 0, rot.y || 0, rot.z || 0);
+        __arQuat.setFromEuler(__arEuler);
+        __arScale.set(scl.x != null ? scl.x : 1, scl.y != null ? scl.y : 1, scl.z != null ? scl.z : 1);
+        matrix.compose(__arPos, __arQuat, __arScale);
+        for (var m = 0; m < meshes.length; m++) {
+          meshes[m].setMatrixAt(i, matrix);
+          meshes[m].instanceMatrix.needsUpdate = true;
+        }
+      },
+      boundsAt: function (i) {
+        if (!parts.length) return new Box3();
+        meshes[0].getMatrixAt(i, matrix);
+        box.copy(parts[0].geometry.boundingBox).applyMatrix4(matrix);
+        return box;
+      },
+    };
+  } catch (e) {
+    console.warn("[ariantra] loadModelBatch failed:", name, e);
+    return null;
+  }
+};
+</script><script>
+(function () {
+  var ctx = null, buffers = {}, currentMusic = null;
+  function context() {
+    if (!ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC();
+      var resume = function () { if (ctx.state === "suspended") ctx.resume(); };
+      addEventListener("pointerdown", resume, true);
+      addEventListener("keydown", resume, true);
+    }
+    return ctx;
+  }
+  function load(name) {
+    var url = (window.AR_ASSETS || {})[name];
+    if (!url) { console.warn("[ariantra] unknown sound:", name); return Promise.resolve(null); }
+    if (!buffers[name]) {
+      buffers[name] = fetch(url)
+        .then(function (r) { return r.arrayBuffer(); })
+        .then(function (ab) {
+          return new Promise(function (res, rej) { context().decodeAudioData(ab, res, rej); });
+        })
+        .catch(function (e) { console.warn("[ariantra] sound failed:", name, e); return null; });
+    }
+    return buffers[name];
+  }
+  function trimBounds(buf) {
+    var d = buf.getChannelData(0), t = 0.001, s = 0, e = d.length - 1;
+    while (s < e && Math.abs(d[s]) < t) s++;
+    while (e > s && Math.abs(d[e]) < t) e--;
+    return { start: s / buf.sampleRate, end: (e + 1) / buf.sampleRate };
+  }
+  window.playSound = function (name) {
+    try {
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        src.connect(context().destination);
+        src.start();
+      });
+    } catch (e) { /* a silent effect, never a broken game */ }
+  };
+  window.playMusic = function (name) {
+    var handle = { stop: function () {} };
+    try {
+      if (currentMusic) { try { currentMusic.stop(); } catch (e2) {} currentMusic = null; }
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        var b = trimBounds(buf);
+        src.loop = true;
+        src.loopStart = b.start;
+        src.loopEnd = b.end;
+        var gain = context().createGain();
+        gain.gain.value = 0.5;
+        src.connect(gain);
+        gain.connect(context().destination);
+        src.start(0, b.start);
+        currentMusic = src;
+        handle.stop = function () { try { src.stop(); } catch (e3) {} if (currentMusic === src) currentMusic = null; };
+      });
+    } catch (e) { /* silent */ }
+    return handle;
+  };
+})();
+</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Cartoon Cricket</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Arial', sans-serif; display: flex; flex-direction: column; height: 100dvh; background-color: #add8e6; color: #333; }
+        #scene { display: block; width: 100%; height: 100%; }
+        #ui-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            pointer-events: none; /* Allows canvas interaction behind UI elements */
+            box-sizing: border-box;
+            padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+        }
+        #top-ui {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            pointer-events: auto;
+            color: white;
+            font-size: clamp(14px, 4vw, 24px);
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+        }
+        #score-panel {
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 8px 12px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            text-align: left;
+        }
+        #score-panel span { display: block; }
+
+        #game-messages {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 20px 30px;
+            border-radius: 15px;
+            font-size: clamp(18px, 6vw, 30px);
+            text-align: center;
+            z-index: 100;
+            pointer-events: auto;
+            white-space: pre-wrap; /* Allows line breaks in message */
+        }
+
+        #controls {
+            display: flex;
+            justify-content: center;
+            align-items: flex-end;
+            gap: 10px;
+            pointer-events: auto;
+            padding-bottom: max(12px, env(safe-area-inset-bottom));
+        }
+        .control-button, .action-button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            padding: 15px 25px;
+            font-size: clamp(16px, 5vw, 24px);
+            cursor: pointer;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            transition: background-color 0.2s, transform 0.1s;
+            touch-action: manipulation; /* Prevent 300ms delay on mobile */
+            -webkit-tap-highlight-color: transparent;
+        }
+        .control-button:active, .action-button:active {
+            background-color: #45a049;
+            transform: scale(0.98);
+        }
+        .action-button.red { background-color: #f44336; }
+        .action-button.red:active { background-color: #da190b; }
+        .action-button.blue { background-color: #2196F3; }
+        .action-button.blue:active { background-color: #0b7dda; }
+
+        #role-selection {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            z-index: 200;
+            pointer-events: auto;
+        }
+        #role-selection h2 {
+            color: white;
+            font-size: clamp(24px, 8vw, 40px);
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+        }
+        #role-selection button {
+            background-color: #FFC107;
+            color: #333;
+            border: none;
+            border-radius: 12px;
+            padding: 18px 35px;
+            font-size: clamp(20px, 6vw, 32px);
+            cursor: pointer;
+            box-shadow: 0 6px 12px rgba(0,0,0,0.4);
+            transition: background-color 0.2s, transform 0.1s;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #role-selection button:active {
+            background-color: #FFA000;
+            transform: scale(0.98);
+        }
+
+        /* Responsive UI for controls */
+        #bowler-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: center;
+            pointer-events: auto;
+        }
+        #ball-type-buttons {
+            display: flex;
+            gap: 10px;
+            pointer-events: auto;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        #batsman-move-buttons {
+            display: flex;
+            gap: 10px;
+            pointer-events: auto;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        /* Hide PC controls by default, show touch controls */
+        .pc-only { display: none; }
+        .touch-only { display: flex; }
+
+        /* Media query for larger screens (e.g., desktops) to show PC controls */
+        @media (min-width: 768px) {
+            .pc-only { display: flex; }
+            .touch-only { display: none; }
+        }
+    </style>
+</head>
+<body>
+    
+    
+    
+
+    <canvas id="scene"></canvas>
+
+    <div id="ui-container">
+        <!-- TOP UI -->
+        <div id="top-ui">
+            <div id="score-panel">
+                <span id="score">Player Runs: 0 / Wickets: 0</span>
+                <span id="ai-score">AI Runs: 0 / Wickets: 0</span>
+                <span id="current-over-ball">Over 0, Ball 0</span>
+            </div>
+            <!-- Empty space for potential future elements -->
+            <div></div>
+        </div>
+
+        <!-- GAME MESSAGES -->
+        <div id="game-messages" style="display: none;"></div>
+
+        <!-- BOTTOM CONTROLS -->
+        <div id="controls">
+            <!-- Role Selection will hide this initially -->
+            <div id="bowler-controls" style="display: none;">
+                <div id="ball-type-buttons">
+                    <button class="action-button blue" id="fast-ball-btn" data-type="fast">Fast Ball</button>
+                    <button class="action-button blue" id="spin-ball-btn" data-type="spin">Spin Ball</button>
+                </div>
+                <button class="action-button red" id="bowl-btn">BOWL!</button>
+            </div>
+
+            <div id="batsman-controls" style="display: none;">
+                <div id="batsman-move-buttons" class="touch-only">
+                    <button class="action-button" id="bat-left-btn">← Left</button>
+                    <button class="action-button" id="bat-right-btn">Right →</button>
+                </div>
+                <button class="action-button red" id="swing-btn">SWING!</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ROLE SELECTION SCREEN -->
+    <div id="role-selection">
+        <h2>Choose Your Role!</h2>
+        <button id="select-batsman-btn">Play as Batsman</button>
+        <button id="select-bowler-btn">Play as Bowler</button>
+    </div>
+
+    <script type="module">
+        import { Scene, PerspectiveCamera, WebGLRenderer, Clock, Color, Fog, Group, Vector3, Box3, BoxGeometry, SphereGeometry, CylinderGeometry, PlaneGeometry, MeshStandardMaterial, MeshBasicMaterial, Mesh, AmbientLight, DirectionalLight, AnimationMixer, Quaternion, MathUtils, Matrix4 } from "three";
+
+        // --- GLOBAL GAME STATE ---
+        const game = {
+            playerRole: null, // "batsman" or "bowler"
+            playerTeamScore: 0,
+            playerTeamWickets: 0,
+            aiTeamScore: 0,
+            aiTeamWickets: 0,
+            currentOver: 0,
+            currentBall: 0,
+            maxOvers: 10,
+            ballsPerOver: 6,
+            currentPhase: 'role_selection', // role_selection, waiting_for_bowl, ball_in_play, waiting_for_bat, outcome, next_ball
+            isPlayerTurnToBowl: false,
+            isPlayerTurnToBat: false,
+            ballInPlay: false,
+            bowlingData: {
+                aimX: 0, // -1 to 1 horizontal aim
+                aimY: 0, // 0 to 1 vertical aim (pitch length)
+                ballType: 'fast' // 'fast' or 'spin'
+            },
+            batsmanInput: {
+                swingTime: 0,
+                swingDirection: 0 // -1 (left), 0 (straight), 1 (right)
+            },
+            ballHitGround: false,
+            ballHitBat: false,
+            ballHitWickets: false,
+            ballLandedInCatchZone: false,
+            gameEnded: false,
+            messageTimer: null,
+            difficultyMultiplier: 1.0, // AI gets harder over time
+        };
+
+        // --- SCENE SETUP ---
+        const scene = new Scene();
+        const camera = new PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new WebGLRenderer({ canvas: document.getElementById('scene'), antialias: true, preserveDrawingBuffer: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        scene.background = new Color(0xadd8e6); // Light blue sky
+        scene.fog = new Fog(0xadd8e6, 50, 150); // Light fog for depth
+
+        // --- LIGHTING ---
+        const ambientLight = new AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        const directionalLight = new DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(50, 70, 50); // Sunlight from top-right
+        directionalLight.target.position.set(0, 0, 0);
+        scene.add(directionalLight);
+        scene.add(directionalLight.target);
+
+        // --- UI ELEMENTS ---
+        const uiContainer = document.getElementById('ui-container');
+        const scoreElement = document.getElementById('score');
+        const aiScoreElement = document.getElementById('ai-score');
+        const currentOverBallElement = document.getElementById('current-over-ball');
+        const gameMessages = document.getElementById('game-messages');
+        const bowlerControlsDiv = document.getElementById('bowler-controls');
+        const batsmanControlsDiv = document.getElementById('batsman-controls');
+        const fastBallBtn = document.getElementById('fast-ball-btn');
+        const spinBallBtn = document.getElementById('spin-ball-btn');
+        const bowlBtn = document.getElementById('bowl-btn');
+        const swingBtn = document.getElementById('swing-btn');
+        const batLeftBtn = document.getElementById('bat-left-btn');
+        const batRightBtn = document.getElementById('bat-right-btn');
+        const roleSelectionScreen = document.getElementById('role-selection');
+        const selectBatsmanBtn = document.getElementById('select-batsman-btn');
+        const selectBowlerBtn = document.getElementById('select-bowler-btn');
+
+        function updateScoreUI() {
+            scoreElement.textContent = `Player Runs: ${game.playerTeamScore} / Wickets: ${game.playerTeamWickets}`;
+            aiScoreElement.textContent = `AI Runs: ${game.aiTeamScore} / Wickets: ${game.aiTeamWickets}`;
+            currentOverBallElement.textContent = `Over ${game.currentOver}, Ball ${game.currentBall}`;
+        }
+
+        function showGameMessage(message, duration = 3000) {
+            clearTimeout(game.messageTimer);
+            gameMessages.textContent = message;
+            gameMessages.style.display = 'block';
+            game.messageTimer = setTimeout(() => {
+                gameMessages.style.display = 'none';
+            }, duration);
+        }
+
+        // --- GAME OBJECTS ---
+        let playerChar, aiChar;
+        let batsmanChar, bowlerChar;
+        let batsmanMixer, bowlerMixer;
+        let playerBatMesh;
+        let ball;
+        let wicketsPlayer, wicketsAI; // The actual 3D wicket models
+        const fielders = []; // Static fielder models
+
+        // --- GEOMETRIES AND MATERIALS ---
+        const grassMaterial = new MeshStandardMaterial({ color: 0x7CFC00 }); // Lawn green
+        const pitchMaterial = new MeshStandardMaterial({ color: 0xD2B48C }); // Tan/brown for pitch
+        const boundaryMaterial = new MeshStandardMaterial({ color: 0x8B4513 }); // Brown for fence posts
+        const ballMaterial = new MeshStandardMaterial({ color: 0xFF0000 }); // Red cricket ball
+        const aimLineMaterial = new MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.5 }); // Yellow aim line
+        const ballIndicatorMaterial = new MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.3 }); // Cyan for ball target
+
+        // --- WORLD GEOMETRY ---
+        function createGround() {
+            const groundGeometry = new PlaneGeometry(200, 200);
+            groundGeometry.rotateX(-Math.PI / 2);
+            const ground = new Mesh(groundGeometry, grassMaterial);
+            ground.position.y = -0.05; // Slightly below 0 to avoid Z-fighting with other objects
+            scene.add(ground);
+        }
+
+        function createPitch() {
+            const pitchLength = 20; // Standard pitch length
+            const pitchWidth = 3;
+            const pitchGeometry = new BoxGeometry(pitchWidth, 0.05, pitchLength);
+            const pitch = new Mesh(pitchGeometry, pitchMaterial);
+            pitch.position.set(0, 0, 0); // Centered at origin for now
+            scene.add(pitch);
+
+            // Stumps markings (simple white lines)
+            const lineMaterial = new MeshBasicMaterial({ color: 0xffffff });
+            const lineThickness = 0.1;
+            const lineLength = pitchWidth;
+            const lineGeometry = new BoxGeometry(lineLength, 0.01, lineThickness);
+
+            // Batting crease (player's end)
+            const battingCrease = new Mesh(lineGeometry, lineMaterial);
+            battingCrease.position.set(0, 0.02, pitchLength / 2 - 2); // 2m from stumps
+            scene.add(battingCrease);
+
+            // Bowling crease (AI's end)
+            const bowlingCrease = new Mesh(lineGeometry, lineMaterial);
+            bowlingCrease.position.set(0, 0.02, -(pitchLength / 2 - 2));
+            scene.add(bowlingCrease);
+        }
+
+        async function createBoundary() {
+            const fenceModelName = "fence";
+            const fenceSize = modelSize(fenceModelName);
+            const segmentLength = fenceSize ? fenceSize.x : 1; // Default to 1m if size not available
+            const radius = 60; // Circular boundary
+
+            const numSegments = Math.ceil(2 * Math.PI * radius / segmentLength);
+            const angleIncrement = (2 * Math.PI) / numSegments;
+
+            const instancedFence = await loadModelBatch(fenceModelName, numSegments);
+            if (instancedFence) {
+                instancedFence.mesh.position.y = 0.5; // Lift off the ground a bit
+                scene.add(instancedFence.mesh);
+
+                for (let i = 0; i < numSegments; i++) {
+                    const angle = i * angleIncrement;
+                    const x = radius * Math.sin(angle);
+                    const z = radius * Math.cos(angle);
+
+                    instancedFence.setInstance(i, {
+                        position: new Vector3(x, 0, z),
+                        rotation: new Vector3(0, -angle, 0), // Rotate to face outward
+                        scale: new Vector3(1, 1, 1)
+                    });
+                }
+            } else {
+                // Fallback to simple cylinders if model fails to load
+                console.warn("Failed to load fence model, using primitive cylinders for boundary.");
+                const cylinderGeometry = new CylinderGeometry(0.5, 0.5, 2, 8);
+                const boundaryGroup = new Group();
+                for (let i = 0; i < numSegments; i++) {
+                    const angle = i * angleIncrement;
+                    const x = radius * Math.sin(angle);
+                    const z = radius * Math.cos(angle);
+                    const cylinder = new Mesh(cylinderGeometry, boundaryMaterial);
+                    cylinder.position.set(x, 1, z);
+                    boundaryGroup.add(cylinder);
+                }
+                scene.add(boundaryGroup);
+            }
+        }
+
+        async function createStumps() {
+            const wicketModel = await loadModel("wicket");
+            if (wicketModel) {
+                // Player's end (batsman's end)
+                wicketsPlayer = wicketModel.clone();
+                wicketsPlayer.position.set(0, 0.4, 10); // End of the pitch
+                wicketsPlayer.scale.set(0.7, 0.7, 0.7); // Adjust size
+                scene.add(wicketsPlayer);
+
+                // AI's end (bowler's end)
+                wicketsAI = wicketModel.clone();
+                wicketsAI.position.set(0, 0.4, -10);
+                wicketsAI.scale.set(0.7, 0.7, 0.7);
+                wicketsAI.rotation.y = Math.PI; // Face the other way
+                scene.add(wicketsAI);
+            } else {
+                // Fallback to primitive cylinders if model fails
+                console.warn("Failed to load wicket model, using primitive cylinders.");
+                const stumpGeometry = new CylinderGeometry(0.1, 0.1, 1, 8);
+                const stumpMaterial = new MeshStandardMaterial({ color: 0x8B4513 });
+
+                const createPrimitiveStumps = (zPos) => {
+                    const stumpsGroup = new Group();
+                    for (let i = -1; i <= 1; i++) {
+                        const stump = new Mesh(stumpGeometry, stumpMaterial);
+                        stump.position.set(i * 0.3, 0.5, 0);
+                        stumpsGroup.add(stump);
+                    }
+                    stumpsGroup.position.set(0, 0, zPos);
+                    return stumpsGroup;
+                };
+                wicketsPlayer = createPrimitiveStumps(10);
+                wicketsAI = createPrimitiveStumps(-10);
+                scene.add(wicketsPlayer);
+                scene.add(wicketsAI);
+            }
+        }
+
+        async function createFielders() {
+            const fielderNames = ["cricketer", "man", "woman", "girl", "footballer"]; // Some variety for fielders
+            const numFielders = 5;
+            const boundaryRadius = 60; // Same as fence radius
+            const fielderDistance = boundaryRadius - 5; // A bit inside the boundary
+
+            for (let i = 0; i < numFielders; i++) {
+                const angle = (i / numFielders) * Math.PI * 0.7 + Math.PI * 0.15; // Place in a wide arc behind batsman
+                const x = fielderDistance * Math.sin(angle);
+                const z = fielderDistance * Math.cos(angle);
+
+                const randomFielderName = fielderNames[Math.floor(Math.random() * fielderNames.length)];
+                const fielderModel = await loadModel(randomFielderName);
+                if (fielderModel) {
+                    fielderModel.position.set(x, 0, z);
+                    fielderModel.rotation.y = angle + Math.PI; // Face towards the pitch
+                    fielderModel.scale.set(0.8, 0.8, 0.8);
+                    scene.add(fielderModel);
+                    fielders.push({ mesh: fielderModel, bounds: new Box3().setFromObject(fielderModel), catcher: false }); // Add a bounding box
+                } else {
+                    console.warn(`Failed to load fielder model: ${randomFielderName}`);
+                    // Fallback to simple box if model fails
+                    const box = new Mesh(new BoxGeometry(0.5, 1.5, 0.5), new MeshStandardMaterial({ color: 0x008000 }));
+                    box.position.set(x, 0.75, z);
+                    box.rotation.y = angle + Math.PI;
+                    scene.add(box);
+                    fielders.push({ mesh: box, bounds: new Box3().setFromObject(box), catcher: false });
+                }
+            }
+        }
+
+        function createBall() {
+            const ballGeometry = new SphereGeometry(0.2, 16, 16);
+            ball = new Mesh(ballGeometry, ballMaterial);
+            ball.visible = false;
+            scene.add(ball);
+            ball.userData.velocity = new Vector3();
+            ball.userData.spin = new Vector3(); // For spin ball effect
+        }
+
+        async function createMountainBackground() {
+            const mountainModels = ["mountain", "mountain_range", "mountain_small"];
+            const numMountains = 5;
+            const mountainDistance = 100; // Far behind the play area
+
+            for (let i = 0; i < numMountains; i++) {
+                const modelName = mountainModels[Math.floor(Math.random() * mountainModels.length)];
+                const mountain = await loadModel(modelName);
+                if (mountain) {
+                    const angle = (i / numMountains) * Math.PI * 0.8 - Math.PI * 0.4; // Arc behind the field
+                    const x = mountainDistance * Math.sin(angle);
+                    const z = mountainDistance * Math.cos(angle);
+
+                    mountain.position.set(x, Math.random() * 5 - 2, z); // Random height variation
+                    mountain.rotation.y = Math.random() * Math.PI * 2;
+                    const scale = Math.random() * 10 + 10;
+                    mountain.scale.set(scale, scale, scale);
+                    scene.add(mountain);
+                }
+            }
+        }
+
+        // --- GAME LOGIC ---
+        const clock = new Clock();
+        let animationMixers = [];
+
+        function resetBall() {
+            ball.visible = false;
+            ball.userData.velocity.set(0, 0, 0);
+            ball.userData.spin.set(0, 0, 0);
+            game.ballInPlay = false;
+            game.ballHitGround = false;
+            game.ballHitBat = false;
+            game.ballHitWickets = false;
+            game.ballLandedInCatchZone = false;
+        }
+
+        function startNewBall() {
+            if (game.gameEnded) return;
+
+            resetBall();
+            game.currentBall++;
+            if (game.currentBall > game.ballsPerOver) {
+                game.currentBall = 1;
+                game.currentOver++;
+                switchRoles(); // Switch roles every over
+            }
+
+            if (game.currentOver > game.maxOvers) {
+                endGame();
+                return;
+            }
+
+            // Reset difficulty for AI after a few overs if it's too high
+            if (game.currentOver > 0 && game.currentOver % 3 === 0) {
+                 game.difficultyMultiplier = Math.max(1.0, game.difficultyMultiplier - 0.1);
+            }
+            game.difficultyMultiplier += 0.05; // Gradually increase difficulty
+
+            updateScoreUI();
+            setControlsForCurrentRole();
+            clearGameMessages();
+
+            if (game.isPlayerTurnToBowl) {
+                game.currentPhase = 'waiting_for_bowl';
+                showGameMessage("Your turn to Bowl! Aim and select ball type.", 2000);
+            } else if (game.isPlayerTurnToBat) {
+                game.currentPhase = 'waiting_for_bat';
+                showGameMessage("Your turn to Bat! Get ready to SWING!", 2000);
+                setTimeout(aiBowl, 2000); // AI bowls after a brief pause
+            }
+        }
+
+        function switchRoles() {
+            game.isPlayerTurnToBowl = !game.isPlayerTurnToBowl;
+            game.isPlayerTurnToBat = !game.isPlayerTurnToBat;
+
+            // Update player and AI characters' roles
+            if (game.isPlayerTurnToBowl) {
+                bowlerChar = playerChar;
+                batsmanChar = aiChar;
+            } else {
+                bowlerChar = aiChar;
+                batsmanChar = playerChar;
+            }
+            setupCameraForRole();
+            showGameMessage(`New Over! Now playing as ${game.isPlayerTurnToBowl ? 'Bowler' : 'Batsman'}`, 3000);
+        }
+
+        // --- CAMERA CONTROLS ---
+        function setupCameraForRole() {
+            if (game.playerRole === null) return;
+
+            if (game.isPlayerTurnToBowl) {
+                camera.position.set(0, 3, -15); // Behind bowler
+                camera.lookAt(0, 1, 10); // Look at batsman's wickets
+            } else if (game.isPlayerTurnToBat) {
+                camera.position.set(0, 3, 13); // Behind batsman
+                camera.lookAt(0, 1, -10); // Look at bowler's wickets
+            }
+        }
+
+        // --- BOWLER MECHANICS ---
+        let currentAimVisual; // Represents the ball's projected landing spot
+        let mouseX = 0, mouseY = 0;
+        let isDraggingAim = false;
+
+        function updateAimVisual() {
+            if (!currentAimVisual) {
+                const indicatorGeometry = new RingGeometry(0.5, 0.7, 32);
+                currentAimVisual = new Mesh(indicatorGeometry, aimLineMaterial);
+                currentAimVisual.rotation.x = -Math.PI / 2;
+                scene.add(currentAimVisual);
+            }
+
+            // Map mouseX/Y to a target point on the pitch
+            const targetZ = MathUtils.lerp(5, 8, game.bowlingData.aimY); // From just before wickets to halfway up pitch
+            const targetX = MathUtils.lerp(-2, 2, (game.bowlingData.aimX + 1) / 2); // Across pitch width
+            currentAimVisual.position.set(targetX, 0.05, targetZ);
+            currentAimVisual.visible = game.currentPhase === 'waiting_for_bowl';
+        }
+
+        function handlePointerDownAim(event) {
+            if (game.currentPhase === 'waiting_for_bowl' && game.isPlayerTurnToBowl) {
+                isDraggingAim = true;
+                renderer.domElement.style.cursor = 'grabbing';
+            }
+        }
+
+        function handlePointerMoveAim(event) {
+            if (isDraggingAim && game.isPlayerTurnToBowl) {
+                const deltaX = event.movementX || (event.touches ? event.touches[0].clientX - mouseX : 0);
+                const deltaY = event.movementY || (event.touches ? event.touches[0].clientY - mouseY : 0);
+
+                game.bowlingData.aimX = Math.max(-1, Math.min(1, game.bowlingData.aimX + deltaX * 0.005));
+                game.bowlingData.aimY = Math.max(0, Math.min(1, game.bowlingData.aimY - deltaY * 0.005));
+
+                mouseX = event.touches ? event.touches[0].clientX : event.clientX;
+                mouseY = event.touches ? event.touches[0].clientY : event.clientY;
+                updateAimVisual();
+            }
+        }
+
+        function handlePointerUpAim() {
+            isDraggingAim = false;
+            renderer.domElement.style.cursor = 'grab';
+        }
+
+        async function bowlBall() {
+            if (game.currentPhase !== 'waiting_for_bowl' || game.ballInPlay) return;
+            playSound("whoosh");
+
+            game.currentPhase = 'ball_in_play';
+            ball.visible = true;
+            ball.position.set(bowlerChar.position.x, bowlerChar.position.y + 1, bowlerChar.position.z + 1); // Start slightly in front of bowler
+            currentAimVisual.visible = false; // Hide aim indicator
+
+            // Bowler animation
+            playCharacterAnimation(bowlerChar, bowlerMixer, 'sprint', 0.5); // Short run-up
+
+            // Calculate initial velocity based on aim and ball type
+            const speed = game.bowlingData.ballType === 'fast' ? 80 / 3.6 : 60 / 3.6; // km/h to m/s
+            const initialAngleY = MathUtils.lerp(-0.1, 0.1, (game.bowlingData.aimX + 1) / 2); // Horizontal direction
+            const initialAngleX = MathUtils.lerp(-0.05, 0.05, game.bowlingData.aimY); // Vertical curve
+
+            ball.userData.velocity.set(
+                Math.sin(initialAngleY) * speed,
+                3, // Initial upward push
+                Math.cos(initialAngleY) * speed
+            ).multiplyScalar(-1); // Bowl towards positive Z (batsman)
+
+            if (game.bowlingData.ballType === 'spin') {
+                ball.userData.spin.set(Math.random() > 0.5 ? 1 : -1, Math.random() * 2 - 1, 0); // Random spin axis
+                ball.userData.spin.normalize().multiplyScalar(0.2); // Spin strength
+            }
+
+            ball.userData.initialSpeed = speed; // Store for bat interaction
+            ball.userData.spinEffect = game.bowlingData.ballType === 'spin' ? 0.01 : 0; // Curve magnitude
+        }
+
+        // --- BATSMAN MECHANICS ---
+        function aiBowl() {
+            if (game.currentPhase !== 'waiting_for_bat' || game.ballInPlay) return;
+
+            game.currentPhase = 'ball_in_play';
+            ball.visible = true;
+            ball.position.set(bowlerChar.position.x, bowlerChar.position.y + 1, bowlerChar.position.z - 1); // Start slightly in front of bowler
+            playSound("whoosh");
+
+            playCharacterAnimation(bowlerChar, bowlerMixer, 'sprint', 0.5); // Short run-up for AI
+
+            // AI aiming - simple: aim towards stumps, sometimes slightly off
+            let aiAimX = (Math.random() - 0.5) * 0.5; // Slightly varied
+            let aiAimY = 0.5 + (Math.random() - 0.5) * 0.3; // Mid-pitch
+
+            let aiBallType = Math.random() < 0.7 ? 'fast' : 'spin'; // Mostly fast balls
+
+            const speed = aiBallType === 'fast' ? 70 / 3.6 * game.difficultyMultiplier : 55 / 3.6 * game.difficultyMultiplier;
+            const initialAngleY = MathUtils.lerp(-0.05, 0.05, (aiAimX + 1) / 2);
+            const initialAngleX = MathUtils.lerp(-0.03, 0.03, aiAimY);
+
+            ball.userData.velocity.set(
+                Math.sin(initialAngleY) * speed,
+                3,
+                Math.cos(initialAngleY) * speed
+            ).multiplyScalar(-1); // Bowl towards positive Z (batsman)
+
+            if (aiBallType === 'spin') {
+                ball.userData.spin.set(Math.random() > 0.5 ? 1 : -1, Math.random() * 2 - 1, 0);
+                ball.userData.spin.normalize().multiplyScalar(0.2);
+            }
+            ball.userData.initialSpeed = speed;
+            ball.userData.spinEffect = aiBallType === 'spin' ? 0.01 : 0;
+        }
+
+        function swingBat(direction = 0) {
+            if (game.currentPhase !== 'ball_in_play' || !game.isPlayerTurnToBat) return;
+
+            game.batsmanInput.swingTime = performance.now();
+            game.batsmanInput.swingDirection = direction;
+            playSound("hit");
+
+            // Play batsman swing animation
+            let swingClipName = 'interact-right'; // Default swing
+            if (direction === -1) swingClipName = 'attack-kick-left'; // Using kick as a swing for left
+            if (direction === 1) swingClipName = 'attack-kick-right'; // Using kick as a swing for right
+
+            playCharacterAnimation(batsmanChar, batsmanMixer, swingClipName, 0.3); // Short swing anim
+        }
+
+        function aiBat() {
+            if (game.currentPhase !== 'ball_in_play' || !game.isPlayerTurnToBowl || ball.position.z < -5) return; // Only AI bats when player bowls, and ball is close
+
+            // Simple AI: Decide to swing if ball is near the wickets (z > 8)
+            const ballToWicketsDist = 10 - ball.position.z; // Distance to player wickets
+            const ballSpeedZ = Math.abs(ball.userData.velocity.z);
+
+            if (ballSpeedZ > 0.1 && ballToWicketsDist > 0 && ballToWicketsDist < 3) { // Ball is in batting range
+                // Calculate ideal swing time based on ball's speed and position
+                const timeToImpact = ballToWicketsDist / ballSpeedZ;
+                const idealSwingTime = performance.now() + timeToImpact * 1000; // In ms
+
+                // AI aims for a good timing within a window
+                const swingWindow = 50 + Math.random() * 50; // Randomize AI's perfect timing slightly
+                if (performance.now() >= idealSwingTime - swingWindow / 2 && performance.now() <= idealSwingTime + swingWindow / 2) {
+                    // AI swings!
+                    const aiSwingDirection = (Math.random() > 0.5 ? 1 : -1) * (Math.random() > 0.7 ? 1 : 0); // Sometimes straight, sometimes side
+                    game.batsmanInput.swingTime = performance.now(); // Simulate a swing
+                    game.batsmanInput.swingDirection = aiSwingDirection;
+                    playSound("hit");
+                    let swingClipName = 'interact-right';
+                    if (aiSwingDirection === -1) swingClipName = 'attack-kick-left';
+                    if (aiSwingDirection === 1) swingClipName = 'attack-kick-right';
+                    playCharacterAnimation(batsmanChar, batsmanMixer, swingClipName, 0.3);
+                }
+            }
+        }
+
+
+        // --- ANIMATION ---
+        function playCharacterAnimation(character, mixer, clipName, duration = 1.0) {
+            if (!mixer || !character.animations) return;
+
+            const clip = character.animations.find(a => a.name.toLowerCase().includes(clipName.toLowerCase()));
+            if (clip) {
+                mixer.stopAllAction();
+                const action = mixer.clipAction(clip);
+                action.setDuration(duration).play();
+                action.setLoop(0, 1); // Play once
+                // Reset to idle after animation
+                setTimeout(() => {
+                    playCharacterAnimation(character, mixer, 'idle');
+                }, duration * 1000);
+            } else {
+                console.warn(`Animation clip "${clipName}" not found for character.`);
+                const idleClip = character.animations.find(a => a.name.toLowerCase().includes('idle'));
+                if (idleClip) {
+                    mixer.stopAllAction();
+                    mixer.clipAction(idleClip).play();
+                }
+            }
+        }
+
+        // --- COLLISION DETECTION & PHYSICS ---
+        const ballBounds = new Box3();
+        const batBounds = new Box3();
+        const wicketsPlayerBounds = new Box3();
+        const wicketsAIBounds = new Box3();
+
+        function checkCollisions(delta) {
+            if (!game.ballInPlay || !ball.visible) return;
+
+            ballBounds.setFromObject(ball);
+
+            // Ball-Ground collision
+            if (ball.position.y < 0.2 && ball.userData.velocity.y < 0) { // If ball is below ground and moving down
+                ball.position.y = 0.2; // Keep it above ground
+                ball.userData.velocity.y *= -0.6; // Bounce with energy loss
+                ball.userData.velocity.x *= 0.9; // Friction
+                ball.userData.velocity.z *= 0.9;
+                if (ball.userData.velocity.length() < 0.5) { // Stop if too slow
+                    ball.userData.velocity.set(0, 0, 0);
+                }
+                game.ballHitGround = true;
+            }
+
+            // Ball-Stumps collision (player's wickets)
+            if (game.isPlayerTurnToBat && wicketsPlayer && wicketsPlayerBounds.setFromObject(wicketsPlayer).intersectsBox(ballBounds)) {
+                if (!game.ballHitBat) {
+                    game.ballHitWickets = true;
+                    processOutcome(); // Wicket!
+                    return;
+                }
+            }
+            // Ball-Stumps collision (AI's wickets)
+            if (game.isPlayerTurnToBowl && wicketsAI && wicketsAIBounds.setFromObject(wicketsAI).intersectsBox(ballBounds)) {
+                if (!game.ballHitBat) {
+                    game.ballHitWickets = true;
+                    processOutcome(); // Wicket!
+                    return;
+                }
+            }
+
+            // Ball-Bat collision (Player's turn to bat)
+            if (game.isPlayerTurnToBat && batsmanChar && playerBatMesh && !game.ballHitBat) {
+                batBounds.setFromObject(playerBatMesh);
+                if (batBounds.intersectsBox(ballBounds)) {
+                    const currentTime = performance.now();
+                    const swingReactionTime = currentTime - game.batsmanInput.swingTime; // How long since swing input
+                    const idealReactionTime = 100; // Milliseconds for optimal timing
+                    const timingWindow = 150; // Total window for a "hit"
+
+                    if (Math.abs(swingReactionTime) < timingWindow) { // Hit within the window
+                        game.ballHitBat = true;
+                        playSound("coin_pickup"); // Sound for successful hit
+
+                        // Calculate hit force based on timing
+                        const timingFactor = 1 - (Math.abs(swingReactionTime) / timingWindow); // 1 for perfect, 0 for edge
+                        let hitForce = 15 + timingFactor * 15; // More force for better timing
+
+                        // Direction of hit based on swing input and ball velocity
+                        const ballVelMagnitude = ball.userData.initialSpeed || 20; // Use initial speed as base
+                        const hitDirection = new Vector3();
+                        if (game.batsmanInput.swingDirection === -1) { // Left swing
+                            hitDirection.set(-1, 0.5, -1);
+                        } else if (game.batsmanInput.swingDirection === 1) { // Right swing
+                            hitDirection.set(1, 0.5, -1);
+                        } else { // Straight swing (defend or straight hit)
+                            hitDirection.set(0, 0.2, -1); // Upward and forward
+                        }
+                        hitDirection.normalize();
+
+                        // Apply new velocity to ball
+                        ball.userData.velocity.copy(hitDirection).multiplyScalar(hitForce);
+
+                        if (timingFactor > 0.5) { // Good timing = strong hit
+                            ball.userData.velocity.y += 5; // Lift the ball
+                            showGameMessage("SIX! Well hit!", 1000); // Exaggerated message
+                        } else { // Defend/weak hit
+                            ball.userData.velocity.y += 2;
+                            showGameMessage("Defended!", 1000);
+                        }
+                    } else {
+                        // Swing missed or mistimed significantly
+                        showGameMessage("Too early/late!", 1000);
+                    }
+                    game.batsmanInput.swingTime = 0; // Reset swing input
+                }
+            }
+
+            // Ball-Bat collision (AI's turn to bat)
+            if (game.isPlayerTurnToBowl && batsmanChar && batsmanChar.userData.batMesh && !game.ballHitBat) {
+                batBounds.setFromObject(batsmanChar.userData.batMesh);
+                if (batBounds.intersectsBox(ballBounds)) {
+                    const currentTime = performance.now();
+                    const swingReactionTime = currentTime - game.batsmanInput.swingTime;
+                    const idealReactionTime = 100; // AI tries to be perfect
+                    const timingWindow = 200; // AI's timing window
+
+                    if (Math.abs(swingReactionTime) < timingWindow) {
+                        game.ballHitBat = true;
+                        playSound("coin_pickup");
+
+                        const timingFactor = 1 - (Math.abs(swingReactionTime) / timingWindow);
+                        let hitForce = 10 + timingFactor * 10 * game.difficultyMultiplier; // AI gets stronger with difficulty
+
+                        const hitDirection = new Vector3();
+                        const aiSwingDirection = game.batsmanInput.swingDirection;
+                        if (aiSwingDirection === -1) { hitDirection.set(-1, 0.5, 1); }
+                        else if (aiSwingDirection === 1) { hitDirection.set(1, 0.5, 1); }
+                        else { hitDirection.set(0, 0.2, 1); } // Upward and forward
+
+                        hitDirection.normalize();
+                        ball.userData.velocity.copy(hitDirection).multiplyScalar(hitForce);
+                        ball.userData.velocity.y += 5; // AI lifts the ball
+
+                        showGameMessage("AI Hits!", 1000);
+                    }
+                    game.batsmanInput.swingTime = 0;
+                }
+            }
+
+
+            // Ball-Boundary check
+            const distanceToCenter = ball.position.distanceTo(new Vector3(0, 0, 0));
+            const boundaryRadius = 60; // Same as fence radius
+            if (distanceToCenter >= boundaryRadius && ball.position.y > 0.5) { // Must be in the air past boundary
+                if (game.ballHitBat) {
+                    processOutcome("boundary_four");
+                    return;
+                }
+            }
+
+            // Ball-Fielder Catch check
+            if (ball.position.y > 1 && game.ballHitBat) { // Only check for catches if ball is in the air after being hit
+                for (const fielder of fielders) {
+                    const fielderBounds = fielder.bounds.clone();
+                    fielderBounds.expandByScalar(0.5); // Give fielders a bigger catch zone
+
+                    if (fielderBounds.intersectsBox(ballBounds) && !game.ballLandedInCatchZone) {
+                        // Simulate a catch chance
+                        if (Math.random() < 0.7 - game.difficultyMultiplier * 0.1) { // Player's fielders catch less often at higher difficulty
+                            game.ballLandedInCatchZone = true;
+                            processOutcome("caught");
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        function processOutcome(specificOutcome = null) {
+            if (game.currentPhase === 'outcome') return; // Prevent multiple outcomes
+
+            game.currentPhase = 'outcome';
+            let message = "";
+            let scored = 0;
+            let wicket = false;
+
+            if (specificOutcome === "boundary_four") {
+                message = "FOUR! Amazing shot!";
+                scored = 4;
+            } else if (specificOutcome === "caught") {
+                message = "OUT! Caught!";
+                wicket = true;
+            } else if (game.ballHitWickets) {
+                message = "OUT! Bowled!";
+                wicket = true;
+            } else if (game.ballHitBat) {
+                // If ball hit bat but no boundary/catch/wicket, assume 1 run
+                message = "Single run!";
+                scored = 1;
+            } else {
+                message = "Missed!";
+            }
+
+            if (game.isPlayerTurnToBat) {
+                game.playerTeamScore += scored;
+                if (wicket) {
+                    game.playerTeamWickets++;
+                    playSound("game_over"); // Sound for wicket
+                } else if (scored > 0) {
+                    playSound("pop"); // Sound for score
+                }
+            } else if (game.isPlayerTurnToBowl) {
+                game.aiTeamScore += scored;
+                if (wicket) {
+                    game.aiTeamWickets++;
+                    playSound("pop"); // Sound for wicket for AI
+                } else if (scored > 0) {
+                    playSound("pop");
+                }
+            }
+
+            showGameMessage(message, 2500);
+
+            // Stop ball movement and prepare for next ball
+            ball.userData.velocity.set(0, 0, 0);
+            ball.userData.spin.set(0, 0, 0);
+
+            // Wait for message to clear, then start next ball
+            setTimeout(startNewBall, 3000);
+        }
+
+        function endGame() {
+            game.gameEnded = true;
+            let finalMessage = "";
+            if (game.playerTeamScore > game.aiTeamScore) {
+                finalMessage = `GAME OVER!\nPlayer Wins!\nPlayer: ${game.playerTeamScore}/${game.playerTeamWickets}\nAI: ${game.aiTeamScore}/${game.aiTeamWickets}`;
+                playSound("jingle_win"); // Assuming a win jingle is available
+            } else if (game.playerTeamScore < game.aiTeamScore) {
+                finalMessage = `GAME OVER!\nAI Wins!\nPlayer: ${game.playerTeamScore}/${game.playerTeamWickets}\nAI: ${game.aiTeamScore}/${game.aiTeamWickets}`;
+                playSound("game_over");
+            } else {
+                finalMessage = `GAME OVER!\nIt's a TIE!\nPlayer: ${game.playerTeamScore}/${game.playerTeamWickets}\nAI: ${game.aiTeamScore}/${game.aiTeamWickets}`;
+            }
+            showGameMessage(finalMessage, 10000); // Show for longer
+            // Disable all controls
+            bowlerControlsDiv.style.display = 'none';
+            batsmanControlsDiv.style.display = 'none';
+        }
+
+        // --- GAME LOOP ---
+        let lastTimestamp = 0;
+        const maxFps = 60;
+        const frameInterval = 1000 / maxFps;
+        let on = true; // For pausing when tab is not active
+
+        const setOn = (v) => {
+            if (v === on) return;
+            on = v;
+            if (v) {
+                clock.getDelta(); // Reset clock delta on resume
+                lastTimestamp = performance.now(); // Reset lastTimestamp
+                requestAnimationFrame(animate);
+            }
+        };
+        document.addEventListener('visibilitychange', () => setOn(!document.hidden));
+        addEventListener('blur', () => setOn(false));
+        addEventListener('focus', () => setOn(true));
+
+        function animate(timestamp) {
+            if (!on) return;
+            requestAnimationFrame(animate);
+
+            const delta = clock.getDelta(); // Time since last frame in seconds
+
+            // Cap FPS
+            if (timestamp - lastTimestamp < frameInterval) {
+                return;
+            }
+            lastTimestamp = timestamp;
+
+
+            // Update mixers for character animations
+            animationMixers.forEach(mixer => mixer.update(delta));
+
+            // Ball physics update
+            if (game.ballInPlay) {
+                ball.userData.velocity.y -= 9.8 * delta; // Gravity
+                ball.position.add(ball.userData.velocity.clone().multiplyScalar(delta));
+
+                // Apply spin (simple rotation)
+                ball.rotation.x += ball.userData.spin.x * ball.userData.velocity.length() * delta;
+                ball.rotation.y += ball.userData.spin.y * ball.userData.velocity.length() * delta;
+                ball.rotation.z += ball.userData.spin.z * ball.userData.velocity.length() * delta;
+
+                // Simple spin curve (adjust horizontal velocity slightly)
+                if (ball.userData.spinEffect > 0) {
+                    ball.userData.velocity.x += ball.userData.spin.x * ball.userData.spinEffect;
+                    ball.userData.velocity.z += ball.userData.spin.z * ball.userData.spinEffect;
+                }
+
+                // If ball goes too far or too high/low without hitting anything, reset
+                if (ball.position.y < -5 || ball.position.y > 50 || Math.abs(ball.position.x) > 100 || ball.position.z > 100 || ball.position.z < -100) {
+                    if (game.currentPhase === 'ball_in_play') {
+                        processOutcome("ball_out_of_play"); // Treat as a dot ball or wide
+                    }
+                }
+            }
+
+            // AI batsman decision for batting
+            if (!game.isPlayerTurnToBat && game.currentPhase === 'ball_in_play') {
+                aiBat();
+            }
+
+            checkCollisions(delta);
+
+            renderer.render(scene, camera);
+        }
+
+        // --- EVENT LISTENERS ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Bowler Controls
+        fastBallBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); game.bowlingData.ballType = 'fast'; showGameMessage("Fast Ball selected!", 500); });
+        spinBallBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); game.bowlingData.ballType = 'spin'; showGameMessage("Spin Ball selected!", 500); });
+        bowlBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); bowlBall(); });
+
+        // Batsman Controls
+        swingBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); swingBat(game.batsmanInput.swingDirection); });
+        batLeftBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); game.batsmanInput.swingDirection = -1; showGameMessage("Aiming Left!", 500); });
+        batRightBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); game.batsmanInput.swingDirection = 1; showGameMessage("Aiming Right!", 500); });
+
+        // Keyboard Controls
+        window.addEventListener('keydown', (e) => {
+            if (game.gameEnded) return;
+            if (e.key === ' ' || e.key === 'Spacebar') {
+                e.preventDefault();
+                if (game.isPlayerTurnToBowl && game.currentPhase === 'waiting_for_bowl') bowlBall();
+                if (game.isPlayerTurnToBat && game.currentPhase === 'ball_in_play') swingBat(game.batsmanInput.swingDirection);
+            }
+            if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') {
+                e.preventDefault();
+                if (game.isPlayerTurnToBat) {
+                    game.batsmanInput.swingDirection = -1;
+                    showGameMessage("Aiming Left!", 500);
+                }
+                if (game.isPlayerTurnToBowl) {
+                    game.bowlingData.aimX = Math.max(-1, game.bowlingData.aimX - 0.1);
+                    updateAimVisual();
+                }
+            }
+            if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') {
+                e.preventDefault();
+                if (game.isPlayerTurnToBat) {
+                    game.batsmanInput.swingDirection = 1;
+                    showGameMessage("Aiming Right!", 500);
+                }
+                if (game.isPlayerTurnToBowl) {
+                    game.bowlingData.aimX = Math.min(1, game.bowlingData.aimX + 0.1);
+                    updateAimVisual();
+                }
+            }
+            if (e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') {
+                e.preventDefault();
+                if (game.isPlayerTurnToBowl) {
+                    game.bowlingData.aimY = Math.min(1, game.bowlingData.aimY + 0.1);
+                    updateAimVisual();
+                }
+            }
+            if (e.key === 'ArrowDown' || e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                if (game.isPlayerTurnToBowl) {
+                    game.bowlingData.aimY = Math.max(0, game.bowlingData.aimY - 0.1);
+                    updateAimVisual();
+                }
+            }
+            if (e.key.toLowerCase() === 'f') { // Fast Ball shortcut
+                e.preventDefault();
+                if (game.isPlayerTurnToBowl) {
+                    game.bowlingData.ballType = 'fast';
+                    showGameMessage("Fast Ball selected!", 500);
+                }
+            }
+            if (e.key.toLowerCase() === 'r') { // Spin Ball shortcut (R for Revolutions!)
+                e.preventDefault();
+                if (game.isPlayerTurnToBowl) {
+                    game.bowlingData.ballType = 'spin';
+                    showGameMessage("Spin Ball selected!", 500);
+                }
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key.toLowerCase() === 'a' || e.key.toLowerCase() === 'd') {
+                if (game.isPlayerTurnToBat) game.batsmanInput.swingDirection = 0; // Reset swing direction for display purposes
+            }
+        });
+
+        // Mouse/Touch Aiming for Bowler
+        renderer.domElement.addEventListener('pointerdown', handlePointerDownAim);
+        renderer.domElement.addEventListener('pointermove', handlePointerMoveAim);
+        renderer.domElement.addEventListener('pointerup', handlePointerUpAim);
+        renderer.domElement.addEventListener('pointerleave', handlePointerUpAim); // End drag if pointer leaves canvas
+
+        // --- CHARACTER LOADING ---
+        async function setupCharacters() {
+            const playerCharModel = await loadModel("cricketer");
+            const aiCharModel = await loadModel("cricketer");
+            const batModel = await loadModel("bat");
+
+            if (playerCharModel && aiCharModel && batModel) {
+                // Player character setup
+                playerChar = playerCharModel;
+                playerChar.scale.set(0.8, 0.8, 0.8);
+                playerChar.position.y = 0; // Ground level
+                scene.add(playerChar);
+                batsmanMixer = new AnimationMixer(playerChar);
+                animationMixers.push(batsmanMixer);
+                playCharacterAnimation(playerChar, batsmanMixer, 'idle');
+
+                // AI character setup
+                aiChar = aiCharModel;
+                aiChar.scale.set(0.8, 0.8, 0.8);
+                aiChar.position.y = 0; // Ground level
+                scene.add(aiChar);
+                bowlerMixer = new AnimationMixer(aiChar);
+                animationMixers.push(bowlerMixer);
+                playCharacterAnimation(aiChar, bowlerMixer, 'idle');
+
+                // Bat setup (attached to playerChar for now, will move to active batsman)
+                playerBatMesh = batModel;
+                playerBatMesh.scale.set(0.5, 0.5, 0.5); // Adjust bat size
+                // Position relative to character's hand - need to find hand bone or approximate
+                const rightArm = playerChar.getObjectByName("arm-right"); // Or similar bone name
+                if (rightArm) {
+                    rightArm.add(playerBatMesh);
+                    playerBatMesh.position.set(0.1, -0.4, 0.0); // Adjust as needed
+                    playerBatMesh.rotation.set(Math.PI / 2, 0, Math.PI / 2); // Rotate to hold
+                } else {
+                    // Fallback if no specific arm bone
+                    playerChar.add(playerBatMesh);
+                    playerBatMesh.position.set(0.5, 1, 0); // Approx position next to character
+                    playerBatMesh.rotation.set(0, Math.PI / 2, 0);
+                }
+                playerChar.userData.batMesh = playerBatMesh; // Store reference to bat
+
+                // Store AI's bat
+                const aiBatMesh = batModel.clone();
+                aiBatMesh.scale.set(0.5, 0.5, 0.5);
+                const aiRightArm = aiChar.getObjectByName("arm-right");
+                if (aiRightArm) {
+                    aiRightArm.add(aiBatMesh);
+                    aiBatMesh.position.set(0.1, -0.4, 0.0);
+                    aiBatMesh.rotation.set(Math.PI / 2, 0, Math.PI / 2);
+                } else {
+                    aiChar.add(aiBatMesh);
+                    aiBatMesh.position.set(0.5, 1, 0);
+                    aiBatMesh.rotation.set(0, Math.PI / 2, 0);
+                }
+                aiChar.userData.batMesh = aiBatMesh;
+
+
+                // Initialize player and AI positions
+                playerChar.position.set(0, 0, 10); // Player at batsman's end
+                playerChar.rotation.y = Math.PI; // Face the bowler
+
+                aiChar.position.set(0, 0, -10); // AI at bowler's end
+                aiChar.rotation.y = 0; // Face the batsman
+
+            } else {
+                console.error("Failed to load character or bat models. Using placeholders.");
+                // Fallback to simple box characters
+                playerChar = new Mesh(new BoxGeometry(0.8, 1.8, 0.8), new MeshStandardMaterial({ color: 0x0000ff }));
+                playerChar.position.set(0, 0.9, 10);
+                scene.add(playerChar);
+
+                aiChar = new Mesh(new BoxGeometry(0.8, 1.8, 0.8), new MeshStandardMaterial({ color: 0xff0000 }));
+                aiChar.position.set(0, 0.9, -10);
+                scene.add(aiChar);
+
+                playerBatMesh = new Mesh(new BoxGeometry(0.1, 0.1, 1.0), new MeshStandardMaterial({ color: 0x8B4513 }));
+                playerChar.add(playerBatMesh);
+                playerBatMesh.position.set(0.5, 0.5, 0);
+                playerChar.userData.batMesh = playerBatMesh;
+            }
+        }
+
+        function setControlsForCurrentRole() {
+            bowlerControlsDiv.style.display = 'none';
+            batsmanControlsDiv.style.display = 'none';
+
+            if (game.currentPhase === 'role_selection') {
+                roleSelectionScreen.style.display = 'flex';
+                uiContainer.style.pointerEvents = 'auto';
+                gameMessages.style.display = 'none';
+            } else {
+                roleSelectionScreen.style.display = 'none';
+                uiContainer.style.pointerEvents = 'none'; // Default to no pointer events
+                clearGameMessages(); // Clear messages initially
+
+                if (game.isPlayerTurnToBowl) {
+                    bowlerControlsDiv.style.display = 'flex';
+                    uiContainer.style.pointerEvents = 'auto'; // Re-enable for buttons
+                } else if (game.isPlayerTurnToBat) {
+                    batsmanControlsDiv.style.display = 'flex';
+                    uiContainer.style.pointerEvents = 'auto'; // Re-enable for buttons
+                }
+            }
+        }
+
+        function clearGameMessages() {
+            gameMessages.style.display = 'none';
+            clearTimeout(game.messageTimer);
+        }
+
+        // --- INITIALIZATION ---
+        async function initGame() {
+            createGround();
+            createPitch();
+            createBall();
+            await createStumps();
+            await createBoundary();
+            await createFielders();
+            await createMountainBackground();
+            await setupCharacters(); // Characters loaded last, so they are ready for role setup
+
+            updateScoreUI();
+            setControlsForCurrentRole(); // Show role selection
+
+            // Initialize mouse coordinates for aiming
+            renderer.domElement.addEventListener('mousemove', (event) => {
+                mouseX = event.clientX;
+                mouseY = event.clientY;
+            });
+            renderer.domElement.addEventListener('touchmove', (event) => {
+                if (event.touches.length > 0) {
+                    mouseX = event.touches[0].clientX;
+                    mouseY = event.touches[0].clientY;
+                }
+            });
+
+            // Start animation loop
+            animate();
+        }
+
+        // Role selection
+        selectBatsmanBtn.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            game.playerRole = "batsman";
+            game.isPlayerTurnToBat = true;
+            game.isPlayerTurnToBowl = false;
+            batsmanChar = playerChar;
+            bowlerChar = aiChar;
+            game.currentPhase = 'waiting_for_bat';
+            playMusic("bg_loop_playful"); // Start background music
+            startNewBall();
+            setControlsForCurrentRole();
+            setupCameraForRole();
+            renderer.domElement.style.cursor = 'default';
+        });
+
+        selectBowlerBtn.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            game.playerRole = "bowler";
+            game.isPlayerTurnToBowl = true;
+            game.isPlayerTurnToBat = false;
+            batsmanChar = aiChar;
+            bowlerChar = playerChar;
+            game.currentPhase = 'waiting_for_bowl';
+            playMusic("bg_loop_playful"); // Start background music
+            startNewBall();
+            setControlsForCurrentRole();
+            setupCameraForRole();
+            renderer.domElement.style.cursor = 'grab'; // Show grab cursor for aiming
+        });
+
+        initGame();
+
+    </script>
+</body>
+</html>

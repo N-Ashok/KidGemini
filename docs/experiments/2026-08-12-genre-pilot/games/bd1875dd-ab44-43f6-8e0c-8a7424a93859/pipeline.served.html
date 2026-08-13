@@ -1,0 +1,1616 @@
+<!DOCTYPE html>
+<html>
+<head><!--ari-perf-probe--><script>(function () {
+  window.__arPerfProbeVersion = 4;
+  var buffer = [];
+  var ready = false;
+  function send(ev) {
+    try { parent.postMessage({ source: "ari-perf-probe", event: ev }, "*"); } catch (e) { /* parent gone */ }
+  }
+  function post(ev) { if (ready) send(ev); else buffer.push(ev); }
+  addEventListener("message", function (event) {
+    var d = event && event.data;
+    if (!d || d.source !== "ari-parent" || d.type !== "ready") return;
+    ready = true;
+    for (var i = 0; i < buffer.length; i++) send(buffer[i]);
+    buffer = [];
+  });
+
+  // GL draw-call counter (v4, 2026-08-10). snapshot.drawCalls was designed to
+  // read __arPerf.renderer.info — which NOTHING ever assigned, so it was null
+  // in every snapshot ever posted. Meanwhile the owner's AutoRicksaw game ran
+  // at 1,250 draws/frame from hand-built meshes the model accounting cannot
+  // see, and the slowdown hint blamed two static trees nine edits in a row.
+  // Count actual GL draw commands instead: engine-agnostic, needs nothing
+  // from the game, reaches stored games via the version re-floor.
+  var glDraws = 0;
+  function wrapGL(proto) {
+    if (!proto) return;
+    try {
+      var de = proto.drawElements;
+      if (de) proto.drawElements = function () { glDraws++; return de.apply(this, arguments); };
+      var da = proto.drawArrays;
+      if (da) proto.drawArrays = function () { glDraws++; return da.apply(this, arguments); };
+      var dei = proto.drawElementsInstanced;
+      if (dei) proto.drawElementsInstanced = function () { glDraws++; return dei.apply(this, arguments); };
+      var dai = proto.drawArraysInstanced;
+      if (dai) proto.drawArraysInstanced = function () { glDraws++; return dai.apply(this, arguments); };
+    } catch (e) { /* never break rendering for telemetry */ }
+  }
+  if (!window.__arGlDrawPatched) {
+    window.__arGlDrawPatched = 1;
+    wrapGL(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+    wrapGL(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+  }
+  var lastGlDraws = 0;
+
+  // FPS estimate: count rAF ticks in the last sample window. Stacks fine on
+  // top of the frame governor's own wrap (both call straight through).
+  var frames = 0;
+  var origRaf = window.requestAnimationFrame;
+  if (origRaf) {
+    window.requestAnimationFrame = function (cb) {
+      return origRaf.call(window, function (t) {
+        frames++;
+        return cb(t);
+      });
+    };
+  }
+
+  // "Playing" signal (v3, owner report 2026-08-06): frames alone can't tell
+  // "running slow" from "not running" — an unstarted game or idle lobby
+  // renders little/nothing by design. Track the last real input so the
+  // slowdown banner only trusts samples taken while the kid is actually
+  // playing. Capture phase: game code often stopPropagation()s.
+  var lastInput = 0;
+  var inputEvents = ["pointerdown", "keydown", "touchstart"];
+  for (var ie = 0; ie < inputEvents.length; ie++) {
+    addEventListener(inputEvents[ie], function () { lastInput = Date.now(); }, true);
+  }
+
+  function snapshot() {
+    // A hidden tab/panel genuinely renders zero frames — that's true, but it
+    // is NOT the same claim as "the game is running slow," which is what
+    // this snapshot exists to detect. Without this guard, every setInterval
+    // tick during a background gap (leaving Ari and coming back) posts a
+    // near-zero fps reading, which is enough on its own to satisfy the
+    // slowdown banner's "5 consecutive low samples" rule — so the banner
+    // flashes on return even though nothing was ever actually slow. Skip
+    // sampling entirely while hidden, and keep resetting the frame counter
+    // so no partial/corrupted count leaks into the first reading after the
+    // tab becomes visible again.
+    if (document.hidden) { frames = 0; return; }
+    var perf = window.__arPerf || {};
+    var reg = perf.models || {};
+    var animatedRoots = perf.animatedRoots;
+    var models = [];
+    for (var name in reg) {
+      if (!Object.prototype.hasOwnProperty.call(reg, name)) continue;
+      var entry = reg[name];
+      var roots = entry.instances || [];
+      // Live = still parented into a scene graph. A load()ed-but-never-added
+      // (or later removed) root reads parent as falsy — never a stale row.
+      var live = [];
+      for (var i = 0; i < roots.length; i++) {
+        if (roots[i] && roots[i].parent) live.push(roots[i]);
+      }
+      if (live.length === 0) continue;
+      var animated = false;
+      if (animatedRoots) {
+        for (var j = 0; j < live.length; j++) {
+          if (animatedRoots.has(live[j])) { animated = true; break; }
+        }
+      }
+      var triangles = entry.triangles || 0;
+      var load = triangles * live.length * (animated ? 2 : 1);
+      var bucket = load <= 20000 ? "green" : (load <= 150000 ? "yellow" : "red");
+      models.push({ name: name, triangles: triangles, instances: live.length, animated: animated, load: load, bucket: bucket });
+    }
+    var batches = perf.batches || {};
+    for (var bname in batches) {
+      if (!Object.prototype.hasOwnProperty.call(batches, bname)) continue;
+      var bentry = batches[bname];
+      var broots = bentry.roots || [];
+      var blive = false;
+      for (var bi = 0; bi < broots.length; bi++) { if (broots[bi] && broots[bi].parent) { blive = true; break; } }
+      if (!blive) continue;
+      var btriangles = bentry.triangles || 0;
+      var bdrawCalls = bentry.drawCalls || 1;
+      var bload = btriangles * bdrawCalls;
+      var bbucket = bload <= 20000 ? "green" : (bload <= 150000 ? "yellow" : "red");
+      models.push({ name: bentry.name, triangles: btriangles, instances: bentry.count || 0, animated: false, load: bload, bucket: bbucket, batched: true, drawCalls: bdrawCalls });
+    }
+    models.sort(function (a, b) { return b.load - a.load; });
+    var drawCalls = null, rendererTriangles = null;
+    // Per-frame average over this window from the GL counter — the value
+    // that actually distinguishes "a thousand tiny meshes" from "two trees".
+    var windowDraws = glDraws - lastGlDraws;
+    lastGlDraws = glDraws;
+    if (windowDraws > 0 && frames > 0) {
+      drawCalls = Math.round(windowDraws / frames);
+    } else if (perf.renderer && perf.renderer.info && perf.renderer.info.render) {
+      // Legacy fallback, kept for a game that registers its renderer.
+      drawCalls = perf.renderer.info.render.calls;
+      rendererTriangles = perf.renderer.info.render.triangles;
+    }
+    var playing = frames > 0 && lastInput > 0 && (Date.now() - lastInput) < 10000;
+    post({ type: "snapshot", snapshot: { fps: frames, playing: playing, drawCalls: drawCalls, rendererTriangles: rendererTriangles, models: models } });
+    frames = 0;
+  }
+  setInterval(snapshot, 1000);
+})();</script><script type="importmap">{"imports":{"three":"https://assets.ariantra.com/three.098b4c.js"}}</script><style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style><script>(function(){
+if (window.__arFrameGovernor) return;
+window.__arFrameGovernor = 1;
+var raf = window.requestAnimationFrame.bind(window);
+var seen = new WeakMap();
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    // Skipped frames ALWAYS re-request through the wrapper, so the loop can
+    // never die — that is the one failure mode that would break a live game.
+    if (document.hidden) { window.requestAnimationFrame(cb); return; }
+    var prev = (typeof cb === 'function' ? seen.get(cb) : 0) || 0;
+    if (prev && t - prev < 15) { window.requestAnimationFrame(cb); return; }
+    if (typeof cb === 'function') seen.set(cb, t);
+    return cb(t);
+  });
+};
+})();</script><script>(function(){
+if (window.__arGlGuard) return;
+window.__arGlGuard = 1;
+window.__arGlGuardVersion = 2;
+var get = HTMLCanvasElement.prototype.getContext;
+var live = [];
+var lostCount = 0;
+HTMLCanvasElement.prototype.getContext = function (type) {
+  var ctx = get.apply(this, arguments);
+  try {
+    if (ctx && /webgl/i.test(String(type)) && !this.__arGlGuarded) {
+      this.__arGlGuarded = 1;
+      var ext = null;
+      try { ext = ctx.getExtension('WEBGL_lose_context'); } catch (e2) { /* none */ }
+      live.push({ ctx: ctx, ext: ext });
+      this.addEventListener('webglcontextlost', function (e) {
+        // THE line that matters: without preventDefault the loss is final and
+        // the canvas stays blank for the rest of the document's life.
+        e.preventDefault();
+        lostCount++;
+        console.warn('[ari] WebGL context lost — restore requested');
+        // Watchdog (2026-08-10 №4, "it didnot regain"): browsers do not
+        // always volunteer webglcontextrestored, and a politely-held loop
+        // waits forever. The ladder is the automatic version of what fixed
+        // it for the owner by hand (code↔preview toggle = a remount):
+        // after 2s still lost → ask the driver; 3s more still lost → ask
+        // the parent to remount this frame.
+        setTimeout(function () {
+          var still = true;
+          try { still = ctx.isContextLost(); } catch (e3) { /* gone */ }
+          if (!still) return;
+          try { if (ext) ext.restoreContext(); } catch (e3) { /* refused */ }
+          setTimeout(function () {
+            var dead = true;
+            try { dead = ctx.isContextLost(); } catch (e4) { /* gone */ }
+            if (!dead) return;
+            console.warn('[ari] WebGL context is not coming back — asking the parent to reload the game');
+            try { parent.postMessage({ __ari: 'gl-dead' }, '*'); } catch (e4) { /* no parent */ }
+          }, 3000);
+        }, 2000);
+      }, false);
+      this.addEventListener('webglcontextrestored', function () {
+        if (lostCount > 0) lostCount--;
+        console.warn('[ari] WebGL context restored');
+      }, false);
+    }
+  } catch (e) { /* never break getContext */ }
+  return ctx;
+};
+// Restoring the CONTEXT is not enough — the game's LOOP must survive to see
+// it. While a context is lost, three.js's renderer throws mid-render (the GL
+// introspection APIs return null, and three calls .trim() on the result —
+// the exact stack the harness attributed on 2026-08-10). Games request their
+// next frame AFTER rendering (three's setAnimationLoop does too), so that
+// throw kills the loop for good: the context comes back, nothing draws, the
+// canvas stays blank, and no click can restart it. So: while any tracked
+// context is lost, hold rAF callbacks — always re-request, never run — the
+// same shape as the frame governor's document.hidden skip, and it resumes by
+// itself on webglcontextrestored. Composes with the governor's own wrapper
+// (this one runs outside it) — worst case a held frame is re-queued twice.
+// lostCount alone is NOT enough to gate on: webglcontextlost is dispatched
+// as a task, so there is a window after the actual loss (browser eviction or
+// our own release) where the event has not landed yet — one frame renders
+// against the dead context and three throws anyway. isContextLost() is
+// synchronous truth; the event counter only covers the fake-restore corner
+// (some drivers report isContextLost()=false again before firing restored).
+function anyLost() {
+  for (var i = 0; i < live.length; i++) {
+    try { if (live[i].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  for (var j = 0; j < released.length; j++) {
+    try { if (released[j].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  return false;
+}
+var raf = window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    if (lostCount > 0 || anyLost()) { window.requestAnimationFrame(cb); return; }
+    return cb(t);
+  });
+};
+var released = [];
+function release(why) {
+  // Hand the GPU back now rather than at GC, so the next preview iframe does
+  // not push the page over the context cap. Kept restorable (see pageshow):
+  // a release we believed was terminal must be reversible if the page comes
+  // back — 2026-08-10 second owner report, the pane-switch freeze.
+  for (var i = 0; i < live.length; i++) {
+    try {
+      if (live[i].ext) { live[i].ext.loseContext(); released.push(live[i]); }
+    } catch (e) { /* already gone */ }
+  }
+  live.length = 0;
+  // Observable from the parent page: this is how the harness proves the round
+  // was ASKED to release at unmount, rather than assuming it.
+  console.warn('[ari] WebGL contexts released (' + why + ')');
+}
+// Lets the harness assert that a torn-down round actually gave its context
+// back, instead of assuming pagehide fired.
+Object.defineProperty(window, '__arGlCount', { get: function () { return live.length; } });
+// The parent asks explicitly, immediately before it unmounts this frame.
+// pagehide alone is NOT enough: Chrome does not reliably fire it when an
+// iframe is detached from the DOM, which is precisely how every shadow round
+// ends — so without this the contexts pile up exactly as they did in the
+// owner's eleven-edit session.
+addEventListener('message', function (e) {
+  var d = e && e.data;
+  if (d && d.__ari === 'release-gl') release('asked');
+}, false);
+// Diagnostic-only (2026-08-11): a non-persisted pagehide fired mid-edit on
+// the STILL-PLAYING game, with no deliberate srcDoc/key change from React —
+// after shadow-verify was removed the same day, the explicit 'release-gl'
+// message (sent by the parent right before it unmounted the shadow frame)
+// went with it, leaving THIS listener as the only release trigger, carrying
+// more weight than "pagehide is kept as a backstop only" (the comment above
+// release()) ever assumed. This context string is what will tell us whether
+// it's a real backgrounding event (visibility/online state) or something
+// else entirely — never throws, so it can never break the guard itself.
+function diag() {
+  try {
+    return 'visibility=' + document.visibilityState + ' hidden=' + document.hidden +
+      ' online=' + navigator.onLine + ' at=' + Date.now();
+  } catch (e) { return 'diag-unavailable'; }
+}
+addEventListener('pagehide', function (e) {
+  // Safari/iOS fires pagehide when the page is merely BACKGROUNDED (app or
+  // tab switch, pane transitions) and will bring it back — persisted=true.
+  // Releasing there kills the LIVE game's context and the loop-hold freezes
+  // it: the owner's "froze, then turned blue when I clicked back"
+  // (2026-08-10, second report). Only a non-persisted pagehide — the actual
+  // teardown of a detached iframe — releases.
+  if (e && e.persisted) {
+    console.warn('[ari] pagehide (persisted, backgrounded — kept alive) ' + diag());
+    return;
+  }
+  console.warn('[ari] pagehide (NOT persisted — releasing) ' + diag());
+  release('pagehide');
+});
+addEventListener('pageshow', function () {
+  // The symmetric half: any release that turned out not to be terminal (the
+  // page came back anyway) is undone. restoreContext fires
+  // webglcontextrestored, which unwinds lostCount and resumes the held loop.
+  if (!released.length) return;
+  for (var i = 0; i < released.length; i++) {
+    try { released[i].ext.restoreContext(); live.push(released[i].ctx); } catch (e) { /* gone for real */ }
+  }
+  released.length = 0;
+  console.warn('[ari] WebGL contexts restored (pageshow)');
+});
+})();</script><script>window.AR_ASSETS={"tank_toy":"https://assets.ariantra.com/tank_toy.1d6230.glb","bunker":"https://assets.ariantra.com/bunker.35d29c.glb","radar":"https://assets.ariantra.com/radar.83379e.glb","shield":"https://assets.ariantra.com/shield.8e73fe.glb","laser":"https://assets.ariantra.com/laser.24e908.mp3","explosion":"https://assets.ariantra.com/explosion.d84e0a.mp3","hit":"https://assets.ariantra.com/hit.8a79a3.mp3","powerup":"https://assets.ariantra.com/powerup.81fe19.mp3","game_over":"https://assets.ariantra.com/game_over.2866a9.mp3","win":"https://assets.ariantra.com/win.820154.mp3","pop":"https://assets.ariantra.com/pop.a0585f.mp3","zap":"https://assets.ariantra.com/zap.c9dfe8.mp3"};</script><script>window.AR_SIZES={"tank_toy":[2.372,2.144,2.503],"bunker":[8.53,4.972,8.53],"radar":[1.626,2.713,1.649],"shield":[2.005,2.564,0.599]};</script><script type="module">
+  import { GLTFLoader, MeshoptDecoder, ConeGeometry, Vector2, Raycaster } from "three";
+  window.__arLoadModelVersion = 7;
+// modelSize (2026-08-08, the fragmented-track fix): the measured metres a model
+// renders at scale 1, available BEFORE loading so a game can plan a layout. The
+// "|| {}" guard means order-of-injection never matters, and an unknown or
+// skinned model answers null rather than a made-up number — a game that checks
+// for null degrades to eyeballing, which is exactly what it did before v4.
+window.AR_SIZES = window.AR_SIZES || {};
+window.modelSize = function (name) {
+  var s = window.AR_SIZES[name];
+  return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
+};
+// modelAxis (2026-08-08, the poorly-formed-track fix): which axis a PATH
+// piece's road runs along at rest — "x", "z", or "none" for a hub/corner. The
+// two road kits genuinely disagree (city road_straight runs along X, racing
+// race_track_straight along Z) and a 1x1 square tile's size cannot reveal it,
+// so before this a game had to guess and got it wrong every time. Unknown
+// answers null — then eyeball it, same as before.
+window.AR_AXES = window.AR_AXES || {};
+window.modelAxis = function (name) {
+  var a = window.AR_AXES[name];
+  return (a === "x" || a === "z" || a === "none") ? a : null;
+};
+// modelJoins (2026-08-09, the SECOND poorly-formed-track fix): which edges a
+// tile's road actually reaches, measured from a top-down render of the
+// published bytes. modelAxis() answers "none" for every corner — true, and
+// useless for placing one; with nothing else to reason from, generated tracks
+// guessed corner rotations and the curves never met the straights.
+//   .joins  ["-x","+z"]  edges the carriageway reaches at rest (no rotation)
+//   .lane   0.7          drivable width in METRES at scale 1
+//   .at     {"-x":0.5}   where each join sits, in metres from the piece's own
+//                        minimum on that edge's axis (matters on 2x2 pieces)
+// Unknown answers null — then eyeball it, exactly as before.
+window.AR_EDGES = window.AR_EDGES || {};
+window.modelJoins = function (name) {
+  var e = window.AR_EDGES[name];
+  return (e && e.joins && e.joins.length) ? e : null;
+};
+// rotateToJoin: the one calculation every track needs and no game got right by
+// hand. Returns the rotation.y IN RADIANS that carries a piece's "from" edge
+// onto the "to" edge — e.g. a corner joining ["+z","+x"] that must instead join
+// west and south is rotateToJoin("race_track_corner","+x","+z"). Quarter turns
+// only, which is all a square grid can use.
+// (No backticks anywhere in this block: it is inlined into a TEMPLATE LITERAL,
+// so one would end the helper string mid-function.)
+window.rotateToJoin = function (name, from, to) {
+  var order = ["-z", "+x", "+z", "-x"]; // clockwise seen from above
+  var a = order.indexOf(from), b = order.indexOf(to);
+  if (a < 0 || b < 0) return 0;
+  return ((b - a + 4) % 4) * (Math.PI / 2);
+};
+// fitTile (2026-08-09): say WHICH DIRECTIONS a grid cell must connect and get
+// the rotation.y that makes the piece do it. Added after three rounds of
+// teaching failed to land: a generated track chose the right kit and one scale
+// factor, then hardcoded all four corner rotations and got all four wrong,
+// because working out "this cell needs north and east, the piece joins +z and
+// +x at rest, so rotate 3pi/2" is four steps of reasoning under a token budget.
+// This is one call. Directions are where the ROAD LEAVES the cell:
+//   fitTile("race_track_corner", ["-z", "+x"])   // track to the north and east
+// Returns 0 for an unknown piece, and null when no quarter turn can satisfy the
+// request — which means the wrong PIECE was chosen (asking a corner to join two
+// opposite edges), so a game can detect that instead of silently drawing a gap.
+window.fitTile = function (name, need) {
+  var e = window.AR_EDGES[name];
+  if (!e || !e.joins || !need || !need.length) return 0;
+  var order = ["-z", "+x", "+z", "-x"];
+  var want = need.slice().sort().join(",");
+  for (var q = 0; q < 4; q++) {
+    var got = e.joins
+      .map(function (j) { return order[(order.indexOf(j) + q) % 4]; })
+      .sort()
+      .join(",");
+    if (got === want) return q * (Math.PI / 2);
+  }
+  return null;
+};
+  const __arLoader = new GLTFLoader();
+__arLoader.setMeshoptDecoder(MeshoptDecoder);
+window.__arPerf = window.__arPerf || { models: {}, rootNames: new WeakMap(), animatedRoots: new WeakSet(), renderer: null };
+var __arStaticTemplates = {};
+function __arCountTriangles(obj) {
+  var triangles = 0;
+  obj.traverse(function (child) {
+    if (!child.isMesh || !child.geometry) return;
+    var geo = child.geometry;
+    if (geo.index) triangles += geo.index.count / 3;
+    else if (geo.attributes && geo.attributes.position) triangles += geo.attributes.position.count / 3;
+  });
+  return Math.round(triangles);
+}
+async function __arLoadFresh(name) {
+  const url = (window.AR_ASSETS || {})[name];
+  if (!url) { console.warn("[ariantra] unknown model:", name); return null; }
+  const gltf = await __arLoader.loadAsync(url);
+  return { scene: gltf.scene, animations: gltf.animations || [] };
+}
+window.loadModel = async function (name) {
+  try {
+    var obj;
+    if (__arStaticTemplates[name]) {
+      // Cache only ever holds a STATIC (no-animation) template — see the
+      // loadModelHelper() doc comment for why animated models are excluded.
+      obj = __arStaticTemplates[name].scene.clone();
+      obj.animations = [];
+    } else {
+      const fresh = await __arLoadFresh(name);
+      if (!fresh) return null;
+      if (fresh.animations.length) {
+        obj = fresh.scene;
+        obj.animations = fresh.animations;
+      } else {
+        __arStaticTemplates[name] = fresh;
+        obj = fresh.scene.clone();
+        obj.animations = [];
+      }
+    }
+    // Same answer as modelSize(name), riding on the object — so code that
+    // already holds the loaded root can size it without re-quoting the name.
+    obj.userData.arSize = window.modelSize(name);
+    try {
+      var __arEntry = window.__arPerf.models[name] || { name: name, triangles: 0, instances: [] };
+      __arEntry.triangles = __arCountTriangles(obj);
+      __arEntry.instances.push(obj);
+      if (__arEntry.instances.length > 1000) __arEntry.instances.shift();
+      window.__arPerf.models[name] = __arEntry;
+      window.__arPerf.rootNames.set(obj, name);
+    } catch (e) { /* telemetry only — never blocks the load */ }
+    return obj;
+  } catch (e) {
+    console.warn("[ariantra] loadModel failed:", name, e);
+    return null;
+  }
+};
+</script><script>
+(function () {
+  var ctx = null, buffers = {}, currentMusic = null;
+  function context() {
+    if (!ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC();
+      var resume = function () { if (ctx.state === "suspended") ctx.resume(); };
+      addEventListener("pointerdown", resume, true);
+      addEventListener("keydown", resume, true);
+    }
+    return ctx;
+  }
+  function load(name) {
+    var url = (window.AR_ASSETS || {})[name];
+    if (!url) { console.warn("[ariantra] unknown sound:", name); return Promise.resolve(null); }
+    if (!buffers[name]) {
+      buffers[name] = fetch(url)
+        .then(function (r) { return r.arrayBuffer(); })
+        .then(function (ab) {
+          return new Promise(function (res, rej) { context().decodeAudioData(ab, res, rej); });
+        })
+        .catch(function (e) { console.warn("[ariantra] sound failed:", name, e); return null; });
+    }
+    return buffers[name];
+  }
+  function trimBounds(buf) {
+    var d = buf.getChannelData(0), t = 0.001, s = 0, e = d.length - 1;
+    while (s < e && Math.abs(d[s]) < t) s++;
+    while (e > s && Math.abs(d[e]) < t) e--;
+    return { start: s / buf.sampleRate, end: (e + 1) / buf.sampleRate };
+  }
+  window.playSound = function (name) {
+    try {
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        src.connect(context().destination);
+        src.start();
+      });
+    } catch (e) { /* a silent effect, never a broken game */ }
+  };
+  window.playMusic = function (name) {
+    var handle = { stop: function () {} };
+    try {
+      if (currentMusic) { try { currentMusic.stop(); } catch (e2) {} currentMusic = null; }
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        var b = trimBounds(buf);
+        src.loop = true;
+        src.loopStart = b.start;
+        src.loopEnd = b.end;
+        var gain = context().createGain();
+        gain.gain.value = 0.5;
+        src.connect(gain);
+        gain.connect(context().destination);
+        src.start(0, b.start);
+        currentMusic = src;
+        handle.stop = function () { try { src.stop(); } catch (e3) {} if (currentMusic === src) currentMusic = null; };
+      });
+    } catch (e) { /* silent */ }
+    return handle;
+  };
+})();
+</script>
+    <title>Tank Battle Arena</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a2a3a; /* Dark background for the browser */
+            color: white;
+            font-family: 'Press Start 2P', cursive; /* A retro game font if available, otherwise a simple sans-serif */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100dvh; /* Dynamic viewport height for mobile safety */
+            -webkit-user-select: none; /* Prevent text selection */
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            touch-action: none; /* Prevent scroll on touch */
+        }
+
+        #game-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            touch-action: none; /* Prevent scroll/zoom on touch */
+        }
+
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Allow clicks to pass through to canvas */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            box-sizing: border-box;
+            z-index: 10;
+        }
+
+        #top-info {
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            pointer-events: none;
+            padding: 0 max(10px, env(safe-area-inset-right)); /* Safe area padding */
+            padding-left: max(10px, env(safe-area-inset-left));
+        }
+
+        #score-display, #health-display {
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: clamp(12px, 3.5vw, 20px);
+            white-space: nowrap;
+        }
+        #score-display { min-width: 80px; text-align: center; }
+
+        #game-message {
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 20px 30px;
+            border-radius: 15px;
+            font-size: clamp(20px, 6vw, 40px);
+            text-align: center;
+            pointer-events: none;
+            opacity: 0;
+            transform: translateY(-20px);
+            transition: opacity 0.5s ease, transform 0.5s ease;
+            max-width: 90%;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: center;
+        }
+        #game-message.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        #game-message button {
+            pointer-events: all;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: clamp(14px, 4vw, 24px);
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            margin-top: 10px;
+        }
+        #game-message button:hover {
+            background-color: #45a049;
+        }
+
+        #controls {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-areas:
+                ". up ."
+                "left . right"
+                ". down .";
+            gap: 10px;
+            width: 100%;
+            max-width: 300px; /* Limit width on larger screens */
+            padding: 0 max(10px, env(safe-area-inset-right));
+            padding-left: max(10px, env(safe-area-inset-left));
+            padding-bottom: max(12px, env(safe-area-inset-bottom)); /* Breathing room for buttons */
+            box-sizing: border-box;
+            pointer-events: none; /* Allow taps to pass to game if no buttons are touched */
+        }
+
+        .control-button {
+            background-color: rgba(0, 0, 0, 0.6);
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            border-radius: 50%; /* Make them round */
+            width: clamp(50px, 15vw, 70px); /* Responsive size */
+            height: clamp(50px, 15vw, 70px);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: clamp(20px, 5vw, 30px);
+            font-weight: bold;
+            cursor: pointer;
+            pointer-events: all; /* Make buttons clickable/tappable */
+            transition: background-color 0.2s, transform 0.1s;
+            -webkit-tap-highlight-color: transparent; /* Remove tap highlight */
+        }
+
+        .control-button:active {
+            background-color: rgba(255, 255, 255, 0.3);
+            transform: scale(0.95);
+        }
+
+        #up-button    { grid-area: up; justify-self: center;}
+        #left-button  { grid-area: left; justify-self: start;}
+        #right-button { grid-area: right; justify-self: end;}
+        #down-button  { grid-area: down; justify-self: center;}
+
+        #fire-button {
+            position: absolute;
+            bottom: max(20px, env(safe-area-inset-bottom));
+            right: max(20px, env(safe-area-inset-right));
+            background-color: rgba(255, 0, 0, 0.7);
+            border-color: rgba(255, 255, 255, 0.7);
+            width: clamp(70px, 20vw, 100px);
+            height: clamp(70px, 20vw, 100px);
+            font-size: clamp(24px, 6vw, 36px);
+            border-radius: 50%;
+        }
+        #fire-button:active {
+            background-color: rgba(255, 100, 100, 0.7);
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+</head>
+<body>
+    
+    
+    
+
+    <div id="game-container">
+        <div id="overlay">
+            <div id="top-info">
+                <div id="health-display">❤️ <span id="player-health">5</span></div>
+                <div id="score-display">ENEMIES: <span id="score">8</span></div>
+            </div>
+            <div id="game-message">
+                <span id="message-text"></span>
+                <button id="restart-button" style="display: none;">Play Again!</button>
+            </div>
+            <div id="controls">
+                <div id="up-button" class="control-button">▲</div>
+                <div id="left-button" class="control-button">◀</div>
+                <div id="right-button" class="control-button">▶</div>
+                <div id="down-button" class="control-button">▼</div>
+            </div>
+            <div id="fire-button" class="control-button" style="bottom: max(20px, env(safe-area-inset-bottom)); right: max(20px, env(safe-area-inset-right));">💥</div>
+        </div>
+        <canvas id="scene"></canvas>
+    </div>
+
+    <script type="module">
+        import { Scene, PerspectiveCamera, WebGLRenderer, Clock, Color, Fog, Group, Vector3, Box3, BoxGeometry, SphereGeometry, CylinderGeometry, PlaneGeometry, MeshStandardMaterial, MeshBasicMaterial, Mesh, AmbientLight, DirectionalLight, Quaternion, Matrix4, MathUtils } from "three";
+
+        // --- GAME INITIALIZATION ---
+        const scene = new Scene();
+        const camera = new PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new WebGLRenderer({ canvas: document.getElementById('scene'), antialias: true, preserveDrawingBuffer: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap pixel ratio for performance
+        const clock = new Clock();
+        let gameActive = true;
+        let on = true; // For pausing when tab is hidden
+
+        // Game state variables
+        const playerHealthElement = document.getElementById('player-health');
+        const scoreElement = document.getElementById('score');
+        const gameMessageElement = document.getElementById('game-message');
+        const messageTextElement = document.getElementById('message-text');
+        const restartButton = document.getElementById('restart-button');
+
+        const arenaSize = 20; // 20x20 meters
+        let playerTank, playerTurret;
+        let playerSpeed = 5; // units per second
+        let playerRotationSpeed = 2; // radians per second
+        let playerHealth = 5;
+        const playerMaxHealth = 5;
+        let playerInvincible = false;
+        const playerInvincibilityDuration = 2; // seconds
+
+        const projectiles = [];
+        const enemies = [];
+        const blocks = [];
+        const powerups = [];
+
+        // Keyboard and touch controls
+        const keys = { w: false, a: false, s: false, d: false, space: false };
+        const touchButtons = { up: false, down: false, left: false, right: false, fire: false };
+        let mouseX = 0;
+        let mouseY = 0;
+
+        // Power-up settings
+        const powerupDuration = 10; // seconds
+        let speedBoostActive = false;
+        let shieldActive = false;
+        let powerupTimer = 0;
+
+        // Damage visuals for player
+        let playerDamageMaterial1, playerDamageMaterial2, playerDamageMaterial3, playerDamageMaterial4;
+
+        // --- SCENE SETUP ---
+        // Skybox - simple colored sky with fog
+        scene.background = new Color(0x87CEEB); // Light blue
+        scene.fog = new Fog(0x87CEEB, 1, 100);
+
+        // Ground
+        const groundGeometry = new PlaneGeometry(arenaSize, arenaSize);
+        const groundMaterial = new MeshStandardMaterial({ color: 0x4CAF50 }); // Green ground
+        const ground = new Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        scene.add(ground);
+
+        // Lights
+        const ambientLight = new AmbientLight(0x404040, 2); // Soft overall light
+        scene.add(ambientLight);
+        const directionalLight = new DirectionalLight(0xffffff, 1.5);
+        directionalLight.position.set(5, 10, 5).normalize();
+        scene.add(directionalLight);
+
+        // Camera setup (top-down perspective)
+        camera.position.set(0, 15, 0); // Position above the arena
+        camera.lookAt(0, 0, 0); // Look down at the center
+
+        // --- UTILITY FUNCTIONS ---
+        // Function to clamp a value between a min and max
+        function clamp(value, min, max) {
+            return Math.max(min, Math.min(value, max));
+        }
+
+        // Function to get a random position within the arena bounds
+        function getRandomArenaPosition() {
+            const halfSize = arenaSize / 2 - 1; // Subtract 1 to keep objects slightly away from edges
+            return new Vector3(
+                Math.random() * halfSize * 2 - halfSize,
+                0.5, // slightly above ground
+                Math.random() * halfSize * 2 - halfSize
+            );
+        }
+
+        // --- PLAYER TANK ---
+        let playerBodyMesh, playerTurretMesh;
+        const playerProjectileOrigin = new Vector3(); // Global for turret tip
+
+        async function createPlayerTank() {
+            const tankModel = await loadModel('tank_toy');
+            if (tankModel) {
+                playerTank = new Group();
+                playerTank.add(tankModel);
+                tankModel.scale.set(0.7, 0.7, 0.7); // Adjust size
+                tankModel.rotation.y = Math.PI; // Face forward (+Z) by default
+
+                // Find the main body mesh and turret mesh if possible, or add a simple turret
+                playerBodyMesh = tankModel; // Assuming the loaded model is the body
+
+                // Add a simple turret if the model doesn't have a distinct one
+                const turretGeometry = new CylinderGeometry(0.3, 0.4, 0.6, 8);
+                playerTurretMesh = new Mesh(turretGeometry, new MeshStandardMaterial({ color: 0x888888 }));
+                playerTurretMesh.position.set(0, 0.6, 0); // Position on top of the tank body
+                playerTank.add(playerTurretMesh);
+
+                // Add a cannon barrel to the turret
+                const barrelGeometry = new CylinderGeometry(0.1, 0.1, 1, 6);
+                const barrelMaterial = new MeshStandardMaterial({ color: 0x555555 });
+                const barrel = new Mesh(barrelGeometry, barrelMaterial);
+                barrel.rotation.x = Math.PI / 2;
+                barrel.position.set(0, 0.6, 0); // Extend forward from the turret
+                playerTurretMesh.add(barrel); // Parent to turret
+
+                playerTank.position.set(0, 0.5, 0);
+                scene.add(playerTank);
+
+                // Create materials for damage states
+                playerDamageMaterial1 = tankModel.material.clone(); // Original
+                playerDamageMaterial2 = new MeshStandardMaterial({ color: 0x8B4513 }); // Brownish for crack 1
+                playerDamageMaterial3 = new MeshStandardMaterial({ color: 0x696969 }); // Darker for crack 2
+                playerDamageMaterial4 = new MeshStandardMaterial({ color: 0x4F4F4F }); // Even darker for crack 3 (almost destroyed)
+
+                // Set initial health display
+                updatePlayerHealthDisplay();
+            } else {
+                // Placeholder tank (cylinder for body, box for turret)
+                playerTank = new Group();
+                playerBodyMesh = new Mesh(new CylinderGeometry(0.7, 0.9, 0.8, 16), new MeshStandardMaterial({ color: 0x00ff00 }));
+                playerBodyMesh.position.y = 0.4;
+                playerTank.add(playerBodyMesh);
+
+                playerTurretMesh = new Mesh(new BoxGeometry(0.5, 0.4, 1), new MeshStandardMaterial({ color: 0x00aa00 }));
+                playerTurretMesh.position.set(0, 0.9, 0);
+                playerTank.add(playerTurretMesh);
+
+                playerTank.position.set(0, 0.5, 0);
+                scene.add(playerTank);
+            }
+        }
+
+        function updatePlayerHealthDisplay() {
+            playerHealthElement.textContent = playerHealth;
+
+            // Update player tank visual based on health
+            if (playerBodyMesh && playerBodyMesh.material) {
+                if (playerHealth === playerMaxHealth) {
+                    playerBodyMesh.material = playerDamageMaterial1; // Original
+                } else if (playerHealth === playerMaxHealth - 1) {
+                    playerBodyMesh.material = playerDamageMaterial2;
+                } else if (playerHealth === playerMaxHealth - 2) {
+                    playerBodyMesh.material = playerDamageMaterial3;
+                } else if (playerHealth <= playerMaxHealth - 3) {
+                    playerBodyMesh.material = playerDamageMaterial4;
+                }
+            }
+        }
+
+        // --- ENEMY TANKS ---
+        class EnemyTank {
+            constructor(position, path = []) {
+                this.mesh = null;
+                this.health = 3;
+                this.position = position.clone();
+                this.targetPath = path;
+                this.pathIndex = 0;
+                this.speed = 1.5; // Slower than player
+                this.rotationSpeed = 1;
+                this.isDestroyed = false;
+                this.destructionTimer = 0;
+                this.destructionDuration = 0.5; // Flash for 0.5 seconds
+                this.flashMesh = null; // Mesh to show flashing effect
+                this.flashTimer = 0;
+                this.flashDuration = 0.1;
+                this.flashOn = false;
+
+                this.createMesh();
+            }
+
+            async createMesh() {
+                const tankModel = await loadModel('tank_toy');
+                if (tankModel) {
+                    this.mesh = new Group();
+                    this.mesh.add(tankModel);
+                    tankModel.scale.set(0.7, 0.7, 0.7);
+                    tankModel.rotation.y = Math.PI; // Face forward (+Z)
+
+                    const turretGeometry = new CylinderGeometry(0.3, 0.4, 0.6, 8);
+                    const turret = new Mesh(turretGeometry, new MeshStandardMaterial({ color: 0xaaaa00 })); // Yellowish turret
+                    turret.position.set(0, 0.6, 0);
+                    this.mesh.add(turret);
+
+                    const barrelGeometry = new CylinderGeometry(0.1, 0.1, 1, 6);
+                    const barrel = new Mesh(barrelGeometry, new MeshStandardMaterial({ color: 0x777700 }));
+                    barrel.rotation.x = Math.PI / 2;
+                    barrel.position.set(0, 0.6, 0);
+                    turret.add(barrel); // Parent to turret
+
+                    this.mesh.position.copy(this.position);
+                    this.mesh.position.y = 0.5; // Ensure it's above ground
+                    scene.add(this.mesh);
+                } else {
+                    // Placeholder enemy tank
+                    this.mesh = new Group();
+                    const body = new Mesh(new CylinderGeometry(0.7, 0.9, 0.8, 16), new MeshStandardMaterial({ color: 0xff0000 }));
+                    body.position.y = 0.4;
+                    this.mesh.add(body);
+
+                    const turret = new Mesh(new BoxGeometry(0.5, 0.4, 1), new MeshStandardMaterial({ color: 0xcc0000 }));
+                    turret.position.set(0, 0.9, 0);
+                    this.mesh.add(turret);
+
+                    this.mesh.position.copy(this.position);
+                    this.mesh.position.y = 0.5;
+                    scene.add(this.mesh);
+                }
+                this.createFlashMesh(); // Create the flash mesh once
+            }
+
+            createFlashMesh() {
+                // A simple sphere to represent the flash
+                const flashGeo = new SphereGeometry(1, 8, 8);
+                const flashMat = new MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.8 });
+                this.flashMesh = new Mesh(flashGeo, flashMat);
+                this.flashMesh.visible = false;
+                scene.add(this.flashMesh);
+            }
+
+            takeHit() {
+                if (this.isDestroyed) return;
+                this.health--;
+                playSound('hit');
+                if (this.health <= 0) {
+                    this.isDestroyed = true;
+                    this.destructionTimer = this.destructionDuration;
+                    this.flashOn = true; // Start flashing
+                    this.flashTimer = this.flashDuration;
+                    playSound('explosion');
+                    scoreElement.textContent = parseInt(scoreElement.textContent) - 1; // Decrement enemy count
+                } else {
+                    this.flashOn = true;
+                    this.flashTimer = this.flashDuration;
+                }
+            }
+
+            update(delta) {
+                if (!this.mesh) return; // Wait for mesh to load
+                if (this.isDestroyed) {
+                    this.destructionTimer -= delta;
+                    this.flashTimer -= delta;
+
+                    if (this.flashTimer <= 0) {
+                        this.flashOn = !this.flashOn;
+                        this.flashMesh.visible = this.flashOn;
+                        this.flashMesh.position.copy(this.mesh.position); // Update flash position
+                        this.flashTimer = this.flashDuration;
+                    }
+
+                    if (this.destructionTimer <= 0) {
+                        // Fully destroyed, remove
+                        scene.remove(this.mesh);
+                        scene.remove(this.flashMesh); // Remove flash mesh too
+                        this.mesh.geometry.dispose();
+                        this.mesh.material.dispose();
+                        this.flashMesh.geometry.dispose();
+                        this.flashMesh.material.dispose();
+
+                        // Drop power-up
+                        if (Math.random() < 0.5) { // 50% chance for either power-up
+                            const type = Math.random() < 0.5 ? 'speed' : 'shield';
+                            powerups.push(new Powerup(this.position.clone(), type));
+                        }
+                    }
+                    return;
+                }
+
+                // Enemy movement (patrol along path)
+                if (this.targetPath.length > 0) {
+                    const targetPos = this.targetPath[this.pathIndex];
+                    const direction = new Vector3().subVectors(targetPos, this.mesh.position).normalize();
+                    this.mesh.position.addScaledVector(direction, this.speed * delta);
+
+                    // Turret always faces forward on enemy tanks for simplicity, or could slowly rotate to player
+                    // For now, enemies just move and look in direction of path
+
+                    // Check if reached target
+                    if (this.mesh.position.distanceTo(targetPos) < 0.2) {
+                        this.pathIndex = (this.pathIndex + 1) % this.targetPath.length;
+                    }
+
+                    // Smooth rotation towards target direction
+                    const targetAngle = Math.atan2(direction.x, direction.z);
+                    let currentAngle = this.mesh.rotation.y;
+                    let angleDiff = targetAngle - currentAngle;
+
+                    // Normalize angle difference to be within -PI to PI
+                    if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+                    if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+
+                    const rotationStep = this.rotationSpeed * delta;
+                    if (Math.abs(angleDiff) > rotationStep) {
+                        currentAngle += Math.sign(angleDiff) * rotationStep;
+                    } else {
+                        currentAngle = targetAngle;
+                    }
+                    this.mesh.rotation.y = currentAngle;
+                }
+            }
+        }
+
+        function createEnemyTanks() {
+            const numEnemies = 8;
+            for (let i = 0; i < numEnemies; i++) {
+                let pos;
+                let validPos = false;
+                let attempts = 0;
+                while (!validPos && attempts < 100) {
+                    pos = getRandomArenaPosition();
+                    pos.y = 0.5; // Ensure enemies are on the ground
+                    // Ensure enemies are not too close to the player's spawn point (0,0,0)
+                    if (pos.distanceTo(new Vector3(0,0,0)) > 5) {
+                        validPos = true;
+                    }
+                    attempts++;
+                }
+                if (!validPos) pos = new Vector3(Math.random() * 8 - 4, 0.5, Math.random() * 8 - 4); // Fallback
+
+                // Create a simple patrol path if desired
+                const path = [];
+                if (Math.random() < 0.7) { // 70% chance to have a patrol path
+                    path.push(pos.clone()); // Start point
+                    for (let j = 0; j < Math.floor(Math.random() * 3) + 2; j++) { // 2 to 4 extra points
+                        const pathOffset = new Vector3(Math.random() * 6 - 3, 0, Math.random() * 6 - 3);
+                        const nextPathPoint = pos.clone().add(pathOffset);
+                        path.push(nextPathPoint);
+                    }
+                }
+                enemies.push(new EnemyTank(pos, path));
+            }
+        }
+
+
+        // --- BLOCKS (OBSTACLES) ---
+        class Block {
+            constructor(position) {
+                this.mesh = null;
+                this.position = position.clone();
+                this.isDestroyed = false;
+                this.createMesh();
+            }
+
+            async createMesh() {
+                const blockModel = await loadModel('bunker');
+                if (blockModel) {
+                    this.mesh = blockModel;
+                    this.mesh.scale.set(0.5, 0.5, 0.5); // Adjust size for 1x1 meter
+                    this.mesh.position.copy(this.position);
+                    this.mesh.position.y = 0.5; // Half height of 1m block
+                    this.mesh.rotation.y = Math.random() * Math.PI * 2; // Random rotation
+                    scene.add(this.mesh);
+                } else {
+                    // Placeholder block (colorful cube)
+                    const color = new Color(Math.random(), Math.random(), Math.random());
+                    this.mesh = new Mesh(new BoxGeometry(1, 1, 1), new MeshStandardMaterial({ color: color }));
+                    this.mesh.position.copy(this.position);
+                    this.mesh.position.y = 0.5;
+                    scene.add(this.mesh);
+                }
+            }
+
+            destroy() {
+                this.isDestroyed = true;
+                playSound('pop');
+                // Simple particle effect (disappear)
+                if (this.mesh) {
+                    scene.remove(this.mesh);
+                    this.mesh.geometry.dispose();
+                    this.mesh.material.dispose();
+                    // In a real game, you'd add a particle system here.
+                }
+            }
+        }
+
+        function createBlocks() {
+            const numBlocks = 50;
+            for (let i = 0; i < numBlocks; i++) {
+                let pos;
+                let validPos = false;
+                let attempts = 0;
+                while (!validPos && attempts < 100) {
+                    pos = getRandomArenaPosition();
+                    pos.y = 0.5; // Ensure blocks are on the ground
+                    // Ensure blocks are not too close to player or other blocks
+                    const tooCloseToPlayer = pos.distanceTo(new Vector3(0,0,0)) < 3;
+                    const tooCloseToOtherBlocks = blocks.some(b => b.mesh && b.mesh.position.distanceTo(pos) < 2); // Minimum 2m separation
+                    if (!tooCloseToPlayer && !tooCloseToOtherBlocks) {
+                        validPos = true;
+                    }
+                    attempts++;
+                }
+                if (!validPos) pos = new Vector3(Math.random() * 8 - 4, 0.5, Math.random() * 8 - 4); // Fallback
+                blocks.push(new Block(pos));
+            }
+        }
+
+        // --- PROJECTILES ---
+        const projectileSpeed = 20; // units per second
+        const projectileRadius = 0.2;
+
+        class Projectile {
+            constructor(position, direction) {
+                this.mesh = new Mesh(
+                    new SphereGeometry(projectileRadius, 8, 8),
+                    new MeshBasicMaterial({ color: 0xFFFFFF })
+                );
+                this.mesh.position.copy(position);
+                this.direction = direction.normalize();
+                scene.add(this.mesh);
+                playSound('laser');
+            }
+
+            update(delta) {
+                this.mesh.position.addScaledVector(this.direction, projectileSpeed * delta);
+            }
+
+            isOutOfBounds() {
+                const halfArena = arenaSize / 2;
+                return Math.abs(this.mesh.position.x) > halfArena ||
+                       Math.abs(this.mesh.position.z) > halfArena;
+            }
+
+            destroy() {
+                scene.remove(this.mesh);
+                this.mesh.geometry.dispose();
+                this.mesh.material.dispose();
+            }
+        }
+
+        // --- POWER-UPS ---
+        class Powerup {
+            constructor(position, type) {
+                this.type = type; // 'speed' or 'shield'
+                this.mesh = null;
+                this.position = position;
+                this.rotationSpeed = Math.PI; // Spin speed
+                this.isCollected = false;
+                this.createMesh();
+            }
+
+            async createMesh() {
+                let model;
+                if (this.type === 'speed') {
+                    model = await loadModel('radar'); // Radar for speed
+                } else { // 'shield'
+                    model = await loadModel('shield'); // Shield for shield
+                }
+
+                if (model) {
+                    this.mesh = new Group();
+                    this.mesh.add(model);
+                    model.scale.set(0.5, 0.5, 0.5); // Adjust size
+                    this.mesh.position.copy(this.position);
+                    this.mesh.position.y = 1; // Float above ground
+                    scene.add(this.mesh);
+                } else {
+                    // Placeholder for power-up
+                    const geometry = new ConeGeometry(0.5, 1, 8);
+                    const material = new MeshStandardMaterial({ color: this.type === 'speed' ? 0x00FFFF : 0xFFFF00 });
+                    this.mesh = new Mesh(geometry, material);
+                    this.mesh.position.copy(this.position);
+                    this.mesh.position.y = 1;
+                    scene.add(this.mesh);
+                }
+            }
+
+            update(delta) {
+                if (this.mesh && !this.isCollected) {
+                    this.mesh.rotation.y += this.rotationSpeed * delta;
+                }
+            }
+
+            collect() {
+                this.isCollected = true;
+                playSound('powerup');
+                if (this.mesh) {
+                    scene.remove(this.mesh);
+                    this.mesh.geometry.dispose();
+                    this.mesh.material.dispose();
+                }
+            }
+        }
+
+        // --- GAME LOGIC ---
+        function resetGame() {
+            gameActive = true;
+            playerHealth = playerMaxHealth;
+            updatePlayerHealthDisplay();
+            scoreElement.textContent = '8'; // Reset enemy count
+
+            // Clear all existing game objects
+            projectiles.forEach(p => p.destroy());
+            projectiles.length = 0;
+            enemies.forEach(e => {
+                if (e.mesh) scene.remove(e.mesh);
+                if (e.flashMesh) scene.remove(e.flashMesh);
+            });
+            enemies.length = 0;
+            blocks.forEach(b => {
+                if (b.mesh) scene.remove(b.mesh);
+            });
+            blocks.length = 0;
+            powerups.forEach(p => {
+                if (p.mesh) scene.remove(p.mesh);
+            });
+            powerups.length = 0;
+
+            // Reset player state
+            if (playerTank) {
+                playerTank.position.set(0, 0.5, 0);
+                playerTank.rotation.y = 0;
+            }
+            speedBoostActive = false;
+            shieldActive = false;
+            playerInvincible = false;
+            powerupTimer = 0;
+
+            // Recreate game elements
+            createBlocks();
+            createEnemyTanks();
+
+            // Hide game message
+            gameMessageElement.classList.remove('visible');
+            restartButton.style.display = 'none';
+        }
+
+        function showGameMessage(message, showRestart = false) {
+            gameMessageElement.classList.add('visible');
+            messageTextElement.textContent = message;
+            if (showRestart) {
+                restartButton.style.display = 'block';
+            } else {
+                restartButton.style.display = 'none';
+            }
+        }
+
+        // --- COLLISION DETECTION ---
+        const playerBoundingBox = new Box3();
+        const blockBoundingBox = new Box3();
+        const enemyBoundingBox = new Box3();
+        const projectileBoundingBox = new Box3();
+        const powerupBoundingBox = new Box3();
+
+        function checkCollisions() {
+            if (!playerTank) return;
+
+            // Player with Powerups
+            playerBoundingBox.setFromObject(playerTank);
+            for (let i = powerups.length - 1; i >= 0; i--) {
+                const powerup = powerups[i];
+                if (!powerup.mesh || powerup.isCollected) continue;
+                powerupBoundingBox.setFromObject(powerup.mesh);
+
+                if (playerBoundingBox.intersectsBox(powerupBoundingBox)) {
+                    powerup.collect();
+                    if (powerup.type === 'speed') {
+                        speedBoostActive = true;
+                        playerSpeed = 10; // Double speed
+                    } else if (powerup.type === 'shield') {
+                        shieldActive = true;
+                        playerInvincible = true;
+                    }
+                    powerupTimer = powerupDuration; // Reset timer for new powerup
+                    powerups.splice(i, 1);
+                }
+            }
+
+            // Projectile collisions
+            for (let i = projectiles.length - 1; i >= 0; i--) {
+                const projectile = projectiles[i];
+                if (!projectile.mesh) continue;
+                projectileBoundingBox.setFromObject(projectile.mesh);
+
+                // Projectile with Blocks
+                let hitBlock = false;
+                for (let j = blocks.length - 1; j >= 0; j--) {
+                    const block = blocks[j];
+                    if (!block.mesh || block.isDestroyed) continue;
+                    blockBoundingBox.setFromObject(block.mesh);
+
+                    if (projectileBoundingBox.intersectsBox(blockBoundingBox)) {
+                        block.destroy();
+                        blocks.splice(j, 1);
+                        projectile.destroy();
+                        projectiles.splice(i, 1);
+                        hitBlock = true;
+                        break; // Projectile hit one block, done with this projectile
+                    }
+                }
+                if (hitBlock) continue;
+
+                // Projectile with Enemy Tanks
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    const enemy = enemies[j];
+                    if (!enemy.mesh || enemy.isDestroyed) continue;
+                    enemyBoundingBox.setFromObject(enemy.mesh);
+
+                    // Check if projectile is inside enemy tank bounding box
+                    if (projectileBoundingBox.intersectsBox(enemyBoundingBox)) {
+                        enemy.takeHit();
+                        projectile.destroy();
+                        projectiles.splice(i, 1);
+                        hitBlock = true; // Use hitBlock to break outer loop for projectile
+                        break;
+                    }
+                }
+                if (hitBlock) continue;
+            }
+
+            // Check win/lose conditions
+            if (gameActive) {
+                if (parseInt(scoreElement.textContent) <= 0) {
+                    gameActive = false;
+                    showGameMessage('VICTORY! All enemies destroyed!', true);
+                    playSound('win');
+                } else if (playerHealth <= 0) {
+                    gameActive = false;
+                    showGameMessage('DEFEAT! Your tank is destroyed!', true);
+                    playSound('game_over');
+                }
+            }
+        }
+
+        // --- INPUT HANDLING ---
+        function onKeyDown(event) {
+            if (!gameActive) return;
+            switch (event.code) {
+                case 'KeyW': keys.w = true; break;
+                case 'KeyS': keys.s = true; break;
+                case 'KeyA': keys.a = true; break;
+                case 'KeyD': keys.d = true; break;
+                case 'Space': keys.space = true; event.preventDefault(); break; // Prevent page scroll
+                case 'ArrowUp': keys.w = true; event.preventDefault(); break;
+                case 'ArrowDown': keys.s = true; event.preventDefault(); break;
+                case 'ArrowLeft': keys.a = true; event.preventDefault(); break;
+                case 'ArrowRight': keys.d = true; event.preventDefault(); break;
+            }
+        }
+
+        function onKeyUp(event) {
+            if (!gameActive) return;
+            switch (event.code) {
+                case 'KeyW': keys.w = false; break;
+                case 'KeyS': keys.s = false; break;
+                case 'KeyA': keys.a = false; break;
+                case 'KeyD': keys.d = false; break;
+                case 'Space': keys.space = false; break;
+                case 'ArrowUp': keys.w = false; break;
+                case 'ArrowDown': keys.s = false; break;
+                case 'ArrowLeft': keys.a = false; break;
+                case 'ArrowRight': keys.d = false; break;
+            }
+        }
+
+        let lastFireTime = 0;
+        const fireCooldown = 0.3; // seconds
+
+        function onMouseDown(event) {
+            if (!gameActive) return;
+            if (event.button === 0) { // Left click
+                keys.space = true; // Treat left click as fire button
+            }
+        }
+
+        function onMouseUp(event) {
+            if (!gameActive) return;
+            if (event.button === 0) {
+                keys.space = false;
+            }
+        }
+
+        function onMouseMove(event) {
+            if (!gameActive) return;
+            mouseX = event.clientX;
+            mouseY = event.clientY;
+        }
+
+        // Touch controls
+        function setupTouchControls() {
+            document.getElementById('up-button').addEventListener('pointerdown', (e) => { e.preventDefault(); touchButtons.up = true; });
+            document.getElementById('up-button').addEventListener('pointerup', (e) => { e.preventDefault(); touchButtons.up = false; });
+            document.getElementById('up-button').addEventListener('pointerleave', (e) => { e.preventDefault(); touchButtons.up = false; }); // Also handle leaving button area
+
+            document.getElementById('down-button').addEventListener('pointerdown', (e) => { e.preventDefault(); touchButtons.down = true; });
+            document.getElementById('down-button').addEventListener('pointerup', (e) => { e.preventDefault(); touchButtons.down = false; });
+            document.getElementById('down-button').addEventListener('pointerleave', (e) => { e.preventDefault(); touchButtons.down = false; });
+
+            document.getElementById('left-button').addEventListener('pointerdown', (e) => { e.preventDefault(); touchButtons.left = true; });
+            document.getElementById('left-button').addEventListener('pointerup', (e) => { e.preventDefault(); touchButtons.left = false; });
+            document.getElementById('left-button').addEventListener('pointerleave', (e) => { e.preventDefault(); touchButtons.left = false; });
+
+            document.getElementById('right-button').addEventListener('pointerdown', (e) => { e.preventDefault(); touchButtons.right = true; });
+            document.getElementById('right-button').addEventListener('pointerup', (e) => { e.preventDefault(); touchButtons.right = false; });
+            document.getElementById('right-button').addEventListener('pointerleave', (e) => { e.preventDefault(); touchButtons.right = false; });
+
+            document.getElementById('fire-button').addEventListener('pointerdown', (e) => { e.preventDefault(); touchButtons.fire = true; });
+            document.getElementById('fire-button').addEventListener('pointerup', (e) => { e.preventDefault(); touchButtons.fire = false; });
+            document.getElementById('fire-button').addEventListener('pointerleave', (e) => { e.preventDefault(); touchButtons.fire = false; });
+
+            // Handle touchmove for aiming. Store latest touch position.
+            renderer.domElement.addEventListener('touchmove', (e) => {
+                if (!gameActive) return;
+                e.preventDefault(); // Prevent scrolling
+                if (e.touches.length > 0) {
+                    // Use the first touch for aiming
+                    mouseX = e.touches[0].clientX;
+                    mouseY = e.touches[0].clientY;
+                }
+            }, { passive: false }); // Use passive: false to allow preventDefault
+        }
+
+        restartButton.addEventListener('click', () => {
+            resetGame();
+        });
+
+
+        // --- UPDATE GAME STATE ---
+        function update(delta) {
+            if (!playerTank || !gameActive) return;
+
+            // Power-up timer
+            if (powerupTimer > 0) {
+                powerupTimer -= delta;
+                if (powerupTimer <= 0) {
+                    speedBoostActive = false;
+                    shieldActive = false;
+                    playerInvincible = false;
+                    playerSpeed = 5; // Reset speed
+                }
+            }
+
+            // Player movement
+            const currentSpeed = speedBoostActive ? playerSpeed * 1.5 : playerSpeed; // Apply speed boost
+            const moveDirection = new Vector3(0, 0, 0);
+            let strafe = 0;
+
+            if (keys.w || touchButtons.up) moveDirection.z -= 1;
+            if (keys.s || touchButtons.down) moveDirection.z += 1;
+            if (keys.a || touchButtons.left) strafe -= 1;
+            if (keys.d || touchButtons.right) strafe += 1;
+
+            if (moveDirection.lengthSq() > 0 || strafe !== 0) {
+                // Apply player's current rotation to movement direction
+                const playerRotation = new Quaternion().setFromEuler(playerTank.rotation);
+                const forwardDirection = new Vector3(0, 0, -1).applyQuaternion(playerRotation);
+                const rightDirection = new Vector3(1, 0, 0).applyQuaternion(playerRotation);
+
+                if (moveDirection.z !== 0) { // Forward/backward
+                    playerTank.position.addScaledVector(forwardDirection, moveDirection.z * currentSpeed * delta);
+                }
+                if (strafe !== 0) { // Strafe left/right
+                    playerTank.position.addScaledVector(rightDirection, strafe * currentSpeed * delta);
+                }
+
+                // Keep player within arena bounds
+                playerTank.position.x = clamp(playerTank.position.x, -arenaSize / 2 + 0.5, arenaSize / 2 - 0.5);
+                playerTank.position.z = clamp(playerTank.position.z, -arenaSize / 2 + 0.5, arenaSize / 2 - 0.5);
+            }
+
+            // Turret aiming (using Raycaster for mouse position on ground plane)
+            // Use pointer position for aiming regardless of input type (mouse or touch)
+            const raycaster = new Raycaster();
+            const mouseNDC = new Vector2(
+                (mouseX / window.innerWidth) * 2 - 1,
+                -(mouseY / window.innerHeight) * 2 + 1
+            );
+            raycaster.setFromCamera(mouseNDC, camera);
+
+            const plane = new Plane(new Vector3(0, 1, 0), 0); // Ground plane at y=0
+            const intersectionPoint = new Vector3();
+            if (raycaster.ray.intersectPlane(plane, intersectionPoint)) {
+                // Turret aims at the intersection point, but only horizontally
+                const targetDirection = new Vector3().subVectors(intersectionPoint, playerTank.position);
+                targetDirection.y = 0; // Only horizontal aim
+                targetDirection.normalize();
+
+                // Calculate angle for turret
+                const targetAngle = Math.atan2(targetDirection.x, targetDirection.z);
+                playerTurretMesh.rotation.y = targetAngle - playerTank.rotation.y; // Turret rotation relative to tank body
+            }
+
+            // Player firing
+            if ((keys.space || touchButtons.fire) && clock.getElapsedTime() - lastFireTime > fireCooldown) {
+                lastFireTime = clock.getElapsedTime();
+
+                // Get projectile origin from the end of the turret barrel
+                const barrelLength = 1; // From barrel geometry
+                const turretWorldPosition = new Vector3();
+                playerTurretMesh.getWorldPosition(turretWorldPosition);
+
+                const turretWorldDirection = new Vector3();
+                playerTurretMesh.getWorldDirection(turretWorldDirection);
+
+                // Projectile should fire forward from the turret's local +Z axis
+                // First, convert the turret's local forward (+Z) into world space
+                const turretLocalForward = new Vector3(0, 0, 1);
+                const worldForward = new Vector3();
+                playerTurretMesh.localToWorld(worldForward.copy(turretLocalForward));
+                worldForward.sub(turretWorldPosition).normalize(); // Direction from turret center to world forward
+
+                playerProjectileOrigin.copy(turretWorldPosition).addScaledVector(worldForward, barrelLength * 0.7); // Adjust position slightly forward from barrel
+
+                projectiles.push(new Projectile(playerProjectileOrigin, worldForward));
+            }
+
+            // Update projectiles
+            for (let i = projectiles.length - 1; i >= 0; i--) {
+                const projectile = projectiles[i];
+                projectile.update(delta);
+                if (projectile.isOutOfBounds()) {
+                    projectile.destroy();
+                    projectiles.splice(i, 1);
+                }
+            }
+
+            // Update enemies
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                enemy.update(delta);
+                if (enemy.isDestroyed && enemy.destructionTimer <= 0) {
+                    enemies.splice(i, 1);
+                }
+            }
+
+            // Update power-ups
+            powerups.forEach(p => p.update(delta));
+
+            // Check collisions
+            checkCollisions();
+        }
+
+        // --- ANIMATION LOOP ---
+        let lastFrameTime = 0;
+        function animate(time) {
+            if (!on) return; // Pause if not in focus/hidden
+
+            requestAnimationFrame(animate);
+
+            const now = performance.now();
+            // Cap framerate at 60fps to save battery on high-refresh screens
+            if (now - lastFrameTime < 1000 / 60) {
+                return;
+            }
+            const delta = Math.min((now - lastFrameTime) / 1000, 0.05); // Cap delta to prevent teleporting
+            lastFrameTime = now;
+
+            if (gameActive) {
+                update(delta);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // --- RESIZING ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        window.addEventListener('resize', onWindowResize);
+
+        // --- PAUSE/RESUME GAME ---
+        const setOn = (val) => {
+            if (val === on) return;
+            on = val;
+            if (on) {
+                clock.getDelta(); // Reset clock delta on resume
+                lastFrameTime = performance.now(); // Reset lastFrameTime
+                requestAnimationFrame(animate);
+            }
+        };
+        document.addEventListener('visibilitychange', () => setOn(!document.hidden));
+        addEventListener('blur', () => setOn(false));
+        addEventListener('focus', () => setOn(true));
+
+        // --- GAME START ---
+        // Create player tank first, then other elements
+        createPlayerTank().then(() => {
+            createBlocks();
+            createEnemyTanks();
+            onWindowResize(); // Set initial size
+            animate(); // Start the game loop
+            setupTouchControls(); // Setup touch buttons after initial HTML load
+        });
+
+        // Add event listeners
+        window.addEventListener('keydown', onKeyDown);
+        window.addEventListener('keyup', onKeyUp);
+        window.addEventListener('mousedown', onMouseDown);
+        window.addEventListener('mouseup', onMouseUp);
+        window.addEventListener('mousemove', onMouseMove);
+
+        // Add an initial player damage for testing visual damage states
+        // setTimeout(() => {
+        //     playerHealth--;
+        //     updatePlayerHealthDisplay();
+        // }, 3000);
+    </script>
+</body>
+</html>

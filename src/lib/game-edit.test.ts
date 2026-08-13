@@ -198,6 +198,17 @@ describe("GAME_EDIT_PROMPT_SECTION — the patch contract for feature-edit turns
   it("tells the model to anchor SEARCH text on a nearby landmark comment when one exists", () => {
     expect(GAME_EDIT_PROMPT_SECTION).toMatch(/landmark comment/i);
   });
+
+  // BUG-FIX-LOG 2026-08-12 ("Drag the ball" instruction survived a rebuild to
+  // WASD-move-then-click controls): "change only what this request needs"
+  // read literally excludes on-screen instructional text as "unrelated" even
+  // when the mechanic it describes was just replaced — the kid ends up being
+  // told to do something that no longer works. Narrow carve-out: instructions
+  // ARE part of the same change when they describe the thing being changed.
+  it("carves out on-screen instructional text as part of a mechanic-changing edit, not 'unrelated'", () => {
+    expect(GAME_EDIT_PROMPT_SECTION).toMatch(/instruction/i);
+    expect(GAME_EDIT_PROMPT_SECTION).toMatch(/no longer (true|accurate|matches|correct)/i);
+  });
 });
 
 // Kill switch (BUG-FIX-LOG 2026-07-18, penguin-maze session): the user must

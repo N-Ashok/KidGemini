@@ -1,0 +1,1537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><!--ari-perf-probe--><script>(function () {
+  window.__arPerfProbeVersion = 4;
+  var buffer = [];
+  var ready = false;
+  function send(ev) {
+    try { parent.postMessage({ source: "ari-perf-probe", event: ev }, "*"); } catch (e) { /* parent gone */ }
+  }
+  function post(ev) { if (ready) send(ev); else buffer.push(ev); }
+  addEventListener("message", function (event) {
+    var d = event && event.data;
+    if (!d || d.source !== "ari-parent" || d.type !== "ready") return;
+    ready = true;
+    for (var i = 0; i < buffer.length; i++) send(buffer[i]);
+    buffer = [];
+  });
+
+  // GL draw-call counter (v4, 2026-08-10). snapshot.drawCalls was designed to
+  // read __arPerf.renderer.info — which NOTHING ever assigned, so it was null
+  // in every snapshot ever posted. Meanwhile the owner's AutoRicksaw game ran
+  // at 1,250 draws/frame from hand-built meshes the model accounting cannot
+  // see, and the slowdown hint blamed two static trees nine edits in a row.
+  // Count actual GL draw commands instead: engine-agnostic, needs nothing
+  // from the game, reaches stored games via the version re-floor.
+  var glDraws = 0;
+  function wrapGL(proto) {
+    if (!proto) return;
+    try {
+      var de = proto.drawElements;
+      if (de) proto.drawElements = function () { glDraws++; return de.apply(this, arguments); };
+      var da = proto.drawArrays;
+      if (da) proto.drawArrays = function () { glDraws++; return da.apply(this, arguments); };
+      var dei = proto.drawElementsInstanced;
+      if (dei) proto.drawElementsInstanced = function () { glDraws++; return dei.apply(this, arguments); };
+      var dai = proto.drawArraysInstanced;
+      if (dai) proto.drawArraysInstanced = function () { glDraws++; return dai.apply(this, arguments); };
+    } catch (e) { /* never break rendering for telemetry */ }
+  }
+  if (!window.__arGlDrawPatched) {
+    window.__arGlDrawPatched = 1;
+    wrapGL(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+    wrapGL(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+  }
+  var lastGlDraws = 0;
+
+  // FPS estimate: count rAF ticks in the last sample window. Stacks fine on
+  // top of the frame governor's own wrap (both call straight through).
+  var frames = 0;
+  var origRaf = window.requestAnimationFrame;
+  if (origRaf) {
+    window.requestAnimationFrame = function (cb) {
+      return origRaf.call(window, function (t) {
+        frames++;
+        return cb(t);
+      });
+    };
+  }
+
+  // "Playing" signal (v3, owner report 2026-08-06): frames alone can't tell
+  // "running slow" from "not running" — an unstarted game or idle lobby
+  // renders little/nothing by design. Track the last real input so the
+  // slowdown banner only trusts samples taken while the kid is actually
+  // playing. Capture phase: game code often stopPropagation()s.
+  var lastInput = 0;
+  var inputEvents = ["pointerdown", "keydown", "touchstart"];
+  for (var ie = 0; ie < inputEvents.length; ie++) {
+    addEventListener(inputEvents[ie], function () { lastInput = Date.now(); }, true);
+  }
+
+  function snapshot() {
+    // A hidden tab/panel genuinely renders zero frames — that's true, but it
+    // is NOT the same claim as "the game is running slow," which is what
+    // this snapshot exists to detect. Without this guard, every setInterval
+    // tick during a background gap (leaving Ari and coming back) posts a
+    // near-zero fps reading, which is enough on its own to satisfy the
+    // slowdown banner's "5 consecutive low samples" rule — so the banner
+    // flashes on return even though nothing was ever actually slow. Skip
+    // sampling entirely while hidden, and keep resetting the frame counter
+    // so no partial/corrupted count leaks into the first reading after the
+    // tab becomes visible again.
+    if (document.hidden) { frames = 0; return; }
+    var perf = window.__arPerf || {};
+    var reg = perf.models || {};
+    var animatedRoots = perf.animatedRoots;
+    var models = [];
+    for (var name in reg) {
+      if (!Object.prototype.hasOwnProperty.call(reg, name)) continue;
+      var entry = reg[name];
+      var roots = entry.instances || [];
+      // Live = still parented into a scene graph. A load()ed-but-never-added
+      // (or later removed) root reads parent as falsy — never a stale row.
+      var live = [];
+      for (var i = 0; i < roots.length; i++) {
+        if (roots[i] && roots[i].parent) live.push(roots[i]);
+      }
+      if (live.length === 0) continue;
+      var animated = false;
+      if (animatedRoots) {
+        for (var j = 0; j < live.length; j++) {
+          if (animatedRoots.has(live[j])) { animated = true; break; }
+        }
+      }
+      var triangles = entry.triangles || 0;
+      var load = triangles * live.length * (animated ? 2 : 1);
+      var bucket = load <= 20000 ? "green" : (load <= 150000 ? "yellow" : "red");
+      models.push({ name: name, triangles: triangles, instances: live.length, animated: animated, load: load, bucket: bucket });
+    }
+    var batches = perf.batches || {};
+    for (var bname in batches) {
+      if (!Object.prototype.hasOwnProperty.call(batches, bname)) continue;
+      var bentry = batches[bname];
+      var broots = bentry.roots || [];
+      var blive = false;
+      for (var bi = 0; bi < broots.length; bi++) { if (broots[bi] && broots[bi].parent) { blive = true; break; } }
+      if (!blive) continue;
+      var btriangles = bentry.triangles || 0;
+      var bdrawCalls = bentry.drawCalls || 1;
+      var bload = btriangles * bdrawCalls;
+      var bbucket = bload <= 20000 ? "green" : (bload <= 150000 ? "yellow" : "red");
+      models.push({ name: bentry.name, triangles: btriangles, instances: bentry.count || 0, animated: false, load: bload, bucket: bbucket, batched: true, drawCalls: bdrawCalls });
+    }
+    models.sort(function (a, b) { return b.load - a.load; });
+    var drawCalls = null, rendererTriangles = null;
+    // Per-frame average over this window from the GL counter — the value
+    // that actually distinguishes "a thousand tiny meshes" from "two trees".
+    var windowDraws = glDraws - lastGlDraws;
+    lastGlDraws = glDraws;
+    if (windowDraws > 0 && frames > 0) {
+      drawCalls = Math.round(windowDraws / frames);
+    } else if (perf.renderer && perf.renderer.info && perf.renderer.info.render) {
+      // Legacy fallback, kept for a game that registers its renderer.
+      drawCalls = perf.renderer.info.render.calls;
+      rendererTriangles = perf.renderer.info.render.triangles;
+    }
+    var playing = frames > 0 && lastInput > 0 && (Date.now() - lastInput) < 10000;
+    post({ type: "snapshot", snapshot: { fps: frames, playing: playing, drawCalls: drawCalls, rendererTriangles: rendererTriangles, models: models } });
+    frames = 0;
+  }
+  setInterval(snapshot, 1000);
+})();</script><script type="importmap">{"imports":{"three":"https://assets.ariantra.com/three.098b4c.js"}}</script><style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style><script>(function(){
+if (window.__arFrameGovernor) return;
+window.__arFrameGovernor = 1;
+var raf = window.requestAnimationFrame.bind(window);
+var seen = new WeakMap();
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    // Skipped frames ALWAYS re-request through the wrapper, so the loop can
+    // never die — that is the one failure mode that would break a live game.
+    if (document.hidden) { window.requestAnimationFrame(cb); return; }
+    var prev = (typeof cb === 'function' ? seen.get(cb) : 0) || 0;
+    if (prev && t - prev < 15) { window.requestAnimationFrame(cb); return; }
+    if (typeof cb === 'function') seen.set(cb, t);
+    return cb(t);
+  });
+};
+})();</script><script>(function(){
+if (window.__arGlGuard) return;
+window.__arGlGuard = 1;
+window.__arGlGuardVersion = 2;
+var get = HTMLCanvasElement.prototype.getContext;
+var live = [];
+var lostCount = 0;
+HTMLCanvasElement.prototype.getContext = function (type) {
+  var ctx = get.apply(this, arguments);
+  try {
+    if (ctx && /webgl/i.test(String(type)) && !this.__arGlGuarded) {
+      this.__arGlGuarded = 1;
+      var ext = null;
+      try { ext = ctx.getExtension('WEBGL_lose_context'); } catch (e2) { /* none */ }
+      live.push({ ctx: ctx, ext: ext });
+      this.addEventListener('webglcontextlost', function (e) {
+        // THE line that matters: without preventDefault the loss is final and
+        // the canvas stays blank for the rest of the document's life.
+        e.preventDefault();
+        lostCount++;
+        console.warn('[ari] WebGL context lost — restore requested');
+        // Watchdog (2026-08-10 №4, "it didnot regain"): browsers do not
+        // always volunteer webglcontextrestored, and a politely-held loop
+        // waits forever. The ladder is the automatic version of what fixed
+        // it for the owner by hand (code↔preview toggle = a remount):
+        // after 2s still lost → ask the driver; 3s more still lost → ask
+        // the parent to remount this frame.
+        setTimeout(function () {
+          var still = true;
+          try { still = ctx.isContextLost(); } catch (e3) { /* gone */ }
+          if (!still) return;
+          try { if (ext) ext.restoreContext(); } catch (e3) { /* refused */ }
+          setTimeout(function () {
+            var dead = true;
+            try { dead = ctx.isContextLost(); } catch (e4) { /* gone */ }
+            if (!dead) return;
+            console.warn('[ari] WebGL context is not coming back — asking the parent to reload the game');
+            try { parent.postMessage({ __ari: 'gl-dead' }, '*'); } catch (e4) { /* no parent */ }
+          }, 3000);
+        }, 2000);
+      }, false);
+      this.addEventListener('webglcontextrestored', function () {
+        if (lostCount > 0) lostCount--;
+        console.warn('[ari] WebGL context restored');
+      }, false);
+    }
+  } catch (e) { /* never break getContext */ }
+  return ctx;
+};
+// Restoring the CONTEXT is not enough — the game's LOOP must survive to see
+// it. While a context is lost, three.js's renderer throws mid-render (the GL
+// introspection APIs return null, and three calls .trim() on the result —
+// the exact stack the harness attributed on 2026-08-10). Games request their
+// next frame AFTER rendering (three's setAnimationLoop does too), so that
+// throw kills the loop for good: the context comes back, nothing draws, the
+// canvas stays blank, and no click can restart it. So: while any tracked
+// context is lost, hold rAF callbacks — always re-request, never run — the
+// same shape as the frame governor's document.hidden skip, and it resumes by
+// itself on webglcontextrestored. Composes with the governor's own wrapper
+// (this one runs outside it) — worst case a held frame is re-queued twice.
+// lostCount alone is NOT enough to gate on: webglcontextlost is dispatched
+// as a task, so there is a window after the actual loss (browser eviction or
+// our own release) where the event has not landed yet — one frame renders
+// against the dead context and three throws anyway. isContextLost() is
+// synchronous truth; the event counter only covers the fake-restore corner
+// (some drivers report isContextLost()=false again before firing restored).
+function anyLost() {
+  for (var i = 0; i < live.length; i++) {
+    try { if (live[i].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  for (var j = 0; j < released.length; j++) {
+    try { if (released[j].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  return false;
+}
+var raf = window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    if (lostCount > 0 || anyLost()) { window.requestAnimationFrame(cb); return; }
+    return cb(t);
+  });
+};
+var released = [];
+function release(why) {
+  // Hand the GPU back now rather than at GC, so the next preview iframe does
+  // not push the page over the context cap. Kept restorable (see pageshow):
+  // a release we believed was terminal must be reversible if the page comes
+  // back — 2026-08-10 second owner report, the pane-switch freeze.
+  for (var i = 0; i < live.length; i++) {
+    try {
+      if (live[i].ext) { live[i].ext.loseContext(); released.push(live[i]); }
+    } catch (e) { /* already gone */ }
+  }
+  live.length = 0;
+  // Observable from the parent page: this is how the harness proves the round
+  // was ASKED to release at unmount, rather than assuming it.
+  console.warn('[ari] WebGL contexts released (' + why + ')');
+}
+// Lets the harness assert that a torn-down round actually gave its context
+// back, instead of assuming pagehide fired.
+Object.defineProperty(window, '__arGlCount', { get: function () { return live.length; } });
+// The parent asks explicitly, immediately before it unmounts this frame.
+// pagehide alone is NOT enough: Chrome does not reliably fire it when an
+// iframe is detached from the DOM, which is precisely how every shadow round
+// ends — so without this the contexts pile up exactly as they did in the
+// owner's eleven-edit session.
+addEventListener('message', function (e) {
+  var d = e && e.data;
+  if (d && d.__ari === 'release-gl') release('asked');
+}, false);
+// Diagnostic-only (2026-08-11): a non-persisted pagehide fired mid-edit on
+// the STILL-PLAYING game, with no deliberate srcDoc/key change from React —
+// after shadow-verify was removed the same day, the explicit 'release-gl'
+// message (sent by the parent right before it unmounted the shadow frame)
+// went with it, leaving THIS listener as the only release trigger, carrying
+// more weight than "pagehide is kept as a backstop only" (the comment above
+// release()) ever assumed. This context string is what will tell us whether
+// it's a real backgrounding event (visibility/online state) or something
+// else entirely — never throws, so it can never break the guard itself.
+function diag() {
+  try {
+    return 'visibility=' + document.visibilityState + ' hidden=' + document.hidden +
+      ' online=' + navigator.onLine + ' at=' + Date.now();
+  } catch (e) { return 'diag-unavailable'; }
+}
+addEventListener('pagehide', function (e) {
+  // Safari/iOS fires pagehide when the page is merely BACKGROUNDED (app or
+  // tab switch, pane transitions) and will bring it back — persisted=true.
+  // Releasing there kills the LIVE game's context and the loop-hold freezes
+  // it: the owner's "froze, then turned blue when I clicked back"
+  // (2026-08-10, second report). Only a non-persisted pagehide — the actual
+  // teardown of a detached iframe — releases.
+  if (e && e.persisted) {
+    console.warn('[ari] pagehide (persisted, backgrounded — kept alive) ' + diag());
+    return;
+  }
+  console.warn('[ari] pagehide (NOT persisted — releasing) ' + diag());
+  release('pagehide');
+});
+addEventListener('pageshow', function () {
+  // The symmetric half: any release that turned out not to be terminal (the
+  // page came back anyway) is undone. restoreContext fires
+  // webglcontextrestored, which unwinds lostCount and resumes the held loop.
+  if (!released.length) return;
+  for (var i = 0; i < released.length; i++) {
+    try { released[i].ext.restoreContext(); live.push(released[i].ctx); } catch (e) { /* gone for real */ }
+  }
+  released.length = 0;
+  console.warn('[ari] WebGL contexts restored (pageshow)');
+});
+})();</script><script>window.AR_ASSETS={"hero":"https://assets.ariantra.com/hero.f5b4d5.glb","mech":"https://assets.ariantra.com/mech.4afc11.glb","orc":"https://assets.ariantra.com/orc.720c00.glb","police":"https://assets.ariantra.com/police.4b030e.glb","businessman":"https://assets.ariantra.com/businessman.4f0919.glb","hit":"https://assets.ariantra.com/hit.8a79a3.mp3","game_over":"https://assets.ariantra.com/game_over.2866a9.mp3","win":"https://assets.ariantra.com/win.820154.mp3","zap":"https://assets.ariantra.com/zap.c9dfe8.mp3","pop":"https://assets.ariantra.com/pop.a0585f.mp3","footstep":"https://assets.ariantra.com/footstep.da4453.mp3","bg_loop_upbeat":"https://assets.ariantra.com/bg_loop_upbeat.ae85a2.mp3"};</script><script>window.AR_SIZES={"mech":[1.6,2.7,0.8],"orc":[1.6,2.7,0.8],"police":[1.5,1.3,3.1],"businessman":[1.6,2.7,0.8]};</script><script type="module">
+  import { GLTFLoader, MeshoptDecoder } from "three";
+  window.__arLoadModelVersion = 7;
+// modelSize (2026-08-08, the fragmented-track fix): the measured metres a model
+// renders at scale 1, available BEFORE loading so a game can plan a layout. The
+// "|| {}" guard means order-of-injection never matters, and an unknown or
+// skinned model answers null rather than a made-up number — a game that checks
+// for null degrades to eyeballing, which is exactly what it did before v4.
+window.AR_SIZES = window.AR_SIZES || {};
+window.modelSize = function (name) {
+  var s = window.AR_SIZES[name];
+  return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
+};
+// modelAxis (2026-08-08, the poorly-formed-track fix): which axis a PATH
+// piece's road runs along at rest — "x", "z", or "none" for a hub/corner. The
+// two road kits genuinely disagree (city road_straight runs along X, racing
+// race_track_straight along Z) and a 1x1 square tile's size cannot reveal it,
+// so before this a game had to guess and got it wrong every time. Unknown
+// answers null — then eyeball it, same as before.
+window.AR_AXES = window.AR_AXES || {};
+window.modelAxis = function (name) {
+  var a = window.AR_AXES[name];
+  return (a === "x" || a === "z" || a === "none") ? a : null;
+};
+// modelJoins (2026-08-09, the SECOND poorly-formed-track fix): which edges a
+// tile's road actually reaches, measured from a top-down render of the
+// published bytes. modelAxis() answers "none" for every corner — true, and
+// useless for placing one; with nothing else to reason from, generated tracks
+// guessed corner rotations and the curves never met the straights.
+//   .joins  ["-x","+z"]  edges the carriageway reaches at rest (no rotation)
+//   .lane   0.7          drivable width in METRES at scale 1
+//   .at     {"-x":0.5}   where each join sits, in metres from the piece's own
+//                        minimum on that edge's axis (matters on 2x2 pieces)
+// Unknown answers null — then eyeball it, exactly as before.
+window.AR_EDGES = window.AR_EDGES || {};
+window.modelJoins = function (name) {
+  var e = window.AR_EDGES[name];
+  return (e && e.joins && e.joins.length) ? e : null;
+};
+// rotateToJoin: the one calculation every track needs and no game got right by
+// hand. Returns the rotation.y IN RADIANS that carries a piece's "from" edge
+// onto the "to" edge — e.g. a corner joining ["+z","+x"] that must instead join
+// west and south is rotateToJoin("race_track_corner","+x","+z"). Quarter turns
+// only, which is all a square grid can use.
+// (No backticks anywhere in this block: it is inlined into a TEMPLATE LITERAL,
+// so one would end the helper string mid-function.)
+window.rotateToJoin = function (name, from, to) {
+  var order = ["-z", "+x", "+z", "-x"]; // clockwise seen from above
+  var a = order.indexOf(from), b = order.indexOf(to);
+  if (a < 0 || b < 0) return 0;
+  return ((b - a + 4) % 4) * (Math.PI / 2);
+};
+// fitTile (2026-08-09): say WHICH DIRECTIONS a grid cell must connect and get
+// the rotation.y that makes the piece do it. Added after three rounds of
+// teaching failed to land: a generated track chose the right kit and one scale
+// factor, then hardcoded all four corner rotations and got all four wrong,
+// because working out "this cell needs north and east, the piece joins +z and
+// +x at rest, so rotate 3pi/2" is four steps of reasoning under a token budget.
+// This is one call. Directions are where the ROAD LEAVES the cell:
+//   fitTile("race_track_corner", ["-z", "+x"])   // track to the north and east
+// Returns 0 for an unknown piece, and null when no quarter turn can satisfy the
+// request — which means the wrong PIECE was chosen (asking a corner to join two
+// opposite edges), so a game can detect that instead of silently drawing a gap.
+window.fitTile = function (name, need) {
+  var e = window.AR_EDGES[name];
+  if (!e || !e.joins || !need || !need.length) return 0;
+  var order = ["-z", "+x", "+z", "-x"];
+  var want = need.slice().sort().join(",");
+  for (var q = 0; q < 4; q++) {
+    var got = e.joins
+      .map(function (j) { return order[(order.indexOf(j) + q) % 4]; })
+      .sort()
+      .join(",");
+    if (got === want) return q * (Math.PI / 2);
+  }
+  return null;
+};
+  const __arLoader = new GLTFLoader();
+__arLoader.setMeshoptDecoder(MeshoptDecoder);
+window.__arPerf = window.__arPerf || { models: {}, rootNames: new WeakMap(), animatedRoots: new WeakSet(), renderer: null };
+var __arStaticTemplates = {};
+function __arCountTriangles(obj) {
+  var triangles = 0;
+  obj.traverse(function (child) {
+    if (!child.isMesh || !child.geometry) return;
+    var geo = child.geometry;
+    if (geo.index) triangles += geo.index.count / 3;
+    else if (geo.attributes && geo.attributes.position) triangles += geo.attributes.position.count / 3;
+  });
+  return Math.round(triangles);
+}
+async function __arLoadFresh(name) {
+  const url = (window.AR_ASSETS || {})[name];
+  if (!url) { console.warn("[ariantra] unknown model:", name); return null; }
+  const gltf = await __arLoader.loadAsync(url);
+  return { scene: gltf.scene, animations: gltf.animations || [] };
+}
+window.loadModel = async function (name) {
+  try {
+    var obj;
+    if (__arStaticTemplates[name]) {
+      // Cache only ever holds a STATIC (no-animation) template — see the
+      // loadModelHelper() doc comment for why animated models are excluded.
+      obj = __arStaticTemplates[name].scene.clone();
+      obj.animations = [];
+    } else {
+      const fresh = await __arLoadFresh(name);
+      if (!fresh) return null;
+      if (fresh.animations.length) {
+        obj = fresh.scene;
+        obj.animations = fresh.animations;
+      } else {
+        __arStaticTemplates[name] = fresh;
+        obj = fresh.scene.clone();
+        obj.animations = [];
+      }
+    }
+    // Same answer as modelSize(name), riding on the object — so code that
+    // already holds the loaded root can size it without re-quoting the name.
+    obj.userData.arSize = window.modelSize(name);
+    try {
+      var __arEntry = window.__arPerf.models[name] || { name: name, triangles: 0, instances: [] };
+      __arEntry.triangles = __arCountTriangles(obj);
+      __arEntry.instances.push(obj);
+      if (__arEntry.instances.length > 1000) __arEntry.instances.shift();
+      window.__arPerf.models[name] = __arEntry;
+      window.__arPerf.rootNames.set(obj, name);
+    } catch (e) { /* telemetry only — never blocks the load */ }
+    return obj;
+  } catch (e) {
+    console.warn("[ariantra] loadModel failed:", name, e);
+    return null;
+  }
+};
+</script><script>
+(function () {
+  var ctx = null, buffers = {}, currentMusic = null;
+  function context() {
+    if (!ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC();
+      var resume = function () { if (ctx.state === "suspended") ctx.resume(); };
+      addEventListener("pointerdown", resume, true);
+      addEventListener("keydown", resume, true);
+    }
+    return ctx;
+  }
+  function load(name) {
+    var url = (window.AR_ASSETS || {})[name];
+    if (!url) { console.warn("[ariantra] unknown sound:", name); return Promise.resolve(null); }
+    if (!buffers[name]) {
+      buffers[name] = fetch(url)
+        .then(function (r) { return r.arrayBuffer(); })
+        .then(function (ab) {
+          return new Promise(function (res, rej) { context().decodeAudioData(ab, res, rej); });
+        })
+        .catch(function (e) { console.warn("[ariantra] sound failed:", name, e); return null; });
+    }
+    return buffers[name];
+  }
+  function trimBounds(buf) {
+    var d = buf.getChannelData(0), t = 0.001, s = 0, e = d.length - 1;
+    while (s < e && Math.abs(d[s]) < t) s++;
+    while (e > s && Math.abs(d[e]) < t) e--;
+    return { start: s / buf.sampleRate, end: (e + 1) / buf.sampleRate };
+  }
+  window.playSound = function (name) {
+    try {
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        src.connect(context().destination);
+        src.start();
+      });
+    } catch (e) { /* a silent effect, never a broken game */ }
+  };
+  window.playMusic = function (name) {
+    var handle = { stop: function () {} };
+    try {
+      if (currentMusic) { try { currentMusic.stop(); } catch (e2) {} currentMusic = null; }
+      load(name).then(function (buf) {
+        if (!buf) return;
+        var src = context().createBufferSource();
+        src.buffer = buf;
+        var b = trimBounds(buf);
+        src.loop = true;
+        src.loopStart = b.start;
+        src.loopEnd = b.end;
+        var gain = context().createGain();
+        gain.gain.value = 0.5;
+        src.connect(gain);
+        gain.connect(context().destination);
+        src.start(0, b.start);
+        currentMusic = src;
+        handle.stop = function () { try { src.stop(); } catch (e3) {} if (currentMusic === src) currentMusic = null; };
+      });
+    } catch (e) { /* silent */ }
+    return handle;
+  };
+})();
+</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Hero Arena Builder</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: sans-serif;
+            color: white;
+            background-color: #000;
+            height: 100dvh; /* Dynamic viewport height for mobile safety */
+            display: flex;
+            flex-direction: column;
+        }
+        #game-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            flex-grow: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Allows clicks to pass through to canvas */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        #score-display {
+            position: absolute; /* Changed to absolute for consistent positioning */
+            top: max(12px, env(safe-area-inset-top)); /* Breathing room at top */
+            left: max(12px, env(safe-area-inset-left)); /* Breathing room at left */
+            font-size: 1.5em;
+            font-weight: bold;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 8px 12px;
+            border-radius: 8px;
+            pointer-events: none;
+            z-index: 10;
+        }
+        #message-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            font-size: 2em;
+            font-weight: bold;
+            text-align: center;
+            z-index: 100;
+            pointer-events: auto; /* Allow interaction with message/restart */
+            display: none; /* Hidden by default */
+        }
+        #message-overlay button {
+            margin-top: 20px;
+            padding: 15px 30px;
+            font-size: 1.2em;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            pointer-events: auto;
+        }
+        .health-bar-container {
+            position: absolute;
+            width: 80px;
+            height: 10px;
+            background-color: rgba(0, 0, 0, 0.6);
+            border-radius: 3px;
+            overflow: hidden;
+            z-index: 5;
+            pointer-events: none;
+            transform: translate(-50%, -50%); /* Center the health bar */
+        }
+        .health-bar {
+            height: 100%;
+            width: 100%;
+            background-color: #4CAF50; /* Green */
+            transition: width 0.1s linear;
+        }
+        .health-bar.hero { background-color: #007bff; } /* Blue for hero */
+        .health-bar.villain { background-color: #dc3545; } /* Red for villain */
+
+        .controls {
+            position: absolute;
+            bottom: max(12px, env(safe-area-inset-bottom));
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            pointer-events: auto;
+            z-index: 10;
+            padding-bottom: max(12px, env(safe-area-inset-bottom)); /* Breathing room */
+            box-sizing: border-box;
+        }
+        .control-button {
+            width: 60px;
+            height: 60px;
+            background-color: rgba(70, 130, 180, 0.7);
+            border-radius: 10px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 2em;
+            color: white;
+            user-select: none;
+            cursor: pointer;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            transition: background-color 0.1s;
+        }
+        .control-button:active {
+            background-color: rgba(100, 160, 200, 0.9);
+        }
+        .control-button.wide {
+            width: 130px;
+        }
+        .control-row {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 5px;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* Teleport buttons for mobile */
+        #teleport-buttons {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: none; /* Hidden by default, shown when RMB is active */
+            flex-direction: column;
+            gap: 10px;
+            z-index: 9; /* Below game over, above other UI */
+        }
+        #teleport-buttons .control-row {
+             gap: 10px;
+        }
+        #teleport-buttons .control-button {
+            background-color: rgba(138, 43, 226, 0.7); /* Purple for teleport */
+        }
+        #teleport-buttons.active {
+            display: flex;
+        }
+        .attack-button {
+            position: absolute;
+            bottom: max(80px, calc(80px + env(safe-area-inset-bottom))); /* Above movement controls */
+            right: max(12px, env(safe-area-inset-right));
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background-color: rgba(255, 69, 0, 0.7); /* Red for attack */
+            font-size: 1.8em;
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            user-select: none;
+            cursor: pointer;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            transition: background-color 0.1s;
+        }
+        .attack-button:active {
+            background-color: rgba(255, 99, 71, 0.9);
+        }
+    </style>
+</head>
+<body>
+    
+    
+    
+
+    <div id="game-container">
+        <canvas id="scene"></canvas>
+        <div id="ui-overlay">
+            <div id="score-display">Score: <span id="score">0</span></div>
+            <div id="teleport-buttons">
+                <div class="control-row">
+                    <div class="control-button" data-dir="forward">⬆️</div>
+                </div>
+                <div class="control-row">
+                    <div class="control-button" data-dir="left">⬅️</div>
+                    <div class="control-button" data-dir="back">⬇️</div>
+                    <div class="control-button" data-dir="right">➡️</div>
+                </div>
+            </div>
+            <div class="attack-button" id="attack-button">👊</div>
+            <div class="controls">
+                <div class="control-group">
+                    <div class="control-row">
+                        <div class="control-button" data-key="w">W</div>
+                    </div>
+                    <div class="control-row">
+                        <div class="control-button" data-key="a">A</div>
+                        <div class="control-button" data-key="s">S</div>
+                        <div class="control-button" data-key="d">D</div>
+                    </div>
+                </div>
+                <div class="control-button wide" data-key="space">Jump</div>
+            </div>
+        </div>
+        <div id="message-overlay">
+            <span id="game-message"></span>
+            <button id="restart-button">Play Again!</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import { Scene, PerspectiveCamera, WebGLRenderer, Clock, Color, Fog, Group, Vector3, Box3, BoxGeometry, SphereGeometry, ConeGeometry, CylinderGeometry, PlaneGeometry, MeshStandardMaterial, MeshBasicMaterial, Mesh, AmbientLight, DirectionalLight, AnimationMixer, Quaternion, MathUtils } from "three";
+
+        // --- GLOBAL GAME STATE & CONSTANTS ---
+        const gameContainer = document.getElementById('game-container');
+        const canvas = document.getElementById('scene');
+        const scoreElement = document.getElementById('score');
+        const messageOverlay = document.getElementById('message-overlay');
+        const gameMessage = document.getElementById('game-message');
+        const restartButton = document.getElementById('restart-button');
+        const teleportButtons = document.getElementById('teleport-buttons');
+        const attackButton = document.getElementById('attack-button');
+
+        let scene, camera, renderer, clock, mixer;
+        let player, playerBody; // playerBody is the group holding model + healthbar
+        const characters = []; // Stores all active characters (player, enemies)
+        const environmentObjects = []; // Stores non-character objects
+
+        let playerHealth = 100;
+        let hulkHealth = 500;
+        let thanosHealth = 500;
+
+        let score = 0;
+        let gameOver = false;
+        let gameActive = false; // To prevent actions before models load and game starts
+
+        const BOUNDARY_SIZE = 100; // Half-width/depth of the 200x200 play space
+        const MAX_Y = 100; // Max height for the play space
+
+        // Player movement
+        const playerSpeed = 8; // units per second
+        const jumpStrength = 15;
+        const gravity = -30;
+        let velocityY = 0;
+        let grounded = true;
+        let moveDirection = new Vector3();
+        let keys = { w: false, a: false, s: false, d: false, space: false };
+        let mouse = { left: false, right: false };
+
+        let attackCooldown = 0;
+        const ATTACK_COOLDOWN_TIME = 0.5; // seconds
+        const ATTACK_RANGE = 2; // units
+        const SPIDERMAN_DAMAGE = 10;
+
+        const TELEPORT_DISTANCE = 15;
+        let teleportActive = false;
+        let teleportTimer = 0;
+        const TELEPORT_DURATION = 0.1; // How long the teleport activation window lasts
+
+        const ENEMY_SPEED = 5;
+        const AGGRO_RANGE = 30; // units
+        let hulkRoarCooldown = 0;
+        const HULK_ROAR_COOLDOWN_TIME = 5; // seconds
+
+        let on = true; // For pause/resume visibility
+
+        // --- CORE SETUP ---
+        function setupScene() {
+            scene = new Scene();
+            scene.background = new Color(0x87CEEB); // Bright blue sky
+
+            // Skybox - fluffy clouds
+            const cloudGeometry = new SphereGeometry(BOUNDARY_SIZE * 3, 32, 16);
+            const cloudMaterial = new MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.8, depthWrite: false }); // White puffy clouds
+            const numClouds = 20;
+            for (let i = 0; i < numClouds; i++) {
+                const cloud = new Mesh(cloudGeometry, cloudMaterial);
+                cloud.position.x = Math.random() * BOUNDARY_SIZE * 4 - BOUNDARY_SIZE * 2;
+                cloud.position.y = Math.random() * (MAX_Y * 2) + MAX_Y;
+                cloud.position.z = Math.random() * BOUNDARY_SIZE * 4 - BOUNDARY_SIZE * 2;
+                cloud.scale.setScalar(Math.random() * 0.5 + 0.5);
+                scene.add(cloud);
+            }
+
+            // Fog to make distant objects fade into the sky
+            scene.fog = new Fog(scene.background, BOUNDARY_SIZE * 0.5, BOUNDARY_SIZE * 2);
+
+            camera = new PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 20, -30);
+            camera.lookAt(0, 0, 0);
+
+            renderer = new WebGLRenderer({ canvas: canvas, antialias: true, preserveDrawingBuffer: true });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setSize(gameContainer.clientWidth, gameContainer.clientHeight);
+
+            // Lighting
+            const ambientLight = new AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const directionalLight = new DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 10, 7);
+            scene.add(directionalLight);
+
+            // Ground
+            const groundGeometry = new PlaneGeometry(BOUNDARY_SIZE * 2, BOUNDARY_SIZE * 2);
+            const groundMaterial = new MeshStandardMaterial({ color: 0x4CAF50 }); // Green for ground
+            const ground = new Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = 0;
+            scene.add(ground);
+
+            clock = new Clock();
+            playMusic('bg_loop_upbeat'); // Start background music
+        }
+
+        // --- CHARACTER CLASS ---
+        class Character {
+            constructor(name, modelName, initialHp, position, rotationY = 0, isPlayer = false) {
+                this.name = name;
+                this.modelName = modelName;
+                this.maxHealth = initialHp;
+                this.currentHealth = initialHp;
+                this.isPlayer = isPlayer;
+                this.model = null;
+                this.body = new Group(); // Group to hold model and health bar
+                this.body.position.copy(position);
+                this.body.rotation.y = rotationY;
+                this.mixer = null;
+                this.action = null; // Current animation action
+                this.healthBarElement = this.createHealthBar();
+                this.target = null; // For enemies to track player
+                this.velocity = new Vector3();
+                this.isAttacking = false; // Flag for enemy attack logic
+                this.attackCooldown = 0;
+                this.attackDamage = 20; // Default enemy damage
+                this.attackRange = 5; // Default enemy attack range
+
+                scene.add(this.body);
+                characters.push(this);
+                this.loadCharacterModel();
+            }
+
+            createHealthBar() {
+                const barContainer = document.createElement('div');
+                barContainer.className = 'health-bar-container';
+                const bar = document.createElement('div');
+                bar.className = `health-bar ${this.isPlayer ? 'hero' : 'villain'}`;
+                barContainer.appendChild(bar);
+                gameContainer.appendChild(barContainer);
+                return { container: barContainer, bar: bar };
+            }
+
+            updateHealthBar() {
+                this.healthBarElement.bar.style.width = `${(this.currentHealth / this.maxHealth) * 100}%`;
+                this.healthBarElement.container.style.display = this.currentHealth > 0 ? 'block' : 'none';
+            }
+
+            takeDamage(amount) {
+                if (this.currentHealth <= 0) return; // Already defeated
+                this.currentHealth -= amount;
+                if (this.currentHealth < 0) this.currentHealth = 0;
+                this.updateHealthBar();
+                playSound('hit');
+
+                if (this.currentHealth === 0) {
+                    this.die();
+                }
+            }
+
+            heal(amount) {
+                this.currentHealth += amount;
+                if (this.currentHealth > this.maxHealth) this.currentHealth = this.maxHealth;
+                this.updateHealthBar();
+            }
+
+            die() {
+                console.log(`${this.name} defeated!`);
+                if (this.model) {
+                    // Play a 'pop' sound and remove the model
+                    playSound('pop');
+                    this.body.remove(this.model);
+                    this.model = null; // Clear reference to the model
+                }
+                if (this.healthBarElement) {
+                    this.healthBarElement.container.remove();
+                    this.healthBarElement = null;
+                }
+                // Check win/lose conditions
+                if (this.isPlayer) {
+                    endGame(false); // Player loses
+                } else {
+                    const remainingEnemies = characters.filter(c => !c.isPlayer && c.currentHealth > 0);
+                    if (remainingEnemies.length === 0) {
+                        endGame(true); // Player wins
+                    } else {
+                        // Update score if it's not the player dying
+                        score += 100;
+                        scoreElement.textContent = score;
+                    }
+                }
+            }
+
+            playAnimation(clipName) {
+                if (!this.mixer || !this.model || this.model.animations.length === 0) return;
+
+                const clip = this.model.animations.find(a => a.name === clipName);
+                if (clip) {
+                    const newAction = this.mixer.clipAction(clip);
+                    if (this.action !== newAction) {
+                        if (this.action) {
+                            this.action.fadeOut(0.2);
+                        }
+                        newAction.reset().fadeIn(0.2).play();
+                        this.action = newAction;
+                    }
+                } else {
+                    // Fallback to idle if specific clip not found
+                    const idleClip = this.model.animations.find(a => a.name === 'idle');
+                    if (idleClip) {
+                        const newAction = this.mixer.clipAction(idleClip);
+                        if (this.action !== newAction) {
+                            if (this.action) {
+                                this.action.fadeOut(0.2);
+                            }
+                            newAction.reset().fadeIn(0.2).play();
+                            this.action = newAction;
+                        }
+                    }
+                }
+            }
+
+            loadCharacterModel() {
+                loadModel(this.modelName).then(m => {
+                    if (m) {
+                        this.model = m;
+                        this.model.scale.setScalar(this.modelName === 'hero' ? 0.012 : 0.015); // Adjust scale to be reasonable
+                        this.model.position.y = 0; // Ensure model base is at body.position.y
+                        this.body.add(this.model);
+
+                        // If Thanos, add gauntlet
+                        if (this.name === 'Thanos') {
+                            const gauntlet = new SphereGeometry(0.5, 8, 8); // Small sphere for gauntlet
+                            const gauntletMaterial = new MeshBasicMaterial({ color: 0x8A2BE2 }); // Purple color
+                            const gauntletMesh = new Mesh(gauntlet, gauntletMaterial);
+                            gauntletMesh.position.set(0.6, 0.8, 0); // Position relative to model's hand area
+                            // Assume Thanos's model has arms, this is a placeholder without knowing specific bone names
+                            // For simplicity, attach to the root or find a general arm area if possible
+                            if (this.model.getObjectByName("arm-right")) { // Example for generic character model
+                                this.model.getObjectByName("arm-right").add(gauntletMesh);
+                            } else {
+                                this.model.add(gauntletMesh); // Attach to root if no specific arm part
+                            }
+                        }
+
+                        this.mixer = new AnimationMixer(this.model);
+                        this.playAnimation('idle'); // Start with idle animation
+
+                        // Initial health bar update
+                        this.updateHealthBar();
+
+                        if (this.isPlayer) {
+                            player = this.model; // Set player reference to the actual loaded model
+                            playerBody = this.body; // Reference to the group
+                        }
+                    } else {
+                        console.warn(`Failed to load model: ${this.modelName}. Using placeholder.`);
+                        const placeholderGeometry = new BoxGeometry(1, 2, 1);
+                        const placeholderMaterial = new MeshStandardMaterial({ color: this.isPlayer ? 0x0000ff : 0xff0000 });
+                        this.model = new Mesh(placeholderGeometry, placeholderMaterial);
+                        this.model.position.y = 1;
+                        this.body.add(this.model);
+                        this.updateHealthBar();
+                        if (this.isPlayer) {
+                            player = this.model;
+                            playerBody = this.body;
+                        }
+                    }
+                    // If all models are loaded, start the game
+                    if (characters.every(c => c.model !== null) && !gameActive) {
+                        gameActive = true;
+                        playMusic('bg_loop_upbeat');
+                        console.log("Game started!");
+                    }
+                });
+            }
+
+            update(delta) {
+                if (!this.model || this.currentHealth <= 0) return;
+
+                // Update animation mixer
+                if (this.mixer) {
+                    this.mixer.update(delta);
+                }
+
+                // Update health bar position
+                const vector = new Vector3();
+                this.model.getWorldPosition(vector);
+                vector.y += 2.5; // Offset above head
+
+                const screenPosition = vector.project(camera);
+                const screenX = (screenPosition.x + 1) / 2 * gameContainer.clientWidth;
+                const screenY = (-screenPosition.y + 1) / 2 * gameContainer.clientHeight;
+
+                this.healthBarElement.container.style.left = `${screenX}px`;
+                this.healthBarElement.container.style.top = `${screenY}px`;
+
+                // Enemy AI (if not player and game is active)
+                if (!this.isPlayer && gameActive && playerBody && playerBody.model) {
+                    const distanceToPlayer = this.body.position.distanceTo(playerBody.position);
+
+                    if (distanceToPlayer < AGGRO_RANGE) {
+                        this.target = playerBody;
+
+                        // Move towards player
+                        const direction = new Vector3().subVectors(this.target.position, this.body.position).normalize();
+                        this.velocity.copy(direction).multiplyScalar(ENEMY_SPEED);
+                        this.body.position.add(this.velocity.clone().multiplyScalar(delta));
+
+                        // Face player
+                        const targetAngle = Math.atan2(direction.x, direction.z);
+                        this.body.rotation.y = MathUtils.lerp(this.body.rotation.y, targetAngle, 0.1);
+
+                        this.playAnimation('run'); // Assuming 'run' for movement
+
+                        // Attack player if in range
+                        if (distanceToPlayer < this.attackRange && this.attackCooldown <= 0) {
+                            this.isAttacking = true;
+                            this.attackCooldown = 1.5; // Enemy attack cooldown
+                            this.playAnimation('attack'); // Assuming 'attack' animation
+                            playerBody.character.takeDamage(this.attackDamage);
+                            playSound('zap');
+                        } else if (this.attackCooldown > 0) {
+                            this.attackCooldown -= delta;
+                            this.isAttacking = false;
+                        }
+
+                        // Hulk roar logic
+                        if (this.name === 'Hulk' && distanceToPlayer < 15 && hulkRoarCooldown <= 0) {
+                            playSound('hulk_roar'); // Assuming 'hulk_roar' is a custom sound or using 'zap' as placeholder
+                            hulkRoarCooldown = HULK_ROAR_COOLDOWN_TIME;
+                        }
+                    } else {
+                        this.target = null;
+                        this.velocity.set(0, 0, 0);
+                        this.playAnimation('idle');
+                    }
+                }
+                if (hulkRoarCooldown > 0) {
+                    hulkRoarCooldown -= delta;
+                }
+            }
+        }
+
+        // --- GAME LOGIC ---
+        function initializeGame() {
+            // Clear existing characters and objects if restarting
+            characters.forEach(c => {
+                if (c.model) scene.remove(c.body);
+                if (c.healthBarElement) c.healthBarElement.container.remove();
+            });
+            characters.length = 0; // Clear the array
+            environmentObjects.forEach(obj => scene.remove(obj));
+            environmentObjects.length = 0;
+
+            setupScene(); // Re-setup scene elements if needed, or keep existing static ones
+
+            // Add environment assets
+            addEnvironmentObjects();
+
+            // Setup characters
+            playerHealth = 100;
+            hulkHealth = 500;
+            thanosHealth = 500;
+            score = 0;
+            scoreElement.textContent = score;
+            gameOver = false;
+            gameActive = false; // Will be set to true when models load
+
+            // Spider-Man in central plaza
+            const spidermanChar = new Character('Spider-Man', 'hero', playerHealth, new Vector3(0, 0, 0), Math.PI, true);
+            // Hulk and Thanos within attacking range (30 meters)
+            const hulkChar = new Character('Hulk', 'mech', hulkHealth, new Vector3(20, 0, 20), Math.PI / 4);
+            hulkChar.attackRange = 4; // Hulk has shorter range
+            hulkChar.attackDamage = 30; // Hulk hits harder
+
+            const thanosChar = new Character('Thanos', 'orc', thanosHealth, new Vector3(-20, 0, 20), -Math.PI / 4);
+            thanosChar.attackRange = 6; // Thanos has slightly longer range
+            thanosChar.attackDamage = 25; // Thanos damage
+
+            // Link character to playerBody for easy access
+            spidermanChar.body.character = spidermanChar;
+            hulkChar.body.character = hulkChar;
+            thanosChar.body.character = thanosChar;
+
+            messageOverlay.style.display = 'none';
+        }
+
+        function addEnvironmentObjects() {
+            // Placeholder buildings (2 city-style, 5 floors tall)
+            const buildingMaterial = new MeshStandardMaterial({ color: 0x808080 }); // Grey
+            const windowMaterial = new MeshStandardMaterial({ color: 0x87CEEB }); // Blue for windows
+
+            function createBuilding(x, z, width, depth, stories) {
+                const height = stories * 5; // 5 units per story
+                const buildingBody = new BoxGeometry(width, height, depth);
+                const building = new Mesh(buildingBody, buildingMaterial);
+                building.position.set(x, height / 2, z); // Base on ground
+                scene.add(building);
+                environmentObjects.push(building);
+
+                // Add windows
+                for (let i = 0; i < stories; i++) {
+                    for (let j = 0; j < 2; j++) { // Two windows per side
+                        const windowW = width * 0.2;
+                        const windowH = height * 0.1;
+                        const windowGeo = new BoxGeometry(windowW, windowH, 0.1);
+                        const window1 = new Mesh(windowGeo, windowMaterial);
+                        window1.position.set(x + width / 2 - windowW / 2 - 0.5, (i * 5) + (height * 0.1) + 2, z);
+                        window1.lookAt(x + width / 2 + 1, (i * 5) + (height * 0.1) + 2, z); // Face outwards
+                        scene.add(window1);
+                        environmentObjects.push(window1);
+
+                        const window2 = new Mesh(windowGeo, windowMaterial);
+                        window2.position.set(x - width / 2 + windowW / 2 + 0.5, (i * 5) + (height * 0.1) + 2, z);
+                        window2.lookAt(x - width / 2 - 1, (i * 5) + (height * 0.1) + 2, z);
+                        scene.add(window2);
+                        environmentObjects.push(window2);
+
+                        const window3 = new Mesh(windowGeo, windowMaterial);
+                        window3.position.set(x, (i * 5) + (height * 0.1) + 2, z + depth / 2 - windowW / 2 - 0.5);
+                        window3.lookAt(x, (i * 5) + (height * 0.1) + 2, z + depth / 2 + 1);
+                        window3.rotation.y = Math.PI / 2;
+                        scene.add(window3);
+                        environmentObjects.push(window3);
+
+                        const window4 = new Mesh(windowGeo, windowMaterial);
+                        window4.position.set(x, (i * 5) + (height * 0.1) + 2, z - depth / 2 + windowW / 2 + 0.5);
+                        window4.lookAt(x, (i * 5) + (height * 0.1) + 2, z - depth / 2 - 1);
+                        window4.rotation.y = Math.PI / 2;
+                        scene.add(window4);
+                        environmentObjects.push(window4);
+                    }
+                }
+            }
+
+            createBuilding(-60, -60, 20, 20, 6);
+            createBuilding(60, 60, 25, 20, 8);
+
+            // 2 static hovering police cars
+            loadModel("police").then(m => {
+                if (m) {
+                    const car1 = m.clone();
+                    car1.scale.setScalar(0.01);
+                    car1.position.set(-40, 10, 40);
+                    car1.rotation.y = Math.PI / 2;
+                    scene.add(car1);
+                    environmentObjects.push(car1);
+
+                    const car2 = m.clone();
+                    car2.scale.setScalar(0.01);
+                    car2.position.set(40, 15, -40);
+                    car2.rotation.y = -Math.PI / 4;
+                    scene.add(car2);
+                    environmentObjects.push(car2);
+                }
+            });
+
+            // 2 static damaged streetlights (from primitives)
+            const poleMaterial = new MeshStandardMaterial({ color: 0x333333 });
+            const lampMaterial = new MeshStandardMaterial({ color: 0xAAAAAA });
+
+            function createStreetlight(x, z) {
+                const pole = new CylinderGeometry(0.5, 0.5, 10, 8);
+                const poleMesh = new Mesh(pole, poleMaterial);
+                poleMesh.position.set(x, 5, z);
+                scene.add(poleMesh);
+                environmentObjects.push(poleMesh);
+
+                const arm = new BoxGeometry(4, 0.5, 0.5);
+                const armMesh = new Mesh(arm, poleMaterial);
+                armMesh.position.set(x + 2, 9, z);
+                scene.add(armMesh);
+                environmentObjects.push(armMesh);
+
+                const lamp = new BoxGeometry(1, 1, 1);
+                const lampMesh = new Mesh(lamp, lampMaterial);
+                lampMesh.position.set(x + 4, 9, z);
+                scene.add(lampMesh);
+                environmentObjects.push(lampMesh);
+            }
+
+            createStreetlight(-10, 50);
+            createStreetlight(10, -50);
+        }
+
+        function endGame(won) {
+            gameOver = true;
+            gameActive = false; // Pause game logic
+            gameMessage.textContent = won ? "VICTORY!" : "DEFEAT!";
+            gameMessage.style.color = won ? '#4CAF50' : '#dc3545';
+            messageOverlay.style.display = 'flex';
+            playSound(won ? 'win' : 'game_over'); // Play win/lose sound
+            stopMusic(); // Stop background music
+        }
+
+        // --- GAME LOOP ---
+        function animate() {
+            if (!on) return; // Stop if not in focus
+
+            requestAnimationFrame(animate);
+
+            const delta = Math.min(clock.getDelta(), 0.05); // Cap delta for stability
+
+            if (!gameActive) {
+                // Still render while models are loading or game is paused
+                renderer.render(scene, camera);
+                return;
+            }
+
+            // --- PLAYER MOVEMENT ---
+            if (playerBody && playerBody.character.currentHealth > 0) {
+                // Handle horizontal movement
+                const currentForward = new Vector3(0, 0, 1).applyQuaternion(playerBody.quaternion);
+                const currentRight = new Vector3(1, 0, 0).applyQuaternion(playerBody.quaternion);
+
+                moveDirection.set(0, 0, 0);
+                if (keys.w) moveDirection.add(currentForward);
+                if (keys.s) moveDirection.sub(currentForward);
+                if (keys.a) moveDirection.sub(currentRight);
+                if (keys.d) moveDirection.add(currentRight);
+
+                moveDirection.normalize(); // Normalize for consistent speed
+
+                if (moveDirection.lengthSq() > 0) { // If moving
+                    playerBody.position.x += moveDirection.x * playerSpeed * delta;
+                    playerBody.position.z += moveDirection.z * playerSpeed * delta;
+
+                    // Orient player to movement direction
+                    const targetAngle = Math.atan2(moveDirection.x, moveDirection.z);
+                    playerBody.rotation.y = MathUtils.lerp(playerBody.rotation.y, targetAngle, 0.1);
+                    playerBody.character.playAnimation('sprint'); // Assuming 'sprint' for run
+                } else {
+                    playerBody.character.playAnimation('idle');
+                }
+
+                // Handle jumping
+                if (keys.space && grounded) {
+                    velocityY = jumpStrength;
+                    grounded = false;
+                    playSound('jump');
+                }
+
+                velocityY += gravity * delta;
+                playerBody.position.y += velocityY * delta;
+
+                // Ground collision
+                if (playerBody.position.y <= 0) {
+                    playerBody.position.y = 0;
+                    if (!grounded) {
+                        grounded = true;
+                        velocityY = 0;
+                    }
+                }
+
+                // Boundary check
+                playerBody.position.x = Math.max(-BOUNDARY_SIZE + 1, Math.min(BOUNDARY_SIZE - 1, playerBody.position.x));
+                playerBody.position.z = Math.max(-BOUNDARY_SIZE + 1, Math.min(BOUNDARY_SIZE - 1, playerBody.position.z));
+                playerBody.position.y = Math.max(0, Math.min(MAX_Y, playerBody.position.y)); // Prevent flying too high
+
+                // Camera follow player
+                const offset = new Vector3(0, 15, -20); // Behind and above player
+                offset.applyQuaternion(playerBody.quaternion); // Rotate offset with player
+                camera.position.copy(playerBody.position).add(offset);
+                camera.lookAt(playerBody.position.x, playerBody.position.y + 5, playerBody.position.z); // Look slightly above player
+            }
+
+            // --- COMBAT & TELEPORT ---
+            if (playerBody && playerBody.character.currentHealth > 0) {
+                // Attack Cooldown
+                if (attackCooldown > 0) {
+                    attackCooldown -= delta;
+                }
+
+                // Teleport activation timer
+                if (teleportActive) {
+                    teleportTimer += delta;
+                    if (teleportTimer > TELEPORT_DURATION) {
+                        teleportActive = false;
+                        teleportTimer = 0;
+                        teleportButtons.classList.remove('active');
+                    }
+                }
+
+                // Spider-Man Attack (LMB)
+                if (mouse.left && attackCooldown <= 0) {
+                    attackCooldown = ATTACK_COOLDOWN_TIME;
+                    playSound('zap'); // Attack sound
+                    // Check for enemies in range
+                    const playerPos = playerBody.position;
+                    characters.forEach(char => {
+                        if (!char.isPlayer && char.currentHealth > 0 && char.model) {
+                            const distance = playerPos.distanceTo(char.body.position);
+                            if (distance < ATTACK_RANGE) {
+                                console.log(`Spider-Man hit ${char.name} for ${SPIDERMAN_DAMAGE} damage!`);
+                                char.takeDamage(SPIDERMAN_DAMAGE);
+                            }
+                        }
+                    });
+                }
+            }
+
+            // --- CHARACTER UPDATES ---
+            characters.forEach(char => char.update(delta));
+
+            // Render the scene
+            renderer.render(scene, camera);
+        }
+
+        // --- EVENT HANDLERS ---
+        window.addEventListener('resize', () => {
+            camera.aspect = gameContainer.clientWidth / gameContainer.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(gameContainer.clientWidth, gameContainer.clientHeight);
+        });
+
+        // Keyboard Controls
+        window.addEventListener('keydown', (event) => {
+            if (gameOver || !gameActive) return;
+            switch (event.key.toLowerCase()) {
+                case 'w': keys.w = true; event.preventDefault(); break;
+                case 'a': keys.a = true; event.preventDefault(); break;
+                case 's': keys.s = true; event.preventDefault(); break;
+                case 'd': keys.d = true; event.preventDefault(); break;
+                case ' ': keys.space = true; event.preventDefault(); break;
+            }
+        });
+
+        window.addEventListener('keyup', (event) => {
+            if (gameOver || !gameActive) return;
+            switch (event.key.toLowerCase()) {
+                case 'w': keys.w = false; break;
+                case 'a': keys.a = false; break;
+                case 's': keys.s = false; break;
+                case 'd': keys.d = false; break;
+                case ' ': keys.space = false; break;
+            }
+        });
+
+        // Mouse Controls
+        canvas.addEventListener('pointerdown', (event) => {
+            if (gameOver || !gameActive) return;
+            if (event.button === 0) { // Left Mouse Button
+                mouse.left = true;
+            } else if (event.button === 2) { // Right Mouse Button
+                mouse.right = true;
+                teleportActive = true;
+                teleportTimer = 0;
+                teleportButtons.classList.add('active'); // Show teleport buttons
+            }
+        });
+
+        canvas.addEventListener('pointerup', (event) => {
+            if (gameOver || !gameActive) return;
+            if (event.button === 0) {
+                mouse.left = false;
+            } else if (event.button === 2) {
+                mouse.right = false;
+                teleportActive = false;
+                teleportButtons.classList.remove('active'); // Hide teleport buttons
+            }
+        });
+
+        // Prevent context menu on right-click
+        canvas.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+        });
+
+        // Teleport logic for keyboard (RMB + WASD)
+        window.addEventListener('keydown', (event) => {
+            if (gameOver || !gameActive || !teleportActive || !playerBody || playerBody.character.currentHealth <= 0) return;
+
+            let teleportDirection = new Vector3();
+            const currentForward = new Vector3(0, 0, 1).applyQuaternion(playerBody.quaternion);
+            const currentRight = new Vector3(1, 0, 0).applyQuaternion(playerBody.quaternion);
+
+            switch (event.key.toLowerCase()) {
+                case 'w': teleportDirection.add(currentForward); break;
+                case 's': teleportDirection.sub(currentForward); break;
+                case 'a': teleportDirection.sub(currentRight); break;
+                case 'd': teleportDirection.add(currentRight); break;
+                default: return; // Not a directional key for teleport
+            }
+
+            teleportDirection.normalize().multiplyScalar(TELEPORT_DISTANCE);
+            playerBody.position.add(teleportDirection);
+            playerBody.position.y = Math.max(0, playerBody.position.y); // Ensure teleport doesn't go below ground
+            playerBody.position.x = Math.max(-BOUNDARY_SIZE + 1, Math.min(BOUNDARY_SIZE - 1, playerBody.position.x));
+            playerBody.position.z = Math.max(-BOUNDARY_SIZE + 1, Math.min(BOUNDARY_SIZE - 1, playerBody.position.z));
+
+            playSound('zap'); // Teleport sound
+            teleportActive = false; // Reset teleport after use
+            teleportButtons.classList.remove('active');
+            event.preventDefault();
+        });
+
+        // Mobile Controls (On-screen buttons)
+        const controlButtons = document.querySelectorAll('.control-button');
+        controlButtons.forEach(button => {
+            button.addEventListener('pointerdown', (e) => {
+                e.preventDefault(); // Prevent text selection etc.
+                if (gameOver || !gameActive) return;
+                const key = button.dataset.key;
+                const dir = button.dataset.dir;
+
+                if (key) {
+                    keys[key] = true;
+                    if (key === 'space') { // Treat space as a single press for jump
+                        keys.space = false; // Clear immediately to allow another press
+                    }
+                } else if (dir && teleportActive) { // Teleport button pressed
+                    let teleportDirection = new Vector3();
+                    const currentForward = new Vector3(0, 0, 1).applyQuaternion(playerBody.quaternion);
+                    const currentRight = new Vector3(1, 0, 0).applyQuaternion(playerBody.quaternion);
+
+                    switch (dir) {
+                        case 'forward': teleportDirection.add(currentForward); break;
+                        case 'back': teleportDirection.sub(currentForward); break;
+                        case 'left': teleportDirection.sub(currentRight); break;
+                        case 'right': teleportDirection.add(currentRight); break;
+                    }
+
+                    teleportDirection.normalize().multiplyScalar(TELEPORT_DISTANCE);
+                    playerBody.position.add(teleportDirection);
+                    playerBody.position.y = Math.max(0, playerBody.position.y);
+                    playerBody.position.x = Math.max(-BOUNDARY_SIZE + 1, Math.min(BOUNDARY_SIZE - 1, playerBody.position.x));
+                    playerBody.position.z = Math.max(-BOUNDARY_SIZE + 1, Math.min(BOUNDARY_SIZE - 1, playerBody.position.z));
+
+                    playSound('zap');
+                    teleportActive = false;
+                    teleportButtons.classList.remove('active');
+                } else if (dir && !teleportActive) {
+                    // This is for the RMB equivalent on mobile: activate teleport mode
+                    teleportActive = true;
+                    teleportTimer = 0;
+                    teleportButtons.classList.add('active');
+                }
+            });
+
+            button.addEventListener('pointerup', (e) => {
+                e.preventDefault();
+                if (gameOver || !gameActive) return;
+                const key = button.dataset.key;
+                if (key && key !== 'space') { // Don't clear space immediately on up
+                    keys[key] = false;
+                }
+            });
+            // Also listen for mouseleave to handle cases where pointer leaves button area while down
+            button.addEventListener('pointerleave', (e) => {
+                if (gameOver || !gameActive) return;
+                const key = button.dataset.key;
+                if (key && key !== 'space') {
+                    keys[key] = false;
+                }
+            });
+        });
+
+        attackButton.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            if (gameOver || !gameActive) return;
+            mouse.left = true;
+        });
+
+        attackButton.addEventListener('pointerup', (e) => {
+            e.preventDefault();
+            if (gameOver || !gameActive) return;
+            mouse.left = false;
+        });
+        attackButton.addEventListener('pointerleave', (e) => {
+             if (gameOver || !gameActive) return;
+             mouse.left = false;
+        });
+
+        // Restart button
+        restartButton.addEventListener('click', () => {
+            initializeGame();
+            animate();
+        });
+
+
+        // --- PAUSE/RESUME LOGIC ---
+        const setOn = (v) => {
+            if (v === on) return;
+            on = v;
+            if (v) {
+                clock.getDelta(); // Reset delta after pause
+                requestAnimationFrame(animate);
+            }
+        };
+        document.addEventListener('visibilitychange', () => setOn(!document.hidden));
+        window.addEventListener('blur', () => setOn(false));
+        window.addEventListener('focus', () => setOn(true));
+
+        // --- INITIALIZATION ---
+        initializeGame();
+        animate();
+    </script>
+</body>
+</html>

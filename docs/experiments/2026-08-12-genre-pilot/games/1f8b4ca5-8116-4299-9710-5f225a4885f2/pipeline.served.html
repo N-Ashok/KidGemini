@@ -1,0 +1,1795 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><!--ari-perf-probe--><script>(function () {
+  window.__arPerfProbeVersion = 4;
+  var buffer = [];
+  var ready = false;
+  function send(ev) {
+    try { parent.postMessage({ source: "ari-perf-probe", event: ev }, "*"); } catch (e) { /* parent gone */ }
+  }
+  function post(ev) { if (ready) send(ev); else buffer.push(ev); }
+  addEventListener("message", function (event) {
+    var d = event && event.data;
+    if (!d || d.source !== "ari-parent" || d.type !== "ready") return;
+    ready = true;
+    for (var i = 0; i < buffer.length; i++) send(buffer[i]);
+    buffer = [];
+  });
+
+  // GL draw-call counter (v4, 2026-08-10). snapshot.drawCalls was designed to
+  // read __arPerf.renderer.info — which NOTHING ever assigned, so it was null
+  // in every snapshot ever posted. Meanwhile the owner's AutoRicksaw game ran
+  // at 1,250 draws/frame from hand-built meshes the model accounting cannot
+  // see, and the slowdown hint blamed two static trees nine edits in a row.
+  // Count actual GL draw commands instead: engine-agnostic, needs nothing
+  // from the game, reaches stored games via the version re-floor.
+  var glDraws = 0;
+  function wrapGL(proto) {
+    if (!proto) return;
+    try {
+      var de = proto.drawElements;
+      if (de) proto.drawElements = function () { glDraws++; return de.apply(this, arguments); };
+      var da = proto.drawArrays;
+      if (da) proto.drawArrays = function () { glDraws++; return da.apply(this, arguments); };
+      var dei = proto.drawElementsInstanced;
+      if (dei) proto.drawElementsInstanced = function () { glDraws++; return dei.apply(this, arguments); };
+      var dai = proto.drawArraysInstanced;
+      if (dai) proto.drawArraysInstanced = function () { glDraws++; return dai.apply(this, arguments); };
+    } catch (e) { /* never break rendering for telemetry */ }
+  }
+  if (!window.__arGlDrawPatched) {
+    window.__arGlDrawPatched = 1;
+    wrapGL(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+    wrapGL(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+  }
+  var lastGlDraws = 0;
+
+  // FPS estimate: count rAF ticks in the last sample window. Stacks fine on
+  // top of the frame governor's own wrap (both call straight through).
+  var frames = 0;
+  var origRaf = window.requestAnimationFrame;
+  if (origRaf) {
+    window.requestAnimationFrame = function (cb) {
+      return origRaf.call(window, function (t) {
+        frames++;
+        return cb(t);
+      });
+    };
+  }
+
+  // "Playing" signal (v3, owner report 2026-08-06): frames alone can't tell
+  // "running slow" from "not running" — an unstarted game or idle lobby
+  // renders little/nothing by design. Track the last real input so the
+  // slowdown banner only trusts samples taken while the kid is actually
+  // playing. Capture phase: game code often stopPropagation()s.
+  var lastInput = 0;
+  var inputEvents = ["pointerdown", "keydown", "touchstart"];
+  for (var ie = 0; ie < inputEvents.length; ie++) {
+    addEventListener(inputEvents[ie], function () { lastInput = Date.now(); }, true);
+  }
+
+  function snapshot() {
+    // A hidden tab/panel genuinely renders zero frames — that's true, but it
+    // is NOT the same claim as "the game is running slow," which is what
+    // this snapshot exists to detect. Without this guard, every setInterval
+    // tick during a background gap (leaving Ari and coming back) posts a
+    // near-zero fps reading, which is enough on its own to satisfy the
+    // slowdown banner's "5 consecutive low samples" rule — so the banner
+    // flashes on return even though nothing was ever actually slow. Skip
+    // sampling entirely while hidden, and keep resetting the frame counter
+    // so no partial/corrupted count leaks into the first reading after the
+    // tab becomes visible again.
+    if (document.hidden) { frames = 0; return; }
+    var perf = window.__arPerf || {};
+    var reg = perf.models || {};
+    var animatedRoots = perf.animatedRoots;
+    var models = [];
+    for (var name in reg) {
+      if (!Object.prototype.hasOwnProperty.call(reg, name)) continue;
+      var entry = reg[name];
+      var roots = entry.instances || [];
+      // Live = still parented into a scene graph. A load()ed-but-never-added
+      // (or later removed) root reads parent as falsy — never a stale row.
+      var live = [];
+      for (var i = 0; i < roots.length; i++) {
+        if (roots[i] && roots[i].parent) live.push(roots[i]);
+      }
+      if (live.length === 0) continue;
+      var animated = false;
+      if (animatedRoots) {
+        for (var j = 0; j < live.length; j++) {
+          if (animatedRoots.has(live[j])) { animated = true; break; }
+        }
+      }
+      var triangles = entry.triangles || 0;
+      var load = triangles * live.length * (animated ? 2 : 1);
+      var bucket = load <= 20000 ? "green" : (load <= 150000 ? "yellow" : "red");
+      models.push({ name: name, triangles: triangles, instances: live.length, animated: animated, load: load, bucket: bucket });
+    }
+    var batches = perf.batches || {};
+    for (var bname in batches) {
+      if (!Object.prototype.hasOwnProperty.call(batches, bname)) continue;
+      var bentry = batches[bname];
+      var broots = bentry.roots || [];
+      var blive = false;
+      for (var bi = 0; bi < broots.length; bi++) { if (broots[bi] && broots[bi].parent) { blive = true; break; } }
+      if (!blive) continue;
+      var btriangles = bentry.triangles || 0;
+      var bdrawCalls = bentry.drawCalls || 1;
+      var bload = btriangles * bdrawCalls;
+      var bbucket = bload <= 20000 ? "green" : (bload <= 150000 ? "yellow" : "red");
+      models.push({ name: bentry.name, triangles: btriangles, instances: bentry.count || 0, animated: false, load: bload, bucket: bbucket, batched: true, drawCalls: bdrawCalls });
+    }
+    models.sort(function (a, b) { return b.load - a.load; });
+    var drawCalls = null, rendererTriangles = null;
+    // Per-frame average over this window from the GL counter — the value
+    // that actually distinguishes "a thousand tiny meshes" from "two trees".
+    var windowDraws = glDraws - lastGlDraws;
+    lastGlDraws = glDraws;
+    if (windowDraws > 0 && frames > 0) {
+      drawCalls = Math.round(windowDraws / frames);
+    } else if (perf.renderer && perf.renderer.info && perf.renderer.info.render) {
+      // Legacy fallback, kept for a game that registers its renderer.
+      drawCalls = perf.renderer.info.render.calls;
+      rendererTriangles = perf.renderer.info.render.triangles;
+    }
+    var playing = frames > 0 && lastInput > 0 && (Date.now() - lastInput) < 10000;
+    post({ type: "snapshot", snapshot: { fps: frames, playing: playing, drawCalls: drawCalls, rendererTriangles: rendererTriangles, models: models } });
+    frames = 0;
+  }
+  setInterval(snapshot, 1000);
+})();</script><script type="importmap">{"imports":{"three":"https://assets.ariantra.com/three.098b4c.js"}}</script><style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style><script>(function(){
+if (window.__arFrameGovernor) return;
+window.__arFrameGovernor = 1;
+var raf = window.requestAnimationFrame.bind(window);
+var seen = new WeakMap();
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    // Skipped frames ALWAYS re-request through the wrapper, so the loop can
+    // never die — that is the one failure mode that would break a live game.
+    if (document.hidden) { window.requestAnimationFrame(cb); return; }
+    var prev = (typeof cb === 'function' ? seen.get(cb) : 0) || 0;
+    if (prev && t - prev < 15) { window.requestAnimationFrame(cb); return; }
+    if (typeof cb === 'function') seen.set(cb, t);
+    return cb(t);
+  });
+};
+})();</script><script>(function(){
+if (window.__arGlGuard) return;
+window.__arGlGuard = 1;
+window.__arGlGuardVersion = 2;
+var get = HTMLCanvasElement.prototype.getContext;
+var live = [];
+var lostCount = 0;
+HTMLCanvasElement.prototype.getContext = function (type) {
+  var ctx = get.apply(this, arguments);
+  try {
+    if (ctx && /webgl/i.test(String(type)) && !this.__arGlGuarded) {
+      this.__arGlGuarded = 1;
+      var ext = null;
+      try { ext = ctx.getExtension('WEBGL_lose_context'); } catch (e2) { /* none */ }
+      live.push({ ctx: ctx, ext: ext });
+      this.addEventListener('webglcontextlost', function (e) {
+        // THE line that matters: without preventDefault the loss is final and
+        // the canvas stays blank for the rest of the document's life.
+        e.preventDefault();
+        lostCount++;
+        console.warn('[ari] WebGL context lost — restore requested');
+        // Watchdog (2026-08-10 №4, "it didnot regain"): browsers do not
+        // always volunteer webglcontextrestored, and a politely-held loop
+        // waits forever. The ladder is the automatic version of what fixed
+        // it for the owner by hand (code↔preview toggle = a remount):
+        // after 2s still lost → ask the driver; 3s more still lost → ask
+        // the parent to remount this frame.
+        setTimeout(function () {
+          var still = true;
+          try { still = ctx.isContextLost(); } catch (e3) { /* gone */ }
+          if (!still) return;
+          try { if (ext) ext.restoreContext(); } catch (e3) { /* refused */ }
+          setTimeout(function () {
+            var dead = true;
+            try { dead = ctx.isContextLost(); } catch (e4) { /* gone */ }
+            if (!dead) return;
+            console.warn('[ari] WebGL context is not coming back — asking the parent to reload the game');
+            try { parent.postMessage({ __ari: 'gl-dead' }, '*'); } catch (e4) { /* no parent */ }
+          }, 3000);
+        }, 2000);
+      }, false);
+      this.addEventListener('webglcontextrestored', function () {
+        if (lostCount > 0) lostCount--;
+        console.warn('[ari] WebGL context restored');
+      }, false);
+    }
+  } catch (e) { /* never break getContext */ }
+  return ctx;
+};
+// Restoring the CONTEXT is not enough — the game's LOOP must survive to see
+// it. While a context is lost, three.js's renderer throws mid-render (the GL
+// introspection APIs return null, and three calls .trim() on the result —
+// the exact stack the harness attributed on 2026-08-10). Games request their
+// next frame AFTER rendering (three's setAnimationLoop does too), so that
+// throw kills the loop for good: the context comes back, nothing draws, the
+// canvas stays blank, and no click can restart it. So: while any tracked
+// context is lost, hold rAF callbacks — always re-request, never run — the
+// same shape as the frame governor's document.hidden skip, and it resumes by
+// itself on webglcontextrestored. Composes with the governor's own wrapper
+// (this one runs outside it) — worst case a held frame is re-queued twice.
+// lostCount alone is NOT enough to gate on: webglcontextlost is dispatched
+// as a task, so there is a window after the actual loss (browser eviction or
+// our own release) where the event has not landed yet — one frame renders
+// against the dead context and three throws anyway. isContextLost() is
+// synchronous truth; the event counter only covers the fake-restore corner
+// (some drivers report isContextLost()=false again before firing restored).
+function anyLost() {
+  for (var i = 0; i < live.length; i++) {
+    try { if (live[i].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  for (var j = 0; j < released.length; j++) {
+    try { if (released[j].ctx.isContextLost()) return true; } catch (e) { /* gone */ }
+  }
+  return false;
+}
+var raf = window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame = function (cb) {
+  return raf(function (t) {
+    if (lostCount > 0 || anyLost()) { window.requestAnimationFrame(cb); return; }
+    return cb(t);
+  });
+};
+var released = [];
+function release(why) {
+  // Hand the GPU back now rather than at GC, so the next preview iframe does
+  // not push the page over the context cap. Kept restorable (see pageshow):
+  // a release we believed was terminal must be reversible if the page comes
+  // back — 2026-08-10 second owner report, the pane-switch freeze.
+  for (var i = 0; i < live.length; i++) {
+    try {
+      if (live[i].ext) { live[i].ext.loseContext(); released.push(live[i]); }
+    } catch (e) { /* already gone */ }
+  }
+  live.length = 0;
+  // Observable from the parent page: this is how the harness proves the round
+  // was ASKED to release at unmount, rather than assuming it.
+  console.warn('[ari] WebGL contexts released (' + why + ')');
+}
+// Lets the harness assert that a torn-down round actually gave its context
+// back, instead of assuming pagehide fired.
+Object.defineProperty(window, '__arGlCount', { get: function () { return live.length; } });
+// The parent asks explicitly, immediately before it unmounts this frame.
+// pagehide alone is NOT enough: Chrome does not reliably fire it when an
+// iframe is detached from the DOM, which is precisely how every shadow round
+// ends — so without this the contexts pile up exactly as they did in the
+// owner's eleven-edit session.
+addEventListener('message', function (e) {
+  var d = e && e.data;
+  if (d && d.__ari === 'release-gl') release('asked');
+}, false);
+// Diagnostic-only (2026-08-11): a non-persisted pagehide fired mid-edit on
+// the STILL-PLAYING game, with no deliberate srcDoc/key change from React —
+// after shadow-verify was removed the same day, the explicit 'release-gl'
+// message (sent by the parent right before it unmounted the shadow frame)
+// went with it, leaving THIS listener as the only release trigger, carrying
+// more weight than "pagehide is kept as a backstop only" (the comment above
+// release()) ever assumed. This context string is what will tell us whether
+// it's a real backgrounding event (visibility/online state) or something
+// else entirely — never throws, so it can never break the guard itself.
+function diag() {
+  try {
+    return 'visibility=' + document.visibilityState + ' hidden=' + document.hidden +
+      ' online=' + navigator.onLine + ' at=' + Date.now();
+  } catch (e) { return 'diag-unavailable'; }
+}
+addEventListener('pagehide', function (e) {
+  // Safari/iOS fires pagehide when the page is merely BACKGROUNDED (app or
+  // tab switch, pane transitions) and will bring it back — persisted=true.
+  // Releasing there kills the LIVE game's context and the loop-hold freezes
+  // it: the owner's "froze, then turned blue when I clicked back"
+  // (2026-08-10, second report). Only a non-persisted pagehide — the actual
+  // teardown of a detached iframe — releases.
+  if (e && e.persisted) {
+    console.warn('[ari] pagehide (persisted, backgrounded — kept alive) ' + diag());
+    return;
+  }
+  console.warn('[ari] pagehide (NOT persisted — releasing) ' + diag());
+  release('pagehide');
+});
+addEventListener('pageshow', function () {
+  // The symmetric half: any release that turned out not to be terminal (the
+  // page came back anyway) is undone. restoreContext fires
+  // webglcontextrestored, which unwinds lostCount and resumes the held loop.
+  if (!released.length) return;
+  for (var i = 0; i < released.length; i++) {
+    try { released[i].ext.restoreContext(); live.push(released[i].ctx); } catch (e) { /* gone for real */ }
+  }
+  released.length = 0;
+  console.warn('[ari] WebGL contexts restored (pageshow)');
+});
+})();</script><script>window.AR_ASSETS={"businessman":"https://assets.ariantra.com/businessman.4f0919.glb","dog":"https://assets.ariantra.com/dog.ee90f4.glb","fish":"https://assets.ariantra.com/fish.a0b863.glb","coin":"https://assets.ariantra.com/coin.46ec4e.glb","hotdog":"https://assets.ariantra.com/hotdog.ea7d6e.glb","donut":"https://assets.ariantra.com/donut.6383da.glb","apple":"https://assets.ariantra.com/apple.11540f.glb","banana":"https://assets.ariantra.com/banana.e70f3c.glb","burger":"https://assets.ariantra.com/burger.cd07c3.glb","pizza":"https://assets.ariantra.com/pizza.7fe50e.glb","ice_cream":"https://assets.ariantra.com/ice_cream.e50948.glb","star":"https://assets.ariantra.com/star.9f50cb.glb","scientist":"https://assets.ariantra.com/scientist.6a2287.glb","police_officer":"https://assets.ariantra.com/police_officer.598224.glb","footballer_blue":"https://assets.ariantra.com/footballer_blue.2a41d0.glb","grandpa":"https://assets.ariantra.com/grandpa.03329e.glb","girl":"https://assets.ariantra.com/girl.95fdf7.glb","woman":"https://assets.ariantra.com/woman.d05910.glb","man":"https://assets.ariantra.com/man.77d7c9.glb","plumber":"https://assets.ariantra.com/plumber.d809b3.glb","mascot":"https://assets.ariantra.com/mascot.4e005a.glb"};</script><script>window.AR_SIZES={"businessman":[1.6,2.7,0.8],"coin":[0.4,0.4,0.175],"hotdog":[0.586,0.153,0.203],"donut":[0.245,0.095,0.283],"apple":[0.196,0.191,0.196],"banana":[0.138,0.196,0.63],"burger":[0.404,0.29,0.404],"pizza":[0.842,0.043,0.842],"ice_cream":[0.235,0.463,0.272],"star":[0.365,0.363,0.239],"scientist":[1.6,2.7,0.8],"police_officer":[1.6,2.7,0.8],"footballer_blue":[1.6,2.7,0.8],"grandpa":[1.6,2.7,0.8],"girl":[1.6,2.7,0.8],"woman":[1.6,2.7,0.8],"man":[1.6,2.7,0.8],"plumber":[1.6,2.7,0.8],"mascot":[1.6,2.7,0.8]};</script><script type="module">
+  import { GLTFLoader, MeshoptDecoder } from "three";
+  window.__arLoadModelVersion = 7;
+// modelSize (2026-08-08, the fragmented-track fix): the measured metres a model
+// renders at scale 1, available BEFORE loading so a game can plan a layout. The
+// "|| {}" guard means order-of-injection never matters, and an unknown or
+// skinned model answers null rather than a made-up number — a game that checks
+// for null degrades to eyeballing, which is exactly what it did before v4.
+window.AR_SIZES = window.AR_SIZES || {};
+window.modelSize = function (name) {
+  var s = window.AR_SIZES[name];
+  return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
+};
+// modelAxis (2026-08-08, the poorly-formed-track fix): which axis a PATH
+// piece's road runs along at rest — "x", "z", or "none" for a hub/corner. The
+// two road kits genuinely disagree (city road_straight runs along X, racing
+// race_track_straight along Z) and a 1x1 square tile's size cannot reveal it,
+// so before this a game had to guess and got it wrong every time. Unknown
+// answers null — then eyeball it, same as before.
+window.AR_AXES = window.AR_AXES || {};
+window.modelAxis = function (name) {
+  var a = window.AR_AXES[name];
+  return (a === "x" || a === "z" || a === "none") ? a : null;
+};
+// modelJoins (2026-08-09, the SECOND poorly-formed-track fix): which edges a
+// tile's road actually reaches, measured from a top-down render of the
+// published bytes. modelAxis() answers "none" for every corner — true, and
+// useless for placing one; with nothing else to reason from, generated tracks
+// guessed corner rotations and the curves never met the straights.
+//   .joins  ["-x","+z"]  edges the carriageway reaches at rest (no rotation)
+//   .lane   0.7          drivable width in METRES at scale 1
+//   .at     {"-x":0.5}   where each join sits, in metres from the piece's own
+//                        minimum on that edge's axis (matters on 2x2 pieces)
+// Unknown answers null — then eyeball it, exactly as before.
+window.AR_EDGES = window.AR_EDGES || {};
+window.modelJoins = function (name) {
+  var e = window.AR_EDGES[name];
+  return (e && e.joins && e.joins.length) ? e : null;
+};
+// rotateToJoin: the one calculation every track needs and no game got right by
+// hand. Returns the rotation.y IN RADIANS that carries a piece's "from" edge
+// onto the "to" edge — e.g. a corner joining ["+z","+x"] that must instead join
+// west and south is rotateToJoin("race_track_corner","+x","+z"). Quarter turns
+// only, which is all a square grid can use.
+// (No backticks anywhere in this block: it is inlined into a TEMPLATE LITERAL,
+// so one would end the helper string mid-function.)
+window.rotateToJoin = function (name, from, to) {
+  var order = ["-z", "+x", "+z", "-x"]; // clockwise seen from above
+  var a = order.indexOf(from), b = order.indexOf(to);
+  if (a < 0 || b < 0) return 0;
+  return ((b - a + 4) % 4) * (Math.PI / 2);
+};
+// fitTile (2026-08-09): say WHICH DIRECTIONS a grid cell must connect and get
+// the rotation.y that makes the piece do it. Added after three rounds of
+// teaching failed to land: a generated track chose the right kit and one scale
+// factor, then hardcoded all four corner rotations and got all four wrong,
+// because working out "this cell needs north and east, the piece joins +z and
+// +x at rest, so rotate 3pi/2" is four steps of reasoning under a token budget.
+// This is one call. Directions are where the ROAD LEAVES the cell:
+//   fitTile("race_track_corner", ["-z", "+x"])   // track to the north and east
+// Returns 0 for an unknown piece, and null when no quarter turn can satisfy the
+// request — which means the wrong PIECE was chosen (asking a corner to join two
+// opposite edges), so a game can detect that instead of silently drawing a gap.
+window.fitTile = function (name, need) {
+  var e = window.AR_EDGES[name];
+  if (!e || !e.joins || !need || !need.length) return 0;
+  var order = ["-z", "+x", "+z", "-x"];
+  var want = need.slice().sort().join(",");
+  for (var q = 0; q < 4; q++) {
+    var got = e.joins
+      .map(function (j) { return order[(order.indexOf(j) + q) % 4]; })
+      .sort()
+      .join(",");
+    if (got === want) return q * (Math.PI / 2);
+  }
+  return null;
+};
+  const __arLoader = new GLTFLoader();
+__arLoader.setMeshoptDecoder(MeshoptDecoder);
+window.__arPerf = window.__arPerf || { models: {}, rootNames: new WeakMap(), animatedRoots: new WeakSet(), renderer: null };
+var __arStaticTemplates = {};
+function __arCountTriangles(obj) {
+  var triangles = 0;
+  obj.traverse(function (child) {
+    if (!child.isMesh || !child.geometry) return;
+    var geo = child.geometry;
+    if (geo.index) triangles += geo.index.count / 3;
+    else if (geo.attributes && geo.attributes.position) triangles += geo.attributes.position.count / 3;
+  });
+  return Math.round(triangles);
+}
+async function __arLoadFresh(name) {
+  const url = (window.AR_ASSETS || {})[name];
+  if (!url) { console.warn("[ariantra] unknown model:", name); return null; }
+  const gltf = await __arLoader.loadAsync(url);
+  return { scene: gltf.scene, animations: gltf.animations || [] };
+}
+window.loadModel = async function (name) {
+  try {
+    var obj;
+    if (__arStaticTemplates[name]) {
+      // Cache only ever holds a STATIC (no-animation) template — see the
+      // loadModelHelper() doc comment for why animated models are excluded.
+      obj = __arStaticTemplates[name].scene.clone();
+      obj.animations = [];
+    } else {
+      const fresh = await __arLoadFresh(name);
+      if (!fresh) return null;
+      if (fresh.animations.length) {
+        obj = fresh.scene;
+        obj.animations = fresh.animations;
+      } else {
+        __arStaticTemplates[name] = fresh;
+        obj = fresh.scene.clone();
+        obj.animations = [];
+      }
+    }
+    // Same answer as modelSize(name), riding on the object — so code that
+    // already holds the loaded root can size it without re-quoting the name.
+    obj.userData.arSize = window.modelSize(name);
+    try {
+      var __arEntry = window.__arPerf.models[name] || { name: name, triangles: 0, instances: [] };
+      __arEntry.triangles = __arCountTriangles(obj);
+      __arEntry.instances.push(obj);
+      if (__arEntry.instances.length > 1000) __arEntry.instances.shift();
+      window.__arPerf.models[name] = __arEntry;
+      window.__arPerf.rootNames.set(obj, name);
+    } catch (e) { /* telemetry only — never blocks the load */ }
+    return obj;
+  } catch (e) {
+    console.warn("[ariantra] loadModel failed:", name, e);
+    return null;
+  }
+};
+</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Awesome Pet Shop</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f0f0; color: #333; height: 100dvh; display: flex; flex-direction: column; }
+        #scene { display: block; width: 100%; flex-grow: 1; }
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Allows clicks to pass through to canvas */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        #top-bar, #bottom-bar {
+            pointer-events: auto; /* Re-enable pointer events for UI elements */
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            padding: 8px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            font-size: clamp(12px, 2.5vw, 18px);
+            max-width: 98%;
+            margin: 0 auto;
+        }
+        #bottom-bar {
+            padding-bottom: max(12px, env(safe-area-inset-bottom));
+        }
+        .ui-panel {
+            pointer-events: auto;
+            background-color: rgba(255, 255, 255, 0.9);
+            border: 2px solid #6c5ce7;
+            border-radius: 10px;
+            padding: 10px;
+            margin: 10px;
+            max-width: 280px;
+            max-height: 50%;
+            overflow-y: auto;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            color: #333;
+            font-size: clamp(10px, 2vw, 14px);
+        }
+        #inventory-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+        }
+        #decorations-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+        }
+        .panel-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+            gap: 5px;
+        }
+        .panel-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            font-size: clamp(10px, 2vw, 12px);
+            text-align: center;
+            position: relative;
+        }
+        .panel-item.selected {
+            border-color: #6c5ce7;
+            background-color: #e0dcfd;
+        }
+        .panel-item:active {
+            background-color: #c9c0ff;
+        }
+        .item-cost {
+            font-size: 0.8em;
+            color: #4CAF50;
+            margin-top: 2px;
+        }
+        .item-image {
+            width: 40px;
+            height: 40px;
+            background-color: #eee; /* Placeholder for model images */
+            border-radius: 3px;
+            margin-bottom: 3px;
+        }
+        #controls {
+            position: absolute;
+            bottom: max(10px, env(safe-area-inset-bottom));
+            left: 50%;
+            transform: translateX(-50%);
+            display: grid;
+            grid-template-areas:
+                ". up ."
+                "left down right";
+            gap: 10px;
+            pointer-events: auto;
+        }
+        .control-button {
+            width: 60px;
+            height: 60px;
+            background-color: rgba(108, 92, 231, 0.7);
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 2em;
+            color: white;
+            cursor: pointer;
+            user-select: none;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            transition: background-color 0.2s;
+        }
+        .control-button:active {
+            background-color: rgba(108, 92, 231, 1);
+        }
+        .control-button.up { grid-area: up; }
+        .control-button.left { grid-area: left; }
+        .control-button.down { grid-area: down; }
+        .control-button.right { grid-area: right; }
+        #interact-button {
+            position: absolute;
+            bottom: max(10px, env(safe-area-inset-bottom));
+            right: 10px;
+            width: 80px;
+            height: 80px;
+            background-color: rgba(255, 159, 67, 0.7);
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 1.2em;
+            color: white;
+            cursor: pointer;
+            user-select: none;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            pointer-events: auto;
+            text-align: center;
+            line-height: 1.1;
+            transition: background-color 0.2s;
+        }
+        #interact-button:active {
+            background-color: rgba(255, 159, 67, 1);
+        }
+        #game-messages {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 25px 40px;
+            border-radius: 15px;
+            text-align: center;
+            font-size: clamp(20px, 5vw, 40px);
+            font-weight: bold;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+            z-index: 1000;
+            display: none; /* Hidden by default */
+            pointer-events: auto;
+        }
+        #game-messages button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: clamp(16px, 3vw, 24px);
+            background-color: #6c5ce7;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        #game-messages button:active {
+            background-color: #5c4cd8;
+        }
+
+        /* Happiness Meter styles */
+        .happiness-meter {
+            position: absolute;
+            bottom: 5px; /* Adjust as needed */
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80%;
+            height: 8px;
+            background-color: #ccc;
+            border-radius: 4px;
+            overflow: hidden;
+            border: 1px solid rgba(0,0,0,0.2);
+        }
+        .happiness-bar {
+            height: 100%;
+            width: 100%; /* Initial width, will be updated */
+            background-color: limegreen; /* Default for high happiness */
+            transition: width 0.1s linear, background-color 0.2s;
+        }
+        .happiness-meter-wrapper {
+            position: absolute; /* Managed by JS for pet positions */
+            pointer-events: none;
+            transform: translate(-50%, -50%); /* Center based on JS position */
+            width: 60px; /* Fixed width for the meter */
+            height: 10px;
+            z-index: 10; /* Above pets */
+            display: none; /* Hide until pet is visible */
+        }
+        .customer-thought {
+            position: absolute;
+            pointer-events: none;
+            transform: translate(-50%, -100px); /* Above customer head */
+            background-color: rgba(255, 255, 255, 0.9);
+            border-radius: 15px;
+            padding: 5px 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            z-index: 10;
+            display: none;
+            font-size: clamp(10px, 2vw, 14px);
+            color: #333;
+        }
+        .customer-thought::after {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 10px solid transparent;
+            border-right: 10px solid transparent;
+            border-top: 10px solid rgba(255, 255, 255, 0.9);
+        }
+        .customer-thought img {
+            width: 30px;
+            height: 30px;
+            vertical-align: middle;
+            margin-right: 5px;
+        }
+
+    </style>
+</head>
+<body>
+    
+    
+    <canvas id="scene"></canvas>
+    <div id="ui">
+        <div id="top-bar">
+            <div id="timer-display">Time: 900s</div>
+            <div id="coins-display">Coins: 100</div>
+            <div id="score">Adoptions: 0</div>
+            <div id="sad-pets-display">Sad Pets: 0/3</div>
+        </div>
+
+        <div id="inventory-panel" class="ui-panel">
+            <h3>Inventory (Drag & Drop)</h3>
+            <div class="panel-grid" id="inventory-grid">
+                <!-- Inventory items will be inserted here by JS -->
+            </div>
+        </div>
+
+        <div id="decorations-panel" class="ui-panel">
+            <h3>Decorations (Drag & Drop)</h3>
+            <div class="panel-grid" id="decorations-grid">
+                <!-- Decoration items will be inserted here by JS -->
+            </div>
+        </div>
+
+        <div id="controls">
+            <div class="control-button up" data-key="w" data-dir="forward">⬆️</div>
+            <div class="control-button left" data-key="a" data-dir="left">⬅️</div>
+            <div class="control-button down" data-key="s" data-dir="backward">⬇️</div>
+            <div class="control-button right" data-key="d" data-dir="right">➡️</div>
+        </div>
+
+        <div id="interact-button">Interact</div>
+
+        <div id="game-messages">
+            <p id="message-text"></p>
+            <button id="restart-button">Play Again!</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import {
+            Scene, PerspectiveCamera, WebGLRenderer, Clock, Color, Fog, Group, Vector3, Box3, BoxGeometry, SphereGeometry, ConeGeometry, CylinderGeometry, PlaneGeometry, TorusGeometry, CapsuleGeometry, RingGeometry, Shape, ShapeGeometry, DoubleSide, MeshStandardMaterial, MeshBasicMaterial, Mesh, AmbientLight, DirectionalLight, PointLight, HemisphereLight, AnimationMixer, Quaternion, Euler, Matrix4, Vector2, MathUtils, Raycaster
+        } from "three";
+
+        // --- GLOBAL SETUP ---
+        const scene = new Scene();
+        const camera = new PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new WebGLRenderer({ canvas: document.getElementById('scene'), antialias: true, preserveDrawingBuffer: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // High-DPI support
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        const clock = new Clock();
+        const raycaster = new Raycaster();
+        const mouse = new Vector2();
+        let gameTimeRemaining = 900; // 15 minutes in seconds
+        let coins = 100;
+        let adoptionsCount = 0;
+        let sadPetsCount = 0;
+        let gameState = 'playing'; // 'playing', 'win', 'lose'
+
+        // Store HTML elements for updates
+        const timerDisplay = document.getElementById('timer-display');
+        const coinsDisplay = document.getElementById('coins-display');
+        const scoreDisplay = document.getElementById('score');
+        const sadPetsDisplay = document.getElementById('sad-pets-display');
+        const gameMessages = document.getElementById('game-messages');
+        const messageText = document.getElementById('message-text');
+        const restartButton = document.getElementById('restart-button');
+
+        const INTERACT_DISTANCE = 3; // How close player needs to be to interact
+
+        // --- CAMERA ---
+        camera.position.set(0, 5, 8);
+        camera.lookAt(0, 1, 0);
+
+        // --- SCENE LIGHTING ---
+        const ambientLight = new AmbientLight(0xffffff, 0.7); // Soft fill light
+        scene.add(ambientLight);
+
+        const directionalLight = new DirectionalLight(0xffffff, 0.6); // Main light source
+        directionalLight.position.set(5, 10, 7);
+        directionalLight.target.position.set(0, 0, 0);
+        scene.add(directionalLight);
+        scene.add(directionalLight.target);
+
+        scene.background = new Color(0xcce0ff); // Sky blue background
+        scene.fog = new Fog(0xcce0ff, 0.1, 100);
+
+        // --- PLAYER MOVEMENT ---
+        let player;
+        let playerMixer;
+        let playerAnimations = {};
+        let playerVelocity = new Vector3();
+        const playerSpeed = 5;
+        const rotationSpeed = Math.PI * 0.7; // Radians per second
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        let isPlayerMoving = false;
+        let playerDirection = new Vector3();
+
+        const keyboardState = {};
+        const controlButtons = {};
+        let selectedItem = null; // Currently selected item from inventory/decorations
+
+        // --- GAME CONTROLS ---
+        window.addEventListener('keydown', (event) => {
+            if (gameState !== 'playing') return;
+            keyboardState[event.key.toLowerCase()] = true;
+            updatePlayerMovementState();
+            if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'w', 'a', 's', 'd'].includes(event.key.toLowerCase())) {
+                event.preventDefault(); // Prevent page scrolling
+            }
+        });
+
+        window.addEventListener('keyup', (event) => {
+            if (gameState !== 'playing') return;
+            keyboardState[event.key.toLowerCase()] = false;
+            updatePlayerMovementState();
+        });
+
+        function updatePlayerMovementState() {
+            moveForward = keyboardState['w'] || keyboardState['arrowup'];
+            moveBackward = keyboardState['s'] || keyboardState['arrowdown'];
+            moveLeft = keyboardState['a'] || keyboardState['arrowleft'];
+            moveRight = keyboardState['d'] || keyboardState['arrowright'];
+            isPlayerMoving = moveForward || moveBackward || moveLeft || moveRight;
+        }
+
+        // On-screen controls
+        document.querySelectorAll('.control-button').forEach(button => {
+            const dir = button.dataset.dir;
+            controlButtons[dir] = false;
+
+            button.addEventListener('pointerdown', (e) => {
+                if (gameState !== 'playing') return;
+                e.preventDefault();
+                controlButtons[dir] = true;
+                updatePlayerMovementStateFromControls();
+            });
+            button.addEventListener('pointerup', (e) => {
+                if (gameState !== 'playing') return;
+                e.preventDefault();
+                controlButtons[dir] = false;
+                updatePlayerMovementStateFromControls();
+            });
+            button.addEventListener('pointerleave', (e) => {
+                if (gameState !== 'playing') return;
+                // Only clear if pointer leaves while pressed
+                if (e.buttons === 0) { // Check if no buttons are pressed
+                    controlButtons[dir] = false;
+                    updatePlayerMovementStateFromControls();
+                }
+            });
+            button.addEventListener('touchend', (e) => {
+                if (gameState !== 'playing') return;
+                e.preventDefault();
+                controlButtons[dir] = false;
+                updatePlayerMovementStateFromControls();
+            });
+        });
+
+        function updatePlayerMovementStateFromControls() {
+            moveForward = controlButtons['forward'];
+            moveBackward = controlButtons['backward'];
+            moveLeft = controlButtons['left'];
+            moveRight = controlButtons['right'];
+            isPlayerMoving = moveForward || moveBackward || moveLeft || moveRight;
+        }
+
+        document.getElementById('interact-button').addEventListener('pointerdown', (e) => {
+            if (gameState !== 'playing') return;
+            e.preventDefault();
+            handleInteraction();
+        });
+
+        restartButton.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            location.reload(); // Simple restart for now
+        });
+
+        // --- RAYCASTING FOR INTERACTION ---
+        window.addEventListener('pointerdown', onPointerDown, false);
+
+        function onPointerDown(event) {
+            if (gameState !== 'playing') return;
+            // Calculate mouse position in normalized device coordinates (-1 to +1)
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+
+            // Check for clicks on UI elements (inventory/decorations) first
+            const clickedInventoryItem = event.target.closest('.panel-item');
+            if (clickedInventoryItem) {
+                if (clickedInventoryItem.closest('#inventory-panel')) {
+                    handleInventoryClick(clickedInventoryItem);
+                } else if (clickedInventoryItem.closest('#decorations-panel')) {
+                    handleDecorationClick(clickedInventoryItem);
+                }
+                return; // Stop here if UI element was clicked
+            }
+
+            // If an item is selected from inventory/decorations, try to place it
+            if (selectedItem) {
+                attemptPlaceItem();
+                return;
+            }
+            // Otherwise, interact with pets
+            handleInteraction();
+        }
+
+        function attemptPlaceItem() {
+            if (!selectedItem || !player) return;
+
+            const intersects = raycaster.intersectObjects([floor]); // Only allow placing on floor
+            if (intersects.length > 0) {
+                const intersection = intersects[0];
+                const point = intersection.point;
+
+                const distanceToPlayer = player.position.distanceTo(point);
+                if (distanceToPlayer > 1 && distanceToPlayer < 10) { // Must be within reasonable range
+                    const item = selectedItem;
+                    if (item.type === 'decoration') {
+                        if (coins >= item.cost) {
+                            coins -= item.cost;
+                            updateCoinsDisplay();
+                            placeDecoration(item.modelName, point);
+                            playSound('confirm');
+                        } else {
+                            playSound('error');
+                            console.log("Not enough coins!");
+                        }
+                    } else if (item.type === 'food' || item.type === 'toy') {
+                         // For food/toy, check if near a pet to auto-apply
+                         let petFound = false;
+                         for (const pet of pets) {
+                             if (pet.mesh && pet.mesh.position.distanceTo(point) < 2) { // Near a pet enclosure
+                                 interactWithPet(pet, item.name);
+                                 petFound = true;
+                                 playSound('pop'); // Success sound
+                                 break;
+                             }
+                         }
+                         if (!petFound) {
+                            // If not near a pet, just deselect for now. Could add a "drop" animation later.
+                             playSound('error');
+                         }
+                    }
+                }
+            }
+            deselectItem();
+        }
+
+        // --- PET DATA ---
+        const petTypes = [
+            { name: "Puppy", modelName: "dog", animationNames: ["idle", "walk"], scale: 0.6, enclosure: null, htmlMeter: null },
+            { name: "Kitten", modelName: "mascot", animationNames: ["idle", "walk"], scale: 0.4, enclosure: null, htmlMeter: null }, // Using mascot as placeholder for kitten
+            { name: "Hamster", modelName: "capsule", animationNames: [], scale: 0.2, enclosure: null, htmlMeter: null }, // Primitive for hamster
+            { name: "Parrot", modelName: "cone", animationNames: [], scale: 0.3, enclosure: null, htmlMeter: null }, // Primitive for parrot
+            { name: "Goldfish", modelName: "fish", animationNames: [], scale: 0.3, enclosure: null, htmlMeter: null }
+        ];
+
+        // --- PET SHOP LAYOUT ---
+        const shopSize = { width: 30, depth: 30, height: 8 };
+        const wallThickness = 0.5;
+
+        // Floor
+        const floorGeometry = new PlaneGeometry(shopSize.width, shopSize.depth);
+        const floorMaterial = new MeshStandardMaterial({ color: 0x8B4513, side: DoubleSide }); // Wood floor
+        const floor = new Mesh(floorGeometry, floorMaterial);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.y = -0.01; // Slightly below ground to avoid z-fighting with other objects
+        scene.add(floor);
+
+        // Walls (using BoxGeometry for simplicity)
+        function createWall(width, height, depth, x, y, z, rotationY = 0) {
+            const geometry = new BoxGeometry(width, height, depth);
+            const material = new MeshStandardMaterial({ color: 0xD3D3D3 }); // Light grey walls
+            const wall = new Mesh(geometry, material);
+            wall.position.set(x, y, z);
+            wall.rotation.y = rotationY;
+            scene.add(wall);
+            return wall;
+        }
+
+        // Back wall
+        createWall(shopSize.width, shopSize.height, wallThickness, 0, shopSize.height / 2, -shopSize.depth / 2);
+        // Left wall
+        createWall(shopSize.depth, shopSize.height, wallThickness, -shopSize.width / 2, shopSize.height / 2, 0, Math.PI / 2);
+        // Right wall
+        createWall(shopSize.depth, shopSize.height, wallThickness, shopSize.width / 2, shopSize.height / 2, 0, -Math.PI / 2);
+        // Front wall (with opening for door)
+        createWall(shopSize.width / 3, shopSize.height, wallThickness, -shopSize.width / 3, shopSize.height / 2, shopSize.depth / 2);
+        createWall(shopSize.width / 3, shopSize.height, wallThickness, shopSize.width / 3, shopSize.height / 2, shopSize.depth / 2);
+        createWall(shopSize.width / 3, shopSize.height / 3, wallThickness, 0, shopSize.height * 5 / 6, shopSize.depth / 2); // Top part of door frame
+
+        // Counter
+        const counterGeometry = new BoxGeometry(4, 1, 1.5);
+        const counterMaterial = new MeshStandardMaterial({ color: 0x8B4513 });
+        const counter = new Mesh(counterGeometry, counterMaterial);
+        counter.position.set(0, 0.5, shopSize.depth / 2 - 3); // In front of the door
+        scene.add(counter);
+
+        // Enclosures (using simple boxes for now, will refine with models)
+        const enclosures = [];
+        function createEnclosure(width, height, depth, x, z, petType) {
+            const geometry = new BoxGeometry(width, height, depth);
+            const material = new MeshStandardMaterial({ color: 0xA9A9A9, transparent: true, opacity: 0.6 }); // Grey glass-like
+            const enclosureMesh = new Mesh(geometry, material);
+            enclosureMesh.position.set(x, height / 2, z);
+            scene.add(enclosureMesh);
+            enclosures.push({ mesh: enclosureMesh, petType: petType, bounds: new Box3().setFromObject(enclosureMesh) });
+            return enclosureMesh;
+        }
+
+        // Enclosure positions
+        const enclosureSpacing = 7;
+        const startX = -shopSize.width / 2 + 5;
+        const startZ = -shopSize.depth / 2 + 5;
+
+        // Puppy pen (left side)
+        const puppyPen = createEnclosure(5, 2, 5, startX, startZ, "Puppy");
+        petTypes.find(p => p.name === "Puppy").enclosure = puppyPen;
+
+        // Kitten area (left side, further back)
+        const kittenEnclosure = createEnclosure(5, 2, 5, startX, startZ + enclosureSpacing, "Kitten");
+        petTypes.find(p => p.name === "Kitten").enclosure = kittenEnclosure;
+
+        // Hamster cages (right side)
+        const hamsterEnclosure1 = createEnclosure(3, 1, 3, -startX, startZ, "Hamster");
+        petTypes.find(p => p.name === "Hamster").enclosure = hamsterEnclosure1; // Hamsters share one enclosure for now
+
+        // Parrot cage (right side)
+        const parrotEnclosure = createEnclosure(3, 3, 3, -startX, startZ + enclosureSpacing, "Parrot");
+        petTypes.find(p => p.name === "Parrot").enclosure = parrotEnclosure;
+
+        // Fish tank (middle, back wall)
+        const fishTank = createEnclosure(4, 2, 2, 0, startZ + enclosureSpacing * 2, "Goldfish");
+        petTypes.find(p => p.name === "Goldfish").enclosure = fishTank;
+
+
+        // --- PETS ---
+        const pets = []; // Array to hold all pet objects
+        const petHappinessMeters = new Map(); // Map pet object to its HTML meter element
+
+        function createPet(typeData, position) {
+            const pet = {
+                id: Math.random().toString(36).substring(7),
+                type: typeData.name,
+                modelName: typeData.modelName,
+                mesh: null,
+                mixer: null,
+                animations: {},
+                happiness: 100,
+                sadnessTimer: 0,
+                isSad: false,
+                htmlMeter: null,
+                enclosure: typeData.enclosure // Reference to the enclosure mesh
+            };
+
+            // Create HTML happiness meter
+            const meterWrapper = document.createElement('div');
+            meterWrapper.className = 'happiness-meter-wrapper';
+            meterWrapper.id = `pet-meter-${pet.id}`;
+            const meter = document.createElement('div');
+            meter.className = 'happiness-meter';
+            const bar = document.createElement('div');
+            bar.className = 'happiness-bar';
+            meter.appendChild(bar);
+            meterWrapper.appendChild(meter);
+            document.getElementById('ui').appendChild(meterWrapper);
+            pet.htmlMeter = { wrapper: meterWrapper, bar: bar };
+            petHappinessMeters.set(pet, pet.htmlMeter);
+
+            loadModel(typeData.modelName).then(model => {
+                if (model) {
+                    pet.mesh = model;
+                    pet.mesh.scale.setScalar(typeData.scale);
+                    pet.mesh.position.copy(position);
+                    // Ensure pet is on the floor of its enclosure
+                    if (pet.enclosure) {
+                        const enclosureBounds = new Box3().setFromObject(pet.enclosure);
+                        pet.mesh.position.y = enclosureBounds.min.y + (modelSize(typeData.modelName)?.y * typeData.scale / 2 || typeData.scale / 2); // Place on enclosure floor
+                    } else {
+                        pet.mesh.position.y = 0; // Default to ground if no enclosure specified
+                    }
+
+
+                    scene.add(pet.mesh);
+
+                    if (model.animations && model.animations.length > 0) {
+                        pet.mixer = new AnimationMixer(pet.mesh);
+                        model.animations.forEach(clip => {
+                            pet.animations[clip.name.toLowerCase()] = pet.mixer.clipAction(clip);
+                        });
+                        // Play a default animation if available
+                        pet.animations['idle']?.play();
+                        pet.animations['walk']?.play(); // If walk is the only non-idle, for motion
+                    }
+                    if (pet.type === "Goldfish") {
+                         // Simple fish movement
+                         pet.mesh.userData.swimDirection = new Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
+                         pet.mesh.userData.swimSpeed = 0.5 + Math.random() * 0.5;
+                         pet.mesh.userData.turnTimer = 0;
+                    }
+                } else {
+                    // Placeholder if model fails to load
+                    console.warn(`Failed to load model for ${typeData.name}, using primitive.`);
+                    const geometry = typeData.name === "Hamster" ? new SphereGeometry(typeData.scale / 2) :
+                                     typeData.name === "Parrot" ? new ConeGeometry(typeData.scale / 2, typeData.scale) :
+                                     new BoxGeometry(typeData.scale, typeData.scale, typeData.scale);
+                    const material = new MeshStandardMaterial({ color: 0x00ff00 });
+                    pet.mesh = new Mesh(geometry, material);
+                    pet.mesh.position.copy(position);
+                    pet.mesh.position.y += typeData.scale / 2; // Lift off ground
+                    scene.add(pet.mesh);
+                }
+            });
+            pets.push(pet);
+            return pet;
+        }
+
+        // Populate enclosures with pets
+        function populatePets() {
+            createPet(petTypes.find(p => p.name === "Puppy"), puppyPen.position.clone().add(new Vector3(0, 0.5, 0)));
+            createPet(petTypes.find(p => p.name === "Kitten"), kittenEnclosure.position.clone().add(new Vector3(0, 0.5, 0)));
+            createPet(petTypes.find(p => p.name === "Hamster"), hamsterEnclosure1.position.clone().add(new Vector3(0, 0.2, 0)));
+            createPet(petTypes.find(p => p.name === "Parrot"), parrotEnclosure.position.clone().add(new Vector3(0, 1, 0)));
+            createPet(petTypes.find(p => p.name === "Goldfish"), fishTank.position.clone().add(new Vector3(0, 0.5, 0)));
+        }
+        populatePets();
+
+
+        // --- CUSTOMER DATA ---
+        const customerTypes = [
+            { name: "Scientist", modelName: "scientist", preferredPet: "Puppy", thoughtBubble: "A loyal friend!" },
+            { name: "Police Officer", modelName: "police_officer", preferredPet: "Kitten", thoughtBubble: "A playful companion!" },
+            { name: "Footballer", modelName: "footballer_blue", preferredPet: "Hamster", thoughtBubble: "Something small and active!" },
+            { name: "Grandpa", modelName: "grandpa", preferredPet: "Goldfish", thoughtBubble: "A peaceful fish for my pond." },
+            { name: "Girl", modelName: "girl", preferredPet: "Puppy", thoughtBubble: "A fluffy puppy!" },
+            { name: "Woman", modelName: "woman", preferredPet: "Parrot", thoughtBubble: "A chatty bird!" },
+            { name: "Man", modelName: "man", preferredPet: "Kitten", thoughtBubble: "A cuddly kitten!" },
+            { name: "Plumber", modelName: "plumber", preferredPet: "Hamster", thoughtBubble: "Needs a wheel to run on!" },
+            { name: "Mascot", modelName: "mascot", preferredPet: "Any", thoughtBubble: "Any happy pet!" }, // Generic customer
+        ];
+        const customers = [];
+        let customerSpawnTimer = 0;
+        const customerSpawnInterval = 10; // Every 10-20 seconds
+        const customerMaxCount = 3; // Max customers in store at once
+
+        function createCustomer() {
+            if (customers.length >= customerMaxCount) return; // Limit customers
+
+            const typeData = customerTypes[Math.floor(Math.random() * customerTypes.length)];
+            const customer = {
+                id: Math.random().toString(36).substring(7),
+                type: typeData.name,
+                modelName: typeData.modelName,
+                preferredPet: typeData.preferredPet,
+                thoughtBubbleText: typeData.thoughtBubble,
+                mesh: null,
+                mixer: null,
+                animations: {},
+                targetPet: null,
+                state: 'entering', // 'entering', 'browsing', 'seeking_pet', 'adopting', 'leaving'
+                speed: 1.5,
+                htmlThoughtBubble: null,
+            };
+
+            const thoughtBubble = document.createElement('div');
+            thoughtBubble.className = 'customer-thought';
+            thoughtBubble.id = `customer-thought-${customer.id}`;
+            thoughtBubble.innerHTML = `<img src="https://placehold.it/30x30?text=?" alt="Pet type"> ${customer.thoughtBubbleText}`;
+            document.getElementById('ui').appendChild(thoughtBubble);
+            customer.htmlThoughtBubble = thoughtBubble;
+
+            loadModel(typeData.modelName).then(model => {
+                if (model) {
+                    customer.mesh = model;
+                    customer.mesh.scale.setScalar(0.7);
+                    customer.mesh.position.set(0, 0, shopSize.depth / 2 + 3); // Start outside door
+                    customer.mesh.rotation.y = Math.PI; // Face inwards
+                    scene.add(customer.mesh);
+
+                    if (model.animations && model.animations.length > 0) {
+                        customer.mixer = new AnimationMixer(customer.mesh);
+                        model.animations.forEach(clip => {
+                            customer.animations[clip.name.toLowerCase()] = customer.mixer.clipAction(clip);
+                        });
+                        customer.animations['walk']?.play(); // Start walking
+                    }
+
+                    customers.push(customer);
+                }
+            });
+        }
+
+        function updateCustomers(delta) {
+            customerSpawnTimer -= delta;
+            if (customerSpawnTimer <= 0) {
+                createCustomer();
+                customerSpawnTimer = customerSpawnInterval + Math.random() * 10; // Next spawn in 10-20s
+            }
+
+            for (let i = customers.length - 1; i >= 0; i--) {
+                const customer = customers[i];
+                if (!customer.mesh) continue;
+
+                customer.mixer?.update(delta);
+
+                let targetPosition;
+
+                switch (customer.state) {
+                    case 'entering':
+                        targetPosition = new Vector3(0, 0, shopSize.depth / 2 - 2); // Just inside the door
+                        customer.mesh.lookAt(targetPosition.x, customer.mesh.position.y, targetPosition.z);
+                        customer.mesh.position.lerp(targetPosition, customer.speed * delta);
+                        if (customer.mesh.position.distanceTo(targetPosition) < 0.5) {
+                            customer.state = 'browsing';
+                            customer.mesh.rotation.y = Math.random() * Math.PI * 2; // Look around
+                            customer.animations['idle']?.play();
+                            customer.animations['walk']?.stop();
+                        }
+                        break;
+
+                    case 'browsing':
+                        // Display thought bubble
+                        updateHTMLObjectPosition(customer.mesh, customer.htmlThoughtBubble, 1.8);
+                        customer.htmlThoughtBubble.style.display = 'block';
+
+                        // Look for a suitable pet
+                        customer.targetPet = pets.find(pet =>
+                            pet.mesh &&
+                            pet.happiness > 80 && // Pet must be happy
+                            !pet.isSad &&
+                            (customer.preferredPet === "Any" || pet.type === customer.preferredPet)
+                        );
+
+                        if (customer.targetPet) {
+                            customer.state = 'seeking_pet';
+                            customer.animations['walk']?.play();
+                            customer.animations['idle']?.stop();
+                        } else {
+                            // If no pet found, customer might leave after some time
+                            // For simplicity, they just browse indefinitely until a pet is happy enough
+                            customer.mesh.rotation.y += delta * 0.2; // Slowly turn
+                        }
+                        break;
+
+                    case 'seeking_pet':
+                        if (!customer.targetPet || !customer.targetPet.mesh || customer.targetPet.happiness <= 80 || customer.targetPet.isSad) {
+                            customer.state = 'browsing'; // Pet became unhappy or was adopted
+                            customer.animations['idle']?.play();
+                            customer.animations['walk']?.stop();
+                            customer.targetPet = null;
+                            continue;
+                        }
+
+                        targetPosition = customer.targetPet.enclosure.position.clone();
+                        targetPosition.z += (customer.targetPet.enclosure.geometry.parameters.depth / 2) + 1; // Stand in front of enclosure
+                        customer.mesh.lookAt(targetPosition.x, customer.mesh.position.y, targetPosition.z);
+                        customer.mesh.position.lerp(targetPosition, customer.speed * delta);
+
+                        if (customer.mesh.position.distanceTo(targetPosition) < 1) {
+                            customer.state = 'adopting';
+                            customer.animations['idle']?.play();
+                            customer.animations['walk']?.stop();
+                            adoptPet(customer, customer.targetPet);
+                        }
+                        break;
+
+                    case 'leaving':
+                        targetPosition = new Vector3(0, 0, shopSize.depth / 2 + 3); // Outside door
+                        customer.mesh.lookAt(targetPosition.x, customer.mesh.position.y, targetPosition.z);
+                        customer.mesh.position.lerp(targetPosition, customer.speed * delta);
+                        customer.htmlThoughtBubble.style.display = 'none'; // Hide bubble when leaving
+                        if (customer.mesh.position.distanceTo(targetPosition) < 0.5) {
+                            scene.remove(customer.mesh);
+                            customer.htmlThoughtBubble.remove();
+                            customers.splice(i, 1);
+                        }
+                        break;
+                }
+            }
+        }
+
+        function adoptPet(customer, pet) {
+            // Remove pet from available pets
+            const petIndex = pets.findIndex(p => p.id === pet.id);
+            if (petIndex > -1) {
+                pets.splice(petIndex, 1); // Remove the pet object from the game's pets array
+            }
+            pet.htmlMeter.wrapper.remove(); // Remove its happiness meter
+
+            // Parent the pet to the customer for a "leaving" animation
+            customer.mesh.add(pet.mesh);
+            pet.mesh.position.set(0.5, 0.5, 0.5); // Carry pet
+            pet.mesh.rotation.y = Math.PI / 2; // Turn pet sideways
+
+            adoptionsCount++;
+            scoreDisplay.textContent = `Adoptions: ${adoptionsCount}`;
+            coins += Math.floor(Math.random() * 150) + 50; // 50-200 coins
+            updateCoinsDisplay();
+            playSound('coins');
+
+            customer.state = 'leaving';
+            customer.animations['walk']?.play(); // Start walking again
+            customer.animations['idle']?.stop();
+
+            // Check win condition
+            if (adoptionsCount >= 10) {
+                endGame('win');
+            }
+        }
+
+        // --- INVENTORY & DECORATIONS ---
+        const inventoryItemsData = [
+            { name: "Dog Bone", type: "toy", modelName: "cone", cost: 30, happinessBoost: 20 },
+            { name: "Catnip Mouse", type: "toy", modelName: "sphere", cost: 25, happinessBoost: 20 },
+            { name: "Hamster Wheel", type: "toy", modelName: "torus", cost: 40, happinessBoost: 25 },
+            { name: "Bird Perch", type: "toy", modelName: "cylinder", cost: 35, happinessBoost: 20 },
+            { name: "Fish Flakes", type: "food", modelName: "plane", cost: 20, happinessBoost: 15 },
+            { name: "Puppy Food", type: "food", modelName: "hotdog", cost: 25, happinessBoost: 15 },
+            { name: "Kitten Food", type: "food", modelName: "donut", cost: 25, happinessBoost: 15 },
+            { name: "Hamster Food", type: "food", modelName: "apple", cost: 20, happinessBoost: 10 },
+            { name: "Parrot Seed", type: "food", modelName: "banana", cost: 20, happinessBoost: 10 },
+            { name: "Brush", type: "grooming", cost: 10, happinessBoost: 10 },
+            { name: "Ball", type: "toy", modelName: "sphere", cost: 30, happinessBoost: 20 },
+            { name: "Laser Pointer", type: "toy", modelName: "cylinder", cost: 40, happinessBoost: 25 },
+            { name: "Treats", type: "food", modelName: "pizza", cost: 35, happinessBoost: 20 },
+            { name: "Pet Bed", type: "decoration", modelName: "box", cost: 50 },
+            { name: "Scratching Post", type: "decoration", modelName: "cylinder", cost: 45 }
+        ];
+
+        const decorationItemsData = [
+            { name: "Plant Pot", type: "decoration", modelName: "cone", cost: 30 },
+            { name: "Colorful Wall", type: "decoration", modelName: "plane", cost: 20 },
+            { name: "Small Table", type: "decoration", modelName: "box", cost: 35 },
+            { name: "Water Dish", type: "decoration", modelName: "torus", cost: 25 },
+            { name: "Toy Box", type: "decoration", modelName: "box", cost: 40 },
+            { name: "Large Plant", type: "decoration", modelName: "capsule", cost: 50 },
+            { name: "Rug", type: "decoration", modelName: "plane", cost: 30 },
+            { name: "Fish Decoration", type: "decoration", modelName: "fish", cost: 40 }, // Using existing model
+            { name: "Sign", type: "decoration", modelName: "box", cost: 20 },
+            { name: "Poster", type: "decoration", modelName: "plane", cost: 15 },
+            { name: "Flower Vase", type: "decoration", modelName: "cylinder", cost: 25 },
+            { name: "Pet Statue", type: "decoration", modelName: "dog", cost: 70 }, // Using dog model
+            { name: "Clock", type: "decoration", modelName: "ring", cost: 30 },
+            { name: "Bookshelf", type: "decoration", modelName: "box", cost: 45 },
+            { name: "Lamp", type: "decoration", modelName: "cylinder", cost: 30 },
+            { name: "Cushion", type: "decoration", modelName: "sphere", cost: 20 },
+            { name: "Basket", type: "decoration", modelName: "sphere", cost: 25 },
+            { name: "Curtains", type: "decoration", modelName: "plane", cost: 20 },
+            { name: "Picture Frame", type: "decoration", modelName: "box", cost: 15 },
+            { name: "Small Tree", type: "decoration", modelName: "cone", cost: 40 }
+        ];
+
+
+        function populatePanel(panelId, itemsData, isDecorationPanel = false) {
+            const panelGrid = document.getElementById(panelId);
+            panelGrid.innerHTML = ''; // Clear existing items
+
+            itemsData.forEach(item => {
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'panel-item';
+                itemDiv.dataset.name = item.name;
+                itemDiv.dataset.type = item.type;
+                itemDiv.dataset.model = item.modelName;
+                itemDiv.dataset.cost = item.cost;
+                itemDiv.dataset.happinessBoost = item.happinessBoost || 0; // Only for food/toy/grooming
+
+                // Placeholder for item image - could use model name for icon later
+                const itemImage = document.createElement('div');
+                itemImage.className = 'item-image';
+                itemImage.style.backgroundColor = isDecorationPanel ? '#d4a572' : '#87CEEB'; // Different color for decor vs inventory
+                itemDiv.appendChild(itemImage);
+
+                const itemName = document.createElement('span');
+                itemName.textContent = item.name;
+                itemDiv.appendChild(itemName);
+
+                const itemCost = document.createElement('span');
+                itemCost.className = 'item-cost';
+                itemCost.textContent = `🪙 ${item.cost}`;
+                itemDiv.appendChild(itemCost);
+
+                itemDiv.addEventListener('pointerdown', (e) => {
+                    e.stopPropagation(); // Prevent onPointerDown from firing on canvas
+                    e.preventDefault();
+                    if (isDecorationPanel) {
+                        handleDecorationClick(itemDiv);
+                    } else {
+                        handleInventoryClick(itemDiv);
+                    }
+                });
+                panelGrid.appendChild(itemDiv);
+            });
+        }
+
+        populatePanel('inventory-grid', inventoryItemsData);
+        populatePanel('decorations-grid', decorationItemsData, true);
+
+        function deselectItem() {
+            if (selectedItem) {
+                const prevSelected = document.querySelector('.panel-item.selected');
+                if (prevSelected) {
+                    prevSelected.classList.remove('selected');
+                }
+            }
+            selectedItem = null;
+        }
+
+        function handleInventoryClick(itemDiv) {
+            deselectItem(); // Deselect any previously selected item
+            itemDiv.classList.add('selected');
+            selectedItem = {
+                name: itemDiv.dataset.name,
+                type: itemDiv.dataset.type,
+                modelName: itemDiv.dataset.model,
+                cost: parseInt(itemDiv.dataset.cost),
+                happinessBoost: parseInt(itemDiv.dataset.happinessBoost)
+            };
+            console.log("Selected inventory item:", selectedItem.name);
+            playSound('select');
+        }
+
+        function handleDecorationClick(itemDiv) {
+            deselectItem(); // Deselect any previously selected item
+            itemDiv.classList.add('selected');
+            selectedItem = {
+                name: itemDiv.dataset.name,
+                type: itemDiv.dataset.type,
+                modelName: itemDiv.dataset.model,
+                cost: parseInt(itemDiv.dataset.cost)
+            };
+            console.log("Selected decoration:", selectedItem.name);
+            playSound('select');
+        }
+
+        const placedDecorations = [];
+        function placeDecoration(modelName, position) {
+            loadModel(modelName).then(model => {
+                if (model) {
+                    model.position.copy(position);
+                    model.position.y = 0.5; // Place on floor
+                    model.scale.setScalar(0.7); // Default scale
+                    scene.add(model);
+                    placedDecorations.push(model);
+                } else {
+                    console.warn(`Failed to load decoration model ${modelName}, using primitive.`);
+                    const geometry = modelName === "box" ? new BoxGeometry(1, 1, 1) :
+                                     modelName === "cone" ? new ConeGeometry(0.5, 1) :
+                                     modelName === "cylinder" ? new CylinderGeometry(0.5, 0.5, 1) :
+                                     new SphereGeometry(0.5);
+                    const material = new MeshStandardMaterial({ color: Math.random() * 0xffffff });
+                    const placeholder = new Mesh(geometry, material);
+                    placeholder.position.copy(position);
+                    placeholder.position.y = 0.5;
+                    scene.add(placeholder);
+                    placedDecorations.push(placeholder);
+                }
+            });
+        }
+
+        // --- GAME LOOP ---
+        let lastTimestamp = performance.now();
+        let frameSkipper = 0; // For 60fps cap
+
+        function animate() {
+            if (!on) return; // Pause if tab is not active
+
+            requestAnimationFrame(animate);
+
+            const now = performance.now();
+            if (now - lastTimestamp < 1000 / 60) { // Cap to 60fps
+                return;
+            }
+            const delta = Math.min((now - lastTimestamp) / 1000, 0.05); // Cap delta to 50ms
+            lastTimestamp = now;
+
+            if (gameState !== 'playing') return;
+
+            // --- TIMER ---
+            gameTimeRemaining -= delta;
+            if (gameTimeRemaining <= 0) {
+                gameTimeRemaining = 0;
+                endGame('lose');
+            }
+            timerDisplay.textContent = `Time: ${Math.max(0, Math.floor(gameTimeRemaining))}s`;
+
+            // --- PLAYER MOVEMENT & ANIMATION ---
+            if (player) {
+                const actualPlayerSpeed = playerSpeed;
+                playerDirection.set(0, 0, 0);
+
+                if (moveForward) playerDirection.z -= 1;
+                if (moveBackward) playerDirection.z += 1;
+                if (moveLeft) playerDirection.x -= 1;
+                if (moveRight) playerDirection.x += 1;
+
+                if (playerDirection.lengthSq() > 0) {
+                    playerDirection.normalize().multiplyScalar(actualPlayerSpeed * delta);
+                    player.position.add(playerDirection.applyQuaternion(player.quaternion)); // Move relative to player's facing
+                    // Keep player within shop boundaries
+                    player.position.x = Math.max(-shopSize.width / 2 + 1, Math.min(shopSize.width / 2 - 1, player.position.x));
+                    player.position.z = Math.max(-shopSize.depth / 2 + 1, Math.min(shopSize.depth / 2 + 1, player.position.z));
+
+                    // Simple rotation to face direction of movement
+                    const targetAngle = Math.atan2(playerDirection.x, playerDirection.z);
+                    player.rotation.y = MathUtils.lerp(player.rotation.y, targetAngle, 0.1);
+
+                    // Player animation
+                    if (playerAnimations['walk'] && !playerAnimations['walk'].isRunning()) {
+                        playerAnimations['walk'].play();
+                        playerAnimations['idle']?.stop();
+                    }
+                } else {
+                    if (playerAnimations['idle'] && !playerAnimations['idle'].isRunning()) {
+                        playerAnimations['idle'].play();
+                        playerAnimations['walk']?.stop();
+                    }
+                }
+                playerMixer?.update(delta);
+
+                // Camera follow
+                camera.position.x = MathUtils.lerp(camera.position.x, player.position.x, 0.05);
+                camera.position.z = MathUtils.lerp(camera.position.z, player.position.z + 5, 0.05);
+                camera.lookAt(player.position.x, player.position.y + 1, player.position.z);
+            }
+
+            // --- PET UPDATES ---
+            for (const pet of pets) {
+                if (!pet.mesh) continue;
+
+                pet.mixer?.update(delta);
+
+                // Goldfish swimming
+                if (pet.type === "Goldfish") {
+                    const enclosureBounds = new Box3().setFromObject(pet.enclosure);
+                    const meshBounds = new Box3().setFromObject(pet.mesh);
+                    const meshSize = meshBounds.getSize(new Vector3());
+
+                    pet.mesh.position.add(pet.mesh.userData.swimDirection.clone().multiplyScalar(pet.mesh.userData.swimSpeed * delta));
+
+                    // Bounce off enclosure walls
+                    if (pet.mesh.position.x < enclosureBounds.min.x + meshSize.x / 2 || pet.mesh.position.x > enclosureBounds.max.x - meshSize.x / 2) {
+                        pet.mesh.userData.swimDirection.x *= -1;
+                        playSound('pop');
+                    }
+                    if (pet.mesh.position.z < enclosureBounds.min.z + meshSize.z / 2 || pet.mesh.position.z > enclosureBounds.max.z - meshSize.z / 2) {
+                        pet.mesh.userData.swimDirection.z *= -1;
+                        playSound('pop');
+                    }
+                    // Prevent fish from going too high/low in tank
+                    pet.mesh.position.y = Math.max(enclosureBounds.min.y + meshSize.y / 2, Math.min(enclosureBounds.max.y - meshSize.y / 2, pet.mesh.position.y));
+
+                    // Smooth rotation towards swim direction
+                    const targetQuaternion = new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), pet.mesh.userData.swimDirection);
+                    pet.mesh.quaternion.slerp(targetQuaternion, 0.1);
+
+                    // Random turn
+                    pet.mesh.userData.turnTimer -= delta;
+                    if (pet.mesh.userData.turnTimer <= 0) {
+                        pet.mesh.userData.swimDirection.set(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
+                        pet.mesh.userData.swimSpeed = 0.5 + Math.random() * 0.5;
+                        pet.mesh.userData.turnTimer = 2 + Math.random() * 3; // Turn every 2-5 seconds
+                    }
+                }
+                // Hamster/Parrot simple movement (placeholder)
+                if (pet.type === "Hamster" || pet.type === "Parrot") {
+                    pet.mesh.rotation.y += delta * 1.5;
+                    pet.mesh.position.y = pet.enclosure.position.y + pet.enclosure.geometry.parameters.height / 2 + Math.sin(clock.elapsedTime * 5) * 0.1; // Bobbing
+                }
+
+
+                // Happiness decrease
+                pet.happiness = Math.max(0, pet.happiness - (delta / 5) * 1); // Decrease by 1% every 5 seconds
+                updateHappinessMeter(pet);
+
+                // Sadness mechanic
+                if (pet.happiness < 20) {
+                    pet.sadnessTimer += delta;
+                    if (pet.sadnessTimer >= 60 && !pet.isSad) {
+                        pet.isSad = true;
+                        sadPetsCount++;
+                        sadPetsDisplay.textContent = `Sad Pets: ${sadPetsCount}/3`;
+                        console.log(`${pet.type} is now sad! Total sad pets: ${sadPetsCount}`);
+                        if (sadPetsCount >= 3) {
+                            endGame('lose');
+                        }
+                    }
+                    // Visual cue for sadness (e.g., color tint)
+                    if (pet.isSad && pet.mesh.material.color) {
+                        pet.mesh.material.color.set(0x888888); // Greyish for sad
+                    }
+                } else {
+                    pet.sadnessTimer = 0;
+                    if (pet.isSad) {
+                        pet.isSad = false;
+                        sadPetsCount--;
+                        sadPetsDisplay.textContent = `Sad Pets: ${sadPetsCount}/3`;
+                        // Restore original color
+                        if (pet.mesh.material.color) {
+                            pet.mesh.material.color.set(0xffffff); // Or whatever default color
+                        }
+                    }
+                }
+
+                // Update HTML meter position
+                updateHTMLObjectPosition(pet.mesh, pet.htmlMeter.wrapper, 0.8); // Offset meter above pet
+                pet.htmlMeter.wrapper.style.display = 'block'; // Ensure it's visible
+            }
+
+            // --- CUSTOMER UPDATES ---
+            updateCustomers(delta);
+
+            renderer.render(scene, camera);
+        }
+
+        // --- GAME STATE AND UI UPDATES ---
+        let on = true; // Flag to control game loop
+        const setOn = (v) => {
+            if (v === on) return;
+            on = v;
+            if (v) {
+                clock.getDelta(); // Reset clock delta on resume
+                lastTimestamp = performance.now(); // Reset last timestamp too
+                requestAnimationFrame(animate);
+            }
+        };
+        document.addEventListener('visibilitychange', () => setOn(!document.hidden));
+        addEventListener('blur', () => setOn(false));
+        addEventListener('focus', () => setOn(true));
+
+        function updateCoinsDisplay() {
+            coinsDisplay.textContent = `Coins: ${coins}`;
+        }
+
+        function updateHappinessMeter(pet) {
+            if (!pet.htmlMeter || !pet.htmlMeter.bar) return;
+
+            const bar = pet.htmlMeter.bar;
+            bar.style.width = `${pet.happiness}%`;
+
+            if (pet.happiness > 70) {
+                bar.style.backgroundColor = 'limegreen';
+            } else if (pet.happiness > 30) {
+                bar.style.backgroundColor = 'orange';
+            } else {
+                bar.style.backgroundColor = 'red';
+            }
+        }
+
+        // Helper to position HTML elements over 3D objects
+        function updateHTMLObjectPosition(object3D, htmlElement, offsetFactor = 1.0) {
+            if (!object3D || !htmlElement) return;
+
+            // Get the 3D position of the object (usually its center)
+            const objectPosition = new Vector3();
+            object3D.getWorldPosition(objectPosition);
+
+            // Get the object's approximate height to place the meter above it
+            const bbox = new Box3().setFromObject(object3D);
+            const height = bbox.isEmpty() ? 1 : bbox.max.y - bbox.min.y; // Fallback height
+
+            // Project 3D position to 2D screen coordinates
+            const screenPosition = objectPosition.clone().add(new Vector3(0, height * offsetFactor, 0)).project(camera);
+
+            const canvas = renderer.domElement;
+            const x = (screenPosition.x + 1) / 2 * canvas.clientWidth;
+            const y = (-screenPosition.y + 1) / 2 * canvas.clientHeight;
+
+            htmlElement.style.left = `${x}px`;
+            htmlElement.style.top = `${y}px`;
+        }
+
+
+        function handleInteraction() {
+            if (!player) return;
+
+            const playerPos = player.position;
+            let closestPet = null;
+            let minDistance = INTERACT_DISTANCE;
+
+            for (const pet of pets) {
+                if (pet.mesh) {
+                    const dist = playerPos.distanceTo(pet.mesh.position);
+                    if (dist < minDistance) {
+                        minDistance = dist;
+                        closestPet = pet;
+                    }
+                }
+            }
+
+            if (closestPet) {
+                if (selectedItem) {
+                    // Use selected item on pet
+                    interactWithPet(closestPet, selectedItem.name);
+                    deselectItem();
+                } else {
+                    // General interaction (e.g., petting, playing)
+                    interactWithPet(closestPet, "Petting");
+                }
+            } else {
+                playSound('error');
+                console.log("No pet to interact with!");
+            }
+        }
+
+        function interactWithPet(pet, action) {
+            let happinessIncrease = 0;
+            let sound = 'pop';
+
+            if (action === "Petting") {
+                happinessIncrease = 15;
+                playSound('confirm');
+            } else {
+                const item = inventoryItemsData.find(i => i.name === action);
+                if (item) {
+                    if (coins >= item.cost) {
+                        coins -= item.cost;
+                        updateCoinsDisplay();
+                        happinessIncrease = item.happinessBoost;
+                        sound = 'coin_pickup'; // Sound for using an item
+                        console.log(`Used ${action} on ${pet.type}. Happiness +${happinessIncrease}. Coins left: ${coins}`);
+                    } else {
+                        playSound('error');
+                        console.log("Not enough coins to buy this item!");
+                        return; // Don't increase happiness if cannot afford
+                    }
+                }
+            }
+
+            if (happinessIncrease > 0) {
+                pet.happiness = Math.min(100, pet.happiness + happinessIncrease);
+                updateHappinessMeter(pet);
+                playSound(sound);
+                console.log(`${pet.type} happiness: ${pet.happiness}`);
+            }
+        }
+
+
+        // --- GAME OVER / WIN ---
+        function endGame(result) {
+            gameState = result;
+            gameMessages.style.display = 'flex'; // Show message
+            if (result === 'win') {
+                messageText.textContent = `You Win! You adopted ${adoptionsCount} pets!`;
+                playSound('jingle_win');
+            } else {
+                messageText.textContent = `Game Over! You adopted ${adoptionsCount} pets.`;
+                playSound('game_over');
+            }
+            setOn(false); // Pause game loop
+        }
+
+        // --- INITIALIZATION ---
+        function init() {
+            loadModel("businessman").then(model => {
+                if (model) {
+                    player = model;
+                    player.scale.set(0.8, 0.8, 0.8);
+                    player.position.set(0, 0, 0); // Start in center
+                    scene.add(player);
+
+                    if (model.animations && model.animations.length > 0) {
+                        playerMixer = new AnimationMixer(player);
+                        model.animations.forEach(clip => {
+                            playerAnimations[clip.name.toLowerCase()] = playerMixer.clipAction(clip);
+                        });
+                        playerAnimations['idle']?.play();
+                    }
+                } else {
+                    console.warn("Failed to load player model, using primitive.");
+                    const geometry = new CapsuleGeometry(0.5, 1);
+                    const material = new MeshStandardMaterial({ color: 0x6c5ce7 });
+                    player = new Mesh(geometry, material);
+                    player.position.set(0, 0.75, 0);
+                    scene.add(player);
+                }
+            });
+
+            updateCoinsDisplay();
+            scoreDisplay.textContent = `Adoptions: ${adoptionsCount}`;
+            sadPetsDisplay.textContent = `Sad Pets: ${sadPetsCount}/3`;
+
+            // Start music (optional)
+            playMusic('bg_loop_playful');
+
+            animate(); // Start the game loop!
+        }
+
+        init();
+
+        // --- WINDOW RESIZE HANDLING ---
+        window.addEventListener('resize', () => {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            renderer.setSize(width, height);
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+        });
+
+    </script>
+</body>
+</html>
