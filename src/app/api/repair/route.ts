@@ -70,7 +70,20 @@ export async function POST(req: NextRequest) {
   });
 
   const t0 = Date.now();
-  console.log(`[api/repair] ▶ code=${failureCode} userId=${userId} htmlChars=${html.length}`);
+  // Log WHAT broke, not just that something did (2026-08-15). The errors array
+  // has always been received and passed to the repair prompt, but never
+  // logged — so across 366 load_errors in production nobody could see the
+  // actual cause, and the same generation faults kept recurring invisibly.
+  // One truncated line makes them countable: `sort | uniq -c` over a week says
+  // which fault to fix at the source instead of healing it forever.
+  // It is a JS error string from generated code, so it carries no user text.
+  const firstError = (errors ?? [])[0];
+  const errorSummary = firstError
+    ? ` err="${String(firstError).replace(/\s+/g, " ").slice(0, 160)}"${(errors ?? []).length > 1 ? ` (+${(errors ?? []).length - 1} more)` : ""}`
+    : " err=none";
+  console.log(
+    `[api/repair] ▶ code=${failureCode} userId=${userId} htmlChars=${html.length}${errorSummary}`,
+  );
 
   let reply: string;
   let realUsage: { promptTokens: number; outputTokens: number; thoughtTokens: number; cachedTokens: number } | undefined;
@@ -110,10 +123,43 @@ export async function POST(req: NextRequest) {
     console.warn(`[api/repair] usage record failed (ignored): ${(err as Error).message}`);
   }
 
-  const patched = applyPatch(html, reply);
+  let patched = applyPatch(html, reply);
   if (!patched.ok) {
-    console.warn(`[api/repair] ✖ patch not applicable (${patched.reason}) @${Date.now() - t0}ms`);
-    return NextResponse.json({ error: patched.reason } satisfies RepairResponse, { status: 422 });
+    // ONE bounded rescue rung (2026-08-15). Until now a repair was a single
+    // shot: if the patch didn't apply, the child simply kept the broken game.
+    // Production over this log: 65 such dead ends — 29 `no_patch_in_reply`
+    // (the model answered in prose), 19 `search_not_found`, 9
+    // `search_ambiguous`. The chat EDIT path already solved exactly this with
+    // a strict retry that restates the source and demands a patch, and it
+    // works there (a real edit landed via `✓ edit patch (strict retry)` the
+    // same day). Reusing that call rather than inventing a second mechanism
+    // is the point: one proven rung, not two drifting ones.
+    //
+    // Bounded on purpose: one extra model call, only on the failure path, and
+    // only when we still hold the original html. A second failure means the
+    // model does not understand this fault, and asking again just spends the
+    // child's time.
+    const firstReason = patched.reason;
+    const faultLine = firstError
+      ? String(firstError).replace(/\s+/g, " ").slice(0, 300)
+      : `the game fails with: ${failureCode}`;
+    try {
+      const retry = await chatModel.strictEditRetry({
+        currentHtml: html,
+        message: `The game is broken. Fix this error and change nothing else: ${faultLine}`,
+      });
+      const retryApplied = applyPatch(html, retry.text);
+      if (retryApplied.ok) {
+        patched = retryApplied;
+        console.log(`[api/repair] ✓ rescued by strict retry (first: ${firstReason}) @${Date.now() - t0}ms`);
+      }
+    } catch (err) {
+      console.warn(`[api/repair] strict retry unavailable: ${(err as Error).message}`);
+    }
+    if (!patched.ok) {
+      console.warn(`[api/repair] ✖ patch not applicable (${patched.reason}) @${Date.now() - t0}ms`);
+      return NextResponse.json({ error: patched.reason } satisfies RepairResponse, { status: 422 });
+    }
   }
 
   // Floor the import map back in (BUG-FIX-LOG 2026-07-23): a repair patch can

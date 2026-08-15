@@ -124,6 +124,72 @@ export class PreviewVerifyController {
     this.beginRound(html);
   }
 
+  /**
+   * Repair the game the child is PLAYING, after verify has already settled
+   * (2026-08-15, owner decision). Everything before this only ever healed the
+   * load window: `handleMessage` drops messages once `settled` is true, so an
+   * error thrown mid-play reached nothing.
+   *
+   * The CALLER owns the decision (shouldHealMidPlay in midplay-heal.ts, which
+   * checks busy/one-shot/timing); this method owns the mechanics, and reuses
+   * the existing repair path exactly — same endpoint, same patch application,
+   * same fresh-round verification of the result — so a mid-play fix cannot
+   * drift from the load-time one.
+   *
+   * Returns true when a repair was actually attempted.
+   */
+  async healMidPlay(errors: readonly GameConsoleMessage[]): Promise<boolean> {
+    if (this.disposed || !this.settled || this.state.phase !== "done") return false;
+    if (!this.deps.repairEnabled) return false;
+    if (!errors.length) return false;
+    const html = this.state.currentHtml;
+    if (!html) return false;
+
+    const tRepair = this.deps.now();
+    // Same kid-facing cover as the load-time heal — the child sees "fixing
+    // it", not a game that silently vanishes and reappears different.
+    this.emit({ ...this.state, kidLine: `Oops — ${REPAIR_TAXONOMY.load_error.kidLine}`, question: null });
+
+    let patchedHtml: string | null = null;
+    try {
+      const res = await this.deps.fetchRepair({
+        html,
+        failureCode: "load_error",
+        evidence: null,
+        errors: errors.slice(0, 20),
+        originalRequest: this.originalRequest,
+      });
+      patchedHtml = res.patchedHtml?.trim() ? res.patchedHtml : null;
+    } catch {
+      patchedHtml = null;
+    }
+    this.deps.track("preview_repair", {
+      failure_code: "midplay_error",
+      attempt: 1,
+      success: Boolean(patchedHtml),
+      ms: Math.round(this.deps.now() - tRepair),
+    });
+    if (this.disposed) return true;
+    if (!patchedHtml) {
+      // Leave the child exactly as they were — a failed mid-play heal must
+      // never take the game away, which is the whole risk of touching a
+      // document someone is already playing.
+      this.emit({ ...this.state, kidLine: null });
+      return true;
+    }
+    // Swap the fixed game in and reload the iframe (round bump), with probes
+    // OFF so nothing ghost-clicks the child's controls.
+    this.emit({
+      ...this.state,
+      currentHtml: patchedHtml,
+      round: this.state.round + 1,
+      probesEnabled: false,
+      kidLine: null,
+      outcome: "repaired",
+    });
+    return true;
+  }
+
   /** Browser message events, forwarded verbatim by the adapter. */
   handleMessage(data: unknown): void {
     if (this.disposed || this.state.phase !== "testing" || this.settled) return;

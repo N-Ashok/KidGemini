@@ -6,6 +6,7 @@
 // 2026-07-10). This hook only wires browser events in and state out.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { GameConsoleMessage } from "@/types/game-console.types";
 import {
   PreviewVerifyController,
   type VerifyControllerState,
@@ -114,5 +115,20 @@ export function usePreviewVerify(html: string, originalRequest: string) {
     );
   }, []);
 
-  return { state, iframeRef, onIframeLoad, docKey: previewDocKey(generationRef.current, state.round) };
+  // Mid-play heal (2026-08-15): the caller decides WHETHER (midplay-heal.ts),
+  // the controller does the work. Exposed as a stable callback so an effect in
+  // ArtifactFrame can fire it without re-subscribing.
+  const healMidPlay = useCallback(
+    (errors: readonly GameConsoleMessage[]) =>
+      controllerRef.current?.healMidPlay(errors) ?? Promise.resolve(false),
+    [],
+  );
+
+  return {
+    state,
+    iframeRef,
+    onIframeLoad,
+    docKey: previewDocKey(generationRef.current, state.round),
+    healMidPlay,
+  };
 }

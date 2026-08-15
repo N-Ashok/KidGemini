@@ -23,6 +23,8 @@ import { injectPreviewRuntime, type PreviewTheme } from "@/lib/preview-runtime";
 import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
 import { keyToPanelAction, previewDisplay, UPDATING_LINE } from "@/lib/preview-pane";
 import { buildErrorReport, hasExtremeError } from "@/lib/error-report";
+import { shouldHealMidPlay, breakingErrors } from "@/lib/midplay-heal";
+import { repairEnabled } from "@/lib/verify-policy";
 import { usePreviewVerify } from "./usePreviewVerify";
 import { usePerfProbe } from "./usePerfProbe";
 import { useGameSaveChannel } from "./useGameSaveChannel";
@@ -285,7 +287,7 @@ export function ArtifactFrame({
     return () => window.removeEventListener("keydown", onKey);
   }, [expanded, onToggleExpand]);
 
-  const { state, iframeRef, onIframeLoad, docKey } = usePreviewVerify(html ?? "", originalRequest ?? "");
+  const { state, iframeRef, onIframeLoad, docKey, healMidPlay } = usePreviewVerify(html ?? "", originalRequest ?? "");
   // Perf Panel (docs/2026-07-30_PRD_PreviewPerfPanel.md) — debug-only, same
   // gate as the console tab. Harmless to mount unconditionally: it's just a
   // message listener until a snapshot arrives, and the injected probe script
@@ -531,6 +533,44 @@ export function ArtifactFrame({
     el.focus({ preventScroll: true });
   }, [settled, docKey, tab, iframeRef]);
 
+
+  // MID-PLAY SELF-HEAL (2026-08-15, owner decision). Until now the auto-heal
+  // covered only the load window: the verify controller settles and then
+  // discards every console message, so a game that broke while the child was
+  // PLAYING was never sent to Ari — it only lit up the error affordance. Owner:
+  // "when there is an error the browser should automatically push to Ari and
+  // solve it... now more than ever, i see error reports [and broken games]."
+  //
+  // The decision lives in midplay-heal.ts (pure, tested); this only supplies
+  // the live signals. `busy` is passed deliberately — the 2026-08-11 incident
+  // was a background effect firing a turn while the child's own edit streamed,
+  // and every passive trigger must check it for itself.
+  const settledAtRef = useRef<number | null>(null);
+  const midPlayHealsRef = useRef<Record<string, number>>({});
+  useEffect(() => {
+    settledAtRef.current = settled ? Date.now() : null;
+  }, [settled, docKey]);
+  useEffect(() => {
+    if (!settled) return;
+    const settledAt = settledAtRef.current;
+    if (settledAt === null) return;
+    const errors = breakingErrors(consoleMessages);
+    const spent = midPlayHealsRef.current[docKey] ?? 0;
+    if (
+      !shouldHealMidPlay({
+        enabled: repairEnabled(),
+        settled,
+        busy: Boolean(busy),
+        healsThisDoc: spent,
+        msSinceSettle: Date.now() - settledAt,
+        hardErrorCount: errors.length,
+      })
+    ) {
+      return;
+    }
+    midPlayHealsRef.current[docKey] = spent + 1;
+    void healMidPlay(errors);
+  }, [consoleMessages, settled, busy, docKey, healMidPlay]);
 
   const errorCount = consoleMessages.filter((m) => m.level === "error").length;
   // "Something unexpected happened" — the game threw, or verify gave up.

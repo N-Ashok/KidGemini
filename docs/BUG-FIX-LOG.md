@@ -11,6 +11,62 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-15 — plain chat answers again, "realistic" means 3D, and the road-tile kit is withheld
+
+Three owner reports in one sitting, all about the model reading a child too literally.
+
+**1. Ordinary chat stopped getting answers** (KNOWN_BUGS #13). "it used to answer kids on
+regular chat... when kids don't ask for a game, it don't reply. it still generates games." Cause
+was routing: `isGameBuildTurn` ended with `history.some(m => m.artifactHtml)`, so once a chat
+contained ANY game every later message was a builder/edit turn — a question arrived wrapped in a
+patch contract. Production confirmed the drift: the off-topic branch fired on **15 of 419 edit
+turns (3.6%) in the older half of the pm2 log and 4 of 860 (0.5%) in the recent half**.
+- Fix (a), shipped first by owner instruction: the hedge in `GAME_EDIT_PROMPT_SECTION` is now an
+  explicit (A) change-the-game / (B) they-are-talking-to-you decision BEFORE the patch rules,
+  with concrete examples, and restated AFTER them.
+- Fix (b): `looksLikePlainChat()` — deliberately narrow, fires only on an unmistakable question
+  or greeting carrying no change word. "can you make the car red?" is question-shaped and still
+  routes as an edit; wrongly answering a real edit request costs the child their change, which is
+  worse than wrongly building on a question.
+- This reverses a test that explicitly required "what do pandas eat?" to be an edit turn.
+
+**2. "Realistic" did not mean 3D** (KNOWN_BUGS #14). Owner: "when child is asking realistic, he
+is asking for 3D... we need to understand the intent from child, not verbatim." Measured: "make
+it realistic", "look real", "like real life", "lifelike", "a real looking car" ALL left the 3D
+catalog off, because `THREE_ASK_RE` matches only the literal token. **This could not be fixed by
+prompt wording** — when the gate is off the 3D playbook, model library, AR_ASSETS and placeModel
+are never sent, so the text that would teach it is exactly what is withheld.
+- Fix: `THREE_INTENT_RE`, used ONLY by the catalog gate. It never makes a message a build turn
+  ("the film was realistic" is chat) and never counts as the explicit ask that converts a working
+  2D game to 3D — silently rebuilding a child's 2D game over one word would be worse than the bug.
+- The prompt also teaches what those words mean, and now teaches chase-camera placement: "behind"
+  is the opposite of the direction of TRAVEL, not of +Z. That was the owner's candy-racer report
+  — the view sat in front of the car and it drove in reverse, which is the `car` faces -Z bug.
+
+**3. The road/race-track tile kit is withheld from the model entirely** (KNOWN_BUGS #15). Owner:
+"the patch of race track don't stick together... better we remove the patch race track and use
+the model only to make the road and loops" and then "keep the kit out of the llm's reach, don't
+ever use it." This was the FOURTH round on the same class (pathAxis, joins/lane/fitTile, the
+one-kit-one-scale rule, rotateToJoin) — and the kit cannot be fixed: 11 square pieces at a fixed
+module cannot express a smooth curve or a loop, so any non-axis-aligned track seams BY
+CONSTRUCTION.
+- Withheld by DATA (`pathRole: "tile"`), not a name list, at both places names reach the model.
+  `retrievedModelNames` needed a post-filter as well, because `selectModelNames` reads the
+  manifest directly and would otherwise surface a tile a child named outright.
+- Replaced with teaching that builds the road as geometry along a list of points — seamless by
+  construction, closes into a loop when the last point meets the first, kerbs and banking are the
+  same walk offset or tilted.
+- The manifest entries, AR_ASSETS injection and the fitTile/modelJoins/modelAxis helpers all
+  REMAIN: ~200 stored games call them and removing that path would break games that work today
+  (rule 11). Verified both halves — no tile leaks into the taught catalog or is retrievable by
+  name, and a stored game using `race_track_corner` still resolves its URL and helpers.
+- The 3D prompt section's documented ~2525-token ceiling caught two of these additions; the
+  wording was trimmed rather than the ceiling raised, since that ceiling is paid on every 3D turn.
+
+Full suite 2528 passed, typecheck clean. NOT deployed.
+
+---
+
 ## 2026-08-15 — the model was told two things about 3D assets that were not true (axis, size, direction)
 
 - **Report (owner):** "i still feel the llm is not getting the axis, size, direction correct."
