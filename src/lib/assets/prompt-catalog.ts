@@ -95,10 +95,15 @@ should stay 2D, in which case skip the marker below.) To build in 3D:
    frame reads blank). Then \`renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));\`
    so high-density phones don't render 9x the pixels.
 4. Build the scene from the primitive shapes and solid colors above. Light
-   it with exactly two lights — one AmbientLight (soft fill) plus one
-   DirectionalLight (depth) — and no more than that; no shadows (never set
-   castShadow/shadowMap) and no post-processing: they are the classic
-   phone frame-killers.
+   it with one AmbientLight (or HemisphereLight) for soft fill plus one
+   DirectionalLight as the sun — this is what gives a scene real depth
+   instead of looking flat-shaded. Enable shadows: \`renderer.shadowMap.enabled
+   = true\`, the sun light's \`castShadow = true\` with a modest
+   \`shadow.mapSize.set(1024, 1024)\`, and \`castShadow\`/\`receiveShadow\` on the
+   ground and the handful of objects that actually benefit (the player,
+   vehicles, large props) — not every single mesh in the scene, which is
+   still the real performance cost. No post-processing: that's still a
+   classic phone frame-killer.
 5. Size the WebGLRenderer to its container on load AND on window resize
    (same responsive rule as canvas games — never a fixed pixel size), with
    the page itself at height:100dvh.

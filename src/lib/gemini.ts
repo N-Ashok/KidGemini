@@ -269,6 +269,18 @@ const GAME_BUILD_CONTRACT = `respond with a single HTML document wrapped in a
   Render the score as an HTML element with id="score" (a real DOM element that
   updates as the player scores — not text drawn inside a canvas), so the
   Ariantra platform can track high scores automatically when it's published.
+- Show a START SCREEN before play begins: the game's name, one sentence
+  saying what the goal is, and its controls, dismissed by a clear Start/Play
+  button — a player who has never seen this game before must know what to do
+  before the first frame of actual play. If any status/message element shows
+  a welcome or instruction message, that message must be VISIBLE the moment
+  play begins, not hidden behind CSS that only reveals it once a later
+  gameplay event fires — an empty-looking styled box until the first random
+  trigger happens is a bug, not a subtle style choice.
+- If the request names specific entities (a particular animal, vehicle,
+  character, hazard, or object), EVERY one of them must actually appear and
+  be interactive in the built game — an entity the request asked for that
+  got silently dropped is a bug, not an acceptable simplification.
 - Start the game loop immediately and synchronously when the script loads —
   never wrap the setup or the loop in an async function or behind an await:
   canvas sizing, world generation and the first requestAnimationFrame must all
@@ -299,6 +311,25 @@ const GAME_BUILD_CONTRACT = `respond with a single HTML document wrapped in a
   short unique landmark is far easier to relocate exactly than a large block
   of gameplay logic — this makes future edits land cleanly instead of
   requiring the whole game to be rebuilt.
+- Build the HUD (score, health/status bars, on-screen buttons, messages) as
+  ONE reusable "panel" component, not several one-off boxes — this is what
+  makes a HUD look professionally designed instead of assembled from random
+  parts. Pick 4-6 hex colours for the WHOLE game (a CSS custom-property
+  palette on \`:root\`) and use only those. Give every HUD box the same
+  translucent-panel treatment: a semi-transparent background, a 1px
+  semi-transparent border, rounded corners, and \`backdrop-filter: blur(6px)\`
+  so it reads as glass over the game world, not an opaque sticker on top of
+  it. Label every stat in small uppercase letter-spaced text (e.g.
+  \`font-size:10px;letter-spacing:.06em;text-transform:uppercase;opacity:.7\`)
+  ABOVE its value or bar, never plain-cased inline text. Render any bar (health,
+  progress, cooldown) as a track element containing a fill element whose WIDTH
+  changes with a short CSS \`transition\` (150-250ms) — never redraw it on a
+  canvas. Give every button a matching translucent-panel style plus a hover
+  state, an active/pressed state (e.g. \`transform:translateY(1px)\`), and,
+  where a button toggles something (anchor down, sound on), a distinct "on"
+  state using one of the palette's accent colours as a solid fill. Use one
+  brief toast/status element for game messages (fixed position, fades in/out
+  via opacity transition) instead of \`alert()\` or scattered inline text.
 - Keep it wholesome; work fully offline unless a CDN library is allowed above.`;
 
 // Exported so tests can pin the child-safety instruction (it replaced the

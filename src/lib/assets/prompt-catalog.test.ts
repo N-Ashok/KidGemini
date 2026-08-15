@@ -51,14 +51,15 @@ describe("THREE_PROMPT_SECTION — §7 render budget on kid hardware", () => {
   it("caps the pixel ratio at 2", () => {
     expect(THREE_PROMPT_SECTION).toMatch(/Math\.min\(\s*(window\.)?devicePixelRatio,\s*2\s*\)/);
   });
-  it("forbids shadows and post-processing", () => {
-    expect(THREE_PROMPT_SECTION).toMatch(/no shadows/i);
+  it("allows shadows with a modest map size, still forbids post-processing", () => {
+    expect(THREE_PROMPT_SECTION).toMatch(/shadowMap\.enabled/i);
+    expect(THREE_PROMPT_SECTION).toMatch(/castShadow/);
+    expect(THREE_PROMPT_SECTION).toMatch(/shadow\.mapSize/);
     expect(THREE_PROMPT_SECTION).toMatch(/post-processing/i);
   });
-  it("limits lights to ambient + one directional", () => {
-    expect(THREE_PROMPT_SECTION).toMatch(/AmbientLight/);
+  it("requires ambient/hemisphere fill plus one directional sun light", () => {
+    expect(THREE_PROMPT_SECTION).toMatch(/AmbientLight|HemisphereLight/);
     expect(THREE_PROMPT_SECTION).toMatch(/DirectionalLight/);
-    expect(THREE_PROMPT_SECTION).toMatch(/at most (one|two)|only .* lights|no more than/i);
   });
   it("keeps poly count low for phones", () => {
     expect(THREE_PROMPT_SECTION).toMatch(/low|handful/i);
