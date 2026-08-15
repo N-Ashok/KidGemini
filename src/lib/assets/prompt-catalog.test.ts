@@ -233,7 +233,17 @@ describe("modelsPromptSection — the catalog version-locks with the manifest (P
 // FULL manifest, so those names always worked — we were simply not telling it.
 describe("the catalog teaches the WHOLE library (so the LLM can design against it)", () => {
   const real = realManifest as AssetManifest;
-  const realModels = real.assets.filter((a) => a.type === "model").map((a) => a.name);
+  // Path TILES are withheld from the model entirely (owner decision
+  // 2026-08-15: "keep the kit out of the llm's reach, don't ever use it"), so
+  // the offered library is the manifest MINUS pathRole:"tile". They remain in
+  // the manifest and in the runtime helpers for the ~200 stored games that
+  // already call them.
+  const realModels = real.assets
+    .filter((a) => a.type === "model" && a.pathRole !== "tile")
+    .map((a) => a.name);
+  const tileModels = real.assets
+    .filter((a) => a.type === "model" && a.pathRole === "tile")
+    .map((a) => a.name);
   const section = modelsPromptSection(real);
 
   // REPLACED 2026-08-09 by the hybrid: the guarantee is no longer "every name
@@ -255,6 +265,16 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     expect(unreachable).toEqual([]);
   });
 
+  it("and CANNOT reach a path tile, however the child asks", () => {
+    // The whole point of the withholding: even naming the piece must not
+    // surface it, or the model will try to build a track out of squares again.
+    expect(tileModels.length).toBeGreaterThan(0);
+    for (const tile of tileModels) {
+      const names = retrievedModelNames({ message: `make a track with ${tile}`, history: [], manifest: real });
+      expect(names).not.toContain(tile);
+    }
+  });
+
   // Regression, 2026-08-08 (BUG-FIX-LOG fragmented race tracks): the section
   // used to say "models load at their own natural size — set m.scale and
   // m.position so they fit your scene", which is an instruction to guess with
@@ -268,11 +288,14 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     expect(section).not.toMatch(/load at their own natural size/);
   });
 
-  it("shows tiles being stepped by their measured footprint, not by a made-up number", () => {
-    expect(section).toMatch(/edge-to-edge/);
-    // .x, not .z (2026-08-08): road_straight RUNS along X, so stepping it by
-    // its z would lay the row across the road — the very bug being fixed.
-    expect(section).toMatch(/modelSize\("road_straight"\)\.x/);
+  it("teaches roads as GEOMETRY, never as tiles (owner decision 2026-08-15)", () => {
+    // "keep the kit out of the llm's reach, don't ever use it." A square-grid
+    // kit cannot express a smooth curve or a loop — every join is a right
+    // angle at a fixed module, so a non-axis-aligned track seams by
+    // construction, which four rounds of fixes could not change.
+    expect(section).toMatch(/ROADS AND TRACKS ARE GEOMETRY YOU BUILD/);
+    expect(section).toMatch(/there is no\s+road piece in the library/);
+    expect(section).not.toMatch(/fitTile|modelJoins|race_track_|road_straight/);
   });
 
   it("does not depend on the child's message — this is what makes the prefix cacheable", () => {
@@ -618,7 +641,8 @@ describe("the facing convention is taught (2026-08-06)", () => {
     const section = modelsPromptSection(realManifest as AssetManifest);
     expect(section).toContain("modelFacing(name)");
     expect(section).toContain("placeModel");
-    expect(section).toContain("modelAxis(name)");
+    // modelAxis() was tile-only guidance and went with the kit (2026-08-15).
+    expect(section).not.toContain("modelAxis(name)");
     // Neither blanket claim may come back — both were false.
     expect(section).not.toMatch(/Every model faces \+Z/);
     expect(section).not.toMatch(/VEHICLES\/CHARACTERS face \+Z/);

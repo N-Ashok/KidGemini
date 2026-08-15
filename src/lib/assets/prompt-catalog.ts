@@ -168,16 +168,43 @@ function categoryCountLines(available: Set<string>): string {
  *      category, so "a fun game" still sees the whole shape of the library;
  *   5. the core basics last.
  */
+/** Path TILES are withheld from the model entirely (owner decision
+ *  2026-08-15: "keep the kit out of the llm's reach, don't ever use it").
+ *
+ *  A square-grid kit of 11 pieces cannot express a smooth curve or a loop:
+ *  every join is a right angle at a fixed module size, so any track that is
+ *  not axis-aligned has a seam BY CONSTRUCTION. Four rounds of fixes proved
+ *  that the hard way — `pathAxis` (2026-08-08), `joins`/`joinOffsets`/`lane`
+ *  plus `fitTile` (2026-08-09), the one-kit-one-scale rule, and
+ *  `rotateToJoin` — and tracks still came out fragmented in a real child's
+ *  game. The reliable shape is a road generated as geometry along a curve,
+ *  which joins perfectly by definition and does loops for free.
+ *
+ *  Defined by DATA (`pathRole: "tile"`), not a name list, so a tile added to
+ *  the manifest later is withheld automatically. `finish_line` is
+ *  `pathRole: "prop"` and stays offered — it is a banner, not a road piece.
+ *
+ *  NOTE this withholds them from the PROMPT only. The manifest entries, the
+ *  AR_ASSETS injection and the fitTile/modelJoins/modelAxis runtime helpers
+ *  all remain, because ~200 stored games already call them and removing that
+ *  path would break games that work today (CLAUDE.md rule 11). */
+function offerableModels(manifest: AssetManifest) {
+  return manifest.assets.filter((a) => a.type === "model" && a.pathRole !== "tile");
+}
+
 export function retrievedModelNames(input: {
   message: string;
   history: ChatMessage[];
   manifest?: AssetManifest;
 }): string[] {
   const manifest = input.manifest ?? (manifestJson as AssetManifest);
-  const available = new Set(
-    manifest.assets.filter((a) => a.type === "model").map((a) => a.name),
+  const available = new Set(offerableModels(manifest).map((a) => a.name));
+  // selectModelNames reads the manifest directly (name matches, tags, genres),
+  // so a child naming a tile outright would surface it despite `available`
+  // above — filter the final list against what may be offered at all.
+  const picked = new Set(
+    selectModelNames({ ...input, manifest }).filter((n) => available.has(n)),
   );
-  const picked = new Set(selectModelNames({ ...input, manifest }));
 
   // The spread: whatever selection found, top up with a sample from every
   // category so no category is ever invisible. Sampled from the FRONT of each
@@ -247,7 +274,7 @@ export function modelNamesBlock(names: readonly string[]): string {
 export function modelsPromptSection(
   manifest: AssetManifest = manifestJson as AssetManifest,
 ): string {
-  const models = manifest.assets.filter((a) => a.type === "model");
+  const models = offerableModels(manifest);
   if (models.length === 0) return "";
   const available = new Set(models.map((m) => m.name));
   const people = peopleModels(available);
@@ -284,6 +311,12 @@ what you need and use the names you are given.
    standing human is ~1.7 units tall; scale every other placeholder against
    that (a ball ≈0.22, a car ≈1.5 tall × 4.5 long, a house ≈3-6 tall). A
    placeholder that looks right next to a human placeholder looks right.
+3b. HEAR THE INTENT, not the words. Children rarely say "3D" — they say
+   "realistic", "make it look real", "like real life", "lifelike", "not flat".
+   All of those mean: use the REAL MODELS above, with depth and lighting — not
+   a more detailed 2D drawing. EXCEPTION: if they already have a working 2D
+   game, improve it instead; never silently rebuild it in 3D over that one
+   word.
 4. \`placeModel(name, opts)\` puts a model in the world CORRECTLY — standing on
    the ground, at a believable size, pointing where you want. Prefer it over
    bare \`loadModel\` for anything you position:
@@ -292,18 +325,20 @@ what you need and use the names you are given.
     const house = await placeModel("house", { at: {x: 8, z: 0}, metres: true });
     scene.add(house);\`
    \`at\` {x,z} · \`heading\` "+z"/"-z"/"+x"/"-x" or radians · \`metres: true\`
-   scales to real-world size · \`scale\` an explicit multiplier · \`y\` ground
-   height if your terrain isn't flat. It measures the loaded model, so its base
-   always rests on the ground — never assume a model is centred or floored.
-   NEVER assume which way a model faces. They genuinely differ: \`car\` faces -Z,
-   \`airplane\` faces +X, \`crocodile\` and \`dog\` face +Z. \`modelFacing(name)\`
-   gives it ("+z"/"-z"/"+x"/"-x", null = unaudited); \`placeModel\`'s \`heading\`
-   uses it for you, and leaves rotation alone when it is null.
+   for real-world size · \`scale\` a multiplier · \`y\` ground height. It measures
+   the model, so its base always rests on the ground.
+   NEVER assume which way a model faces — they differ (\`car\` -Z, \`airplane\`
+   +X, \`dog\` +Z). \`modelFacing(name)\` gives it (null = unaudited);
+   \`placeModel\`'s \`heading\` uses it for you.
+   A CHASE CAMERA GOES BEHIND, and "behind" is the opposite of the direction
+   the thing TRAVELS — not the opposite of +Z. Decide the travel direction
+   first, drive along it, and put the camera back along it: get that backwards
+   and the child watches the car's face while driving in reverse.
    SIZES COME IN TWO FLAVOURS, don't mix them up:
    \`modelSize(name)\` = the model's own units as published — what it measures on
-   screen at scale 1. NEVER guess a size or spacing — a road piece is ~1 m, not
-   10. Use it to work out a SCALE, and to step tiles edge-to-edge:
-   \`const w = modelSize("road_straight").x; place(i * w);\`
+   screen at scale 1. NEVER guess a size or spacing. Use it to work out a SCALE,
+   and to space things by their real footprint:
+   \`const w = modelSize("house").x; place(i * w * 1.5);\`
    \`modelMetres(name)\` = how big the thing is in REAL LIFE. Use it to decide how
    big something SHOULD be. They are not the same number and the catalog's own
    units are not consistent between models — by \`modelSize\` alone a mountain
@@ -311,14 +346,13 @@ what you need and use the names you are given.
    next to a car at the wrong scale. Either pass \`metres: true\`, or scale
    explicitly: \`obj.scale.setScalar(modelMetres(n).y / modelSize(n).y)\`.
    Both answer null when unknown — then eyeball it.
-   ROAD TILES DON'T FACE ANYTHING: \`modelAxis(name)\` gives the run axis
-   ("x"/"z"/"none"/null); kits differ and a square tile's size can't reveal it.
-   TRACKS: ONE kit (\`road_*\` OR \`race_track_*\`), every piece scaled by the
-   SAME number. NEVER guess a rotation — name the directions the road LEAVES
-   each cell and \`fitTile\` does it (a 2 m piece covers TWO 1 m cells):
-   \`// corner with track to the north and east:
-    t.rotation.y = fitTile("race_track_corner", ["-z", "+x"]);\`
-   null = wrong PIECE there. \`modelJoins(n)\` = edges + lane width.
+   ROADS AND TRACKS ARE GEOMETRY YOU BUILD, never props you tile — there is no
+   road piece in the library, do not look for one. Lay the route out as a list
+   of points, then walk them: for each segment add a flat box centred on it,
+   turned to face the next point, as wide as the road. Neighbouring segments
+   share an edge, so it is seamless by construction and closes into a loop when
+   the last point meets the first. Kerbs, centre lines and banking are the same
+   walk with a narrower strip offset or tilted.
 5. Some models carry NAMED animations in \`m.animations\` — don't blindly play
    \`m.animations[0]\`: it's often an idle pose, or even an attack, so picking
    it for a "running" character makes it look like it's attacking instead of
