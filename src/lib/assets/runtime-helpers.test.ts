@@ -14,6 +14,7 @@ import {
   insertEarly,
   loadModelHelper,
   loadModelBatchHelper,
+  LOAD_MODEL_BATCH_VERSION,
   LOAD_MODEL_HELPER_VERSION,
   MAX_TRACKED_INSTANCES,
   parseSizeTables,
@@ -168,20 +169,45 @@ describe("loadModelBatchHelper — generated script shape", () => {
     expect(script).toMatch(/template\.animations\.length[\s\S]*?does not support animated models/);
   });
 
+  // NOTE (2026-08-15): the three tests below used to pin the script's exact
+  // TEXT — `new InstancedMesh(part.geometry, …)` and
+  // `box.copy(parts[0].geometry.boundingBox)` — which is how the placement bug
+  // survived: they asserted the broken expression as though it were the spec,
+  // so they passed for as long as the bug existed and failed the moment it was
+  // fixed. Behaviour that regexes cannot see is covered by
+  // scripts/check-batch-parity.mts, which compares batched against single
+  // placement for every model in a real browser.
   it("creates one InstancedMesh per distinct geometry\\/material part and adds it to a container added once", () => {
-    expect(script).toMatch(/new InstancedMesh\(part\.geometry, part\.material, count\)/);
+    expect(script).toMatch(/new InstancedMesh\(part\.mesh\.geometry, part\.mesh\.material, count\)/);
     expect(script).toMatch(/container\.add\(im\)/);
   });
 
-  it("setInstance writes a composed TRS matrix into every part's InstancedMesh and flags it dirty", () => {
+  it("captures each part's transform INSIDE the model, relative to the model root", () => {
+    // Without this, a batched prop loses the node transforms that stand it
+    // upright, sit it on the ground and scale it to real-world metres.
+    expect(script).toMatch(/template\.scene\.updateMatrixWorld\(true\)/);
+    expect(script).toMatch(/rootInverse[\s\S]*?template\.scene\.matrixWorld[\s\S]*?invert\(\)/);
+    expect(script).toMatch(/local:\s*new Matrix4\(\)\.multiplyMatrices\(rootInverse, child\.matrixWorld\)/);
+  });
+
+  it("setInstance bakes the part transform into the instance matrix and flags it dirty", () => {
     expect(script).toMatch(/matrix\.compose\(__arPos, __arQuat, __arScale\)/);
-    expect(script).toMatch(/meshes\[m\]\.setMatrixAt\(i, matrix\)/);
+    // instance transform FIRST, then the part's place within the model.
+    expect(script).toMatch(/__arPartMatrix\.multiplyMatrices\(matrix, parts\[m\]\.local\)/);
+    expect(script).toMatch(/meshes\[m\]\.setMatrixAt\(i, __arPartMatrix\)/);
     expect(script).toMatch(/meshes\[m\]\.instanceMatrix\.needsUpdate = true/);
   });
 
-  it("boundsAt derives a Box3 from the geometry's boundingBox transformed by the instance matrix (the Box3.setFromObject replacement)", () => {
+  it("boundsAt unions EVERY part, so a multi-part model reports its whole collision box", () => {
     expect(script).toMatch(/boundsAt:\s*function\s*\(i\)/);
-    expect(script).toMatch(/box\.copy\(parts\[0\]\.geometry\.boundingBox\)\.applyMatrix4\(matrix\)/);
+    expect(script).toMatch(/box\.makeEmpty\(\)/);
+    expect(script).toMatch(/box\.union\(partBox\)/);
+  });
+
+  it("stamps a version so ensureAssetRuntime can replace a stale copy in a stored game", () => {
+    expect(script).toMatch(
+      new RegExp(`window\\.__arLoadModelBatchVersion = ${LOAD_MODEL_BATCH_VERSION}`),
+    );
   });
 
   it("fails soft (returns null, warns) rather than throwing on a bad name or a load failure", () => {

@@ -12,9 +12,16 @@
 import { describe, it, expect } from "vitest";
 import { ensureAssetRuntime } from "./ensure-runtime";
 import { PERF_PROBE_MARKER, buildPerfProbeScript } from "./perf-probe";
+import { buildResolutionGovernorScript } from "./resolution-governor";
 import manifestJson from "./manifest.json";
 import type { AssetManifest } from "./manifest";
-import { countSizeTables, parseSizeTables, webglContextGuard, WEBGL_GUARD_VERSION } from "./runtime-helpers";
+import {
+  countSizeTables,
+  parseSizeTables,
+  webglContextGuard,
+  WEBGL_GUARD_VERSION,
+  LOAD_MODEL_BATCH_VERSION,
+} from "./runtime-helpers";
 
 const manifest = manifestJson as AssetManifest;
 const ENGINE = manifest.assets.find((a) => a.type === "engine")!.url;
@@ -54,14 +61,16 @@ describe("ensureAssetRuntime — the three-importmap floor", () => {
 
   it("F.3 idempotent: a fully-floored 3D game is unchanged", () => {
     // The floor grew a fourth element on 2026-07-30 (the perf probe, after the
-    // 2026-07-29 governor) and a FIFTH on 2026-08-10 (the WebGL context
-    // guard). The property under test is unchanged: running the floor over
-    // already-floored HTML must be a no-op.
+    // 2026-07-29 governor), a FIFTH on 2026-08-10 (the WebGL context guard)
+    // and a SIXTH on 2026-08-15 (the adaptive resolution governor). The
+    // property under test is unchanged: running the floor over already-floored
+    // HTML must be a no-op.
     const injected = page(
       `<script type="importmap">${JSON.stringify({ imports: { three: ENGINE } })}</script>` +
         `<style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style>` +
         `<script>window.__arFrameGovernor = 1;</script>` +
         webglContextGuard() +
+        buildResolutionGovernorScript() +
         `${PERF_PROBE_MARKER}<script>${buildPerfProbeScript()}</script>` +
         `<script type="module">import { Scene } from "three";</script>`,
     );
@@ -266,6 +275,35 @@ window.loadModel = async function (name) {
     const out = ensureAssetRuntime(raw);
     expect(out).toContain("window.loadModelBatch");
     expect(ensureAssetRuntime(out)).toBe(out); // idempotent
+  });
+
+  it("F.14b a game carrying the ORIGINAL unstamped batch helper is upgraded, not left alone", () => {
+    // The 2026-08-15 bug: v1's loadModelBatch dropped each part's in-model
+    // transform, so every batched prop rendered rotated/sunk/un-normalised
+    // ("the trees were lying down", "the car goes through the houses").
+    // Gating on the helper's mere PRESENCE — as this did — means the games
+    // that HAVE the broken helper are exactly the ones the fix skips. Same
+    // trap as the WebGL guard (2026-08-11) and the perf probe before it.
+    const stale = page(
+      `<script type="module">import { Scene } from "three"; loadModel("tree"); loadModelBatch("tree", 40);</script>` +
+        `<script type="module">window.loadModelBatch = async function () { /* v1, unstamped */ return null; };</script>`,
+    );
+    const out = ensureAssetRuntime(stale);
+    expect(out).toContain(`window.__arLoadModelBatchVersion = ${LOAD_MODEL_BATCH_VERSION}`);
+    expect(out).not.toContain("/* v1, unstamped */");
+    // Exactly one helper — a stale copy left in place would run alongside
+    // (and after) the fresh one and win.
+    expect(out.match(/window\.loadModelBatch\s*=/g)?.length).toBe(1);
+    expect(ensureAssetRuntime(out)).toBe(out); // and settles
+  });
+
+  it("F.14c a game already carrying the CURRENT batch helper is left byte-identical", () => {
+    const raw = page(
+      `<script type="module">import { Scene } from "three"; loadModel("tree"); loadModelBatch("tree", 40);</script>`,
+    );
+    const once = ensureAssetRuntime(raw);
+    expect(once).toContain(`window.__arLoadModelBatchVersion = ${LOAD_MODEL_BATCH_VERSION}`);
+    expect(ensureAssetRuntime(once)).toBe(once);
   });
 
   it("F.15 a game that only calls loadModel (no batch) does NOT get the batch helper floored in", () => {

@@ -886,6 +886,23 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   real game, hidden-tab rendering went 53.3 fps → 0. Published arcade games are
   static S3 HTML and cannot be reached. Also new: a rule against letting dead
   objects fill a spawn cap, after a tank game deadlocked into an empty arena
+- **Adaptive resolution governor** (2026-08-15, `src/lib/assets/resolution-governor.ts`;
+  owner report: "in production the 3d games are slow", on a **Chromebook**): every 3D game
+  renders at full device resolution, because the playbook has the model call
+  `setPixelRatio(Math.min(devicePixelRatio, 2))`. On a weak integrated GPU that is the whole
+  problem — the reported game had nothing to cut (24 meshes, 63k triangles, 23 draw calls,
+  0.6ms of JS per frame, 60fps on an M2), yet ran 14-28fps in production. Measured: at an
+  880x1400 drawing buffer it managed 30fps on a fill-limited renderer and 59fps at half the
+  pixels, while switching to cheap non-PBR shading moved it 30 → 32, i.e. nothing. So the
+  governor watches rAF ticks and spends only the pixels the device can afford, walking a ladder
+  (2 → 1.5 → 1 → 0.75): down after 2s under 50fps, back up only after 5s at 58fps+, never above
+  the ratio the game itself chose, and it stops retrying a level that has failed twice.
+  Samples taken while `document.hidden` (or at 0fps) are ignored, so a backgrounded preview
+  cannot walk itself to the floor. **Silent by owner decision** — no kid-facing banner, no
+  server report; the game simply gets smooth. Injected via `ensureAssetRuntime`, the same route
+  as the frame governor and WebGL guard, so the ~200 stored games get it without regeneration.
+  Verified on the child's real stored game under a fill-limited renderer: 37fps → 53fps, with
+  the governor dropping the buffer to 660x1050 on its own.
 - **Preview Perf Panel** (2026-07-30,
   `docs/2026-07-30_PRD_PreviewPerfPanel.md`; owner ask: a 3D cricket game with
   24 separately-animated characters heated up a laptop, with no way to tell

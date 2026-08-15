@@ -11,6 +11,94 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-15 — batched scenery placed rotated, sunk and un-normalised (`loadModelBatch` v1)
+
+- **Report (owner, watching his daughter build a car game):** "the trees were lying down and no
+  vertical"; "she was expecting the car to not go through the mountains and houses and so on but
+  it was not working like that"; "the hills on the way of the car/road"; and the village she kept
+  asking for "was not like the village she expected".
+- **Root cause:** `loadModelBatchHelper()` built each `InstancedMesh` from `part.geometry` alone
+  and threw away every part's transform INSIDE the model (`part.matrixWorld`). A mesh in a GLB is
+  almost never at the model origin with unit scale — kits park parts under rotated/offset nodes —
+  and `loadModel()` additionally normalises the model to real-world metres (AR_SIZES) and stands
+  its base on y=0. All of that lives in the node transforms of the subtree `loadModel()` returns,
+  none of it in the geometry. So every batched prop rendered rotated, sunk into the ground, and at
+  the kit's raw ~2-unit scale.
+- **Scale of it:** `scripts/check-batch-parity.mts` (new, see below) compared both paths for every
+  model in the manifest: **267 of 271 batchable models placed differently.** `snow_pine` came out
+  1.25x3.34x1.39 → 0.75x0.83x2.00 (on its side); `mountain` likewise; a batched `airplane` was 2m
+  long instead of 36m; `hill_block` doubled to [2,2,2] — which is how hills ended up in the road.
+- **Why it broke COLLISION without touching any collision code:** games record a solid at the
+  LOGICAL instance position (`solids.push({x: tx, z: tz, r: 3})`) while the mesh is drawn
+  somewhere else entirely. The car then stops at invisible walls and drives through visible
+  houses. Verified in the child's actual stored game (conversation `7aa4a11a…`): its collision
+  code was correct and present the whole time.
+- **Where it came from:** v1 shipped 2026-08-10 as part of the draw-call/instancing push, and the
+  prompt was changed the same day to TEACH the model to batch scenery — so the performance fix
+  quietly broke placement for exactly the props kids ask for most (trees, houses, hills).
+- **Why no test caught it:** the only coverage asserted the generated script's TEXT
+  (`expect(script).toMatch(/new InstancedMesh\(part\.geometry, …/)`) — it pinned the broken
+  expression as though it were the spec, so it passed while the bug existed and failed the moment
+  it was fixed. A regex over an injected `<script>` string cannot see placement.
+- **Fix:** capture each part's matrix relative to the model root
+  (`rootInverse * child.matrixWorld`) and bake it into every instance matrix
+  (`instance * part.local`). Derived from the live subtree rather than re-implementing
+  `loadModel()`'s normalisation, so the two paths cannot drift apart again. `boundsAt(i)` now
+  unions EVERY part instead of reporting only `parts[0]` — a house body + roof used to report
+  collision bounds covering one piece of itself.
+- **Reaching the games that already exist:** injection was gated on the helper merely being
+  PRESENT, which is the same trap that froze the WebGL guard on ~200 stored games (2026-08-11)
+  and the perf probe before that — the games carrying the broken helper are exactly the ones a
+  presence check skips. Added `LOAD_MODEL_BATCH_VERSION` / `window.__arLoadModelBatchVersion`
+  with `hasCurrentBatchHelper` / `stripStaleBatchHelper`, mirroring the existing pairs. v1 shipped
+  unstamped, so "no stamp" reads as stale, not as absent.
+- **Verified:** parity 267 failures → **0 (271/271 place identically)**. On the child's real
+  stored game, pulled read-only from the prod DB: every batch previously sat below ground
+  (base y = -7.22, -2.75, -9.62) with three lying down; after re-flooring, all bases sit at y=0
+  and the pines stand 27.7 units tall instead of lying 3.7 high. Full suite 2475 passed,
+  typecheck clean.
+- **New instrument:** `scripts/check-batch-parity.mts` — same model, same transform, both paths,
+  real browser, real GLBs; compares bounding boxes and names the failure mode (rotated / sunk /
+  wrong size). This is the missing behavioural check; the unit suite could only ever assert the
+  helper was present.
+
+## 2026-08-15 — 3D games slow in the preview on a Chromebook (adaptive resolution governor)
+
+- **Report:** "in production the 3d games are slow" — narrowed with the owner to the Ari chat
+  preview, on newly built 3D games, on a **Chromebook**.
+- **What the production logs actually said** (`~/.pm2/logs/kidgemini-error.log` — the `[perf]`
+  lines go to stderr, not out.log): **fps 14-28 at only 16-72 draw calls.** That rules out the
+  2026-08-10 draw-call story outright (AutoRicksaw was 1,250 draws/frame); instanced batching was
+  visibly working — 40 pines in 33 draws.
+- **Ruled out by measurement, not argument:** triangle/vertex cost (counted every catalog GLB from
+  the file — the heaviest model in the entire catalog is 13k tris, most are 2-5k, so 40 instanced
+  pines ≈ 80k triangles); session decay in the preview shell (drove the real
+  `/dev/preview-harness` through 14 edit rounds — fps flat 57-60, heap flat 48MB); and
+  devicePixelRatio on a capable GPU (M2: dpr2 → 60fps, 6x CPU throttle → 56fps).
+- **Root cause:** pure fill cost on a weak integrated GPU. Profiling the child's actual reported
+  game found nothing to cut — 24 meshes, 63k triangles, 23 draw calls, 0.6ms of JS per frame, no
+  shadows, 60fps on an M2. The only lever that moved it was PIXELS: at an 880x1400 drawing buffer
+  it ran 30fps on a fill-limited renderer, 59fps at half the pixels; switching to cheap non-PBR
+  shading moved it 30 → 32, i.e. nothing. Every game renders at full device resolution because
+  the playbook tells the model to call `setPixelRatio(Math.min(devicePixelRatio, 2))`.
+- **Fix (owner decision: adaptive, and SILENT):** new `src/lib/assets/resolution-governor.ts`,
+  injected through `ensureAssetRuntime` alongside the frame governor and WebGL guard — the only
+  path that reaches the ~200 games that already exist. Watches rAF ticks and walks a ladder
+  (2 → 1.5 → 1 → 0.75), down after 2s below 50fps, back up only after 5s at 58fps+, never above
+  the ratio the game itself chose, and stops retrying a level that failed twice. Skips samples
+  while `document.hidden` or at 0fps, so a backgrounded preview cannot walk itself to the floor.
+  No banner, no server report — the game just gets smooth.
+- **Verified end-to-end on the child's real game** under a fill-limited renderer: 37fps → **53fps**,
+  with the governor stepping the drawing buffer 880x1400 → 660x1050 on its own. 18 unit tests for
+  the state machine; full suite 2475 passed, typecheck clean.
+- **Methodology note worth keeping:** headless chromium renders with **SwiftShader (software)** —
+  `ANGLE (Google, Vulkan … SwiftShader)`. Under it, dpr2 "measured" 33fps and dpr2+4x CPU
+  "measured" 24fps, a beautiful match for the production signature and entirely an artifact;
+  `--headed` gives Metal/M2 and the effect vanishes. Check `UNMASKED_RENDERER_WEBGL` before
+  trusting any WebGL performance number.
+
+---
+
 ## 2026-08-13 — deterministic pre-delivery syntax check (owner ask, after the River Nomad self-heal chase)
 
 - **Context:** same investigation as the self-heal-persistence entry above. Once the real

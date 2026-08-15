@@ -14,9 +14,15 @@ import manifestJson from "./manifest.json";
 import type { AssetManifest } from "./manifest";
 import { THREE_MARKER, PHYSICS_MARKER } from "./markers";
 import {
+  buildResolutionGovernorScript,
+  hasCurrentResolutionGovernor,
+  stripStaleResolutionGovernor,
+} from "./resolution-governor";
+import {
   insertEarly,
   loadModelHelper,
   loadModelBatchHelper,
+  LOAD_MODEL_BATCH_VERSION,
   frameGovernor,
   webglContextGuard,
   WEBGL_GUARD_VERSION,
@@ -79,6 +85,18 @@ function hasCurrentGlGuard(html: string): boolean {
 }
 function stripStaleGlGuard(html: string): string {
   return html.replace(SCRIPT_BLOCK_RE, (block) => (block.includes("window.__arGlGuard") ? "" : block));
+}
+
+// Same pair for the loadModelBatch helper (2026-08-15). v1 shipped unstamped,
+// so "no stamp" must read as stale, not as absent — an unstamped copy is
+// precisely the broken one.
+const BATCH_HELPER_VERSION_RE = /window\.__arLoadModelBatchVersion\s*=\s*(\d+)/;
+function hasCurrentBatchHelper(html: string): boolean {
+  const m = html.match(BATCH_HELPER_VERSION_RE);
+  return !!m && Number(m[1]) >= LOAD_MODEL_BATCH_VERSION;
+}
+function stripStaleBatchHelper(html: string): string {
+  return html.replace(SCRIPT_BLOCK_RE, (block) => (block.includes("window.loadModelBatch =") ? "" : block));
 }
 
 // The SECOND black-screen cause (BUG-FIX-LOG 2026-07-23 follow-up, verified in a
@@ -181,6 +199,16 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
   if (!hasCurrentGlGuard(out)) {
     if (out.includes("__arGlGuard")) out = stripStaleGlGuard(out);
     markup += webglContextGuard();
+  }
+
+  // (2d) adaptive resolution governor (2026-08-15) — spend only as many pixels
+  // as the device can actually shade. The owner's Chromebook ran a 24-mesh,
+  // 63k-triangle, 23-draw-call game at 14-28fps purely on fill cost; the same
+  // scene at half the pixels doubles its frame rate. Like the two above, this
+  // is the only path that reaches the games that already exist.
+  if (!hasCurrentResolutionGovernor(out)) {
+    if (out.includes("__arResGovernor")) out = stripStaleResolutionGovernor(out);
+    markup += buildResolutionGovernorScript();
   }
 
   // (3) the AR_ASSETS table — healed UNCONDITIONALLY when the game calls
@@ -309,7 +337,16 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
 
   // (3b) loadModelBatch scaffolding — the bulk-instancing counterpart, only
   // injected when the game actually calls it (most games won't).
-  if (usesLoadModel && CALLS_LOADMODELBATCH_RE.test(out) && !HAS_LOADMODELBATCH_HELPER_RE.test(out)) {
+  //
+  // Version-aware since 2026-08-15. This used to gate on the helper merely
+  // being PRESENT, which is the same trap that froze the WebGL guard on ~200
+  // stored games (2026-08-11) and the perf probe before it: any game that
+  // already carried the helper kept its ORIGINAL copy forever, through every
+  // edit and every deploy. That mattered the moment v1 turned out to place
+  // every batched prop rotated and sunk — the games needing the fix are
+  // exactly the ones a presence check would skip.
+  if (usesLoadModel && CALLS_LOADMODELBATCH_RE.test(out) && !hasCurrentBatchHelper(out)) {
+    if (HAS_LOADMODELBATCH_HELPER_RE.test(out)) out = stripStaleBatchHelper(out);
     markup += loadModelBatchHelper();
   }
 

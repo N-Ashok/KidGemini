@@ -437,9 +437,17 @@ window.loadModel = async function (name) {
  *
  *  Capacity is fixed at call time (`count`) — no silent unbounded growth of
  *  the underlying InstancedMesh buffers. */
+/** Bump whenever buildModelBatchHelper's BEHAVIOR changes, so ensureAssetRuntime
+ *  can replace a stale copy instead of seeing the marker and calling it done.
+ *  v2 (2026-08-15): bake each part's in-model transform into the instance
+ *  matrix — see the note in the helper body. v1 (unstamped) placed every
+ *  batched model rotated, sunk and un-normalised. */
+export const LOAD_MODEL_BATCH_VERSION = 2;
+
 export function loadModelBatchHelper(): string {
   return `<script type="module">
   import { InstancedMesh, Matrix4, Box3, Group, Vector3, Quaternion, Euler } from "three";
+window.__arLoadModelBatchVersion = ${LOAD_MODEL_BATCH_VERSION};
 window.loadModelBatch = async function (name, count) {
   try {
     if (typeof window.loadModel !== "function") { console.warn("[ariantra] loadModelBatch needs loadModel loaded first"); return null; }
@@ -454,21 +462,46 @@ window.loadModelBatch = async function (name, count) {
     if (template.animations.length) { console.warn("[ariantra] loadModelBatch does not support animated models:", name); return null; }
     const container = new Group();
     const parts = [];
+    // A mesh inside a GLB is almost never at the model's origin with unit
+    // scale: kits park parts under rotated/offset/scaled nodes, and loadModel()
+    // additionally normalises the whole model to real-world metres (AR_SIZES)
+    // and stands its base on y=0. All of that lives in the NODE TRANSFORMS of
+    // the subtree loadModel() returns — none of it is in part.geometry.
+    //
+    // v1 built each InstancedMesh from part.geometry alone and threw those
+    // transforms away, so every batched prop rendered rotated, sunk into the
+    // ground and at the kit's raw ~2-unit scale instead of its real size.
+    // Measured against loadModel() across the manifest: 267 of 271 batchable
+    // models placed differently (scripts/check-batch-parity.mts). snow_pine
+    // and mountain came out lying on their side; a batched airplane was 2m
+    // long instead of 36m. It also silently broke COLLISION in games that
+    // never touched collision code — they record a solid at the logical
+    // instance position while the mesh is drawn somewhere else, so the car
+    // stops at invisible walls and drives through visible houses.
+    // (Owner report 2026-08-15: "the trees were lying down", "the car goes
+    // through the mountains and houses", "the hills are on the road".)
+    //
+    // Fix: capture each part's matrix RELATIVE TO THE MODEL ROOT and bake it
+    // into every instance matrix. Deriving it from the live subtree — rather
+    // than re-implementing loadModel()'s normalisation here — means the two
+    // paths cannot drift apart again.
+    template.scene.updateMatrixWorld(true);
+    var rootInverse = new Matrix4().copy(template.scene.matrixWorld).invert();
     template.scene.traverse(function (child) {
       if (!child.isMesh || !child.geometry || !child.material) return;
-      parts.push(child);
+      parts.push({ mesh: child, local: new Matrix4().multiplyMatrices(rootInverse, child.matrixWorld) });
     });
     const meshes = parts.map(function (part) {
-      const im = new InstancedMesh(part.geometry, part.material, count);
+      const im = new InstancedMesh(part.mesh.geometry, part.mesh.material, count);
       im.count = count;
       container.add(im);
-      if (!part.geometry.boundingBox) part.geometry.computeBoundingBox();
+      if (!part.mesh.geometry.boundingBox) part.mesh.geometry.computeBoundingBox();
       return im;
     });
     try {
       var __arTriangles = 0;
       for (var __p = 0; __p < parts.length; __p++) {
-        var __geo = parts[__p].geometry;
+        var __geo = parts[__p].mesh.geometry;
         if (__geo.index) __arTriangles += __geo.index.count / 3;
         else if (__geo.attributes && __geo.attributes.position) __arTriangles += __geo.attributes.position.count / 3;
       }
@@ -482,6 +515,7 @@ window.loadModelBatch = async function (name, count) {
     var __arQuat = new Quaternion();
     var __arEuler = new Euler();
     var __arScale = new Vector3();
+    var __arPartMatrix = new Matrix4();
     return {
       mesh: container,
       setInstance: function (i, transform) {
@@ -493,15 +527,27 @@ window.loadModelBatch = async function (name, count) {
         __arQuat.setFromEuler(__arEuler);
         __arScale.set(scl.x != null ? scl.x : 1, scl.y != null ? scl.y : 1, scl.z != null ? scl.z : 1);
         matrix.compose(__arPos, __arQuat, __arScale);
+        // instance transform FIRST, then the part's own place inside the
+        // model — the same order the scene graph would apply them.
         for (var m = 0; m < meshes.length; m++) {
-          meshes[m].setMatrixAt(i, matrix);
+          __arPartMatrix.multiplyMatrices(matrix, parts[m].local);
+          meshes[m].setMatrixAt(i, __arPartMatrix);
           meshes[m].instanceMatrix.needsUpdate = true;
         }
       },
       boundsAt: function (i) {
         if (!parts.length) return new Box3();
-        meshes[0].getMatrixAt(i, matrix);
-        box.copy(parts[0].geometry.boundingBox).applyMatrix4(matrix);
+        // Union of EVERY part, not just the first: a model whose parts sit at
+        // different offsets (a house body + its roof) would otherwise report
+        // collision bounds covering only one piece of itself.
+        box.makeEmpty();
+        var partBox = new Box3();
+        for (var m = 0; m < meshes.length; m++) {
+          meshes[m].getMatrixAt(i, __arPartMatrix);
+          if (!parts[m].mesh.geometry.boundingBox) parts[m].mesh.geometry.computeBoundingBox();
+          partBox.copy(parts[m].mesh.geometry.boundingBox).applyMatrix4(__arPartMatrix);
+          box.union(partBox);
+        }
         return box;
       },
     };
