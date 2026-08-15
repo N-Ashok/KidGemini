@@ -319,6 +319,15 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // the documented revisit the PRD demanded (measured by this test during
     // implementation, not assumed). Model NAMES still dominate the section;
     // an accidental bulk import still trips this.
+    // Raised 2700 -> 2820 (2026-08-15, same evening): SCENERY PLACEMENT. A
+    // 65-second screen recording of a child racing her own game showed an
+    // empty world for the whole run, while Ari's replies said it had added
+    // trees, a village, a lake and ducks across four separate turns. Measured
+    // in the stored game: the props were real, but the houses and trees sat
+    // at x = +/-65..90 beside an 8-wide road, and scene.fog ended at 150 — so
+    // the child drove past none of them. Chickens and dogs existed only in
+    // the first 290 units of an 850-unit track. This is the rule that turns
+    // "I added it!" into something she can actually see. Measured 2808.
     // Raised 2600 -> 2700 (2026-08-15, same day): the DRIVING SETUP block —
     // the owner's race game had a correct-looking chase camera that still felt
     // wrong, because `back = 12` was a bare number in a world built ~10x the
@@ -404,7 +413,7 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // (teach the RULES, look the CATALOG up on demand), not more prose. Layer
     // 2 golden prompts (PRD §4) is what would catch a regression here without
     // spending another token.
-    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_700);
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_820);
   });
 });
 

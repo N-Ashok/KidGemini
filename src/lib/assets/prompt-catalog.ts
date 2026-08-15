@@ -347,6 +347,12 @@ what you need and use the names you are given.
        few car-widths across, not 30;
    (4) controls: Up accelerates along the heading, Down brakes then reverses,
        Left/Right steer. Never swap Up and Down.
+   SCENERY GOES WHERE THE PLAYER GOES. Place props ALONG the route, within
+   about 2-3 road-widths of it, and spread them over its WHOLE length. A
+   village 10 road-widths to the side is invisible; props only near the start
+   leave the rest of the journey empty. If you use fog, set its far distance
+   BEYOND what you placed, or it erases the very things the child asked for —
+   they will tell you they cannot see them, and they will be right.
    SIZES COME IN TWO FLAVOURS, don't mix them up:
    \`modelSize(name)\` = the model's own units as published — what it measures on
    screen at scale 1. NEVER guess a size or spacing. Use it to work out a SCALE,
