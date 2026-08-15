@@ -11,6 +11,113 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-15 — the model was told two things about 3D assets that were not true (axis, size, direction)
+
+- **Report (owner):** "i still feel the llm is not getting the axis, size, direction correct."
+- **Finding 1 — facing was asserted, never known.** `prompt-catalog.ts` told the model
+  "VEHICLES/CHARACTERS face +Z" unconditionally. A top-down render audit
+  (`scripts/render-assets.mjs`) disproves it: **`car` faces -Z** (180 degrees out, and `car` is
+  the name a racing game reaches for first), **`airplane` faces +X** (90 degrees out),
+  `small_plane` -Z, `bird` +X, `elephant` -X — while most road vehicles, all ten audited
+  two-wheelers, and most animals do face +Z. A bounding box cannot express a direction (it is
+  identical for a car facing either way), so before this there was NO datum anywhere that could
+  tell a game which way a model points: every generated game re-guessed, which is exactly why
+  wrong-facing models recur across unrelated games (TECH_DEBT #91).
+- **Finding 2 — "REAL metres" was not metres.** The prompt described `modelSize()` as REAL
+  metres. **238 of 296 sized models are raw kit units** (max dimension <= 3); only 58 are
+  plausibly metres, because only a handful of vendor entries carry `normalizeLongest`. By those
+  numbers `mountain` (1.9 tall) is smaller than `car` (2.56 long), `house` (1.3 wide) is
+  narrower than one, and `man` is 2.7 m tall. A model asked for a village cannot place a house
+  beside a car believably, so it invents a scale factor per game — the child's game used
+  `scale 15` on its houses.
+- **Finding 3 — nothing floors a model onto the ground.** No base-height data exists and no code
+  applies one. Props sit wherever their node transforms happen to put them.
+- **Correction recorded (same day):** the `loadModelBatch` entry below, and a comment in
+  `runtime-helpers.ts`, previously credited `loadModel()` with metre-normalisation and a
+  base-on-y=0 flooring. `loadModel()` does neither — it clones the template and returns it
+  (`runtime-helpers.ts:378`). The normalisation is baked into the published GLB's node
+  transforms at vendor time, which is precisely why discarding those transforms broke batching.
+- **Fix — data, then an API that uses it:**
+  - `manifest.ts` gains `facing` (measured by render) and `realSize` (curated real-world
+    metres), backfilled by the new `scripts/backfill-facing-and-real-size.mjs`: **69 models
+    audited for facing, 111 given a real size**, with 16 explicitly recorded as
+    `FACING_DELIBERATELY_ABSENT` and why (a canoe pointed at both ends, a rocket that points up,
+    a tank whose hull and turret disagree). Absent means unknown, and the runtime then leaves
+    rotation alone rather than turning a model by a guess.
+  - New injected tables `AR_FACING` / `AR_REAL` with accessors `modelFacing()` / `modelMetres()`,
+    emitted by both `inject.ts` and `ensure-runtime.ts` so the ~200 stored games pick them up on
+    their next preview render.
+  - New `placeModel(name, {at, heading, metres, scale, y})` — loads, scales to real metres,
+    turns the model's own front onto the heading asked for, and MEASURES the result to rest its
+    base on the ground.
+  - `modelSize()` is deliberately unchanged: live games already compute `want / modelSize(...)`,
+    and redefining it would silently change their arithmetic. `placeModel` is likewise a NEW
+    function rather than a change to `loadModel` — stored games hand-compensate for these quirks
+    (one flips a crocodile with `rotation.y = Math.PI`), and auto-correcting `loadModel` would
+    flip those back to wrong (CLAUDE.md rule 11).
+  - The prompt no longer claims either falsehood, and teaches `placeModel` / `modelFacing` /
+    `modelMetres` instead. `LOAD_MODEL_HELPER_VERSION` 7 -> 8 carries all of it to stored games.
+- **Verified in a real browser** by the new `scripts/check-placement.mts` — 13/13: every model
+  rests at base y=0; a `car` asked to head south turns exactly 180 degrees while one asked north
+  does not turn at all; the car measures 4.4 m long; the house (8.1 m tall, 12.7 m wide) dwarfs
+  it. The render confirms it visually — the two cars are exact mirror images.
+- **Caught by looking at the render, not the numbers:** the first run passed all 13 checks
+  against a completely black image, because `placeModel` returns the object and *nothing adds it
+  to the scene* — and the prompt's own example didn't show `scene.add()` either. A model copying
+  that example would have placed a perfectly-oriented invisible car. Both fixed.
+- **Still open:** ~250 models remain unaudited for facing (the audit covers vehicles, bikes,
+  aircraft, animals and characters — the categories with a meaningful front), and `realSize` is
+  first-pass curation that deserves an owner review. Full suite 2492 passed, typecheck clean.
+
+---
+
+## 2026-08-15 — the perf probe silently defeated the frame governor's 60fps cap (KNOWN_BUGS #12)
+
+- **Found:** while investigating the Chromebook slowness, by reading the two injected scripts
+  together rather than separately. Unrelated to that report — a second, independent defect.
+- **Root cause:** `frameGovernor()` throttles per callback via a `WeakMap` keyed on the function
+  it is handed. `perf-probe.ts` is injected AFTER it and also wraps `requestAnimationFrame`,
+  creating a **fresh closure on every call** — so the governor never saw the same key twice, its
+  `prev` timestamp was always 0, and the cap never fired at all. Each script is correct alone; the
+  bug existed only in their composition, which nothing exercised.
+- **Impact:** on a 120Hz ProMotion Mac/iPad every 3D game did 2x the work — precisely the
+  device-heating report that prompted the governor on 2026-07-29 — and any game moving per-frame
+  rather than per-second ran literally twice as fast. Published games inherit it too.
+- **Fix:** the probe memoises one wrapper per callback and never re-wraps its own wrapper (the
+  governor's skip path re-requests back through `window.requestAnimationFrame`, so re-wrapping
+  would both restart the identity problem and double-count frames). `PERF_PROBE_VERSION` 4 → 5,
+  which is the entire delivery mechanism for stored games.
+- **Test:** `governor-probe-composition.test.ts` — drives both injected scripts, composed in
+  injection order, at a 120Hz tick. Written first and **failed at 120fps / 0 skips**; passes at
+  ~60fps after. Also pins that a 60Hz display is not throttled below 60, that the probe still
+  counts frames, and that the loop can never die.
+- **Lesson:** two individually-tested injected scripts can still be wrong together. The floor now
+  has six members; this is the first test that exercises any two of them composed.
+
+## 2026-08-15 — resolution governor hardening: prove the downshift helped
+
+- **Found by the real browser, not by reasoning** — the exact failure the CLAUDE.md rule about
+  UAT-as-test-loop exists to catch. Profiling the child's game with the new governor installed,
+  it walked all the way to the 0.75 floor on an **M2** — because the headed automation window was
+  being throttled to ~30fps by occlusion, and the governor read that as fill cost.
+- **Two flaws it exposed:** (a) any low frame rate was treated as evidence that PIXELS were the
+  bottleneck, which is false for an occluded window, a 30Hz display, battery saver, or a
+  main-thread stall during generation; (b) `blockedAbove` banned a level permanently after two
+  failures, so two transient stalls could pin a perfectly fast machine at low resolution for the
+  rest of the session. A `document.hasFocus()` guard was tried first and was NOT sufficient —
+  Chrome reported the window as focused while still throttling it.
+- **Fix:** the premise is now measured instead of assumed. Every downshift records the frame rate
+  before the step and checks the next sample: if the step did not buy at least
+  `DOWNSHIFT_MUST_HELP_RATIO` (10%) more frames, the pixels go straight back and cutting is
+  disabled for `FILL_RULED_OUT_COOLDOWN_MS` (60s). Permanent bans became geometric backoff
+  (`UPSHIFT_BACKOFF_FACTOR`, capped at 5 minutes), so the worst case is a slow climb back rather
+  than a permanently soft game. `document.hidden`/unfocused/zero-fps samples are still discarded.
+- **Verified in a real browser, both directions:** throttled-but-capable (M2, occluded window) now
+  **holds full resolution** where it previously fell to 0.75; genuinely fill-bound (weak GPU at
+  dpr2) still drops 2 → 1 and recovers the frame rate to ~54fps. Full suite 2486 passed.
+
+---
+
 ## 2026-08-15 — batched scenery placed rotated, sunk and un-normalised (`loadModelBatch` v1)
 
 - **Report (owner, watching his daughter build a car game):** "the trees were lying down and no
@@ -20,9 +127,13 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 - **Root cause:** `loadModelBatchHelper()` built each `InstancedMesh` from `part.geometry` alone
   and threw away every part's transform INSIDE the model (`part.matrixWorld`). A mesh in a GLB is
   almost never at the model origin with unit scale — kits park parts under rotated/offset nodes —
-  and `loadModel()` additionally normalises the model to real-world metres (AR_SIZES) and stands
-  its base on y=0. All of that lives in the node transforms of the subtree `loadModel()` returns,
-  none of it in the geometry. So every batched prop rendered rotated, sunk into the ground, and at
+  and the VENDOR step (`scripts/vendor-models.mjs`: `rotateYDeg`, `normalizeLongest`,
+  `recenterXZ`) bakes the catalog's normalisation into those same nodes. All of that lives in the
+  node transforms of the subtree `loadModel()` returns, none of it in the geometry.
+  **Correction (same day):** an earlier version of this entry said `loadModel()` performs the
+  metre-normalisation and stands the base on y=0. It does not — it clones the template and
+  returns it (`runtime-helpers.ts:378`), and NOTHING in the runtime floors Y. The fix below is
+  unaffected; only the explanation was wrong. So every batched prop rendered rotated, sunk into the ground, and at
   the kit's raw ~2-unit scale.
 - **Scale of it:** `scripts/check-batch-parity.mts` (new, see below) compared both paths for every
   model in the manifest: **267 of 271 batchable models placed differently.** `snow_pine` came out

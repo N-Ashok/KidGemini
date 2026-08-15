@@ -886,6 +886,24 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   real game, hidden-tab rendering went 53.3 fps → 0. Published arcade games are
   static S3 HTML and cannot be reached. Also new: a rule against letting dead
   objects fill a spawn cap, after a tank game deadlocked into an empty arena
+- **Model facing, real-world size, and `placeModel()`** (2026-08-15; owner: "the llm is not
+  getting the axis, size, direction correct"): three things a generated game had to guess, each
+  independently, every time. **Facing** was asserted by the prompt ("VEHICLES/CHARACTERS face
+  +Z") and never known — a render audit shows `car` faces -Z, `airplane` +X, `elephant` -X,
+  while most vehicles and animals do face +Z; a bounding box cannot express a direction, so no
+  datum existed. **Size** was described as "REAL metres" but 238 of 296 sized models are raw kit
+  units, which is how `mountain` (1.9) ends up smaller than `car` (2.56) and a house narrower
+  than one. **Ground** had no data at all and nothing floors a model. Now: `facing` and
+  `realSize` ship in the manifest (69 models audited by render, 111 given real sizes, 16
+  explicitly recorded as un-auditable and why) as `AR_FACING`/`AR_REAL` with `modelFacing()` /
+  `modelMetres()`, and `placeModel(name, {at, heading, metres, scale, y})` loads a model, scales
+  it, turns its own front onto the heading you asked for, and measures the result so its base
+  rests on the ground. `modelSize()` is unchanged and `placeModel` is a NEW function rather than
+  a change to `loadModel` — stored games hand-compensate for these quirks, and correcting
+  `loadModel` under them would flip those games back to wrong. Injected via `ensureAssetRuntime`
+  (helper v8), so stored games get it on their next preview render. Proved in a real browser by
+  `scripts/check-placement.mts` (13/13): base y=0, a car asked south turns exactly 180 degrees,
+  the house dwarfs it at real scale.
 - **Adaptive resolution governor** (2026-08-15, `src/lib/assets/resolution-governor.ts`;
   owner report: "in production the 3d games are slow", on a **Chromebook**): every 3D game
   renders at full device resolution, because the playbook has the model call
@@ -897,8 +915,12 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   governor watches rAF ticks and spends only the pixels the device can afford, walking a ladder
   (2 → 1.5 → 1 → 0.75): down after 2s under 50fps, back up only after 5s at 58fps+, never above
   the ratio the game itself chose, and it stops retrying a level that has failed twice.
-  Samples taken while `document.hidden` (or at 0fps) are ignored, so a backgrounded preview
-  cannot walk itself to the floor. **Silent by owner decision** — no kid-facing banner, no
+  Samples taken while `document.hidden`, unfocused, or at 0fps are ignored, and — after a real
+  browser caught it walking an M2 to the floor because an occluded window was throttled to
+  30fps — the premise is MEASURED, not assumed: every downshift checks whether it actually
+  bought at least 10% more frames, and if it did not, the pixels go straight back and cutting
+  is disabled for a minute. Levels that fail back off geometrically rather than being banned,
+  so a transient stall can never pin a fast machine at low resolution. **Silent by owner decision** — no kid-facing banner, no
   server report; the game simply gets smooth. Injected via `ensureAssetRuntime`, the same route
   as the frame governor and WebGL guard, so the ~200 stored games get it without regeneration.
   Verified on the child's real stored game under a fill-limited renderer: 37fps → 53fps, with
