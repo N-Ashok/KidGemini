@@ -81,9 +81,17 @@ describe("nextGovernorState — downshift", () => {
     expect(s.changed).toBe(true);
   });
 
-  it("keeps stepping down while it is still slow, to the floor and no further", () => {
+  it("keeps stepping down on a genuinely fill-bound device, to the floor and no further", () => {
+    // Fill-bound means each halving of the pixel count buys real frames — the
+    // measured premise the governor now requires. This device is slow enough
+    // that even the floor does not reach 50fps, so it walks the whole ladder.
+    const fpsFor = (p: number) => 20 * (2 / p) ** 2 * 0.35;
     let s = initialGovernorState(2);
-    for (let i = 0; i < 20; i++) s = feed(s, 20, DOWNSHIFT_SUSTAIN_MS / 1000 + 1, 1000, s.lastChangeAt);
+    let t = 0;
+    for (let i = 0; i < 60; i++) {
+      t += 1000;
+      s = nextGovernorState(s, { fps: fpsFor(s.pixelRatio), now: t });
+    }
     const floor = RESOLUTION_LADDER[RESOLUTION_LADDER.length - 1]!;
     expect(s.pixelRatio).toBe(floor);
   });
@@ -108,32 +116,48 @@ describe("nextGovernorState — downshift", () => {
 });
 
 describe("nextGovernorState — upshift", () => {
-  it("steps back up after a long, comfortably smooth stretch", () => {
-    let s = initialGovernorState(2);
-    s = feed(s, 30, DOWNSHIFT_SUSTAIN_MS / 1000 + 1);
-    expect(s.pixelRatio).toBe(1.5);
-    s = feed(s, 60, UPSHIFT_SUSTAIN_MS / 1000 + 1, 1000, s.lastChangeAt);
-    expect(s.pixelRatio).toBe(2);
-  });
-
   it("requires a HIGHER bar to go up than to come down (no flapping)", () => {
     expect(UPSHIFT_FPS).toBeGreaterThan(DOWNSHIFT_FPS);
     expect(UPSHIFT_SUSTAIN_MS).toBeGreaterThan(DOWNSHIFT_SUSTAIN_MS);
   });
 
-  it("does not climb back to a level that already failed twice", () => {
-    // Hysteresis: a device that cannot hold 2.0 must stop trying, or the kid
-    // sees the game soften and sharpen forever.
+  it("backs off — not bans — a level that keeps failing", () => {
+    // Hysteresis: a device that cannot hold 2.0 must stop RETRYING it every
+    // few seconds, or the kid watches the game soften and sharpen forever.
+    // But it must never be banned outright: see the trustworthy-sample test
+    // below for why low fps is not proof that pixels are the problem.
     let s = initialGovernorState(2);
     let t = 0;
-    for (let round = 0; round < 3; round++) {
-      // fails at 2.0
-      for (let i = 0; i < DOWNSHIFT_SUSTAIN_MS / 1000 + 1; i++) { t += 1000; s = nextGovernorState(s, { fps: 28, now: t }); }
-      // then looks great at 1.5
-      for (let i = 0; i < UPSHIFT_SUSTAIN_MS / 1000 + 1; i++) { t += 1000; s = nextGovernorState(s, { fps: 60, now: t }); }
-    }
+    const slow = () => { for (let i = 0; i < DOWNSHIFT_SUSTAIN_MS / 1000 + 1; i++) { t += 1000; s = nextGovernorState(s, { fps: 28, now: t }); } };
+    const fast = () => { for (let i = 0; i < UPSHIFT_SUSTAIN_MS / 1000 + 1; i++) { t += 1000; s = nextGovernorState(s, { fps: 60, now: t }); } };
+
+    slow();                                   // 2.0 fails
     expect(s.pixelRatio).toBe(1.5);
-    expect(s.blockedAbove).toBe(1.5);
+    const firstWait = s.retryAfter["2"]! - s.lastChangeAt;
+
+    t = s.retryAfter["2"]! + 1000;            // wait it out, climb back
+    fast();
+    expect(s.pixelRatio).toBe(2);
+
+    slow();                                   // 2.0 fails a second time
+    expect(s.pixelRatio).toBe(1.5);
+    const secondWait = s.retryAfter["2"]! - s.lastChangeAt;
+
+    // Retried, not banned — but each failure buys a longer wait.
+    expect(secondWait).toBeGreaterThan(firstWait);
+    expect(s.attempts["2"]).toBe(2);
+  });
+
+  it("DOES eventually climb back once the backoff has elapsed", () => {
+    // The permanent ban this replaced would have pinned a 60fps machine at
+    // the floor forever after two unlucky stalls.
+    let s = initialGovernorState(2);
+    let t = 0;
+    for (let i = 0; i < DOWNSHIFT_SUSTAIN_MS / 1000 + 1; i++) { t += 1000; s = nextGovernorState(s, { fps: 28, now: t }); }
+    expect(s.pixelRatio).toBe(1.5);
+    t = s.retryAfter["2"]! + 1000; // wait the backoff out
+    for (let i = 0; i < UPSHIFT_SUSTAIN_MS / 1000 + 1; i++) { t += 1000; s = nextGovernorState(s, { fps: 60, now: t }); }
+    expect(s.pixelRatio).toBe(2);
   });
 
   it("never exceeds the ceiling it started from", () => {
@@ -158,7 +182,82 @@ describe("hidden tab", () => {
   });
 });
 
+describe("a downshift must prove it helped", () => {
+  it("reverts the step when cutting pixels bought nothing", () => {
+    // The case a real browser produced: a focused, visible window that Chrome
+    // was throttling to ~30fps. Fewer pixels cannot fix that, so the governor
+    // must undo its own step rather than keep walking to the floor.
+    let s = initialGovernorState(2);
+    let t = 0;
+    for (let i = 0; i < DOWNSHIFT_SUSTAIN_MS / 1000 + 1; i++) {
+      t += 1000;
+      s = nextGovernorState(s, { fps: 30, now: t });
+    }
+    expect(s.pixelRatio).toBe(1.5); // stepped down on the hypothesis…
+    t += 1000;
+    s = nextGovernorState(s, { fps: 30, now: t }); // …and it changed nothing
+    expect(s.pixelRatio).toBe(2); // so the pixels go back
+    expect(s.fillRuledOutUntil).toBeGreaterThan(t);
+  });
+
+  it("does not keep cutting pixels once fill has been ruled out", () => {
+    let s = initialGovernorState(2);
+    let t = 0;
+    for (let i = 0; i < 60; i++) {
+      t += 1000;
+      s = nextGovernorState(s, { fps: 30, now: t }); // capped by something else
+    }
+    // One probe down and back, then it leaves the picture alone.
+    expect(s.pixelRatio).toBe(2);
+  });
+
+  it("keeps the step when it genuinely helped", () => {
+    // The Chromebook case: halving the pixels roughly doubles the frame rate.
+    let s = initialGovernorState(2);
+    let t = 0;
+    for (let i = 0; i < DOWNSHIFT_SUSTAIN_MS / 1000 + 1; i++) {
+      t += 1000;
+      s = nextGovernorState(s, { fps: 30, now: t });
+    }
+    expect(s.pixelRatio).toBe(1.5);
+    t += 1000;
+    s = nextGovernorState(s, { fps: 52, now: t }); // fill really was the problem
+    expect(s.pixelRatio).toBe(1.5);
+    expect(s.fillRuledOutUntil).toBe(0);
+  });
+});
+
+describe("untrustworthy samples", () => {
+  it("ignores frame rates the browser itself may have throttled", () => {
+    // Found in a REAL browser, not by reasoning: an occluded window was
+    // throttled to ~30fps and the governor, reading that as fill cost, walked
+    // a game that runs at 60fps all the way to the 0.75 floor. An unfocused
+    // window, a main-thread stall mid-generation and a GC pause are all
+    // indistinguishable from a slow GPU from inside the game — so a sample
+    // the caller cannot vouch for is discarded, never acted on.
+    let s = initialGovernorState(2);
+    let t = 0;
+    for (let i = 0; i < 30; i++) {
+      t += 1000;
+      s = nextGovernorState(s, { fps: 30, now: t, trustworthy: false });
+    }
+    expect(s.pixelRatio).toBe(2);
+  });
+
+  it("still acts on trustworthy slow samples", () => {
+    const s = feed(initialGovernorState(2), 30, DOWNSHIFT_SUSTAIN_MS / 1000 + 1);
+    expect(s.pixelRatio).toBe(1.5);
+  });
+});
+
 describe("injected script", () => {
+  it("discards samples taken while the window is not focused", () => {
+    // The injected copy must carry the same guard as the state machine above.
+    const script = buildResolutionGovernorScript();
+    expect(script).toMatch(/hasFocus/);
+    expect(script).toMatch(/document\.hidden/);
+  });
+
   it("carries its version stamp and marker so re-injection is version-aware", () => {
     const script = buildResolutionGovernorScript();
     expect(script).toContain(`window.__arResGovernorVersion = ${RESOLUTION_GOVERNOR_VERSION}`);

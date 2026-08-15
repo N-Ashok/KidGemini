@@ -41,10 +41,40 @@ export const DOWNSHIFT_SUSTAIN_MS = 2_000;
 export const UPSHIFT_FPS = 58;
 export const UPSHIFT_SUSTAIN_MS = 5_000;
 
-/** After this many failed attempts at a level, stop trying to reach it. A
- *  device that cannot hold 2.0 should settle at 1.5 for good rather than
- *  rediscovering the same limit every five seconds. */
-export const MAX_UPSHIFT_ATTEMPTS = 2;
+/** Each failed attempt at a level makes the NEXT attempt at it wait longer,
+ *  rather than banning it outright.
+ *
+ *  This started life as a permanent block after two failures, and a real
+ *  browser caught why that was wrong: an occluded window throttled to 30fps
+ *  and the governor — reading a browser throttle as fill cost — walked a game
+ *  that runs at 60fps to the 0.75 floor and would have pinned it there. Low
+ *  fps is not proof that pixels are the problem: an unfocused window, a
+ *  main-thread stall during generation, or a GC pause all look identical from
+ *  here. Backing off instead of banning means the worst case is a slow climb
+ *  back, not a permanently soft game on a perfectly capable machine. */
+export const UPSHIFT_BACKOFF_FACTOR = 3;
+/** Never wait longer than this before retrying a level (5 minutes). */
+export const MAX_UPSHIFT_BACKOFF_MS = 300_000;
+
+/** A downshift must buy at least this much more frame rate to be kept.
+ *
+ *  The governor's whole premise is that PIXELS are the bottleneck — true on
+ *  the Chromebook that prompted it, and false whenever something else is
+ *  capping the frame rate: an occluded window, a display running at 30Hz, a
+ *  main-thread stall during generation, battery saver. Those look identical
+ *  from in here, and a real browser proved the point — a focused window that
+ *  Chrome was throttling to 30fps dragged a 60fps game to the 0.75 floor,
+ *  even with a hasFocus() guard in place, because focus was never the thing
+ *  that was wrong.
+ *
+ *  So the claim is MEASURED rather than assumed: take the frame rate before
+ *  the step, take it again after, and if the pixels were not the problem, put
+ *  them back. A wrong guess then costs one sample of softness instead of the
+ *  whole session. */
+export const DOWNSHIFT_MUST_HELP_RATIO = 1.1;
+/** After a downshift that did not help, stop trying to cut pixels for a
+ *  while — whatever is capping the frame rate, it is not fill. */
+export const FILL_RULED_OUT_COOLDOWN_MS = 60_000;
 
 export const RESOLUTION_GOVERNOR_VERSION = 1;
 export const RESOLUTION_GOVERNOR_MARKER = "<!--ari-resolution-governor-->";
@@ -54,26 +84,33 @@ export interface GovernorState {
   pixelRatio: number;
   /** The game's own choice — never exceeded. */
   ceiling: number;
-  /** Ratios at or above this have failed too often to retry. */
-  blockedAbove: number;
   /** Whether the last sample changed the ratio (the caller applies it). */
   changed: boolean;
   lastChangeAt: number;
   slowSince: number;
   fastSince: number;
+  /** How many times each level has failed to hold. */
   attempts: Record<string, number>;
+  /** Earliest time each level may be retried (backoff, not a ban). */
+  retryAfter: Record<string, number>;
+  /** A downshift awaiting its verdict: did cutting pixels actually help? */
+  pending: { from: number; fpsBefore: number } | null;
+  /** While set, fill has been ruled out — stop cutting pixels until then. */
+  fillRuledOutUntil: number;
 }
 
 export function initialGovernorState(ceiling: number): GovernorState {
   return {
     pixelRatio: ceiling,
     ceiling,
-    blockedAbove: Infinity,
     changed: false,
     lastChangeAt: 0,
     slowSince: 0,
     fastSince: 0,
     attempts: {},
+    retryAfter: {},
+    pending: null,
+    fillRuledOutUntil: 0,
   };
 }
 
@@ -94,7 +131,7 @@ function stepUp(from: number, ceiling: number): number | null {
  */
 export function nextGovernorState(
   state: GovernorState,
-  sample: { fps: number; now: number },
+  sample: { fps: number; now: number; trustworthy?: boolean },
 ): GovernorState {
   const { fps, now } = sample;
 
@@ -104,21 +141,52 @@ export function nextGovernorState(
   // game. Same guard, same reason, as perf-probe.ts's document.hidden check.
   if (fps <= 0) return { ...state, changed: false, slowSince: 0, fastSince: 0 };
 
+  // Only frame rates measured while the page is visible AND focused say
+  // anything about the GPU. A real browser caught this: an occluded window
+  // was throttled to 30fps and the governor read it as fill cost, walking a
+  // 60fps game to the floor. Everything the caller cannot vouch for is
+  // discarded rather than acted on.
+  if (sample.trustworthy === false) {
+    return { ...state, changed: false, slowSince: 0, fastSince: 0 };
+  }
+
   const next: GovernorState = { ...state, changed: false };
+
+  // Verdict on the previous step: did cutting pixels actually buy frames? If
+  // not, the bottleneck was never fill — put the pixels back and stop cutting
+  // for a while. This is what keeps a browser throttle (or a 30Hz display)
+  // from walking a perfectly fast game down to the floor.
+  if (state.pending) {
+    next.pending = null;
+    if (fps < state.pending.fpsBefore * DOWNSHIFT_MUST_HELP_RATIO) {
+      next.pixelRatio = state.pending.from;
+      next.changed = true;
+      next.lastChangeAt = now;
+      next.fillRuledOutUntil = now + FILL_RULED_OUT_COOLDOWN_MS;
+      next.slowSince = 0;
+      next.fastSince = 0;
+      return next;
+    }
+  }
 
   if (fps < DOWNSHIFT_FPS) {
     next.fastSince = 0;
     next.slowSince = state.slowSince || now;
-    if (now - next.slowSince >= DOWNSHIFT_SUSTAIN_MS) {
+    if (now - next.slowSince >= DOWNSHIFT_SUSTAIN_MS && now >= state.fillRuledOutUntil) {
       const target = stepDown(state.pixelRatio);
       if (target !== null) {
-        // Remember that the level we are leaving could not be held.
+        // Remember that the level we are leaving could not be held, and make
+        // the next attempt at it wait longer — geometric backoff, capped.
         const key = String(state.pixelRatio);
-        next.attempts = { ...state.attempts, [key]: (state.attempts[key] ?? 0) + 1 };
-        if ((next.attempts[key] ?? 0) >= MAX_UPSHIFT_ATTEMPTS) {
-          next.blockedAbove = Math.min(state.blockedAbove, target);
-        }
+        const failures = (state.attempts[key] ?? 0) + 1;
+        next.attempts = { ...state.attempts, [key]: failures };
+        const wait = Math.min(
+          UPSHIFT_SUSTAIN_MS * Math.pow(UPSHIFT_BACKOFF_FACTOR, failures),
+          MAX_UPSHIFT_BACKOFF_MS,
+        );
+        next.retryAfter = { ...state.retryAfter, [key]: now + wait };
         next.pixelRatio = target;
+        next.pending = { from: state.pixelRatio, fpsBefore: fps };
         next.changed = true;
         next.lastChangeAt = now;
         next.slowSince = 0;
@@ -132,7 +200,8 @@ export function nextGovernorState(
     next.fastSince = state.fastSince || now;
     if (now - next.fastSince >= UPSHIFT_SUSTAIN_MS) {
       const target = stepUp(state.pixelRatio, state.ceiling);
-      if (target !== null && target <= state.blockedAbove) {
+      const readyAt = target === null ? 0 : (state.retryAfter[String(target)] ?? 0);
+      if (target !== null && now >= readyAt) {
         next.pixelRatio = target;
         next.changed = true;
         next.lastChangeAt = now;
@@ -169,7 +238,8 @@ export function buildResolutionGovernorScript(): string {
   var LADDER = ${JSON.stringify(RESOLUTION_LADDER)};
   var DOWN_FPS = ${DOWNSHIFT_FPS}, DOWN_MS = ${DOWNSHIFT_SUSTAIN_MS};
   var UP_FPS = ${UPSHIFT_FPS}, UP_MS = ${UPSHIFT_SUSTAIN_MS};
-  var MAX_TRIES = ${MAX_UPSHIFT_ATTEMPTS};
+  var BACKOFF = ${UPSHIFT_BACKOFF_FACTOR}, MAX_BACKOFF = ${MAX_UPSHIFT_BACKOFF_MS};
+  var MUST_HELP = ${DOWNSHIFT_MUST_HELP_RATIO}, FILL_RULED_OUT_MS = ${FILL_RULED_OUT_COOLDOWN_MS};
 
   var frames = 0;
   var raf = window.requestAnimationFrame;
@@ -181,7 +251,9 @@ export function buildResolutionGovernorScript(): string {
 
   var state = null;      // initialised once a renderer shows up
   var attempts = {};
-  var blockedAbove = Infinity;
+  var retryAfter = {};
+  var pending = null;          // a downshift awaiting its verdict
+  var fillRuledOutUntil = 0;   // while set, cutting pixels is known not to help
   var slowSince = 0, fastSince = 0;
 
   function renderer() {
@@ -222,7 +294,13 @@ export function buildResolutionGovernorScript(): string {
 
   setInterval(function () {
     var f = frames; frames = 0;
-    if (document.hidden || f <= 0) { slowSince = 0; fastSince = 0; return; }
+    // Discard any sample the browser itself may have throttled: hidden, or
+    // simply not the focused window (an occluded tab is capped near 30fps,
+    // which is indistinguishable from a slow GPU from in here). hasFocus is
+    // absent in some embeddings — treat missing as focused rather than
+    // freezing the governor entirely.
+    var focused = typeof document.hasFocus === "function" ? document.hasFocus() : true;
+    if (document.hidden || !focused || f <= 0) { slowSince = 0; fastSince = 0; return; }
     var r = renderer();
     if (!r || typeof r.setPixelRatio !== "function") return;
     if (state === null) {
@@ -232,15 +310,32 @@ export function buildResolutionGovernorScript(): string {
     }
     var now = Date.now();
 
+    // Verdict on the previous step: did cutting pixels actually buy frames?
+    // If not, whatever is capping the frame rate is not fill — put the pixels
+    // back and stop cutting for a while.
+    if (pending) {
+      var helped = f >= pending.fpsBefore * MUST_HELP;
+      var wasPending = pending;
+      pending = null;
+      if (!helped) {
+        state.ratio = wasPending.from;
+        apply(r, wasPending.from);
+        fillRuledOutUntil = now + FILL_RULED_OUT_MS;
+        slowSince = 0; fastSince = 0;
+        return;
+      }
+    }
+
     if (f < DOWN_FPS) {
       fastSince = 0;
       slowSince = slowSince || now;
-      if (now - slowSince >= DOWN_MS) {
+      if (now - slowSince >= DOWN_MS && now >= fillRuledOutUntil) {
         var down = stepDown(state.ratio);
         if (down !== null) {
           var key = String(state.ratio);
           attempts[key] = (attempts[key] || 0) + 1;
-          if (attempts[key] >= MAX_TRIES) blockedAbove = Math.min(blockedAbove, down);
+          retryAfter[key] = now + Math.min(UP_MS * Math.pow(BACKOFF, attempts[key]), MAX_BACKOFF);
+          pending = { from: state.ratio, fpsBefore: f };
           state.ratio = down;
           apply(r, down);
         }
@@ -254,7 +349,7 @@ export function buildResolutionGovernorScript(): string {
       fastSince = fastSince || now;
       if (now - fastSince >= UP_MS) {
         var up = stepUp(state.ratio, state.ceiling);
-        if (up !== null && up <= blockedAbove) {
+        if (up !== null && now >= (retryAfter[String(up)] || 0)) {
           state.ratio = up;
           apply(r, up);
           fastSince = 0;
