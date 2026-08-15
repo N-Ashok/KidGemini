@@ -15,6 +15,43 @@ import type { ChatMessage } from "@/types/chat.types";
 const msg = (role: "child" | "assistant", text: string, artifactHtml?: string): ChatMessage =>
   ({ role, text, artifactHtml }) as ChatMessage;
 
+describe("3D intent — the child asks for 'realistic', not '3d' (KNOWN_BUGS #14)", () => {
+  // Owner 2026-08-15: "when child is asking realistic, he is asking for 3D...
+  // we need to understand the intent from child, not verbatim." Before this,
+  // every one of these left the 3D catalog OFF, so the model never received
+  // the 3D playbook, the model library, AR_ASSETS or placeModel — which no
+  // prompt wording could recover, because that text is what was withheld.
+  // A real chat: the child asked for a game and got one, so an artifact
+  // exists — which is what makes every later message a build turn.
+  const withGame = [
+    msg("child", "make a racing game"),
+    msg("assistant", "here you go", "<html><canvas></canvas></html>"),
+  ];
+
+  for (const phrase of [
+    "make it realistic",
+    "i want it to look real",
+    "make it look like real life",
+    "realistic graphics please",
+    "make it lifelike",
+    "a real looking car",
+    "make the trees realistic",
+  ]) {
+    it(`unlocks 3D for "${phrase}"`, () => {
+      expect(catalogGates({ message: phrase, history: withGame, paid: false }).three).toBe(true);
+    });
+  }
+
+  it("still unlocks 3D for the literal word", () => {
+    expect(catalogGates({ message: "make a 3d game", history: [], paid: false }).three).toBe(true);
+  });
+
+  it("does not unlock 3D for an ordinary 2D ask", () => {
+    expect(catalogGates({ message: "add a red car", history: withGame, paid: false }).three).toBe(false);
+    expect(catalogGates({ message: "make it faster", history: withGame, paid: false }).three).toBe(false);
+  });
+});
+
 describe("catalogGates — the build-turn gate comes first (§9: chit-chat pays zero catalog tokens)", () => {
   it("a chit-chat turn unlocks nothing, whatever the tier", () => {
     expect(catalogGates({ message: "how are you today?", history: [], paid: false })).toEqual({ three: false, audio: false, save: false });

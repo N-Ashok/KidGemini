@@ -5,7 +5,7 @@
 // regexes only — no LLM call, no I/O. Pure logic, no React/Next.
 
 import type { ChatMessage } from "@/types/chat.types";
-import { isGameBuildTurn, THREE_ASK_RE } from "../builder-mode";
+import { isGameBuildTurn, THREE_ASK_RE, THREE_INTENT_RE } from "../builder-mode";
 
 export interface CatalogGates {
   three: boolean; // engine + model catalog (they travel together: models need the engine)
@@ -33,7 +33,12 @@ export interface CatalogGates {
 // pattern just didn't implement it. It now lives in ONE place — builder-mode's
 // THREE_ASK_RE — because this was a second copy of the same rule and the two
 // could drift apart (they had).
-const THREE_TRIGGER = THREE_ASK_RE;
+// Literal "3d" / "three dimensional" (shared with the build-turn gate) OR the
+// ways a child asks for the same thing without the word — "realistic", "look
+// real", "lifelike" (2026-08-15, KNOWN_BUGS #14). The intent form unlocks the
+// CATALOG only: it never makes a message a build turn and never counts as the
+// explicit ask that converts an existing 2D game to 3D.
+const THREE_TRIGGER = new RegExp(`${THREE_ASK_RE.source}|${THREE_INTENT_RE.source}`, "i");
 const AUDIO_TRIGGER = /\b(sounds?|music|songs?|sfx)\b/i;
 // Build/world/inventory mechanics (docs/2026-08-01_PRD_SaveContinueBuilding.md):
 // a kid naming placement/persistence mechanics, not just "make me a game".
