@@ -327,15 +327,26 @@ what you need and use the names you are given.
    \`at\` {x,z} · \`heading\` "+z"/"-z"/"+x"/"-x" or radians · \`metres: true\`
    for real-world size · \`scale\` a multiplier · \`y\` ground height. It measures
    the model, so its base always rests on the ground.
-   NEVER assume which way a model faces — they differ (\`car\` -Z, \`airplane\`
-   +X, \`dog\` +Z). \`modelFacing(name)\` gives it (null = unaudited);
-   \`placeModel\`'s \`heading\` uses it for you. Writing \`m.rotation.y = Math.PI\`
-   to "turn it round" is ALWAYS a guess and is the single most common way a
-   game ends up driving backwards at the camera — ask for the heading instead.
-   A CHASE CAMERA GOES BEHIND, and "behind" is the opposite of the direction
-   the thing TRAVELS — not the opposite of +Z. Decide the travel direction
-   first, drive along it, and put the camera back along it: get that backwards
-   and the child watches the car's face while driving in reverse.
+   NEVER assume or hand-write which way a model faces — they differ (\`car\` -Z,
+   \`airplane\` +X, \`dog\` +Z); \`modelFacing(name)\` gives it, null = unaudited.
+   \`rotation.y = Math.PI\` to "turn it round" is
+   a guess that lands a game driving backwards at its own camera. Placing it:
+   \`placeModel\`'s \`heading\`. STEERING it (rotation set every frame, where
+   placeModel cannot help): \`m.rotation.y = modelHeading(name, heading)\`.
+   With the usual \`pos.x += sin(h)*v; pos.z += cos(h)*v\`, heading 0 travels
+   +Z, so a -Z car driven by \`rotation.y = h\` drives in reverse.
+   DRIVING SETUP — get these four consistent or the game feels wrong even when
+   each part looks right. Pick the heading convention first
+   (\`pos.x += sin(h)*v; pos.z += cos(h)*v\`, so heading 0 travels +Z), then:
+   (1) the model: \`rotation.y = modelHeading(name, h)\`;
+   (2) the camera: BEHIND along travel — \`pos - (sin(h), 0, cos(h)) * back\`,
+       raised a little, looking at the car. Size \`back\` FROM THE CAR, about
+       3-4 car lengths (\`modelSize(name).z * 3.5\`) — never a bare number like
+       12, which is a close chase in one game and a distant speck in another;
+   (3) build the WORLD at the car's scale too: a road a car can sit on is a
+       few car-widths across, not 30;
+   (4) controls: Up accelerates along the heading, Down brakes then reverses,
+       Left/Right steer. Never swap Up and Down.
    SIZES COME IN TWO FLAVOURS, don't mix them up:
    \`modelSize(name)\` = the model's own units as published — what it measures on
    screen at scale 1. NEVER guess a size or spacing. Use it to work out a SCALE,

@@ -319,6 +319,23 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // the documented revisit the PRD demanded (measured by this test during
     // implementation, not assumed). Model NAMES still dominate the section;
     // an accidental bulk import still trips this.
+    // Raised 2600 -> 2700 (2026-08-15, same day): the DRIVING SETUP block —
+    // the owner's race game had a correct-looking chase camera that still felt
+    // wrong, because `back = 12` was a bare number in a world built ~10x the
+    // car's scale, leaving the car a speck in an empty field. Measured in a
+    // real browser (camera trailed correctly at ~12 units; the car is 2.56
+    // units long while the track spans 145). The block ties heading, model
+    // rotation, camera distance-in-car-lengths, world scale and the Up/Down
+    // mapping together, because getting any one of them out of step is what
+    // produces "the cars are going in the reverse direction". Measured 2696.
+    // Raised 2525 -> 2600 (2026-08-15): four faults were taught this day, each
+    // traced to a specific broken game — per-model FACING (a child's kart
+    // driving at the camera), modelHeading for anything that STEERS (both cars
+    // in a race game driving in reverse), intent ("realistic" means 3D), and
+    // chase-camera placement. The section simultaneously LOST the tile-kit
+    // teaching when the road kit was withheld, so this is +28 net over the old
+    // ceiling for four distinct fault classes. Fault-driven teaching, not
+    // catalog creep — measured 2553.
     // Raised 2300 → 2350 (2026-08-06, BUG-FIX-LOG rotor no-op): rule 7 now
     // states that rigid models have NO named parts and a name lookup is a
     // silent no-op — verified against the live helicopter GLB (one mesh,
@@ -387,7 +404,7 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // (teach the RULES, look the CATALOG up on demand), not more prose. Layer
     // 2 golden prompts (PRD §4) is what would catch a regression here without
     // spending another token.
-    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_525);
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_700);
   });
 });
 

@@ -403,6 +403,27 @@ window.modelMetres = function (name) {
   var s = window.AR_REAL[name];
   return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
 };
+// modelHeading (2026-08-15): the rotation.y that makes a model POINT along a
+// heading, given the way it was authored.
+//
+// placeModel fixes orientation once, at placement. It cannot help anything
+// that STEERS: a car updates rotation.y every frame from its own heading
+// variable, so it never goes near placeModel. That is the whole of a driving
+// game, and it is how a child's race game ended up with both cars driving in
+// reverse — the game moved them with the usual
+//   pos.x += Math.sin(heading) * speed;  pos.z += Math.cos(heading) * speed;
+// (so heading 0 means travelling +Z) while the car model faces -Z.
+//
+// Use it wherever you set rotation from a heading:
+//   car.rotation.y = modelHeading("car", state.heading);
+// An unaudited model returns the heading unchanged — no worse than today.
+window.modelHeading = function (name, heading) {
+  var facing = window.modelFacing(name);
+  // Radians to add so the model's own front ends up along +Z, which is where
+  // heading 0 points under the sin/cos convention above.
+  var offset = { "+z": 0, "+x": -Math.PI / 2, "-z": Math.PI, "-x": Math.PI / 2 }[facing];
+  return (heading || 0) + (offset || 0);
+};
 // placeModel (2026-08-15): load a model and put it in the world correctly —
 // standing on the ground, at a believable size, pointing where you want.
 //
@@ -447,7 +468,14 @@ window.placeModel = async function (name, opts) {
     if (typeof opts.scale === "number" && opts.scale > 0) obj.scale.multiplyScalar(opts.scale);
 
     // 2. HEADING — turn the model's own front onto the direction asked for.
-    var order = ["-z", "+x", "+z", "-x"]; // clockwise seen from above
+    // Order = the sequence a vector visits under a POSITIVE rotation.y, which
+    // three.js takes +Z to +X (verified empirically, not from memory). The
+    // first version of this used the tile helper's ["-z","+x","+z","-x"] and
+    // was 180 degrees wrong for every +x/-x model — airplane, bird, elephant,
+    // tank. The 0/180 cases are symmetric, so the placement proof passed 13/13
+    // while the quarter turns were inverted; that is why check-placement.mts
+    // now tests a +x model explicitly.
+    var order = ["+z", "+x", "-z", "-x"];
     if (opts.heading !== undefined && opts.heading !== null) {
       if (typeof opts.heading === "number") {
         obj.rotation.y = opts.heading;

@@ -34,7 +34,7 @@ const entry = (n: string) => (manifest.assets as { name: string; facing?: string
 // them they exercise every branch.
 const page = ensureAssetRuntime(`<!DOCTYPE html><html><head></head><body><canvas id="c"></canvas>
 <script type="module">
-// seeds: loadModel("car"); loadModel("house"); loadModel("tree");
+// seeds: loadModel("car"); loadModel("house"); loadModel("tree"); loadModel("airplane"); loadModel("dog");
 import { Scene, PerspectiveCamera, WebGLRenderer, DirectionalLight, AmbientLight, Box3, Vector3 } from "three";
 const scene = new Scene();
 const renderer = new WebGLRenderer({ antialias: true });
@@ -65,6 +65,20 @@ const measure = (o) => {
   const house = await placeModel("house", { at: { x: 0, z: 10 }, metres: true });
   if (house) scene.add(house);
   out.house = house ? measure(house) : null;
+  // A +X-FACING model asked to head south. This is the case the first version
+  // of this script did not cover: car faces -z, so heading +z/-z are 0 and
+  // 180 degrees — symmetric, and blind to an inverted quarter turn. airplane
+  // faces +x, so it can only pass if the rotation direction is right.
+  const plane = await placeModel("airplane", { at: { x: 0, z: -14 }, heading: "+z" });
+  if (plane) scene.add(plane);
+  out.plane = plane ? measure(plane) : null;
+  // And the steering helper, which is what a moving vehicle actually uses.
+  out.headings = {
+    carAt0: +modelHeading("car", 0).toFixed(4),
+    planeAt0: +modelHeading("airplane", 0).toFixed(4),
+    dogAt0: +modelHeading("dog", 0).toFixed(4),
+  };
+
   // A tree placed with no options at all — must still stand on the ground.
   const tree = await placeModel("tree", { at: { x: 10, z: 6 } });
   if (tree) scene.add(tree);
@@ -130,7 +144,7 @@ if (!r || r.error) {
 const checks: Array<[string, boolean, string]> = [];
 const near = (a: number, b: number, tol: number) => Math.abs(a - b) <= tol;
 
-for (const name of ["car", "carNorth", "house", "tree"]) {
+for (const name of ["car", "carNorth", "house", "tree", "plane"]) {
   const m = r[name];
   checks.push([`${name} loaded`, !!m, m ? "" : "placeModel returned null"]);
   if (m) checks.push([`${name} stands on the ground`, near(m.minY, 0, 0.02), `base y = ${m.minY}`]);
@@ -146,6 +160,36 @@ if (r.carNorth) checks.push(["car asked north does not turn", near(r.carNorth.ro
 const carReal = entry("car")?.realSize;
 if (r.car && carReal) {
   checks.push([`car is about ${carReal[2]}m long`, near(r.car.z, carReal[2], carReal[2] * 0.25), `measured ${r.car.z}m`]);
+}
+// airplane is 35.8m along X natively; asked to head +z it must now lie along Z.
+const planeM = r.plane as { x: number; z: number } | null;
+if (planeM) {
+  // Assert the ROTATION, not the bounding box: airplane measures 35.76 x 36,
+  // so its footprint is nearly square (wingspan == fuselage) and a box tells
+  // you nothing about which way it points. A +x model asked to head +z must
+  // turn -90 degrees; the inverted version of this maths turned it +90, which
+  // is 180 degrees wrong and exactly what shipped.
+  const planeRot = (r.plane as unknown as { rotY: number }).rotY;
+  // Test the PROPERTY, not the angle: -90 and 270 are the same turn, and an
+  // assertion on the number rather than the effect just fails on the
+  // representation. Rotate the model's own facing (+x) by rotation.y and it
+  // must land on +z. three.js rotation about Y:
+  //   x' = x cos + z sin ; z' = -x sin + z cos
+  const landedX = Math.cos(planeRot);
+  const landedZ = -Math.sin(planeRot);
+  checks.push([
+    "a +x model asked to head south actually points +z",
+    Math.abs(landedX) < 0.01 && Math.abs(landedZ - 1) < 0.01,
+    `rotation.y=${planeRot} turns +x onto (${landedX.toFixed(2)}, ${landedZ.toFixed(2)})`,
+  ]);
+}
+const headings = (r as unknown as { headings?: Record<string, number> }).headings;
+if (headings) {
+  // heading 0 means travelling +Z (pos.z += cos(0)), so each model must be
+  // turned by exactly the offset that puts ITS front on +Z.
+  checks.push(["modelHeading: car (-z) offsets by 180 deg", Math.abs(Math.abs(headings.carAt0!) - Math.PI) < 0.01, `${headings.carAt0}`]);
+  checks.push(["modelHeading: airplane (+x) offsets by -90 deg", Math.abs(headings.planeAt0! + Math.PI / 2) < 0.01, `${headings.planeAt0}`]);
+  checks.push(["modelHeading: dog (+z) needs no offset", Math.abs(headings.dogAt0!) < 0.01, `${headings.dogAt0}`]);
 }
 if (r.car && r.house) {
   checks.push(["house is taller than the car", r.house.y > r.car.y * 2, `house ${r.house.y}m vs car ${r.car.y}m`]);
