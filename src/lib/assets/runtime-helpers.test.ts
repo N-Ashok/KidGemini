@@ -204,6 +204,39 @@ describe("loadModelBatchHelper — generated script shape", () => {
     expect(script).toMatch(/box\.union\(partBox\)/);
   });
 
+  it("exposes modelFacing/modelMetres and a placeModel that uses them", () => {
+    // 2026-08-15. Before this the runtime had no facing datum at all and no
+    // way to floor a model onto the ground, so every game guessed both.
+    const helper = loadModelHelper();
+    expect(helper).toMatch(/window\.modelFacing\s*=/);
+    expect(helper).toMatch(/window\.modelMetres\s*=/);
+    expect(helper).toMatch(/window\.placeModel\s*=/);
+    // The heading maths must go through the measured facing, not a constant.
+    expect(helper).toMatch(/window\.modelFacing\(name\)/);
+    // The ground floor is MEASURED after scale+rotation, not read from a table.
+    expect(helper).toMatch(/new Box3\(\)\.setFromObject\(obj\)/);
+    expect(helper).toMatch(/obj\.position\.y = groundY - box\.min\.y/);
+  });
+
+  it("placeModel leaves rotation alone when the model has no audited facing", () => {
+    // A confident wrong turn is worse than no turn: an unaudited model must
+    // come out exactly as loadModel would have given it.
+    const helper = loadModelHelper();
+    expect(helper).toMatch(/if \(a >= 0 && b >= 0\) obj\.rotation\.y/);
+  });
+
+  it("placeModel is a NEW api, and loadModel still normalises nothing", () => {
+    // Deliberate: stored games hand-compensate for these quirks (one flips a
+    // crocodile with rotation.y = Math.PI). Auto-correcting loadModel would
+    // flip those games BACK to wrong — see CLAUDE.md rule 11.
+    const helper = loadModelHelper();
+    const loadModelBody = helper.slice(helper.indexOf("window.loadModel = async"));
+    const upToPlace = loadModelBody.slice(0, loadModelBody.indexOf("window.placeModel"));
+    expect(upToPlace).not.toMatch(/rotation\.y\s*=/);
+    expect(upToPlace).not.toMatch(/position\.y\s*=/);
+    expect(upToPlace).not.toMatch(/scale\.(setScalar|multiplyScalar)/);
+  });
+
   it("stamps a version so ensureAssetRuntime can replace a stale copy in a stored game", () => {
     expect(script).toMatch(
       new RegExp(`window\\.__arLoadModelBatchVersion = ${LOAD_MODEL_BATCH_VERSION}`),
@@ -322,11 +355,13 @@ describe("loadModelHelper — modelSize(name)", () => {
   // rotateToJoin() to stored games — which IS the migration for the reported
   // broken race track (BUG-FIX-LOG). A child re-opening it gets a model that
   // can finally answer which way a corner turns.
-  it("bumped the helper version so stored games get modelSize + modelAxis + modelJoins + fitTile retrofitted", () => {
+  it("bumped the helper version so stored games get the new accessors retrofitted", () => {
     // Without the bump, ensureAssetRuntime leaves an existing older helper
     // alone and the new capability never reaches any game that already exists.
-    expect(LOAD_MODEL_HELPER_VERSION).toBe(7);
-    expect(script).toContain("window.__arLoadModelVersion = 7");
+    // v7: modelSize + modelAxis + modelJoins + fitTile.
+    // v8 (2026-08-15): modelFacing + modelMetres + placeModel.
+    expect(LOAD_MODEL_HELPER_VERSION).toBe(8);
+    expect(script).toContain("window.__arLoadModelVersion = 8");
   });
 
   it("answers null rather than a made-up number for an unmeasured model", () => {

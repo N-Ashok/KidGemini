@@ -236,6 +236,28 @@ export function injectAssets(html: string, manifest: AssetManifest = manifestJso
   if (Object.keys(edges).length > 0) {
     markup += `<script>window.AR_EDGES=${JSON.stringify(edges)};</script>`;
   }
+  // Which way each model FACES at rest (2026-08-15 — the wrong-facing fix).
+  // Until now the prompt simply asserted "VEHICLES/CHARACTERS face +Z", which
+  // a render audit disproved (car faces -Z, airplane +X), and `size` cannot
+  // express a direction at all. Same shape rules as the tables above: models
+  // only, absent when unaudited, modelFacing() answers null.
+  const facings = Object.fromEntries(
+    models.flatMap((m) => (m.facing ? [[m.name, m.facing] as const] : [])),
+  );
+  if (Object.keys(facings).length > 0) {
+    markup += `<script>window.AR_FACING=${JSON.stringify(facings)};</script>`;
+  }
+  // The model's size in TRUE metres (2026-08-15). AR_SIZES is the honest
+  // extent of the published GLB, but the catalog mixes kit units and metres,
+  // so those numbers make a mountain smaller than a car. This ships the real
+  // figure alongside rather than redefining AR_SIZES, whose values live games
+  // already divide by.
+  const realSizes = Object.fromEntries(
+    models.flatMap((m) => (m.realSize ? [[m.name, m.realSize] as const] : [])),
+  );
+  if (Object.keys(realSizes).length > 0) {
+    markup += `<script>window.AR_REAL=${JSON.stringify(realSizes)};</script>`;
+  }
   if (modelNames.length > 0) markup += loadModelHelper();
   if (modelNames.length > 0 && CALLS_LOADMODELBATCH_RE.test(html)) markup += loadModelBatchHelper();
   if (audioNames.length > 0) markup += audioHelper();

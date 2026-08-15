@@ -21,6 +21,7 @@ import {
   webglContextGuard,
   WEBGL_GUARD_VERSION,
   LOAD_MODEL_BATCH_VERSION,
+  LOAD_MODEL_HELPER_VERSION,
 } from "./runtime-helpers";
 
 const manifest = manifestJson as AssetManifest;
@@ -306,6 +307,27 @@ window.loadModel = async function (name) {
     expect(ensureAssetRuntime(once)).toBe(once);
   });
 
+  it("F.18 a game using an audited model gets AR_FACING and AR_REAL floored in", () => {
+    // 2026-08-15. These two tables are the whole delivery mechanism for the
+    // facing/scale fix: the v8 helper retrofits onto stored games, and without
+    // the tables modelFacing()/modelMetres() answer null for everything — i.e.
+    // exactly the bug they exist to close.
+    const raw = page(`<script type="module">import { Scene } from "three"; loadModel("car");</script>`);
+    const out = ensureAssetRuntime(raw);
+    expect(out).toMatch(/window\.AR_FACING=/);
+    expect(out).toContain('"car":"-z"'); // measured, and NOT the +Z the prompt used to assert
+    expect(out).toMatch(/window\.AR_REAL=/);
+    expect(ensureAssetRuntime(out)).toBe(out); // settles
+  });
+
+  it("F.19 a model with no audited facing contributes no AR_FACING row", () => {
+    // Absent must stay absent: placeModel then leaves rotation alone, which is
+    // strictly better than turning a model by a guess.
+    const raw = page(`<script type="module">import { Scene } from "three"; loadModel("canoe");</script>`);
+    const out = ensureAssetRuntime(raw);
+    expect(out).not.toMatch(/"canoe":"[+-][xz]"/);
+  });
+
   it("F.15 a game that only calls loadModel (no batch) does NOT get the batch helper floored in", () => {
     const raw = page(`<script type="module">import { Scene } from "three"; loadModel("car");</script>`);
     const out = ensureAssetRuntime(raw);
@@ -331,7 +353,7 @@ window.loadModel = async function (name) { return null; };
         `<script type="module">import { Scene } from "three"; loadModel("car");</script>`,
     );
     const out = ensureAssetRuntime(stored);
-    expect(out).toContain("window.__arLoadModelVersion = 7");
+    expect(out).toContain(`window.__arLoadModelVersion = ${LOAD_MODEL_HELPER_VERSION}`);
     expect(out).toContain("window.modelSize");
     // The helper alone would be useless — it must find real metres to read.
     const carSize = manifest.assets.find((a) => a.name === "car")!.size;

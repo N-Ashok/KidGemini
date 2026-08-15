@@ -37,6 +37,12 @@ import {
   parseAxisTables,
   stripAxisTables,
   countEdgeTables,
+  parseFacingTables,
+  stripFacingTables,
+  countFacingTables,
+  parseRealTables,
+  stripRealTables,
+  countRealTables,
   parseEdgeTables,
   stripEdgeTables,
 } from "./runtime-helpers";
@@ -319,6 +325,45 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
       out = stripEdgeTables(out);
       if (Object.keys(edges).length > 0) {
         markup += `<script>window.AR_EDGES=${JSON.stringify(edges)};</script>`;
+      }
+    }
+
+    // (3f) the AR_FACING table — which way each model's front points, behind
+    // modelFacing() and placeModel() (2026-08-15). Same reasoning as (3d):
+    // the v8 helper retrofits onto stored games, and without the table it
+    // would answer null for everything — i.e. the bug it exists to fix.
+    const facingByName = new Map(
+      manifest.assets.flatMap((a) => (a.type === "model" && a.facing ? [[a.name, a.facing] as const] : [])),
+    );
+    const facings: Record<string, string> = {};
+    for (const name of Object.keys(union)) {
+      const f = facingByName.get(name);
+      if (f) facings[name] = f;
+    }
+    const singleFacings = countFacingTables(out) === 1 ? parseFacingTables(out)[0] : undefined;
+    if (singleFacings === undefined || JSON.stringify(singleFacings) !== JSON.stringify(facings)) {
+      out = stripFacingTables(out);
+      if (Object.keys(facings).length > 0) {
+        markup += `<script>window.AR_FACING=${JSON.stringify(facings)};</script>`;
+      }
+    }
+
+    // (3g) the AR_REAL table — each model's true real-world size, behind
+    // modelMetres() (2026-08-15). AR_SIZES stays exactly as it is: live games
+    // divide by those numbers, so they cannot be redefined under them.
+    const realByName = new Map(
+      manifest.assets.flatMap((a) => (a.type === "model" && a.realSize ? [[a.name, a.realSize] as const] : [])),
+    );
+    const reals: Record<string, [number, number, number]> = {};
+    for (const name of Object.keys(union)) {
+      const r = realByName.get(name);
+      if (r) reals[name] = r;
+    }
+    const singleReals = countRealTables(out) === 1 ? parseRealTables(out)[0] : undefined;
+    if (singleReals === undefined || JSON.stringify(singleReals) !== JSON.stringify(reals)) {
+      out = stripRealTables(out);
+      if (Object.keys(reals).length > 0) {
+        markup += `<script>window.AR_REAL=${JSON.stringify(reals)};</script>`;
       }
     }
   }

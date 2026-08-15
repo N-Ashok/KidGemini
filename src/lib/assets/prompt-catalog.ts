@@ -284,13 +284,35 @@ what you need and use the names you are given.
    standing human is ~1.7 units tall; scale every other placeholder against
    that (a ball ≈0.22, a car ≈1.5 tall × 4.5 long, a house ≈3-6 tall). A
    placeholder that looks right next to a human placeholder looks right.
-4. \`modelSize(name)\` gives REAL metres \`{x, y, z}\` before you load (null =
-   unknown, eyeball it). NEVER guess a size or spacing — a road piece is ~1 m,
-   not 10. Scale by want ÷ actual; tile edge-to-edge by stepping the footprint:
+4. \`placeModel(name, opts)\` puts a model in the world CORRECTLY — standing on
+   the ground, at a believable size, pointing where you want. Prefer it over
+   bare \`loadModel\` for anything you position:
+   \`const car = await placeModel("car", { at: {x: 0, z: 10}, heading: "-z" });
+    scene.add(car);   // placeModel positions it; YOU still add it to the scene
+    const house = await placeModel("house", { at: {x: 8, z: 0}, metres: true });
+    scene.add(house);\`
+   \`at\` {x,z} · \`heading\` "+z"/"-z"/"+x"/"-x" or radians · \`metres: true\`
+   scales to real-world size · \`scale\` an explicit multiplier · \`y\` ground
+   height if your terrain isn't flat. It measures the loaded model, so its base
+   always rests on the ground — never assume a model is centred or floored.
+   NEVER assume which way a model faces. They genuinely differ: \`car\` faces -Z,
+   \`airplane\` faces +X, \`crocodile\` and \`dog\` face +Z. \`modelFacing(name)\`
+   gives it ("+z"/"-z"/"+x"/"-x", null = unaudited); \`placeModel\`'s \`heading\`
+   uses it for you, and leaves rotation alone when it is null.
+   SIZES COME IN TWO FLAVOURS, don't mix them up:
+   \`modelSize(name)\` = the model's own units as published — what it measures on
+   screen at scale 1. NEVER guess a size or spacing — a road piece is ~1 m, not
+   10. Use it to work out a SCALE, and to step tiles edge-to-edge:
    \`const w = modelSize("road_straight").x; place(i * w);\`
-   VEHICLES/CHARACTERS face +Z — steer with \`rotation.y\`. ROAD TILES DON'T:
-   \`modelAxis(name)\` gives the run axis ("x"/"z"/"none"/null); kits differ and
-   a square tile's size can't reveal it.
+   \`modelMetres(name)\` = how big the thing is in REAL LIFE. Use it to decide how
+   big something SHOULD be. They are not the same number and the catalog's own
+   units are not consistent between models — by \`modelSize\` alone a mountain
+   (1.9) is smaller than a car (2.56), so sizing a scene from it puts a house
+   next to a car at the wrong scale. Either pass \`metres: true\`, or scale
+   explicitly: \`obj.scale.setScalar(modelMetres(n).y / modelSize(n).y)\`.
+   Both answer null when unknown — then eyeball it.
+   ROAD TILES DON'T FACE ANYTHING: \`modelAxis(name)\` gives the run axis
+   ("x"/"z"/"none"/null); kits differ and a square tile's size can't reveal it.
    TRACKS: ONE kit (\`road_*\` OR \`race_track_*\`), every piece scaled by the
    SAME number. NEVER guess a rotation — name the directions the road LEAVES
    each cell and \`fitTile\` does it (a 2 m piece covers TWO 1 m cells):

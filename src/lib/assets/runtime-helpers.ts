@@ -134,6 +134,67 @@ export function countAxisTables(html: string): number {
   return [...html.matchAll(arAxesBlockRe())].length;
 }
 
+// The injected FACING table (`<script>window.AR_FACING={...};</script>`),
+// added 2026-08-15 for the wrong-facing bug. Same shape rules as AR_AXES:
+// values are plain strings, so no `}` can appear inside one.
+const arFacingBlockRe = () => /<script[^>]*>\s*window\.AR_FACING\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/g;
+
+/** Every parseable AR_FACING table in the document, in document order. */
+export function parseFacingTables(html: string): Array<Record<string, string>> {
+  const tables: Array<Record<string, string>> = [];
+  for (const m of html.matchAll(arFacingBlockRe())) {
+    try {
+      const parsed: unknown = JSON.parse(m[1]!);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        tables.push(parsed as Record<string, string>);
+      }
+    } catch {
+      /* not our block shape — fail soft, same floor as parseAxisTables */
+    }
+  }
+  return tables;
+}
+
+/** Removes every AR_FACING table block. Callers re-emit exactly one. */
+export function stripFacingTables(html: string): string {
+  return html.replace(arFacingBlockRe(), "");
+}
+
+/** How many AR_FACING table blocks the document carries. */
+export function countFacingTables(html: string): number {
+  return [...html.matchAll(arFacingBlockRe())].length;
+}
+
+// The injected REAL-METRES table (`<script>window.AR_REAL={...};</script>`),
+// added 2026-08-15. Array values, exactly like AR_SIZES.
+const arRealBlockRe = () => /<script[^>]*>\s*window\.AR_REAL\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/g;
+
+/** Every parseable AR_REAL table in the document, in document order. */
+export function parseRealTables(html: string): Array<Record<string, [number, number, number]>> {
+  const tables: Array<Record<string, [number, number, number]>> = [];
+  for (const m of html.matchAll(arRealBlockRe())) {
+    try {
+      const parsed: unknown = JSON.parse(m[1]!);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        tables.push(parsed as Record<string, [number, number, number]>);
+      }
+    } catch {
+      /* not our block shape — fail soft */
+    }
+  }
+  return tables;
+}
+
+/** Removes every AR_REAL table block. Callers re-emit exactly one. */
+export function stripRealTables(html: string): string {
+  return html.replace(arRealBlockRe(), "");
+}
+
+/** How many AR_REAL table blocks the document carries. */
+export function countRealTables(html: string): number {
+  return [...html.matchAll(arRealBlockRe())].length;
+}
+
 // The injected tile-EDGE table (`<script>window.AR_EDGES={...};</script>`),
 // added 2026-08-09 for the SECOND poorly-formed-track bug (BUG-FIX-LOG).
 // AR_AXES answers "none" for every corner, which is true and useless — a model
@@ -235,7 +296,7 @@ export function countTriangles(obj: { traverse: (cb: (child: any) => void) => vo
  *  the directions it must connect. Three rounds of PROMPT teaching failed to
  *  make a generated track rotate its corners correctly (TECH_DEBT #97 — the
  *  fix is not more prose), so the calculation moved into the runtime. */
-export const LOAD_MODEL_HELPER_VERSION = 7;
+export const LOAD_MODEL_HELPER_VERSION = 8;
 
 /** The runtime helper 3D games call: resolves a catalog name via AR_ASSETS,
  *  loads the GLB with GLTFLoader + meshopt (models are meshopt-compressed),
@@ -279,7 +340,7 @@ export const LOAD_MODEL_HELPER_VERSION = 7;
  *  on a genuine load failure is unchanged — nothing is recorded on that path). */
 export function loadModelHelper(): string {
   return `<script type="module">
-  import { GLTFLoader, MeshoptDecoder } from "three";
+  import { GLTFLoader, MeshoptDecoder, Box3 } from "three";
   window.__arLoadModelVersion = ${LOAD_MODEL_HELPER_VERSION};
 // modelSize (2026-08-08, the fragmented-track fix): the measured metres a model
 // renders at scale 1, available BEFORE loading so a game can plan a layout. The
@@ -316,6 +377,102 @@ window.AR_EDGES = window.AR_EDGES || {};
 window.modelJoins = function (name) {
   var e = window.AR_EDGES[name];
   return (e && e.joins && e.joins.length) ? e : null;
+};
+// modelFacing (2026-08-15, the wrong-facing fix): which way a model's FRONT
+// points at rest — "+z", "-z", "+x" or "-x". The prompt used to assert that
+// vehicles and characters all face +Z; a render audit of the catalog shows
+// car faces -Z and airplane faces +X, so games that trusted the claim placed
+// them backwards or sideways. A bounding box cannot express this (it is
+// identical for a car facing either way), which is why no data existed before.
+// Unaudited answers null — then eyeball it, exactly as before.
+window.AR_FACING = window.AR_FACING || {};
+window.modelFacing = function (name) {
+  var f = window.AR_FACING[name];
+  return (f === "+x" || f === "-x" || f === "+z" || f === "-z") ? f : null;
+};
+// modelMetres (2026-08-15): the model's size in TRUE real-world metres.
+// modelSize() reports the published GLB's own extent, and the catalog mixes
+// kit units with metres — by those numbers a mountain (1.9) is smaller than a
+// car (2.56). Use modelMetres() to decide how big something SHOULD be, and
+// modelSize() to work out the scale that gets you there:
+//   var want = modelMetres("house"), have = modelSize("house");
+//   house.scale.setScalar(want.y / have.y);
+// Unknown answers null.
+window.AR_REAL = window.AR_REAL || {};
+window.modelMetres = function (name) {
+  var s = window.AR_REAL[name];
+  return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
+};
+// placeModel (2026-08-15): load a model and put it in the world correctly —
+// standing on the ground, at a believable size, pointing where you want.
+//
+// Every one of those three had to be guessed per game before, and each guess
+// was independent: loadModel() does no normalisation of any kind (it clones
+// the template and returns it), nothing anywhere floors Y, the catalog's sizes
+// are not all in the same units, and no facing data existed. That is three
+// coin-flips per model per game.
+//
+// Deliberately a NEW function rather than a change to loadModel(): games
+// already stored hand-compensate for these quirks (one flips a crocodile with
+// rotation.y = Math.PI), and silently correcting loadModel would flip those
+// games BACK to wrong. Old calls behave exactly as before.
+//
+//   var car = await placeModel("car", { at: {x: 0, z: 10}, heading: "-z" });
+//   var h  = await placeModel("house", { at: {x: 8, z: 0}, metres: true });
+//
+//   at       {x, z}   where to stand it (y is computed so its base sits on 0)
+//   heading  "+z"|"-z"|"+x"|"-x"|radians   which way it should point
+//   metres   true     scale it to its real-world size (needs modelMetres)
+//   scale    number   an explicit scale instead, applied after metres
+//   y        number   ground height at that spot, if your terrain isn't flat
+//
+// Fails soft in every direction: an unknown name returns null, and any datum
+// that is missing is simply not applied.
+window.placeModel = async function (name, opts) {
+  opts = opts || {};
+  var obj = await window.loadModel(name);
+  if (!obj) return null;
+  try {
+    // 1. SIZE — real metres if we know them, then any explicit scale.
+    if (opts.metres) {
+      var want = window.modelMetres(name), have = window.modelSize(name);
+      if (want && have && have.y > 0 && have.x > 0 && have.z > 0) {
+        // Longest axis wins: a stylised model is not uniformly out, and
+        // matching the biggest dimension is what keeps it believable beside
+        // its neighbours.
+        var byX = want.x / have.x, byY = want.y / have.y, byZ = want.z / have.z;
+        obj.scale.setScalar(Math.max(byX, Math.max(byY, byZ)));
+      }
+    }
+    if (typeof opts.scale === "number" && opts.scale > 0) obj.scale.multiplyScalar(opts.scale);
+
+    // 2. HEADING — turn the model's own front onto the direction asked for.
+    var order = ["-z", "+x", "+z", "-x"]; // clockwise seen from above
+    if (opts.heading !== undefined && opts.heading !== null) {
+      if (typeof opts.heading === "number") {
+        obj.rotation.y = opts.heading;
+      } else {
+        var from = window.modelFacing(name);
+        var a = order.indexOf(from), b = order.indexOf(opts.heading);
+        // Unaudited model: leave rotation alone rather than turn it by a guess.
+        if (a >= 0 && b >= 0) obj.rotation.y = ((b - a + 4) % 4) * (Math.PI / 2);
+      }
+    }
+
+    // 3. GROUND — measure the model AS TRANSFORMED and drop it so its lowest
+    // point rests on the ground. Measured, not read from a table: it has to
+    // account for the scale and rotation just applied.
+    obj.updateMatrixWorld(true);
+    var box = new Box3().setFromObject(obj);
+    var groundY = typeof opts.y === "number" ? opts.y : 0;
+    if (isFinite(box.min.y)) obj.position.y = groundY - box.min.y;
+    var at = opts.at || {};
+    if (typeof at.x === "number") obj.position.x = at.x;
+    if (typeof at.z === "number") obj.position.z = at.z;
+  } catch (e) {
+    console.warn("[ariantra] placeModel could not place:", name, e);
+  }
+  return obj;
 };
 // rotateToJoin: the one calculation every track needs and no game got right by
 // hand. Returns the rotation.y IN RADIANS that carries a piece's "from" edge
@@ -463,10 +620,14 @@ window.loadModelBatch = async function (name, count) {
     const container = new Group();
     const parts = [];
     // A mesh inside a GLB is almost never at the model's origin with unit
-    // scale: kits park parts under rotated/offset/scaled nodes, and loadModel()
-    // additionally normalises the whole model to real-world metres (AR_SIZES)
-    // and stands its base on y=0. All of that lives in the NODE TRANSFORMS of
-    // the subtree loadModel() returns — none of it is in part.geometry.
+    // scale: kits park parts under rotated/offset/scaled nodes, and the vendor
+    // step bakes the catalog's own normalisation (rotateYDeg / normalizeLongest
+    // / recenterXZ, scripts/vendor-models.mjs) into those same nodes. All of it
+    // lives in the NODE TRANSFORMS of the subtree loadModel() returns — none of
+    // it is in part.geometry. (loadModel itself normalises NOTHING: it clones
+    // the template and returns it. Corrected 2026-08-15 — an earlier version of
+    // this comment credited loadModel with the rescaling and a base-on-y=0
+    // flooring it has never done; nothing in the runtime floors Y.)
     //
     // v1 built each InstancedMesh from part.geometry alone and threw those
     // transforms away, so every batched prop rendered rotated, sunk into the

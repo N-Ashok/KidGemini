@@ -607,13 +607,31 @@ describe("the facing convention is taught (2026-08-06)", () => {
   // exactly the falsehood that broke every road build: the city kit's
   // road_straight runs along X. The facing rule is now scoped to
   // vehicles/characters, and tiles get modelAxis() instead.
-  it("scopes +Z facing to vehicles/characters and teaches modelAxis for tiles", () => {
+  it("never claims a blanket facing, and teaches modelFacing/placeModel instead", () => {
+    // 2026-08-15: the prompt used to assert "VEHICLES/CHARACTERS face +Z"
+    // unconditionally. A top-down render audit disproved it — `car` faces -Z
+    // (180 degrees out) and `airplane` faces +X (90 degrees out), while
+    // `crocodile` and `dog` do face +Z. A bounding box cannot express a
+    // direction, so before AR_FACING there was no datum anywhere that could
+    // tell a game which way a model points, and every game re-guessed it
+    // (TECH_DEBT #91: wrong-facing models recurring across unrelated games).
     const section = modelsPromptSection(realManifest as AssetManifest);
-    expect(section).toContain("VEHICLES/CHARACTERS face +Z");
-    expect(section).toContain("rotation.y");
+    expect(section).toContain("modelFacing(name)");
+    expect(section).toContain("placeModel");
     expect(section).toContain("modelAxis(name)");
-    // The universal claim must never come back — it was never true.
+    // Neither blanket claim may come back — both were false.
     expect(section).not.toMatch(/Every model faces \+Z/);
+    expect(section).not.toMatch(/VEHICLES\/CHARACTERS face \+Z/);
+  });
+
+  it("does not call the catalog's own units REAL metres, and teaches modelMetres", () => {
+    // The other half of the same report: 238 of 296 sized models are raw kit
+    // units, not metres, so `modelSize` alone makes a mountain (1.9) smaller
+    // than a car (2.56). Calling it "REAL metres" is what let the model size a
+    // whole scene from it.
+    const section = modelsPromptSection(realManifest as AssetManifest);
+    expect(section).toContain("modelMetres(name)");
+    expect(section).not.toMatch(/modelSize\(name\)` gives REAL metres/);
   });
 });
 
