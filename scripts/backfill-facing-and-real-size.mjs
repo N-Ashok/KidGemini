@@ -52,6 +52,22 @@ const FACING = {
   suv: "+z", luxury_suv: "+z", van: "+z", delivery_van: "+z", truck: "+z",
   pickup_truck: "+z", ambulance: "+z", firetruck: "+z", garbage_truck: "+z",
   tractor: "+z", armored_truck: "+z", tank_toy: "+z",
+  // At FULL SIZE the hull and turret do NOT disagree (the contact-sheet tile
+  // was too small to tell): the hull is X-long and the barrel points along it.
+  // This is the hull at rest — the turret rotates in play, which is the game's
+  // business, not the asset's.
+  tank: "-x",
+  // Added 2026-08-15 (second pass). These were first left unaudited as
+  // "seat/nose ambiguous from above" — a judgement made from a 12-up contact
+  // sheet where each tile was ~200px. At FULL SIZE the karts are unambiguous:
+  // the driver's visor and the front bumper face +Z, the twin exhausts sit at
+  // -Z. Leaving them out was the costliest gap in the first pass: a child's
+  // "Candy Kingdom Racer" used `race_kart`, got null from modelFacing, and
+  // hand-guessed `rotation.y = Math.PI` — which is the kart driving backwards
+  // at the camera in the owner's screenshot. Lesson: audit the models a GENRE
+  // depends on at full size, whatever the sheet suggests.
+  race_kart: "+z", gokart: "+z",
+  future_car: "-z", // same F1 shape as `car`: wide rear wing at +Z, nose at -Z
   // ── two-wheelers (handlebars/forks south in every render) ────────────────
   sport_bike: "+z", race_bike: "+z", dirt_bike: "+z", cruiser_bike: "+z",
   chopper_bike: "+z", police_bike: "+z", scooter: "+z", moped: "+z",
@@ -71,6 +87,12 @@ const FACING = {
   man: "+z", woman: "+z", girl: "+z", scientist: "+z", police_officer: "+z",
   pirate: "+z", grandpa: "+z", explorer: "+z", hero: "+z", alien: "+z",
   ghost: "+z",
+  // Added 2026-08-15 (third pass, usage-weighted). Scanning every stored game
+  // for loadModel() calls showed `cricketer` is the 8th most-used model in the
+  // library (79 uses) and had NO facing — the same gap that made a child's
+  // kart drive at the camera. Both are the blocky character kit, verified in
+  // the 3/4 view against `explorer`, which was audited from two views.
+  cricketer: "+z", plumber: "+z",
 };
 
 /** Deliberately NOT given a facing, and why — so the next person does not
@@ -79,18 +101,14 @@ export const FACING_DELIBERATELY_ABSENT = {
   canoe: "pointed at both ends — no front",
   rocket: "points up (+Y); no horizontal heading",
   ufo: "radially symmetric",
-  tank: "hull and turret disagree in the render; turret rotates in play",
   tank_desert: "authored X-long, see TECH_DEBT #91 — needs its own decision",
   tank_rusty: "authored X-long, see TECH_DEBT #91",
   armored_pickup: "cab/bed could not be told apart from above",
   digger: "blade vs cab ambiguous from above",
-  future_car: "symmetric in the top-down render",
-  race_kart: "seat/nose ambiguous from above",
-  gokart: "seat/nose ambiguous from above",
   motorcycle: "no handlebar visible in the render",
   military_motorbike: "handlebars ambiguous",
   zebra: "head/tail could not be told apart from above",
-  monkey: "limbs splayed; head not resolvable from above",
+  monkey: "3/4 view leaves the face between -X and +Z; a single view cannot decompose it",
   robot: "arms out, head not resolvable from above",
 };
 
@@ -148,6 +166,24 @@ const REAL_SIZE = {
   scientist: [0.5, 1.8, 0.35], police_officer: [0.55, 1.85, 0.38],
   pirate: [0.55, 1.8, 0.38], grandpa: [0.5, 1.7, 0.35], explorer: [0.55, 1.8, 0.38],
   soldier: [0.55, 1.8, 0.38], hero: [0.55, 1.85, 0.38],
+  // ── added 2026-08-15, usage-weighted ────────────────────────────────────
+  // Chosen by scanning every stored game for loadModel() calls: these are the
+  // props children actually place most, and every one of them was missing a
+  // real size. `cricketer` and `plumber` measure 2.70m tall in catalog units,
+  // which is why a person ends up towering over a house.
+  cricketer: [0.5, 1.8, 0.35], plumber: [0.5, 1.75, 0.35],
+  star: [0.4, 0.4, 0.15], coin: [0.3, 0.3, 0.05], heart: [0.35, 0.35, 0.15],
+  gem: [0.25, 0.3, 0.25], chest: [0.8, 0.6, 0.5], crate: [0.9, 0.9, 0.9],
+  rock: [1.2, 0.9, 1.1], spring: [0.4, 0.5, 0.4], apple: [0.08, 0.09, 0.08],
+  banana: [0.05, 0.05, 0.18], traffic_cone: [0.35, 0.7, 0.35],
+  finish_line: [8, 5, 1.2], grandstand: [24, 9, 8],
+  cricket_bat: [0.11, 0.96, 0.06], cricket_ball: [0.07, 0.07, 0.07],
+  wicket: [0.23, 0.71, 0.05], cricket_pitch: [3.05, 0.02, 20.12],
+  sight_screen: [10, 6, 0.5], soccer_ball: [0.22, 0.22, 0.22],
+  soccer_goal: [7.32, 2.44, 2], toadstool: [0.5, 0.7, 0.5],
+  low_fence: [2, 1, 0.1], garden_path: [1, 0.02, 1],
+  tank_toy: [0.3, 0.2, 0.5], spaceship: [8, 3, 12], dragon: [6, 4, 9],
+  monkey: [0.4, 0.9, 0.5], fish: [0.08, 0.12, 0.25],
 };
 
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));

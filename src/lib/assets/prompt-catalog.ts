@@ -329,7 +329,9 @@ what you need and use the names you are given.
    the model, so its base always rests on the ground.
    NEVER assume which way a model faces — they differ (\`car\` -Z, \`airplane\`
    +X, \`dog\` +Z). \`modelFacing(name)\` gives it (null = unaudited);
-   \`placeModel\`'s \`heading\` uses it for you.
+   \`placeModel\`'s \`heading\` uses it for you. Writing \`m.rotation.y = Math.PI\`
+   to "turn it round" is ALWAYS a guess and is the single most common way a
+   game ends up driving backwards at the camera — ask for the heading instead.
    A CHASE CAMERA GOES BEHIND, and "behind" is the opposite of the direction
    the thing TRAVELS — not the opposite of +Z. Decide the travel direction
    first, drive along it, and put the camera back along it: get that backwards
