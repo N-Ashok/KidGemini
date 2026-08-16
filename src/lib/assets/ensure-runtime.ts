@@ -11,6 +11,7 @@
 // calls loadModel), not the marker, and is idempotent on already-injected HTML.
 
 import manifestJson from "./manifest.json";
+import { ensureStorageShim } from "./storage-shim";
 import type { AssetManifest } from "./manifest";
 import { THREE_MARKER, PHYSICS_MARKER } from "./markers";
 import {
@@ -47,12 +48,24 @@ import {
   stripEdgeTables,
 } from "./runtime-helpers";
 import { injectPerfProbe } from "./perf-probe";
+import { resolveModelName } from "./model-alias";
 
 const IMPORTS_THREE_RE = /\bfrom\s*["']three["']/;
 // Physics games import the second engine by its own bare specifier; an
 // unmapped one dies on the import line exactly like an unmapped "three".
 const IMPORTS_CANNON_RE = /\bfrom\s*["']cannon-es["']/;
-const CALLS_LOADMODEL_RE = /\bloadModel\s*\(/;
+// ANY of the model APIs pulls the helper in — they all live in the same
+// injected block and all depend on loadModel internally.
+//
+// This used to be `/\bloadModel\s*\(/` alone, which matches neither
+// `placeModel(` nor `loadModelBatch(` nor `modelHeading(`. That was survivable
+// while loadModel was the only API a game called, and became a live bug on
+// 2026-08-15 when the prompt started telling the model to PREFER placeModel:
+// a game that used placeModel and never wrote the literal `loadModel(` got no
+// helper injected at all and died on `placeModel is not defined`. Found by a
+// round-trip test (strip -> re-floor), not in production, but it was already
+// deployed.
+const CALLS_LOADMODEL_RE = /\b(?:loadModel|loadModelBatch|placeModel|modelHeading|modelFacing|modelMetres|modelSize|modelAxis|modelJoins|fitTile|rotateToJoin)\s*\(/;
 const CALLS_LOADMODELBATCH_RE = /\bloadModelBatch\s*\(/;
 const LOADMODEL_ARG_RE = /\bloadModel\s*\(\s*["']([a-z0-9_]+)["']/gi;
 const ANY_IMPORTMAP_RE = /<script[^>]*type=["']importmap["'][^>]*>[\s\S]*?<\/script>/gi;
@@ -134,7 +147,15 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
   const usesThree = IMPORTS_THREE_RE.test(html) || html.includes(THREE_MARKER);
   const usesLoadModel = CALLS_LOADMODEL_RE.test(html);
   const usesPhysics = IMPORTS_CANNON_RE.test(html) || html.includes(PHYSICS_MARKER);
-  if (!usesThree && !usesLoadModel && !usesPhysics) return html; // plain 2D — identity
+
+  // The storage shim is NOT part of the 3D floor and must be applied first:
+  // the game it saves is usually a plain 2D one, which every line below this
+  // point declines to touch. A 2D game that reads a saved high score throws in
+  // the opaque-origin preview iframe and dies at init — title screen up, Start
+  // button dead (see storage-shim.ts).
+  html = ensureStorageShim(html);
+
+  if (!usesThree && !usesLoadModel && !usesPhysics) return html; // plain 2D — identity (plus any shim)
 
   // By NAME, never by type — two engine-type rows exist since 2026-07-29.
   const engine = manifest.assets.find((a) => a.type === "engine" && a.name === "three");
@@ -231,10 +252,31 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
     const union: Record<string, string> = {};
     for (const t of [...tables].reverse()) Object.assign(union, t);
     const urlByName = new Map(manifest.assets.map((a) => [a.name, a.url] as const));
+    const availableNames = new Set(
+      manifest.assets.filter((a) => a.type === "model").map((a) => a.name),
+    );
     for (const m of html.matchAll(LOADMODEL_ARG_RE)) {
       const name = m[1]!.toLowerCase();
       const url = urlByName.get(name);
-      if (url) union[name] = url; // unknown/hallucinated names omitted → loadModel returns null
+      if (url) {
+        union[name] = url;
+        continue;
+      }
+      // A name we do not have. Before giving up (which leaves loadModel
+      // returning null and the child looking at a hand-built placeholder),
+      // try to resolve it onto a real model — deterministically, no extra
+      // model call. Measured across every stored game: 2 of 99 distinct names
+      // were invented, `stegosaurus` x5 and `mermaid` x1. The first should
+      // simply be `dino`; the second correctly stays unmatched.
+      //
+      // The INVENTED name stays the key, so the game's own
+      // `loadModel("stegosaurus")` keeps working untouched — only the URL
+      // behind it becomes real. Nothing in the child's code is rewritten.
+      const resolved = resolveModelName(name, availableNames);
+      if (resolved.name) {
+        const resolvedUrl = urlByName.get(resolved.name);
+        if (resolvedUrl) union[name] = resolvedUrl;
+      }
     }
     for (const name of Object.keys(union)) {
       const current = urlByName.get(name);

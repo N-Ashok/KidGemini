@@ -16,6 +16,16 @@ export interface CatalogGates {
   // same as omitting three/audio would if they were optional. New call sites
   // should set it explicitly; catalogGates() itself always returns it.
   save?: boolean;
+  /** The cannon-es physics playbook (2026-08-16). Optional for the same
+   *  reason `save` is: existing literals in tests predate it and undefined
+   *  reads as false.
+   *
+   *  WHY IT IS ITS OWN GATE: it used to ride on `three`, so the 1,079-token
+   *  physics playbook was sent on EVERY 3D turn. Measured across 1,227 stored
+   *  game versions: 55% use three, and only **4% use physics**. That is ~1,079
+   *  tokens spent on 96% of 3D turns to teach a library the game never
+   *  imports — on a first build AND on every edit thereafter. */
+  physics?: boolean;
 }
 
 // Free-tier triggers (§9): err toward unlocking — a false unlock costs a few
@@ -43,6 +53,11 @@ const AUDIO_TRIGGER = /\b(sounds?|music|songs?|sfx)\b/i;
 // Build/world/inventory mechanics (docs/2026-08-01_PRD_SaveContinueBuilding.md):
 // a kid naming placement/persistence mechanics, not just "make me a game".
 const SAVE_TRIGGER = /\b(build|building|stack|stacking|place|placing|placed|inventory|world|city|base)\b/i;
+// Physics words a child actually uses. Deliberately about SIMULATION —
+// "bounce", "gravity", "roll", "tumble", "ragdoll", "stack and knock over" —
+// not mere collision, which every game has and which needs no engine.
+const PHYSICS_TRIGGER =
+  /\b(physics|gravity|bounc(?:e|y|ing)|ragdoll|tumbl(?:e|ing)|topple|roll(?:s|ing)?\s+(?:down|around|over)|knock(?:s|ed)?\s+(?:over|down)|realistic\s+(?:falling|collisions?)|domino(?:es)?)\b/i;
 
 // Iteration insurance: a game already built WITH library assets keeps its
 // catalogs on follow-up turns even when the keyword text has scrolled away.
@@ -59,6 +74,11 @@ const AUDIO_ARTIFACT = /USES_AUDIO|playSound\s*\(|playMusic\s*\(/;
 // idiom as THREE_ARTIFACT, checking the postMessage protocol strings too so a
 // generation that emitted the handlers but forgot the marker isn't punished.
 const SAVE_ARTIFACT = /SUPPORTS_SAVE|ariantra:request-save|ariantra:save-state|__ARIANTRA_INITIAL_STATE__/;
+// Structural evidence that the game ALREADY uses the engine — same
+// "err toward unlocking on iteration" idiom as THREE_ARTIFACT: a game that
+// imports cannon-es must keep the playbook on follow-up turns even after the
+// keyword has scrolled out of the window.
+const PHYSICS_ARTIFACT = /USES_PHYSICS|from\s*['"]cannon-es['"]|new\s+CANNON\.|['"]cannon-es['"]\s*:/;
 
 /** The §9 decision tree: build turn? → paid: both · free: keyword scan over
  *  the message AND the child's prior messages AND prior artifacts. Paid is
@@ -68,17 +88,22 @@ const SAVE_ARTIFACT = /SUPPORTS_SAVE|ariantra:request-save|ariantra:save-state|_
  *  it is NOT part of the paid bundle (a build/world game is identified by
  *  what it IS, not by the child's plan), so paid:true does not force it on. */
 export function catalogGates(input: { message: string; history: ChatMessage[]; paid: boolean }): CatalogGates {
-  if (!isGameBuildTurn(input.message, input.history)) return { three: false, audio: false, save: false };
+  if (!isGameBuildTurn(input.message, input.history)) return { three: false, audio: false, save: false, physics: false };
 
   const texts = [input.message, ...input.history.filter((m) => m.role === "child").map((m) => m.text)];
   const artifacts = input.history.map((m) => m.artifactHtml).filter((h): h is string => Boolean(h));
   const save = texts.some((t) => SAVE_TRIGGER.test(t)) || artifacts.some((h) => SAVE_ARTIFACT.test(h));
+  const physics = texts.some((t) => PHYSICS_TRIGGER.test(t)) || artifacts.some((h) => PHYSICS_ARTIFACT.test(h));
 
-  if (input.paid) return { three: true, audio: true, save };
+  // Paid unlocks the CATALOGS; physics stays evidence-based either way — it
+  // is a playbook for a library the game must actually import, not a library
+  // of content a child might reach for.
+  if (input.paid) return { three: true, audio: true, save, physics };
 
   return {
     three: texts.some((t) => THREE_TRIGGER.test(t)) || artifacts.some((h) => THREE_ARTIFACT.test(h)),
     audio: texts.some((t) => AUDIO_TRIGGER.test(t)) || artifacts.some((h) => AUDIO_ARTIFACT.test(h)),
     save,
+    physics,
   };
 }

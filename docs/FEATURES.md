@@ -1222,6 +1222,61 @@ server-to-server contract as `arcade-partner.ts`).
   for that pack — repeatable, no "already paid" gate, since packs are
   top-ups, not a single active plan (`upgrade-deeplink.test.ts`)
 
+## Preview & fix safety (2026-08-16 — one-pager: `2026-08-16_ONE-PAGER_SafetyQualityAndCostBatch.md`)
+- **Nothing edits a child's game unless she asked.** The proactive draw-call
+  auto-fix is OFF (`AUTO_FIX_ENABLED`, `src/lib/slowdown-nudge.ts`) — it fired
+  on merely opening a draw-call-bound game, looped (its one-shot guard was
+  keyed on `docKey`, and every fix mints a new one), and stripped every mesh
+  out of a child's game mid-play. Its bounds (`MAX_AUTO_FIXES_PER_SESSION`,
+  `AUTO_FIX_MUST_HELP_RATIO`) live on in `autoFixBoundsAllow` and stay tested
+  underneath the switch. The child-tapped "Make it faster" banner is unchanged
+- **A speed fix can never make the game worse** (`src/lib/scene-census.ts`):
+  `sceneCensus()` counts COPIES IN THE WORLD (`loadModelBatch(name, n)` = n,
+  `new InstancedMesh(…, n)` = n) before and after, and `censusRegression()`
+  discards the result — keeping the running game on screen — if a model name
+  vanished or the world shrank below 60%. Counting copies rather than
+  construction calls is the point: a CORRECT instancing fix deletes hundreds
+  of `new Mesh(...)` calls by design. Scoped to the two "make it faster" paths
+  (`handleSend(..., { protectSceneFrom })`); an ordinary edit may still remove
+  things on request
+- **Games that save a high score survive the preview**
+  (`src/lib/assets/storage-shim.ts`): the preview iframe is
+  `sandbox="allow-scripts"` with no `allow-same-origin`, an opaque origin where
+  reading `localStorage` THROWS — the title screen painted and the Start button
+  did nothing. `ensureStorageShim()` installs a memory-backed stand-in ahead of
+  the game's first script, tries the real API first (published games untouched),
+  and runs BEFORE the plain-2D early return, since those are the games that need
+  it. Scores don't persist — they can't — but the game plays
+- **The build-progress line no longer leaks**: one emoji instead of two
+  (`ArtifactFrame` no longer doubles the derived one), word-anchored keywords
+  (🏆 came from `/point/` inside "Pinpointing"), an `ENGINEER_JARGON` reject in
+  `kid-thought.ts` so "identifying the root cause of the draw calls" never
+  reaches a child, and no quoting of an ask too long to quote
+
+## Generation quality & cost (2026-08-16)
+- **Edit turns cost ~9,900 tokens, down from ~21,000**
+  (`src/lib/assets/strip-runtime.ts`): our injected runtime is stripped from the
+  copy the model reads (~8,470 tokens/edit). The child's own code survives
+  byte-identical, or every SEARCH/REPLACE patch quoting it would miss. Plus a
+  persona split (`CHILD_PERSONA_CORE` always rides; the build contract is
+  dropped on edit turns)
+- **Invented model names resolve deterministically**
+  (`src/lib/assets/model-alias.ts`): `resolveModelName()` maps `stegosaurus` →
+  `dino` with no extra model call, and prefers NO match over a wrong one — a
+  missing model leaves the game's placeholder, a wrong one puts a strange
+  object in the child's world
+- **What the prompt may teach is pinned to what is SERVED**
+  (`src/lib/assets/three-exports.published.json`, written only by a verified
+  bundle upload): editing the vendoring recipe does not change the
+  content-hashed bundle every game already loads, and advertising a name the
+  live bundle lacks is what killed a child's game on 2026-08-15
+  (`CatmullRomCurve3`). Now a test failure instead
+- **The golden-prompt harness can complete a run**: `ipGuestTokenCap()` makes
+  the per-IP guest cap env-overridable (`IP_GUEST_TOKEN_CAP`, local dev only,
+  fails closed on junk), and the runner judges the DELIVERED artifact rather
+  than the streamed text, reports pipeline refusals as their own category, and
+  exits non-zero on a partial run
+
 ## Ariantra integration
 - Shared Ariantra header on every page (`ArNav`): Home · Games · Games-Lab ·
   Studio — pixel-identical with the platform via the generated brand CSS

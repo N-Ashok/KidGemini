@@ -6,10 +6,22 @@ import { CATEGORY_GUIDE, ALWAYS_HARD_BLOCK } from "./safety.config";
  *  only REAL/graphic violence and REAL-WORLD dangerous acts. These tests lock
  *  the exemption wording so a future edit can't silently re-block game-making. */
 describe("safety policy — game-action exemption", () => {
-  it("violence category is scoped to graphic/realistic, exempting cartoon game action", () => {
-    expect(CATEGORY_GUIDE.violence).toMatch(/graphic or realistic/i);
+  it("violence exempts GAME-MAKING, however realistic, and still catches gore/real harm", () => {
+    // Widened 2026-08-16 by owner decision: "kids want bullets and guns and
+    // it's part of games they play". The carve-out used to cover only CARTOON
+    // action, so a child asking for a realistic shooter could be classified as
+    // violence and blocked before the model ever saw the request.
     expect(CATEGORY_GUIDE.violence).toMatch(/NOT violence/);
-    expect(CATEGORY_GUIDE.violence).toMatch(/shooters/i);
+    expect(CATEGORY_GUIDE.violence).toMatch(/guns, bullets, shooting/i);
+    expect(CATEGORY_GUIDE.violence).toMatch(/however realistic/i);
+    // What the category still means. These are the fail-closed parts.
+    expect(CATEGORY_GUIDE.violence).toMatch(/gore/i);
+    expect(CATEGORY_GUIDE.violence).toMatch(/REAL people/);
+  });
+
+  it("the hard-block core is unchanged by the widening", () => {
+    // Widening a carve-out must never touch what always blocks.
+    expect(ALWAYS_HARD_BLOCK).toEqual(["sexual", "self_harm", "stranger_contact"]);
   });
 
   it("dangerous_acts is scoped to the real world, exempting fictional game weapons", () => {

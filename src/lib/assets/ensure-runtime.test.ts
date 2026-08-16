@@ -328,6 +328,62 @@ window.loadModel = async function (name) {
     expect(out).not.toMatch(/"canoe":"[+-][xz]"/);
   });
 
+  it("F.20 a game that uses ONLY placeModel still gets the helper (live bug, 2026-08-15)", () => {
+    // The gate was `/\bloadModel\s*\(/`, which matches neither `placeModel(`
+    // nor `loadModelBatch(` nor `modelHeading(`. Survivable while loadModel
+    // was the only API a game called — and a live bug the moment the prompt
+    // started telling the model to PREFER placeModel: such a game got NO
+    // helper injected and died on "placeModel is not defined".
+    const raw = page(
+      `<script type="module">import { Scene } from "three"; const car = await placeModel("car", { at: { x: 0, z: 0 } });</script>`,
+    );
+    const out = ensureAssetRuntime(raw);
+    expect(out).toContain("window.loadModel =");
+    expect(out).toContain("window.placeModel =");
+    expect(out).toMatch(/window\.AR_ASSETS=/); // and its asset table
+  });
+
+  it("F.21 the same for loadModelBatch-only and modelHeading-only games", () => {
+    for (const call of [`loadModelBatch("tree", 40)`, `modelHeading("car", h)`, `modelSize("house").x`]) {
+      const out = ensureAssetRuntime(page(`<script type="module">import { Scene } from "three"; ${call};</script>`));
+      expect(out, call).toContain("window.loadModel =");
+    }
+  });
+
+  it("F.22 a name that merely CONTAINS an api name does not trigger injection", () => {
+    // `myLoadModelWrapper()` is the child's own function, not our API.
+    const out = ensureAssetRuntime(page(`<script type="module">import { Scene } from "three"; myLoadModelWrapper();</script>`));
+    expect(out).not.toContain("window.loadModel =");
+  });
+
+  it("F.23 an INVENTED model name resolves to a real asset (stegosaurus -> dino)", () => {
+    // Measured in production: `stegosaurus` was asked for 5 times and got
+    // nothing, leaving the child a hand-built placeholder. The invented name
+    // stays the KEY — the game's own loadModel("stegosaurus") is untouched —
+    // and only the URL behind it becomes real.
+    const raw = page(`<script type="module">import { Scene } from "three"; loadModel("stegosaurus");</script>`);
+    const out = ensureAssetRuntime(raw);
+    const table = JSON.parse(out.match(/window\.AR_ASSETS=(\{.*?\});/)![1]!);
+    expect(Object.keys(table)).toContain("stegosaurus");
+    expect(table.stegosaurus).toContain("dino");
+    // and the game's code is NOT rewritten
+    expect(out).toContain('loadModel("stegosaurus")');
+  });
+
+  it("F.24 a name with no honest match stays absent — placeholder, not a wrong model", () => {
+    const out = ensureAssetRuntime(page(`<script type="module">import { Scene } from "three"; loadModel("mermaid");</script>`));
+    const m = out.match(/window\.AR_ASSETS=(\{.*?\});/);
+    const table = m ? JSON.parse(m[1]!) : {};
+    expect(table.mermaid).toBeUndefined();
+  });
+
+  it("F.25 a real name is never diverted by the resolver", () => {
+    const out = ensureAssetRuntime(page(`<script type="module">import { Scene } from "three"; loadModel("car"); loadModel("tree");</script>`));
+    const table = JSON.parse(out.match(/window\.AR_ASSETS=(\{.*?\});/)![1]!);
+    expect(table.car).toContain("car.");
+    expect(table.tree).toContain("tree.");
+  });
+
   it("F.15 a game that only calls loadModel (no batch) does NOT get the batch helper floored in", () => {
     const raw = page(`<script type="module">import { Scene } from "three"; loadModel("car");</script>`);
     const out = ensureAssetRuntime(raw);

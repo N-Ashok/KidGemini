@@ -17,20 +17,31 @@ import type { ChatMessage } from "@/types/chat.types";
 import { CHILD_SYSTEM_PROMPT, buildTurnSystemInstruction } from "../gemini";
 import { ASSET_HOST_ORIGIN, type AssetManifest } from "./manifest";
 import realManifest from "./manifest.json";
+import published from "./three-exports.published.json";
 
 describe("THREE_PROMPT_SECTION — marker + import contract", () => {
   it("teaches the exact opt-in marker", () => {
     expect(THREE_PROMPT_SECTION).toContain(THREE_MARKER);
   });
 
-  it("teaches every name the vendored bundle actually exports (lockstep with vendor-three.mjs)", () => {
-    const vendorSource = readFileSync(join(__dirname, "../../../scripts/vendor-three.mjs"), "utf8");
-    const listMatch = vendorSource.match(/const THREE_EXPORTS = \[([\s\S]*?)\];/);
-    expect(listMatch).not.toBeNull();
-    const names = [...listMatch![1]!.matchAll(/'([A-Za-z0-9]+)'/g)].map((m) => m[1]!);
+  // Was: "teaches every name in scripts/vendor-three.mjs". Retargeted at the
+  // PUBLISHED list on 2026-08-16. The vendoring script is the RECIPE for the
+  // next bundle; every game loads a content-hashed file already on
+  // assets.ariantra.com, and editing the recipe does not change it. Under the
+  // old coupling, adding an export to the recipe FORCED the prompt to teach it
+  // in the same commit — advertising a name the served bundle does not have,
+  // which is exactly what killed a child's game on 2026-08-15
+  // (`CatmullRomCurve3`). The recipe now leads, the upload follows, and the
+  // teaching comes last. See curated-imports.test.ts for the other direction.
+  it("teaches every name the SERVED bundle exports (lockstep with three-exports.published.json)", () => {
+    const names = published.exports.filter(
+      // Internal to runtime-helpers.ts and deliberately never taught to the
+      // model — it calls loadModel()/placeModel(), never the loaders.
+      (n) => !["GLTFLoader", "MeshoptDecoder", "SkeletonUtils"].includes(n),
+    );
     expect(names.length).toBeGreaterThan(10);
     for (const name of names) {
-      expect(THREE_PROMPT_SECTION, `prompt must teach "${name}" (it is exported by the bundle)`).toContain(name);
+      expect(THREE_PROMPT_SECTION, `prompt must teach "${name}" (the served bundle exports it)`).toContain(name);
     }
   });
 
@@ -319,6 +330,15 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // the documented revisit the PRD demanded (measured by this test during
     // implementation, not assumed). Model NAMES still dominate the section;
     // an accidental bulk import still trips this.
+    // Raised 2820 -> 2900 (2026-08-16): the no-curve-class rule. A child's
+    // "Village Turbo Racer" shipped DEAD because the build imported
+    // CatmullRomCurve3, which this platform's three bundle does not export —
+    // a missing export is a parse error, so the module never ran and the
+    // Start button did nothing ("startGame is not defined"). The roads
+    // teaching added the evening before invited exactly that by talking about
+    // laying a route out; it now says, by name, that there is no curve class
+    // and to walk a plain array instead. ~30 tokens to close a whole-game
+    // failure. Measured 2889.
     // Raised 2700 -> 2820 (2026-08-15, same evening): SCENERY PLACEMENT. A
     // 65-second screen recording of a child racing her own game showed an
     // empty world for the whole run, while Ari's replies said it had added
@@ -413,7 +433,7 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // (teach the RULES, look the CATALOG up on demand), not more prose. Layer
     // 2 golden prompts (PRD §4) is what would catch a regression here without
     // spending another token.
-    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_820);
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_900);
   });
 });
 
@@ -750,5 +770,18 @@ describe("the category-map hybrid — the block that rides at the end of the con
 
   it("is empty for an empty selection (zero tokens, never a dangling label)", () => {
     expect(modelNamesBlock([])).toBe("");
+  });
+});
+
+describe("the prompt never teaches a three import the bundle lacks (2026-08-16)", () => {
+  it("names the curve classes as FORBIDDEN, since the bundle does not export them", () => {
+    // The Village Turbo Racer failure: the model reached for CatmullRomCurve3
+    // to lay out a road, which is not exported, so the module failed to parse
+    // and the child's Start button did nothing.
+    const section = modelsPromptSection(realManifest as AssetManifest);
+    expect(section).toMatch(/no curve class/i);
+    expect(section).toContain("CatmullRomCurve3");
+    // and it must say so as a prohibition, not as a suggestion to use it
+    expect(section).toMatch(/NO curve class in this build/);
   });
 });

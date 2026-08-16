@@ -31,6 +31,7 @@ import {
 import { foldTweaksIntoQueue, takeBagForMigration } from "@/lib/idea-migrate";
 import { ideaMicEnabled } from "@/lib/idea-mic";
 import { buildStepLabel, buildUpdatingLine } from "@/lib/build-narration";
+import { censusRegression } from "@/lib/scene-census";
 import { IdeaQueue } from "./IdeaQueue";
 import {
   defaultCoachStore,
@@ -1117,6 +1118,10 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     // file's full contents ever reaching the safety rules classifier.
     attachmentText?: string,
     attachmentName?: string,
+    // The game on screen, for a turn the child did not ask to CHANGE (the two
+    // "make it faster" paths). A result that empties their world is discarded
+    // and the running game stays — see the `done` branch below.
+    protectSceneFrom?: string,
   ) {
     const setReply = (
       t: string,
@@ -1262,19 +1267,31 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             setThinking(null);
             console.warn(`[chat] ↻ fallback model restart @${Date.now() - startedAt}ms — partial reply cleared`);
           } else if (ev.type === "done") {
-            setReply(ev.text ?? acc, ev.artifactHtml ?? undefined, ev.newGamePrompt, ev.threeDNewGame, ev.nextAskHints);
-            setPreview((a) => nextArtifact({ type: "done", artifactHtml: ev.artifactHtml }, a));
+            // A speed fix that DELETED the game is not a fix (2026-08-16).
+            // Scoped to turns the child never asked to change anything in —
+            // an ordinary edit may legitimately remove things ("take the
+            // trees out"), a "make it faster" turn never may.
+            let artifactHtml = ev.artifactHtml;
+            if (protectSceneFrom && artifactHtml) {
+              const verdict = censusRegression(protectSceneFrom, artifactHtml);
+              if (verdict.regressed) {
+                console.warn(`[chat] ⛔ speed fix discarded — ${verdict.reason}; keeping the game on screen`);
+                artifactHtml = null; // the running game stays; nothing swaps under the kid
+              }
+            }
+            setReply(ev.text ?? acc, artifactHtml ?? undefined, ev.newGamePrompt, ev.threeDNewGame, ev.nextAskHints);
+            setPreview((a) => nextArtifact({ type: "done", artifactHtml }, a));
             // Community Help's second stuck signal (stuck-signal.ts): asks that
             // produced NO new game. A turn that swapped the artifact clears the
             // run, so a kid iterating happily is never nudged toward a human.
-            asksWithoutSwapRef.current = ev.artifactHtml
+            asksWithoutSwapRef.current = artifactHtml
               ? []
               : [...asksWithoutSwapRef.current, Date.now()].slice(-5);
             setBusy(false);
             finalized = true;
             turnOk = true;
             onSuccess?.();
-            console.log(`[chat] ✓ shown @${Date.now() - startedAt}ms artifact=${ev.artifactHtml ? "yes" : "no"}`);
+            console.log(`[chat] ✓ shown @${Date.now() - startedAt}ms artifact=${artifactHtml ? "yes" : "no"}`);
           } else if (ev.type === "retract") {
             setReply(ev.text ?? KIND_FALLBACK);
             setPreview((a) => nextArtifact({ type: "retract" }, a)); // safety: always blank
@@ -1391,7 +1408,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
       // new-game prompt instead of the rebuild they had just picked, and
       // "🔄 Different one" quietly stopped using the alternate model. Every
       // other turn parameter was already forwarded (code review 2026-08-09).
-      await runStream(text, history, replyId, attempt + 1, image, onSuccess, activeGameMessageId, forceRebuild, differentVersion, attachmentText, attachmentName);
+      await runStream(text, history, replyId, attempt + 1, image, onSuccess, activeGameMessageId, forceRebuild, differentVersion, attachmentText, attachmentName, protectSceneFrom);
     }
   }
 
@@ -1457,6 +1474,15 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
        *  sentence) is the only visible trace. Still a real turn: sent to the
        *  model, saved in history, same runStream path as any other. */
       silent?: boolean;
+      /** The game currently on screen, for a turn the child did not ask to
+       *  CHANGE — today only the two "make it faster" paths. If the result
+       *  empties their world (censusRegression), it is discarded and the
+       *  running game stays. Owner, after the auto-fix stripped every mesh
+       *  from a child's game mid-play: "autofix making the game bad is not
+       *  acceptable." A performance fix has no business removing anything the
+       *  child can see, so this guard is on the RESULT, not the trigger —
+       *  the tap-to-fix banner sends the very same hint. */
+      protectSceneFrom?: string;
     },
   ) {
     // A turn deliberately started is a kid action: it clears a "restored"
@@ -1578,6 +1604,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         undefined,
         isTextAttachment ? attachment.content : undefined,
         isTextAttachment ? attachment.name : undefined,
+        opts?.protectSceneFrom,
       );
     } finally {
       sendingRef.current = false;
@@ -2122,7 +2149,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             // context (heaviest model, instance count, animated) built in
             // ArtifactFrame from the latest perf snapshot — sent through the
             // ordinary chat pipeline exactly like a next-ask hint chip.
-            onFixSlowdown={(hint) => void handleSend(hint)}
+            onFixSlowdown={(hint) => void handleSend(hint, undefined, { protectSceneFrom: artifact ?? undefined })}
             // Proactive draw-call auto-fix (owner decision 2026-08-10): fires
             // itself the instant a fresh scene is draw-call-bound, no tap —
             // `silent` skips the child bubble since the child never asked.
@@ -2131,7 +2158,9 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             // so ArtifactFrame must never be allowed to fire this while a
             // real turn is already streaming — see shouldAutoFixSlowdown's
             // doc comment.
-            onAutoFixSlowdown={(hint) => void handleSend(hint, undefined, { silent: true })}
+            onAutoFixSlowdown={(hint) =>
+              void handleSend(hint, undefined, { silent: true, protectSceneFrom: artifact ?? undefined })
+            }
           />
         </div>
       )}

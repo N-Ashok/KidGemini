@@ -6,7 +6,9 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { CHILD_SYSTEM_PROMPT } from "./gemini";
+import { CHILD_SYSTEM_PROMPT, buildTurnSystemInstruction } from "./gemini";
+import { THREE_PROMPT_SECTION } from "./assets/prompt-catalog";
+import { PHYSICS_PROMPT_SECTION, physicsEnginePromptSection } from "./assets/physics-playbook";
 
 describe("CHILD_SYSTEM_PROMPT (safety instruction, monitor replacement)", () => {
   it("states the audience is a child aged 7 to 14", () => {
@@ -80,5 +82,48 @@ describe("CHILD_SYSTEM_PROMPT (safety instruction, monitor replacement)", () => 
   it("instructs the model to sprinkle short landmark comments across distinct code sections", () => {
     expect(CHILD_SYSTEM_PROMPT).toMatch(/landmark comment/i);
     expect(CHILD_SYSTEM_PROMPT).toMatch(/short,\s*distinct/i);
+  });
+});
+
+describe("edit turns carry a slimmer prompt (2026-08-16)", () => {
+  // Owner: "i want edit prompt to be simpler rather than the same 7200 token".
+  const g3 = { three: true, audio: false, save: false, physics: false };
+
+  it("a fresh build gets the renderer bootstrap; an edit does not", () => {
+    // THREE_PROMPT_SECTION teaches how to STAND UP a renderer, size the canvas
+    // and light the scene. On an edit that renderer already exists in the code
+    // the model is reading, so re-teaching it costs ~1,000 tokens a turn to
+    // describe what the game already does.
+    const build = buildTurnSystemInstruction(g3, false, false, false, "default", true);
+    const edit = buildTurnSystemInstruction(g3, false, true, false, "default", true);
+    expect(build).toContain(THREE_PROMPT_SECTION);
+    expect(edit).not.toContain(THREE_PROMPT_SECTION);
+  });
+
+  it("but an edit KEEPS the model/placement rules — edits add and move props", () => {
+    const edit = buildTurnSystemInstruction(g3, false, true, false, "default", true);
+    expect(edit).toContain("placeModel");
+    expect(edit).toContain("modelHeading");
+    expect(edit).toContain("SCENERY GOES WHERE THE PLAYER GOES");
+  });
+
+  it("and an edit KEEPS movement feel, which is not renderer bootstrap", () => {
+    const edit = buildTurnSystemInstruction(g3, false, true, false, "default", true);
+    expect(edit).toContain(PHYSICS_PROMPT_SECTION);
+  });
+
+  it("the cannon-es engine playbook rides only when physics is gated on", () => {
+    const off = buildTurnSystemInstruction(g3, false, true, false, "default", true);
+    const on = buildTurnSystemInstruction({ ...g3, physics: true }, false, true, false, "default", true);
+    expect(on.length).toBeGreaterThan(off.length);
+    expect(on).toContain(physicsEnginePromptSection());
+  });
+
+  it("an edit turn is materially smaller than a first build", () => {
+    const build = buildTurnSystemInstruction(g3, false, false, false, "default", true);
+    const edit = buildTurnSystemInstruction(g3, false, true, false, "default", true);
+    // It still carries the patch contract, so it is not free — but the
+    // bootstrap it drops is bigger than the contract it adds.
+    expect(edit.length).toBeLessThan(build.length);
   });
 });

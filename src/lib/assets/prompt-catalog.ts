@@ -366,9 +366,13 @@ what you need and use the names you are given.
    explicitly: \`obj.scale.setScalar(modelMetres(n).y / modelSize(n).y)\`.
    Both answer null when unknown — then eyeball it.
    ROADS AND TRACKS ARE GEOMETRY YOU BUILD, never props you tile — there is no
-   road piece in the library, do not look for one. Lay the route out as a list
-   of points, then walk them: for each segment add a flat box centred on it,
-   turned to face the next point, as wide as the road. Neighbouring segments
+   road piece in the library, do not look for one. Lay the route out as a plain
+   ARRAY of points and walk it yourself: for each segment add a flat box
+   centred on it, turned to face the next point, as wide as the road. Use ONLY
+   the imports listed above — there is NO curve class in this build (no
+   \`CatmullRomCurve3\`, no \`Curve\`, no \`TubeGeometry\`); importing one is a
+   missing export, which stops the whole file parsing and leaves the child a
+   game whose Start button does nothing. For a smooth bend, add more points. Neighbouring segments
    share an edge, so it is seamless by construction and closes into a loop when
    the last point meets the first. Kerbs, centre lines and banking are the same
    walk with a narrower strip offset or tilted.

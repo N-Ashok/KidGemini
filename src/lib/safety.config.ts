@@ -11,7 +11,13 @@ export const DEFAULT_STRICTNESS: Strictness = "strict";
 export const CATEGORY_GUIDE: Record<SafetyCategory, string> = {
   sexual: "sexual content, nudity, or romantic/sexual themes",
   violence:
-    "graphic or realistic violence, gore, or threats of harm against people — cartoon video-game action (space shooters, sword adventures, tank games with bloodless 'pop/vanish' enemies) is NOT violence",
+    // Widened 2026-08-16 (owner): "kids want bullets and guns and it's part of
+    // games they play". The old wording carved out only CARTOON action, so a
+    // child asking for a realistic shooter could be classified as violence and
+    // blocked BEFORE the model ever saw it — which would have made the prompt
+    // change below useless. Game-making is the carve-out now; gore and
+    // real-world harm are still violence.
+    "gore, or threats of harm against REAL people — a child asking to MAKE OR PLAY a video game with guns, bullets, shooting, tanks, soldiers or sword fighting is NOT violence, however realistic they want it to look",
   self_harm: "self-harm, suicide, eating disorders",
   hate: "hate, harassment, slurs, or demeaning groups",
   dangerous_acts:

@@ -11,6 +11,174 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-16 — a saved high score killed the game before it started, and the auto-fix looped on a child mid-race
+
+**1. `localStorage` in the sandboxed preview is not empty — it THROWS.**
+
+Found by the golden-prompt run (`scripts/golden-prompts.mjs`), the first fault it has ever caught
+on its own. The generated 2D game "Star Catcher" read its saved best score while building its
+state object:
+
+    highScore: localStorage.getItem('starCatcherHigh') || 0,
+
+The preview iframe is `sandbox="allow-scripts"` with **no** `allow-same-origin`
+(`ArtifactFrame.tsx`), which is an *opaque origin*. Reading `localStorage` there does not return
+null, it throws `Failed to read the 'localStorage' property from 'Window'`. The throw happens at
+init, so no handler is ever registered: the title screen paints (plain markup) and **the Start
+button does nothing**. To a child that is a finished-looking game that will not start — the same
+symptom as the 2026-08-15 outage, from a completely different cause.
+
+Scope: any generated game that remembers a score, which is one of the most common asks. Published
+games on CloudFront are a normal top-level origin and were never affected — this is preview-only,
+which is exactly where the child builds.
+
+- Fix: `src/lib/assets/storage-shim.ts` — a memory-backed stand-in installed by the runtime floor
+  ahead of the game's first script, for `localStorage` *and* `sessionStorage`. It first tries the
+  real API and no-ops when it works, so published games are untouched.
+- It is applied **before** `ensureAssetRuntime`'s plain-2D early return; the games that need it are
+  precisely the ones the 3D floor declines to touch. That ordering is pinned by a test.
+- The scores do not persist. They cannot, in an opaque origin. A game that plays and forgets beats
+  one that will not start, and the child's device storage stays untouched, which is what the
+  sandbox is for.
+- A prompt rule was considered and rejected as *the* fix: it reaches new builds only, while the
+  runtime floor reaches every stored game on its next preview.
+- **Proven in the real container before shipping** (global rule 12): the golden game loaded in an
+  iframe with those exact sandbox flags — bare, START VOYAGE dead; floored through the real
+  `ensureAssetRuntime`, the game plays. Screenshots both ways.
+- Guarded by `src/lib/assets/storage-shim.test.ts` (22 tests: placement, idempotency, degenerate
+  html, the stand-in's own semantics, and the two integration cases).
+
+**2. The proactive slowdown auto-fix ran again and again — and deleted a child's game.**
+
+Owner, watching a race in production: *"'I've tidied up the way the village is built so your race
+zooms along even faster than before!' — this kept appearing as i was riding the car."* Then, on
+what it did: *"it broke the whole game. all the meshes were gone. that was bigger worry than
+sparks. kids don't know about sparks."*
+
+Ours, not generated content. The draw-call auto-fix (shipped in `046759e`) sends a silent real
+model turn and replies with one kid-friendly sentence. Two faults, one much worse than the other:
+
+- **It looped.** The one-shot guard was keyed on `docKey` — and every successful fix mints a *new*
+  `docKey`, so the guard reset itself every time. Production logs showed consecutive turns with
+  identical `chars=816`.
+- **It destroyed the game.** The fix hint tells the model to merge repeated objects into
+  `InstancedMesh` / `loadModelBatch`; applied without the child asking, it took every mesh out of
+  her scene. She had no way to connect the loss to anything she did, and no way to undo an edit
+  she never requested.
+
+**Decision: the proactive path is OFF** (`AUTO_FIX_ENABLED = false`). Bounding the loop was not
+enough — an unasked-for edit that can delete a child's work is not a performance feature, and two
+such edits are not meaningfully safer than five. The cost that matters is the child's game, not
+the Sparks.
+
+What survives untouched: the **"Make it faster" banner** the child taps. Same hint, same pipeline —
+but they chose it, they watch it happen, and the result is theirs.
+
+- `shouldAutoFixSlowdown` is now the switch; `autoFixBoundsAllow` holds the rules and stays fully
+  tested underneath it, so if the owner turns it back on it cannot return unbounded. Those bounds:
+  `MAX_AUTO_FIXES_PER_SESSION = 2` (session-scoped, not per document — the distinction IS the bug)
+  and `AUTO_FIX_MUST_HELP_RATIO = 0.9` (a second attempt only if the first measurably helped).
+- `ArtifactFrame.tsx` tracks both as session refs and passes them through.
+
+**2a. A speed fix can no longer make the game worse — whoever asked for it.**
+
+Owner: *"autofix making the game bad is not acceptable."* Switching the proactive path off was
+only half the answer: the tap-to-fix banner sends the identical hint, so the identical deletion
+was still one tap away. The trigger was never the real problem.
+
+The guard now sits on the RESULT. `scene-census.ts` counts what a child can SEE — `loadModel` 1,
+`loadModelBatch(name, n)` n, `new InstancedMesh(…, n)` n, `new Mesh` 1 — before and after the fix,
+and the new game is DISCARDED (the running one stays on screen, nothing swaps under the child) if
+either rule trips:
+
+1. a library model that was in the game is now absent entirely — "all the meshes were gone" needs
+   no threshold;
+2. the world shrank below 60% of what it was.
+
+**Counting copies rather than construction calls is the whole design.** A correct instancing fix
+deletes hundreds of `new Mesh(...)` calls by design — that IS the fix — so a naive count would
+reject exactly the edit the hint asks for and leave every slow game slow forever. Under this lens
+200 meshes becoming one `InstancedMesh(…, 200)` is conservative, while a deletion is unmistakable.
+Both directions are pinned in `scene-census.test.ts` (20 tests).
+
+Scoped to the two "make it faster" paths and nothing else: an ordinary edit may legitimately
+remove things ("take the trees out"), a speed fix never may.
+
+**2b. The build-progress line leaked engineer's prose, doubled its emoji, and quoted the
+child's complaint back at her.**
+
+Three owner reports from production while the auto-fix above was still firing:
+
+    🛠️🛠️ Making "The game is good only issue is that the humans a…" — you can keep playing this one! ✨
+    🛠️🏆 Pinpointing Draw Call Sources I'm now identifying the root cause of the draw calls.
+
+Three independent defects in one line:
+
+- **The doubled emoji.** `ArtifactFrame.tsx` renders a hardcoded animated 🛠️ and then
+  `updatingLine`, which `buildUpdatingLine` has ALREADY prefixed with a derived emoji. Every build
+  since the narration shipped has shown two. The hardcoded one now renders only when the line
+  brings none of its own (the plain `UPDATING_LINE` fallback).
+- **🏆 for "Pinpointing".** The keyword table matched bare fragments, so `/point/` fired inside
+  "Pinpointing" — and `/hop/` inside "shopping", `/ball/` inside "football". Every entry is now
+  word-anchored with explicit plural/participle forms.
+- **The engineering thought reached a child.** `kidThoughtLine` fails closed on anything
+  code-LIKE, but "I'm now identifying the root cause of the draw calls" is clean English with no
+  punctuation to object to. The filter had only ever asked *is this code?*, never *is this about
+  the child's game?* — and on a surface a child reads, the second question is the one that
+  matters. Added an `ENGINEER_JARGON` reject (draw call, root cause, refactor, mesh, geometry,
+  WebGL, frame rate, parse, syntax…), which fails closed the same way: a rejected thought leaves
+  the previous line up.
+- **The quoted ask.** The fallback quotes the child's own words — right for "add buildings and
+  grass", wrong for a sentence ABOUT the game, which chopped at 48 chars announces that we are
+  building her complaint. A long ask now returns nothing and the caller uses its plain
+  "Making your update…" line, which is always true.
+
+Worth stating plainly: the second line only existed because the silent auto-fix was running, and
+the owner's own summary of it was *"i didnot ask for it but opening game does it automatically"*.
+It fires on the first perf snapshot of a draw-call-bound scene — opening a saved game is enough.
+
+**3. The golden runner threw away work it had already paid for.**
+
+The same run died on prompt 5 with a guest `401 ip_limit` and took the four games it had already
+generated down with it, unverified. `scripts/golden-prompts.mjs` now records the failure, keeps
+going, verifies whatever was produced, lists what never ran, and exits non-zero — a partial run
+must never read as a clean sweep.
+
+**And the cap it hit is now tunable** (owner decision, same day). `IP_GUEST_TOKEN_CAP` — 20,000
+guest tokens per IP per rolling 2 days, the backstop against cookie-clearing — was a hardcoded
+constant, so the only lever was an edit and a deploy. It is now read per request through
+`ipGuestTokenCap()`, the same shape `BIBLE_TEACHER_GUEST_TOKEN_LIMIT` already used, and a dev
+machine can set it high enough for the harness to finish.
+
+A **tunable, not a bypass**: the gate still runs, still counts, still walls; only the number moves,
+and only where the variable is set. It fails CLOSED — empty, junk, zero, negative and Infinity all
+fall back to the shipped 20,000, because a paywall that fails open on a typo gives the app away.
+Pinned at both levels: `gate.config.test.ts` for the helper, `route.test.ts` G.3b/G.3c for the
+route's actual behaviour in both directions. Production sets nothing.
+
+**The full run then happened** (owner set the variable; 13/13 generated):
+
+- **11 games delivered, all 11 run clean in a real browser.** Assets resolve, the helper is v8,
+  a canvas is drawn.
+- **2 turns were REFUSED by the pipeline** — correctly. `curvy-track` reached for
+  `CatmullRomCurve3`/`TubeGeometry`, `chase-camera` imported three from a `cdnjs` URL. Both are
+  fatal (a missing export is a parse error; a CDN module bypasses the import map, `AR_ASSETS` and
+  every helper), the corrective retry produced the same violation again, and the fatal-artifact
+  split refused to serve either. Nothing broken reached a child — but the child got "the model
+  glitched, try again" instead of a game, which is its own bad turn. Tracked as KNOWN_BUGS #18;
+  the bundle is rebuilt with both classes (621 KB, budget 650) and awaits an owner-authorised
+  upload.
+- **`realistic-intent` gated 3D on with 9 models** from the prompt "make me a realistic car game
+  with real looking cars" — no literal "3d" anywhere. The intent lexicon works on a real turn.
+- **`shooter-guns` was allowed and runs.** The safety layer passed it (`input-rules action=allow`)
+  and the game plays.
+
+**Harness fidelity, fixed in the same pass:** the runner had been saving the model's fenced HTML
+even when the route REFUSED to deliver it — so the files on disk were games no child would ever
+see, and it reported a defect the pipeline had already handled. It now judges the `done` frame's
+`artifactHtml`, reports refusals separately as real bad turns, and exits non-zero on them. A golden
+run must measure the product, not the model.
+
 ## 2026-08-15 — plain chat answers again, "realistic" means 3D, and the road-tile kit is withheld
 
 Three owner reports in one sitting, all about the model reading a child too literally.

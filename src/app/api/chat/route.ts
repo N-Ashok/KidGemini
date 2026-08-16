@@ -38,7 +38,7 @@ import { SESSION_COOKIE } from "@/lib/ariantra-session";
 import { billSparks, fetchGate } from "@/lib/sparks-bridge";
 import { catalogGates } from "@/lib/assets/catalog-gate";
 import { resolvePersona } from "@/lib/persona/persona";
-import { GUEST_ASK_LIMIT, GUEST_COOKIE, GUEST_COOKIE_LEGACY, GUEST_COOKIE_MAX_AGE_S, GUEST_WINDOW_MS, IP_GUEST_TOKEN_CAP, guestTokenLimitFor, signedInDailyTokenLimit } from "@/lib/gate.config";
+import { GUEST_ASK_LIMIT, GUEST_COOKIE, GUEST_COOKIE_LEGACY, GUEST_COOKIE_MAX_AGE_S, GUEST_WINDOW_MS, ipGuestTokenCap, guestTokenLimitFor, signedInDailyTokenLimit } from "@/lib/gate.config";
 import { validateImageAttachment } from "@/lib/image-attachment";
 import type { ChatMessage, ImageAttachment, TokenUsage } from "@/types/chat.types";
 import type { SafetyVerdict } from "@/types/safety.types";
@@ -215,9 +215,10 @@ export async function POST(req: NextRequest) {
       // IP backstop: cookie-clearing must not reset the trial. Checked BEFORE
       // the per-device tally so a fresh cookie on a spent IP walls immediately.
       // Both tallies are windowed: the trial RESETS as usage ages past 2 days.
+      const ipCap = ipGuestTokenCap(); // shipped 20,000; env-tunable per request
       const ipUsed = usage.guestTokensUsedByIp(geo.ip, Date.now() - GUEST_WINDOW_MS);
-      if (ipUsed >= IP_GUEST_TOKEN_CAP) {
-        console.log(`[api/chat] ⛔ gate: ip=${geo.ip} used=${ipUsed}/${IP_GUEST_TOKEN_CAP} → 401`);
+      if (ipUsed >= ipCap) {
+        console.log(`[api/chat] ⛔ gate: ip=${geo.ip} used=${ipUsed}/${ipCap} → 401`);
         return NextResponse.json(
           { error: "auth_required", reason: "ip_limit",
             message: "Please sign in to continue using Ari ✨" },
@@ -1074,7 +1075,53 @@ export async function POST(req: NextRequest) {
               : corrective.text;
             deliverableHtml = toDeliverable(corrective.artifactHtml);
           } else {
-            console.warn(`[api/chat] import-lint retry did not come back clean — serving the original @${ms()}ms`);
+            // NEVER serve an artifact with an unknown three import (2026-08-16).
+            //
+            // This branch used to fall through to "serving the original", and
+            // on 2026-08-16 that put a DEAD game in a child's hands: the build
+            // imported CatmullRomCurve3, the lint caught it, the corrective
+            // retry produced it again, and we shipped it anyway. A missing
+            // export is not a risk — it is a PARSE error, so the module never
+            // runs, every function inside it is undefined, and the Start
+            // button does nothing. The child's console showed
+            // "does not provide an export named 'CatmullRomCurve3'" followed
+            // by "startGame is not defined".
+            //
+            // Nothing is better than that. A child who is told the build
+            // tangled and to try again has lost a minute; a child handed a
+            // game that cannot start loses their trust in the thing that
+            // said "here you go!".
+            // FATAL vs SURVIVABLE — the distinction matters, and getting it
+            // wrong in either direction hurts a child.
+            //
+            // An unknown three import, a dangling module specifier or a syntax
+            // error are all PARSE/RESOLVE failures: the module never executes,
+            // every function in it is undefined, and the Start button does
+            // nothing. There is no version of that a child can play or repair.
+            //
+            // An external <script src> is NOT in that class: the game very
+            // likely still runs (an old CDN three.js is worse than ours, not
+            // fatal), so the long-standing contract — "visible + repairable
+            // beats dropped", pinned by XS.2 — still holds for it.
+            const stillBadImports = corrective.artifactHtml
+              ? unknownThreeImports(corrective.artifactHtml)
+              : badImports;
+            const stillBadModules = corrective.artifactHtml
+              ? danglingModuleSpecifiers(corrective.artifactHtml)
+              : badModules;
+            const stillSyntax = corrective.artifactHtml
+              ? findJsSyntaxError(corrective.artifactHtml)
+              : syntaxError;
+            const fatal = stillBadImports.length > 0 || stillBadModules.length > 0 || Boolean(stillSyntax);
+            if (fatal) {
+              console.warn(
+                `[api/chat] ⛔ retry STILL fatal (${[...stillBadImports, ...stillBadModules, stillSyntax?.message].filter(Boolean).join(", ")}) — refusing to serve a game that cannot parse @${ms()}ms`,
+              );
+              displayText = MODEL_GLITCH_RETRY;
+              deliverableHtml = null;
+            } else {
+              console.warn(`[api/chat] import-lint retry did not come back clean — serving the original @${ms()}ms`);
+            }
           }
         } catch (err) {
           console.warn(`[api/chat] import-lint retry unavailable (${(err as Error).message}) — serving the original @${ms()}ms`);

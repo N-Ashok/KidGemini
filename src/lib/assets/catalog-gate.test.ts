@@ -54,32 +54,32 @@ describe("3D intent — the child asks for 'realistic', not '3d' (KNOWN_BUGS #14
 
 describe("catalogGates — the build-turn gate comes first (§9: chit-chat pays zero catalog tokens)", () => {
   it("a chit-chat turn unlocks nothing, whatever the tier", () => {
-    expect(catalogGates({ message: "how are you today?", history: [], paid: false })).toEqual({ three: false, audio: false, save: false });
-    expect(catalogGates({ message: "how are you today?", history: [], paid: true })).toEqual({ three: false, audio: false, save: false });
+    expect(catalogGates({ message: "how are you today?", history: [], paid: false })).toEqual({ three: false, audio: false, save: false, physics: false });
+    expect(catalogGates({ message: "how are you today?", history: [], paid: true })).toEqual({ three: false, audio: false, save: false, physics: false });
   });
 
   it("an audio keyword outside a build turn stays locked (\"i like music\" is chat, not a game ask)", () => {
-    expect(catalogGates({ message: "i like music", history: [], paid: false })).toEqual({ three: false, audio: false, save: false });
+    expect(catalogGates({ message: "i like music", history: [], paid: false })).toEqual({ three: false, audio: false, save: false, physics: false });
   });
 });
 
 describe("catalogGates — paid tier: inbuilt, both catalogs on every build turn", () => {
   it("unlocks both with no keywords at all", () => {
-    expect(catalogGates({ message: "make me a racing game", history: [], paid: true })).toEqual({ three: true, audio: true, save: false });
+    expect(catalogGates({ message: "make me a racing game", history: [], paid: true })).toEqual({ three: true, audio: true, save: false, physics: false });
   });
 
   it("save is NOT part of the paid bundle — it still needs a build/world keyword or artifact", () => {
-    expect(catalogGates({ message: "a game where I build a fort", history: [], paid: true })).toEqual({ three: true, audio: true, save: true });
+    expect(catalogGates({ message: "a game where I build a fort", history: [], paid: true })).toEqual({ three: true, audio: true, save: true, physics: false });
   });
 });
 
 describe("catalogGates — free tier: keyword-invoked, 3D and audio gate independently", () => {
   it("a plain game ask unlocks neither catalog (rung-1 inline content, exactly today's product)", () => {
-    expect(catalogGates({ message: "make me a platformer game", history: [], paid: false })).toEqual({ three: false, audio: false, save: false });
+    expect(catalogGates({ message: "make me a platformer game", history: [], paid: false })).toEqual({ three: false, audio: false, save: false, physics: false });
   });
 
   it("\"3d\" unlocks the 3D catalog only", () => {
-    expect(catalogGates({ message: "3d cars", history: [], paid: false })).toEqual({ three: true, audio: false, save: false });
+    expect(catalogGates({ message: "3d cars", history: [], paid: false })).toEqual({ three: true, audio: false, save: false, physics: false });
   });
 
   // BUG_LOG 2026-08-09 ("Calvin"). A child ended his ask with "Make it 3-D" —
@@ -116,16 +116,16 @@ describe("catalogGates — free tier: keyword-invoked, 3D and audio gate indepen
 
   it("\"sound\"/\"music\"/\"sound effects\" unlock the audio catalog only", () => {
     for (const ask of ["make me a game with sound", "a jumping game with music", "platformer game with sound effects"]) {
-      expect(catalogGates({ message: ask, history: [], paid: false }), ask).toEqual({ three: false, audio: true, save: false });
+      expect(catalogGates({ message: ask, history: [], paid: false }), ask).toEqual({ three: false, audio: true, save: false, physics: false });
     }
   });
 
   it("both keywords unlock both catalogs", () => {
-    expect(catalogGates({ message: "a 3d dino game with music", history: [], paid: false })).toEqual({ three: true, audio: true, save: false });
+    expect(catalogGates({ message: "a 3d dino game with music", history: [], paid: false })).toEqual({ three: true, audio: true, save: false, physics: false });
   });
 
   it("does not fire inside words (\"grade3d\", \"unsound\", \"musical\" stay locked)", () => {
-    expect(catalogGates({ message: "make a grade3d unsound musical game", history: [], paid: false })).toEqual({ three: false, audio: false, save: false });
+    expect(catalogGates({ message: "make a grade3d unsound musical game", history: [], paid: false })).toEqual({ three: false, audio: false, save: false, physics: false });
   });
 });
 
@@ -136,17 +136,17 @@ describe("catalogGates — iteration turns keep the catalog (history scan, §9 e
   ];
 
   it("\"make it faster\" after a 3d ask keeps the 3D catalog", () => {
-    expect(catalogGates({ message: "make it faster", history: built3d, paid: false })).toEqual({ three: true, audio: false, save: false });
+    expect(catalogGates({ message: "make it faster", history: built3d, paid: false })).toEqual({ three: true, audio: false, save: false, physics: false });
   });
 
   it("a prior artifact carrying USES_AUDIO keeps the audio catalog even if the keyword text is gone", () => {
     const history = [msg("assistant", "Here's your game! 🎮", "<html><!--USES_AUDIO: jump--><canvas></canvas></html>")];
-    expect(catalogGates({ message: "add a second level", history, paid: false })).toEqual({ three: false, audio: true, save: false });
+    expect(catalogGates({ message: "add a second level", history, paid: false })).toEqual({ three: false, audio: true, save: false, physics: false });
   });
 
   it("a prior artifact carrying USES_THREE / USES_MODELS keeps the 3D catalog", () => {
     const history = [msg("assistant", "Here's your game! 🎮", "<html><!--USES_THREE--><!--USES_MODELS: car--></html>")];
-    expect(catalogGates({ message: "make the car red", history, paid: false })).toEqual({ three: true, audio: false, save: false });
+    expect(catalogGates({ message: "make the car red", history, paid: false })).toEqual({ three: true, audio: false, save: false, physics: false });
   });
 
   // REGRESSION (BUG-FIX-LOG 2026-07-20, "DoubleSide" — days-long UAT
@@ -161,22 +161,22 @@ describe("catalogGates — iteration turns keep the catalog (history scan, §9 e
       '<html><head><script type="importmap">{"imports":{"three":"https://assets.ariantra.com/three.07fb80.js"}}</script></head>' +
       '<body><!--USES_MULTIPLAYER--><script type="module">import { Scene } from "three";</script></body></html>';
     expect(catalogGates({ message: "add an oval track", history: [msg("assistant", "Here! 🌟", noMarker)], paid: false }))
-      .toEqual({ three: true, audio: false, save: false });
+      .toEqual({ three: true, audio: false, save: false, physics: false });
   });
 
   it("a marker-less game calling loadModel() keeps the 3D catalog", () => {
     const history = [msg("assistant", "Here! 🌟", '<html><script>loadModel("car").then(m => {});</script></html>')];
-    expect(catalogGates({ message: "make the car red", history, paid: false })).toEqual({ three: true, audio: false, save: false });
+    expect(catalogGates({ message: "make the car red", history, paid: false })).toEqual({ three: true, audio: false, save: false, physics: false });
   });
 
   it("a marker-less game calling playSound()/playMusic() keeps the audio catalog", () => {
     const history = [msg("assistant", "Here! 🌟", '<html><script>playSound("win"); playMusic("bg_loop_chill");</script></html>')];
-    expect(catalogGates({ message: "add a second level", history, paid: false })).toEqual({ three: false, audio: true, save: false });
+    expect(catalogGates({ message: "add a second level", history, paid: false })).toEqual({ three: false, audio: true, save: false, physics: false });
   });
 
   it("iterating on a plain 2D silent game stays locked (no keyword anywhere)", () => {
     const history = [msg("child", "make me a maze game"), msg("assistant", "Here's your game! 🎮", "<html><canvas></canvas></html>")];
-    expect(catalogGates({ message: "add more walls", history, paid: false })).toEqual({ three: false, audio: false, save: false });
+    expect(catalogGates({ message: "add more walls", history, paid: false })).toEqual({ three: false, audio: false, save: false, physics: false });
   });
 });
 
@@ -196,12 +196,12 @@ describe("catalogGates — save gate (docs/2026-08-01_PRD_SaveContinueBuilding.m
   });
 
   it("does not fire inside words (\"rebuild\", \"placement\", \"worldwide\" stay locked — same word-bounding convention as THREE_TRIGGER)", () => {
-    expect(catalogGates({ message: "can you rebuild the level", history: [], paid: false })).toEqual({ three: false, audio: false, save: false });
-    expect(catalogGates({ message: "improve the placement of enemies", history: [], paid: false })).toEqual({ three: false, audio: false, save: false });
+    expect(catalogGates({ message: "can you rebuild the level", history: [], paid: false })).toEqual({ three: false, audio: false, save: false, physics: false });
+    expect(catalogGates({ message: "improve the placement of enemies", history: [], paid: false })).toEqual({ three: false, audio: false, save: false, physics: false });
   });
 
   it("a plain game ask with no build/world keyword stays locked", () => {
-    expect(catalogGates({ message: "make me a platformer game", history: [], paid: false })).toEqual({ three: false, audio: false, save: false });
+    expect(catalogGates({ message: "make me a platformer game", history: [], paid: false })).toEqual({ three: false, audio: false, save: false, physics: false });
   });
 
   it("a prior artifact carrying SUPPORTS_SAVE keeps the clause even once the keyword scrolls away", () => {
@@ -215,6 +215,39 @@ describe("catalogGates — save gate (docs/2026-08-01_PRD_SaveContinueBuilding.m
   });
 
   it("save gates independently of three/audio — a 2D building game unlocks save with neither engine nor sound", () => {
-    expect(catalogGates({ message: "a game where I build a tower", history: [], paid: false })).toEqual({ three: false, audio: false, save: true });
+    expect(catalogGates({ message: "a game where I build a tower", history: [], paid: false })).toEqual({ three: false, audio: false, save: true, physics: false });
+  });
+});
+
+describe("physics gate — the engine playbook only when the game is about physics", () => {
+  // Measured across 1,227 stored game versions: 55% use three, only 4% use
+  // physics. Riding physics on `three` meant teaching cannon-es on 96% of 3D
+  // turns for a library the game never imports.
+  const withGame = [msg("child", "make a game"), msg("assistant", "done", "<html></html>")];
+
+  for (const phrase of ["make the balls bounce", "add gravity", "the blocks should topple", "realistic falling", "add physics", "knock over the pins"]) {
+    it(`unlocks for "${phrase}"`, () =>
+      expect(catalogGates({ message: phrase, history: withGame, paid: false }).physics).toBe(true));
+  }
+
+  for (const phrase of ["make the car red", "add a tree", "make it faster", "move the house"]) {
+    it(`stays locked for "${phrase}"`, () =>
+      expect(catalogGates({ message: phrase, history: withGame, paid: false }).physics).toBe(false));
+  }
+
+  it("a game that already imports cannon-es keeps it after the words scroll away", () => {
+    const history = [
+      msg("child", "make a bouncing ball game"),
+      msg("assistant", "done", `<html><script type="module">import * as CANNON from "cannon-es";</script></html>`),
+    ];
+    expect(catalogGates({ message: "make it blue", history, paid: false }).physics).toBe(true);
+  });
+
+  it("paid does NOT force physics on — it is evidence-based, not a content catalog", () => {
+    expect(catalogGates({ message: "make a game", history: withGame, paid: true }).physics).toBe(false);
+  });
+
+  it("a non-build turn returns physics false", () => {
+    expect(catalogGates({ message: "why is the sky blue?", history: [], paid: false }).physics).toBe(false);
   });
 });

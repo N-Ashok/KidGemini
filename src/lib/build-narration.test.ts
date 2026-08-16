@@ -98,10 +98,26 @@ describe("buildUpdatingLine", () => {
     );
   });
 
-  it("truncates a long ask in the fallback line", () => {
-    const long = "a".repeat(60);
-    const result = buildUpdatingLine({ thinkingLine: null, askText: long });
-    expect(result).toBe(`🛠️ Making "${"a".repeat(48)}…" — you can keep playing this one! ✨`);
+  it("does NOT quote a long ask — a chopped sentence reads as nonsense", () => {
+    // Owner, from production: 🛠️🛠️ Making "The game is good only issue is that
+    // the humans a…". Quoting the child's own words is right for a short
+    // instruction and wrong for a sentence ABOUT the game: truncated, it
+    // announces that we are building her complaint. Returning undefined hands
+    // the caller its plain "Making your update…" line, which is always true.
+    const long = "The game is good only issue is that the humans are floating above the road";
+    expect(buildUpdatingLine({ thinkingLine: null, askText: long })).toBeUndefined();
+  });
+
+  it("still quotes an ask that fits", () => {
+    expect(buildUpdatingLine({ thinkingLine: null, askText: "make the car red" })).toBe(
+      '🛠️ Making "make the car red" — you can keep playing this one! ✨',
+    );
+  });
+
+  it("a long ask never loses the LIVE thought line — that path is unchanged", () => {
+    expect(
+      buildUpdatingLine({ thinkingLine: "Adding the dinosaur now", askText: "x".repeat(200) }),
+    ).toBe("🦖 Adding the dinosaur now");
   });
 
   it("returns undefined when neither a thought line nor an ask exists", () => {
@@ -111,4 +127,26 @@ describe("buildUpdatingLine", () => {
   it("treats an empty-string ask the same as no ask", () => {
     expect(buildUpdatingLine({ thinkingLine: null, askText: "" })).toBeUndefined();
   });
+});
+
+describe("keyword emojis must match WORDS, not fragments (2026-08-16)", () => {
+  // Owner, from production: "🛠️🏆 Pinpointing Draw Call Sources…" — the trophy
+  // came from /point/ matching inside "Pinpointing".
+  it("does not award a trophy for 'Pinpointing'", () => {
+    expect(buildStepLabel("Pinpointing the problem").emoji).toBe("🛠️");
+  });
+
+  for (const [line, emoji] of [
+    ["Shopping for new cars", "🛠️"],      // was 🦘 via /hop/
+    ["Adding a football pitch", "🛠️"],    // was ⚾ via /ball/ … and 🏟️ via /field/? no: "pitch"
+    ["Making it colorful", "🎨"],          // real match, kept
+    ["Adding the score board", "🏆"],      // real match, kept
+    ["Adding a big ball", "⚾"],           // real match, kept
+    // jump is listed BEFORE character/player, so it wins — first-match order,
+    // unchanged by this fix. (My first expectation here was wrong, not the code.)
+    ["The players are jumping", "🦘"],
+    ["Adding a new player", "🧍"],
+  ] as const) {
+    it(`${line} → ${emoji}`, () => expect(buildStepLabel(line).emoji).toBe(emoji));
+  }
 });

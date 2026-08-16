@@ -22,6 +22,9 @@ import {
   isDrawCallBound,
   shouldAutoFixSlowdown,
   type SlowdownBannerState,
+  MAX_AUTO_FIXES_PER_SESSION,
+  AUTO_FIX_ENABLED,
+  autoFixBoundsAllow,
 } from "./slowdown-nudge";
 import type { PerfModelEntry } from "@/types/preview-perf.types";
 
@@ -290,10 +293,15 @@ describe("isDrawCallBound — shared gate between buildSlowdownHint and the proa
   });
 });
 
-describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026-08-10, no tap/fps wait)", () => {
+// These describe the TRIGGER semantics, which still matter: the proactive
+// fix is switched off (2026-08-16) but its rules must stay correct and
+// exercised underneath the switch, so it can never come back subtly wrong.
+// They now pin autoFixBoundsAllow directly; shouldAutoFixSlowdown returns
+// false unconditionally while AUTO_FIX_ENABLED is false.
+describe("autoFixBoundsAllow — proactive nudge trigger (owner decision 2026-08-10, no tap/fps wait)", () => {
   it("fires the first time a fresh docKey is draw-call-bound", () => {
     expect(
-      shouldAutoFixSlowdown({
+      autoFixBoundsAllow({
         docKey: "gen-1",
         lastAutoFixedDocKey: null,
         models: [],
@@ -305,7 +313,7 @@ describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026
 
   it("does NOT fire again for the SAME docKey (one-shot per document — no tight loop on a soft-failed patch)", () => {
     expect(
-      shouldAutoFixSlowdown({
+      autoFixBoundsAllow({
         docKey: "gen-1",
         lastAutoFixedDocKey: "gen-1",
         models: [],
@@ -317,7 +325,7 @@ describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026
 
   it("fires again once the fix (or any edit) produces a NEW docKey that's still draw-call-bound", () => {
     expect(
-      shouldAutoFixSlowdown({
+      autoFixBoundsAllow({
         docKey: "gen-2",
         lastAutoFixedDocKey: "gen-1",
         models: [],
@@ -329,7 +337,7 @@ describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026
 
   it("does not fire when the scene isn't actually draw-call-bound", () => {
     expect(
-      shouldAutoFixSlowdown({
+      autoFixBoundsAllow({
         docKey: "gen-1",
         lastAutoFixedDocKey: null,
         models: [],
@@ -348,7 +356,7 @@ describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026
   // game). Must never fire while a turn is already in flight.
   it("does NOT fire while a turn is already streaming, even on an otherwise-eligible fresh docKey", () => {
     expect(
-      shouldAutoFixSlowdown({
+      autoFixBoundsAllow({
         docKey: "gen-1",
         lastAutoFixedDocKey: null,
         models: [],
@@ -366,10 +374,10 @@ describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026
       drawCalls: 1250,
       busy: true,
     };
-    expect(shouldAutoFixSlowdown(argsWhileBusy)).toBe(false);
+    expect(autoFixBoundsAllow(argsWhileBusy)).toBe(false);
     // Caller never advances lastAutoFixedDocKey on a false return (see
     // ArtifactFrame.tsx) — the SAME docKey must still fire once busy clears.
-    expect(shouldAutoFixSlowdown({ ...argsWhileBusy, busy: false })).toBe(true);
+    expect(autoFixBoundsAllow({ ...argsWhileBusy, busy: false })).toBe(true);
   });
 });
 
@@ -384,5 +392,57 @@ describe("buildAutoFixHint — the silent proactive turn's full prompt", () => {
     expect(hint.toLowerCase()).toContain("did not ask");
     expect(hint.toLowerCase()).toContain("one short, friendly sentence");
     expect(hint.toLowerCase()).toContain("no numbers");
+  });
+});
+
+describe("the proactive auto-fix is OFF (2026-08-16)", () => {
+  // Owner, after the repeated "I've tidied up the village" turns: "it broke
+  // the whole game. all the meshes were gone. that was bigger worry than
+  // sparks. kids don't know about sparks."
+  //
+  // A silent edit the child never asked for, which can delete their work, is
+  // not a performance feature. The tap-to-fix banner (every test above) is a
+  // different path and stays.
+  const heavy = { docKey: "d1", lastAutoFixedDocKey: null, models: [], drawCalls: 900, busy: false };
+
+  it("never fires, however draw-call-bound the scene is", () => {
+    expect(AUTO_FIX_ENABLED).toBe(false);
+    expect(shouldAutoFixSlowdown({ ...heavy, autoFixCount: 0 })).toBe(false);
+    expect(shouldAutoFixSlowdown({ ...heavy, drawCalls: 99_999, autoFixCount: 0 })).toBe(false);
+  });
+});
+
+describe("the bounds underneath it, kept honest while it is off", () => {
+  // These pin autoFixBoundsAllow directly, so if the owner turns the switch
+  // back on it cannot return unbounded — the loop that started this is
+  // impossible either way.
+  const heavy = { docKey: "d1", lastAutoFixedDocKey: null, models: [], drawCalls: 900, busy: false };
+
+  it("would allow the first fix", () => {
+    expect(autoFixBoundsAllow({ ...heavy, autoFixCount: 0 })).toBe(true);
+  });
+
+  it("stops after the session cap, even on a brand-new docKey", () => {
+    // The actual defect: every successful fix mints a new docKey, so the
+    // per-docKey guard reset itself and the fix fired again, and again.
+    expect(
+      autoFixBoundsAllow({ ...heavy, docKey: "d9", autoFixCount: MAX_AUTO_FIXES_PER_SESSION }),
+    ).toBe(false);
+  });
+
+  it("stops when the previous fix did NOT reduce draw calls", () => {
+    expect(
+      autoFixBoundsAllow({ ...heavy, docKey: "d2", autoFixCount: 1, drawCalls: 880, lastAutoFixDrawCalls: 900 }),
+    ).toBe(false);
+  });
+
+  it("allows a second attempt when the first genuinely helped but it is still heavy", () => {
+    expect(
+      autoFixBoundsAllow({ ...heavy, docKey: "d2", autoFixCount: 1, drawCalls: 500, lastAutoFixDrawCalls: 900 }),
+    ).toBe(true);
+  });
+
+  it("still never fires while a turn is streaming", () => {
+    expect(autoFixBoundsAllow({ ...heavy, busy: true, autoFixCount: 0 })).toBe(false);
   });
 });

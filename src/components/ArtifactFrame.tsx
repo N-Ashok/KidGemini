@@ -341,6 +341,13 @@ export function ArtifactFrame({
   // in a tight loop). Also dispatches `fixTapped` so the fps-based banner's
   // cooldown suppresses it from ALSO popping right after.
   const lastAutoFixedDocKeyRef = useRef<string | null>(null);
+  // Session-scoped, NOT per document: every successful fix mints a new docKey,
+  // so the per-docKey guard alone let this fire over and over while a child
+  // was playing (owner report 2026-08-16 — the same "I've tidied up the
+  // village" sentence appearing again and again mid-race, each one a real
+  // model turn that edited her game under her).
+  const autoFixCountRef = useRef(0);
+  const lastAutoFixDrawCallsRef = useRef<number | null>(null);
   useEffect(() => {
     if (!perfSnapshot || !onAutoFixSlowdown) return;
     if (
@@ -350,11 +357,15 @@ export function ArtifactFrame({
         models: perfSnapshot.models ?? [],
         drawCalls: perfSnapshot.drawCalls ?? null,
         busy: busy ?? false,
+        autoFixCount: autoFixCountRef.current,
+        lastAutoFixDrawCalls: lastAutoFixDrawCallsRef.current,
       })
     ) {
       return;
     }
     lastAutoFixedDocKeyRef.current = docKey;
+    autoFixCountRef.current += 1;
+    lastAutoFixDrawCallsRef.current = perfSnapshot.drawCalls ?? null;
     dispatchSlowdown({ type: "fixTapped", now: Date.now() });
     onAutoFixSlowdown(buildAutoFixHint(perfSnapshot.models ?? [], perfSnapshot.drawCalls ?? null));
   }, [perfSnapshot, docKey, onAutoFixSlowdown, busy]);
@@ -928,7 +939,14 @@ export function ArtifactFrame({
           reads as deliberate rather than stale. */}
       {busy && tab === "preview" && (
         <div className="border-b border-sky-100 bg-sky-50 px-4 py-1.5 text-sm text-sky-800">
-          <span className="mr-1 inline-block animate-bounce" aria-hidden>🛠️</span>
+          {/* ONLY when the line brings no emoji of its own (2026-08-16).
+              buildUpdatingLine already prefixes a derived one, so this
+              hardcoded hammer doubled it on every single build — the owner saw
+              "🛠️🛠️ Making …" and "🛠️🏆 Pinpointing …" in production. The
+              plain UPDATING_LINE fallback has no emoji, so it still gets one. */}
+          {!updatingLine && (
+            <span className="mr-1 inline-block animate-bounce" aria-hidden>🛠️</span>
+          )}
           {/* A QUEUED idea building gets named (PRD-IDEA-QUEUE-V2 §4.2) — the
               game swap that follows must be narrated, never a silent switch. */}
           {updatingLine ?? UPDATING_LINE}

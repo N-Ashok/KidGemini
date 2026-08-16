@@ -1,5 +1,5 @@
 {
-  "_comment": "Golden prompts (docs/2026-08-08_PRD_AssetFitnessAndReview.md Layer 2). A FIXED, SMALL set of child-shaped prompts run on demand against the real model, so a regression in generated output is caught before a child finds it. Kids never see these; nothing in the generation pipeline reads this file. Keep the set small and DIVERSE \u2014 a large set tempts tuning the prompt against a fixed target, which is how every kid's game starts looking the same.",
+  "_comment": "Golden prompts (docs/2026-08-08_PRD_AssetFitnessAndReview.md Layer 2). A FIXED, SMALL set of child-shaped prompts run on demand against the real model, so a regression in generated output is caught before a child finds it. Kids never see these; nothing in the generation pipeline reads this file. Keep the set small and DIVERSE — a large set tempts tuning the prompt against a fixed target, which is how every kid's game starts looking the same.",
   "prompts": [
     {
       "id": "race-track",
@@ -9,12 +9,12 @@
     {
       "id": "city-roads",
       "text": "3D - make a city with roads and cars driving around",
-      "why": "The OTHER road kit. City runs X, racing runs Z \u2014 the disagreement that caused the first fault."
+      "why": "The OTHER road kit. City runs X, racing runs Z — the disagreement that caused the first fault."
     },
     {
       "id": "dino-runner",
       "text": "3D - make a dinosaur running game",
-      "why": "Animated/skinned models and named animation clips \u2014 a different subsystem from tiles."
+      "why": "Animated/skinned models and named animation clips — a different subsystem from tiles."
     },
     {
       "id": "plain-2d",
@@ -32,6 +32,36 @@
     {
       "id": "river-jungle",
       "text": "3D - make a rain forest game with a river and a crocodile"
+    },
+    {
+      "id": "curvy-track",
+      "text": "3D - make a race game with a long curvy track through a village",
+      "why": "2026-08-16, Village Turbo Racer: the build imported CatmullRomCurve3 (not exported by our bundle), the module failed to PARSE and the child's Start button did nothing. This is the prompt shape that produced it — roads-as-geometry plus 'curvy' is the exact invitation."
+    },
+    {
+      "id": "chase-camera",
+      "text": "3D - make a car racing game where I drive the blue car and the camera follows behind",
+      "why": "2026-08-15: the kart faced the camera and drove in reverse, and a later game put the camera so far back the car was a speck. Covers facing (car faces -Z), modelHeading for steering, and camera distance sized from the car."
+    },
+    {
+      "id": "village-scenery",
+      "text": "3D - make a driving game past a village with trees, houses, chickens and a lake",
+      "why": "2026-08-15: a 65-second recording showed an EMPTY world while Ari said it had added all of these — props sat 8-11 road-widths off the route and fog ended at 150. Covers the scenery-placement rules."
+    },
+    {
+      "id": "realistic-intent",
+      "text": "make me a realistic car game with real looking cars",
+      "why": "2026-08-16: a child saying 'realistic' means 3D. Never says '3d', so it also proves THREE_INTENT_RE unlocks the catalog — if it comes back a 2D canvas game, the gate regressed."
+    },
+    {
+      "id": "shooter-guns",
+      "text": "make a shooting game with soldiers and guns and bullets",
+      "why": "2026-08-16 owner decision: guns and bullets are welcome. Proves both the persona clause AND the input safety classifier, which used to carve out only CARTOON action and could block this before the model ever saw it."
+    },
+    {
+      "id": "props-placement",
+      "text": "3D - make a farm game with a tractor, animals and a barn I can drive around",
+      "why": "Exercises placeModel/modelHeading/modelMetres end to end — including the 2026-08-15 gate bug where a game using only placeModel got NO helper injected and died on 'placeModel is not defined'. Also hits the invented-name resolver (a barn is not in the library)."
     }
   ]
 }

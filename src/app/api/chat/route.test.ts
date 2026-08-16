@@ -341,6 +341,43 @@ describe("POST /api/chat — guest trial (10K) with layered abuse control", () =
     expect(replyStreamMock).not.toHaveBeenCalled();
   });
 
+  it("G.3b the IP cap honours the env override — the harness lever, proven at the route", async () => {
+    // Added 2026-08-16 so the golden-prompt harness can finish a local run.
+    // The gate still RUNS and still counts; only the number moves. Pinned here
+    // rather than only in gate.config.test.ts because the thing that matters is
+    // the route's behaviour, not the helper's return value.
+    authMock.mockResolvedValue(null);
+    usedByUser.mockReturnValue(0);
+    usedByIp.mockReturnValue(IP_GUEST_TOKEN_CAP); // would wall at the shipped cap
+    replyStreamMock.mockReturnValue(one("Hello!"));
+    const prev = process.env.IP_GUEST_TOKEN_CAP;
+    process.env.IP_GUEST_TOKEN_CAP = "5000000";
+    try {
+      const res = await POST(makeReq({ message: "hello", history: [] }));
+      expect(res.status).toBe(200);
+    } finally {
+      if (prev === undefined) delete process.env.IP_GUEST_TOKEN_CAP;
+      else process.env.IP_GUEST_TOKEN_CAP = prev;
+    }
+  });
+
+  it("G.3c a junk override does NOT open the gate — it falls back to the shipped cap", async () => {
+    // The direction that matters for a paywall: fail closed on a typo.
+    authMock.mockResolvedValue(null);
+    usedByUser.mockReturnValue(0);
+    usedByIp.mockReturnValue(IP_GUEST_TOKEN_CAP);
+    const prev = process.env.IP_GUEST_TOKEN_CAP;
+    process.env.IP_GUEST_TOKEN_CAP = "lots";
+    try {
+      const res = await POST(makeReq({ message: "hello", history: [] }));
+      expect(res.status).toBe(401);
+      expect(replyStreamMock).not.toHaveBeenCalled();
+    } finally {
+      if (prev === undefined) delete process.env.IP_GUEST_TOKEN_CAP;
+      else process.env.IP_GUEST_TOKEN_CAP = prev;
+    }
+  });
+
   it("G.5 the guest tallies use a rolling 2-day window (limit RESETS — not lifetime)", async () => {
     authMock.mockResolvedValue(null);
     replyStreamMock.mockReturnValue(one("Hello!"));
@@ -655,6 +692,31 @@ describe("POST /api/chat — a game must never load a library from an external C
   // The relative form of the same bypass, found by running all 312 stored
   // conversations through the browser harness: a game that invented a local
   // multi-file three.js layout and died on "Failed to resolve module specifier".
+  it("XS.3 a build whose retry STILL has an unknown three import is NOT served (2026-08-16)", async () => {
+    // The Village Turbo Racer failure, pinned. The build imported
+    // CatmullRomCurve3 (not exported by this platform's bundle), the lint
+    // caught it, the corrective retry produced it AGAIN, and the pipeline
+    // served the original anyway. The child's console:
+    //   "does not provide an export named 'CatmullRomCurve3'"
+    //   "startGame is not defined"
+    // — a missing export is a PARSE error, so nothing in the module ran and
+    // the Start button did nothing. A dead game is worse than an honest
+    // "that tangled me up, try again", so it must not be delivered.
+    const CURVE_GAME =
+      `<!doctype html><html><body><canvas id="c"></canvas>\n` +
+      `<script type="module">import { Scene, CatmullRomCurve3 } from "three";\nfunction startGame(){}</script></body></html>`;
+    replyStreamMock.mockReturnValue(one("Here!\n```html" + CURVE_GAME + "```"));
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: CURVE_GAME, wasFenced: false }));
+    // the corrective retry comes back with the SAME bad import
+    replyMock.mockResolvedValue({ text: "same again", artifactHtml: CURVE_GAME, wasFenced: false });
+
+    const res = await POST(makeReq({ message: "make me a race game with a curvy track", history: [] }));
+    const done = doneOf(await res.text());
+
+    expect(done.artifactHtml ?? null).toBeNull();
+    expect(done.text).toContain("tangled");
+  });
+
   it("XS.4 a build importing files that don't exist gets the same corrective retry", async () => {
     const DANGLING =
       `<!doctype html><html><body><canvas id="c"></canvas>\n` +

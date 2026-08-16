@@ -337,7 +337,11 @@ const GAME_BUILD_CONTRACT = `respond with a single HTML document wrapped in a
 // the child-audience framing + the shared GAME_BUILD_CONTRACT — the resulting
 // text is byte-identical to the previous single literal (the prompt pins in
 // gemini.prompt.test.ts still hold).
-export const CHILD_SYSTEM_PROMPT = `You are a friendly, encouraging assistant for a child aged between 7 and 14.
+/** The child-audience framing and the SAFETY rules. Rides on EVERY turn of
+ *  every kind — a build, an edit, and a plain chat — and is never trimmed. On
+ *  a conversational turn it is the entire system prompt, so anything removed
+ *  here is removed from the child's ordinary replies too. */
+export const CHILD_PERSONA_CORE = `You are a friendly, encouraging assistant for a child aged between 7 and 14.
 Be careful in the way you speak and be cautious about safety when answering,
 because you are talking to a child aged between 7 and 14.
 Speak simply and warmly. Keep answers short and clear. Be playful and curious.
@@ -351,15 +355,62 @@ open-source library from a public CDN with <script src> (e.g. chess.js for
 correct chess rules) so the game plays like a professional site; all other
 games stay fully self-contained and offline (inline CSS + JS, no external
 resources).
-Classic video-game action IS fine and welcome — space shooters, laser blasters,
-sword-and-shield adventures, dodging dino attacks, water-balloon battles, tank
-games. Keep it cartoonish and bloodless: enemies "pop", "vanish" or "bounce away",
-never bleed or suffer; no realistic weapons aimed at people, no gore, no cruelty.
+Video-game action IS fine and welcome — shooters, guns and bullets, laser
+blasters, sword-and-shield adventures, dodging dino attacks, tank battles,
+army games. These are the games children actually play, and the library ships
+rifles, pistols, tanks and soldiers for exactly that: build what they asked
+for, and it may look real rather than cartoonish (owner decision 2026-08-16).
+The one line that stays: no gore. Enemies are hit, defeated, "down" or out of
+the game — not bleeding, mutilated or suffering, and never real people or
+real events. Injury is never dwelt on.
 If the ask is vague or open-ended ("make something cool", "a fun game"),
 pick one fun, concrete interpretation yourself and start building it
 immediately — do not list options or ask which one, and do not spend long
 weighing interpretations; the child can always ask for changes after playing.
+`;
+
+/** What an EDIT turn still needs from the build contract (2026-08-16, owner:
+ *  "game build contract if executed already in the game, need not be there on
+ *  the edit prompts").
+ *
+ *  Most of GAME_BUILD_CONTRACT describes decisions the game has ALREADY made —
+ *  its controls, its responsive layout, its start screen, its HUD design, that
+ *  the loop starts synchronously. Re-teaching them on every edit costs ~1,000
+ *  tokens to describe what the model can simply read in the code.
+ *
+ *  It is not only waste: the contract opens with "respond with a single HTML
+ *  document wrapped in a ```html code block", which on an edit turn flatly
+ *  CONTRADICTS the patch contract's "return SEARCH/REPLACE blocks and nothing
+ *  else". The model has been reading both on every edit.
+ *
+ *  What stays is what an edit can still get wrong: landmark comments (future
+ *  SEARCH anchors), the score element the platform reads, factual accuracy for
+ *  any content the edit adds, and staying offline. */
+const GAME_EDIT_CONTRACT = `keep these while you patch:
+- Above each logically distinct part of any code you ADD, put a short, distinct
+  landmark comment naming it, e.g. \`// --- PLAYER MOVEMENT ---\` — the next
+  edit finds code by matching a small exact chunk, and a short unique landmark
+  relocates far more reliably than a large block of gameplay logic.
+- Keep the score as an HTML element with id="score" (a real DOM element that
+  updates as the player scores) so the platform can track high scores.
+- If the change needs real-world facts (people or places from the Bible,
+  countries, animals, historical figures), use ONLY real, accurate ones —
+  never invent names or facts.
+- The game stays fully self-contained and offline: no new external resources
+  unless a CDN library was already allowed for a rule-heavy classic.
+- Keep it wholesome.`;
+
+export const CHILD_SYSTEM_PROMPT = `${CHILD_PERSONA_CORE}
 If the child asks for a game, ${GAME_BUILD_CONTRACT}`;
+
+/** The base prompt for THIS turn: the full build contract on a fresh build (and
+ *  on a plain-chat turn, where it is the fallback if the child turns out to be
+ *  asking for a game), the slimmed edit contract on an edit. */
+export function personaBaseForTurn(persona: PersonaId, isEdit: boolean): string {
+  if (persona === "bible-teacher" || !isEdit) return personaBasePrompt(persona);
+  return `${CHILD_PERSONA_CORE}
+When you change the child's game, ${GAME_EDIT_CONTRACT}`;
+}
 
 // Bible-teacher persona (PRD-BIBLE-TEACHER §6). Audience is a VERIFIED-ADULT
 // Sunday-school / kids' Bible teacher building games FOR their class of children
@@ -420,9 +471,30 @@ export function buildTurnSystemInstruction(
   // keeps every existing call site (and the prompt-pin tests) unchanged.
   nextAsk = false,
 ): string {
-  const base = personaBasePrompt(persona);
+  const base = personaBaseForTurn(persona, isEdit);
   const sections = [
-    ...(gates.three ? [THREE_PROMPT_SECTION, modelsPromptSection(), PHYSICS_PROMPT_SECTION, physicsEnginePromptSection()] : []),
+    // THREE_PROMPT_SECTION is the BOOTSTRAP: how to stand a renderer up, size
+    // the canvas, light the scene. On an EDIT the renderer already exists in
+    // the code the model is reading, and re-teaching it costs ~1,000 tokens a
+    // turn to describe something the game already does (2026-08-16). The
+    // model/placement rules below stay on every turn, because edits add and
+    // move props constantly.
+    ...(gates.three && !isEdit ? [THREE_PROMPT_SECTION] : []),
+    ...(gates.three ? [modelsPromptSection()] : []),
+    // MOVEMENT FEEL rides on every 3D turn, unchanged. It is engine- and
+    // dimension-agnostic (velocity over time, delta clamping, jump feel) and
+    // its own test pins that it must not assume Three.js — gating it on
+    // "does this game import cannon-es" would strip movement guidance from
+    // the 96% of games that never do. An earlier version of this change did
+    // exactly that; the physics-playbook test caught it.
+    ...(gates.three ? [PHYSICS_PROMPT_SECTION] : []),
+    // Only the cannon-es ENGINE playbook is gated. Measured across 1,227
+    // stored game versions: 55% use three, 4% use physics — so these 253
+    // tokens were teaching a library the game never imports on 96% of 3D
+    // turns. Evidence-based (the child's words, or the game already
+    // importing cannon-es), so a real physics game keeps it on every
+    // follow-up turn.
+    ...(gates.physics ? [physicsEnginePromptSection()] : []),
     ...(gates.audio ? [audioPromptSection()] : []),
     ...(gates.save ? [SAVE_STATE_PROMPT_SECTION, PUBLISHED_SAVE_PROMPT_SECTION] : []),
     ...(multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),

@@ -56,3 +56,48 @@ describe("kidThoughtLine", () => {
     expect(kidThoughtLine("const player = { x: 0 }. let jump = true.")).toBeNull();
   });
 });
+
+describe("engineer's prose is not kid prose (2026-08-16, production)", () => {
+  // Owner, mid-play, in production:
+  //   "🛠️🏆 Pinpointing Draw Call Sources I'm now identifying the root cause
+  //    of the draw calls."
+  // Clean English, no code punctuation — CODE_LIKE could never object. The
+  // filter had only ever asked "is this code?", never "is this about the
+  // child's game?", and on a surface a child reads the second question is the
+  // one that matters.
+  it("rejects the exact line the owner saw", () => {
+    expect(
+      kidThoughtLine("Pinpointing Draw Call Sources I'm now identifying the root cause of the draw calls."),
+    ).toBeNull();
+  });
+
+  for (const jargon of [
+    "I am identifying the root cause of the slowdown now.",
+    "Refactoring the scene to reduce draw calls.",
+    "Merging the repeated meshes into one instanced mesh.",
+    "Checking the WebGL context and the canvas size.",
+    "The frame rate is low so I will optimise the geometry.",
+    "Parsing the html to find the syntax error.",
+  ]) {
+    it(`rejects: ${jargon}`, () => expect(kidThoughtLine(jargon)).toBeNull());
+  }
+
+  // The filter must not become so eager that nothing reaches the child — the
+  // whole point of the narration is that SOMETHING true is on screen.
+  for (const good of [
+    "Adding the dinosaur to the jungle now",
+    "Making the car go faster around the corners",
+    "Painting the houses in the village",
+    "Putting a scoreboard at the top of the screen",
+  ]) {
+    it(`still shows: ${good}`, () => expect(kidThoughtLine(good)).toBe(good));
+  }
+
+  it("takes a clean sentence sitting beside a jargon one", () => {
+    // The per-sentence rule that already exists must keep working: reject the
+    // engineering half, keep the half a child would like.
+    expect(
+      kidThoughtLine("Reducing the draw calls in the scene. Now I am adding the trees to the village."),
+    ).toBe("Now I am adding the trees to the village.");
+  });
+});
