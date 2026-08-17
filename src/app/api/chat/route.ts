@@ -898,22 +898,33 @@ export async function POST(req: NextRequest) {
           if (rungBadBypass.length) {
             console.warn(`[api/chat] ⛔ strict rung introduces a pipeline bypass: ${rungBadBypass.join(", ")} @${ms()}ms`);
           }
-          // Same gate as the patch path above (BUG_LOG 2026-08-17): without it
-          // the cheap rung is a second, unguarded door for the very swap the
-          // branch before just rejected.
+          // ADVISORY here, blocking on the main patch branch above — the two
+          // doors have opposite fallbacks (owner decision 2026-08-17, from a
+          // live production session an hour after the gate shipped).
+          //
+          // This rung is the LAST rescue before the turn gives up. Rejecting it
+          // does not buy another attempt: it soft-fails, the child's game is
+          // left untouched and they are told "that change turned out tricky".
+          // Blocking here traded a small harm for a bigger one — the observed
+          // case dropped a single `dog` model, and refusing it cost the child
+          // their entire edit. Losing one prop beats losing the whole change.
+          //
+          // The main patch branch is the right place to block, because a
+          // rejection there still gets this rung afterwards. So: log it (the
+          // count is what tells us how often the model does this at all) and
+          // let the child keep their edit.
           const rungModelSwaps =
             rungApplied.ok && rungApplied.mode === "patch"
               ? unrequestedModelSwaps({ before: currentHtml, after: rungApplied.html, message })
               : [];
           if (rungModelSwaps.length) {
-            console.warn(`[api/chat] ⛔ strict rung drops models the child never asked to change: ${rungModelSwaps.join(", ")} @${ms()}ms`);
+            console.warn(`[api/chat] ⚠ strict rung drops models the child never asked to change: ${rungModelSwaps.join(", ")} — ACCEPTED anyway (last rescue before soft-fail) @${ms()}ms`);
           }
           if (
             rungApplied.ok &&
             rungApplied.mode === "patch" &&
             rungBadImports.length === 0 &&
-            rungBadBypass.length === 0 &&
-            rungModelSwaps.length === 0
+            rungBadBypass.length === 0
           ) {
             console.log(`[api/chat] ✓ edit patch (cheap strict rung, before rebuild) @${ms()}ms`);
             displayText = editReplyProse(rung.text);
@@ -925,9 +936,7 @@ export async function POST(req: NextRequest) {
                 ? `bad_imports:${rungBadImports.join("+")}`
                 : rungBadBypass.length
                   ? `pipeline_bypass:${rungBadBypass.join("+")}`
-                  : rungModelSwaps.length
-                    ? `unrequested_model_swap:${rungModelSwaps.join("+")}`
-                    : `mode=${rungApplied.mode}`
+                  : `mode=${rungApplied.mode}`
               : rungApplied.reason;
             console.log(`[api/chat] cheap strict rung declined (${why}) — full regeneration @${ms()}ms`);
           }
