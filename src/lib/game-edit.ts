@@ -308,11 +308,7 @@ export function editReplyProse(reply: string): string {
  *  whatever the edit adds — unlike a repair, a feature edit can introduce
  *  new visible content the safety rules must still govern. Modeled on
  *  repair-prompt.ts's already-proven REPAIR_SYSTEM_PROMPT wording. */
-export const GAME_EDIT_PROMPT_SECTION = `FIRST, decide what this message actually is. Two possibilities:
-(A) The child wants to CHANGE the game — add, remove, fix, tweak, make something faster/bigger/different. Follow the patch rules below.
-(B) The child is TALKING TO YOU — a question ("why is the sky blue?", "how do birds fly?", "what does gravity mean?"), a greeting, a thank-you, telling you about their day, asking what you think, asking for help understanding something, or just chatting. Then IGNORE every rule below and simply ANSWER them, warmly and briefly, in plain words. Do not touch the game. Do not write a patch. Do not steer the conversation back to the game.
-A child gets a game in front of them and then keeps talking to you — that is normal and welcome, and it is the whole point of having someone to talk to. Answering a real question is never the wrong move. A child who asks "why do stars twinkle?" and gets a silent edit to their game instead has learned that you are not listening.
-If it is (A): this is NOT a fresh build — do not rewrite the whole file.
+export const GAME_EDIT_PROMPT_SECTION = `The child already has a working game from this conversation. If this message is actually asking you to change or add something to it, this is NOT a fresh build — do not rewrite the whole file. If the message isn't about the game at all (a question, plain chat), ignore everything below and just answer normally instead.
 If — and only if — the child is clearly asking for a COMPLETELY DIFFERENT game (a brand-new game, not a change, addition, or tweak to this one), do NOT rebuild anything: reply with exactly ${NEW_GAME_SENTINEL} on its own line, and nothing else at all (no sentence, no code). When in doubt, treat it as a change to the current game, not a new game.
 First, on its own line, write ONE short, encouraging sentence about what you added (no code, no markdown fence).
 Then return the change as one or more blocks in EXACTLY this format, and nothing else after that sentence:
@@ -329,11 +325,8 @@ Rules:
   is much less likely to be mistyped than a large block of code copied from
   memory.
 - Change only what this request needs. Do not rename, restyle, reformat, or "improve" anything else — the child is proud of the game exactly as it plays right now.
-- The 3D models this game ALREADY loads are the child's game. NEVER swap, replace or drop one because another model would suit the change better, look cooler, or is one you like more — if their game flies an \`airplane\`, every later turn still flies that same \`airplane\`. Change a model ONLY when the child asked for that specific change ("make it a jet"). You may still ADD a new model the request genuinely needs.
-- EXCEPTION: if this change alters HOW the game is played or controlled, any on-screen instruction text describing the OLD way is no longer accurate and must be updated in the same patch — a text label is part of the change, not "something else", the moment it stops being true.
 - Everything you don't put in a REPLACE block must stay byte-for-byte identical.
-- No prose after the patch blocks, no markdown fences, no full HTML document.
-And the reminder this section opened with, because it is the easiest thing to forget after all these rules: everything above applies ONLY if the child asked you to change the game. If they asked you a question or were just chatting, none of it applies — answer them like a friendly person would, and leave the game alone.`;
+- No prose after the patch blocks, no markdown fences, no full HTML document.`;
 
 /** Friendly line shown in place of streaming patch hunks (see below). */
 export const EDIT_STREAM_WORKING_LINE = "Making your change… ✨";

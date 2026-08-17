@@ -31,7 +31,6 @@ import {
 import { foldTweaksIntoQueue, takeBagForMigration } from "@/lib/idea-migrate";
 import { ideaMicEnabled } from "@/lib/idea-mic";
 import { buildStepLabel, buildUpdatingLine } from "@/lib/build-narration";
-import { censusRegression } from "@/lib/scene-census";
 import { IdeaQueue } from "./IdeaQueue";
 import {
   defaultCoachStore,
@@ -66,7 +65,6 @@ import { shouldAutoRetry } from "@/lib/stream-recovery";
 import { pollTurnResult, pollTurnOutcome } from "@/lib/turn-resume";
 import {
   applyRecoveredReply,
-  applyRepairedArtifact,
   noteStillWorking,
   keepBookmark,
   RECOVERY_WORKING_NOTE,
@@ -1118,10 +1116,6 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     // file's full contents ever reaching the safety rules classifier.
     attachmentText?: string,
     attachmentName?: string,
-    // The game on screen, for a turn the child did not ask to CHANGE (the two
-    // "make it faster" paths). A result that empties their world is discarded
-    // and the running game stays — see the `done` branch below.
-    protectSceneFrom?: string,
   ) {
     const setReply = (
       t: string,
@@ -1129,7 +1123,6 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
       newGamePrompt?: boolean,
       threeDNewGame?: boolean,
       nextAskHints?: string[],
-      traceId?: string,
     ) =>
       patchActive((c) => ({
         ...c,
@@ -1142,7 +1135,6 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
                 ...(newGamePrompt ? { newGamePrompt: true } : {}),
                 ...(threeDNewGame ? { threeDNewGame: true } : {}),
                 ...(nextAskHints ? { nextAskHints } : {}),
-                ...(traceId ? { traceId } : {}),
               }
             : m,
         ),
@@ -1251,7 +1243,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
           const line = buffer.slice(0, nl).trim();
           buffer = buffer.slice(nl + 1);
           if (!line) continue;
-          const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null; newGamePrompt?: boolean; threeDNewGame?: boolean; nextAskHints?: string[]; sparksOver?: boolean; traceId?: string };
+          const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null; newGamePrompt?: boolean; threeDNewGame?: boolean; nextAskHints?: string[]; sparksOver?: boolean };
           if (ev.type === "thinking") {
             if (ev.text) setThinking(ev.text);
           } else if (ev.type === "delta") {
@@ -1269,31 +1261,19 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             setThinking(null);
             console.warn(`[chat] ↻ fallback model restart @${Date.now() - startedAt}ms — partial reply cleared`);
           } else if (ev.type === "done") {
-            // A speed fix that DELETED the game is not a fix (2026-08-16).
-            // Scoped to turns the child never asked to change anything in —
-            // an ordinary edit may legitimately remove things ("take the
-            // trees out"), a "make it faster" turn never may.
-            let artifactHtml = ev.artifactHtml;
-            if (protectSceneFrom && artifactHtml) {
-              const verdict = censusRegression(protectSceneFrom, artifactHtml);
-              if (verdict.regressed) {
-                console.warn(`[chat] ⛔ speed fix discarded — ${verdict.reason}; keeping the game on screen`);
-                artifactHtml = null; // the running game stays; nothing swaps under the kid
-              }
-            }
-            setReply(ev.text ?? acc, artifactHtml ?? undefined, ev.newGamePrompt, ev.threeDNewGame, ev.nextAskHints, ev.traceId);
-            setPreview((a) => nextArtifact({ type: "done", artifactHtml }, a));
+            setReply(ev.text ?? acc, ev.artifactHtml ?? undefined, ev.newGamePrompt, ev.threeDNewGame, ev.nextAskHints);
+            setPreview((a) => nextArtifact({ type: "done", artifactHtml: ev.artifactHtml }, a));
             // Community Help's second stuck signal (stuck-signal.ts): asks that
             // produced NO new game. A turn that swapped the artifact clears the
             // run, so a kid iterating happily is never nudged toward a human.
-            asksWithoutSwapRef.current = artifactHtml
+            asksWithoutSwapRef.current = ev.artifactHtml
               ? []
               : [...asksWithoutSwapRef.current, Date.now()].slice(-5);
             setBusy(false);
             finalized = true;
             turnOk = true;
             onSuccess?.();
-            console.log(`[chat] ✓ shown @${Date.now() - startedAt}ms artifact=${artifactHtml ? "yes" : "no"}`);
+            console.log(`[chat] ✓ shown @${Date.now() - startedAt}ms artifact=${ev.artifactHtml ? "yes" : "no"}`);
           } else if (ev.type === "retract") {
             setReply(ev.text ?? KIND_FALLBACK);
             setPreview((a) => nextArtifact({ type: "retract" }, a)); // safety: always blank
@@ -1410,7 +1390,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
       // new-game prompt instead of the rebuild they had just picked, and
       // "🔄 Different one" quietly stopped using the alternate model. Every
       // other turn parameter was already forwarded (code review 2026-08-09).
-      await runStream(text, history, replyId, attempt + 1, image, onSuccess, activeGameMessageId, forceRebuild, differentVersion, attachmentText, attachmentName, protectSceneFrom);
+      await runStream(text, history, replyId, attempt + 1, image, onSuccess, activeGameMessageId, forceRebuild, differentVersion, attachmentText, attachmentName);
     }
   }
 
@@ -1476,15 +1456,6 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
        *  sentence) is the only visible trace. Still a real turn: sent to the
        *  model, saved in history, same runStream path as any other. */
       silent?: boolean;
-      /** The game currently on screen, for a turn the child did not ask to
-       *  CHANGE — today only the two "make it faster" paths. If the result
-       *  empties their world (censusRegression), it is discarded and the
-       *  running game stays. Owner, after the auto-fix stripped every mesh
-       *  from a child's game mid-play: "autofix making the game bad is not
-       *  acceptable." A performance fix has no business removing anything the
-       *  child can see, so this guard is on the RESULT, not the trigger —
-       *  the tap-to-fix banner sends the very same hint. */
-      protectSceneFrom?: string;
     },
   ) {
     // A turn deliberately started is a kid action: it clears a "restored"
@@ -1606,7 +1577,6 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
         undefined,
         isTextAttachment ? attachment.content : undefined,
         isTextAttachment ? attachment.name : undefined,
-        opts?.protectSceneFrom,
       );
     } finally {
       sendingRef.current = false;
@@ -2046,11 +2016,6 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             // The kid's latest ask — self-healing repair prompts carry it so a
             // fix never drifts from intent (PRD §7 / R.5).
             originalRequest={[...active.messages].reverse().find((m) => m.role === "child")?.text ?? ""}
-            // The turn that BUILT the game the kid is looking at — not the
-            // newest turn — so a self-heal logs under the same trace as the
-            // build it is repairing, even after Continue-from-here pins an
-            // older version.
-            traceId={currentGameMessage(active.messages)?.traceId}
             onClose={() => {
               setArtifact(null);
               setExpandState({ expanded: false });
@@ -2126,49 +2091,12 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
               ) : undefined
             }
             onDiagnostics={setHelpDiagnostics}
-            // Persist a successful self-heal patch (BUG-FIX-LOG 2026-08-13):
-            // without this, the fix only ever lived in ArtifactFrame's own
-            // in-tab state and vanished on the next reload/reopen — confirmed
-            // live, the same game auto-"repaired" 5 times over 2+ hours and
-            // was still broken every time. Same pure-updater-then-PUT shape
-            // as the write-through effect below (never PUT from inside the
-            // updater — React may invoke it more than once for one update).
-            onRepaired={(html) => {
-              const messageId = currentGameMessage(active.messages)?.id;
-              if (!messageId) return;
-              let persistConvo: Conversation | undefined;
-              setConvos((list) => {
-                const { convos: next, patched } = applyRepairedArtifact(list, { convoId: active.id, replyId: messageId }, html);
-                if (!patched) return list;
-                persistConvo = next.find((c) => c.id === active.id);
-                return next;
-              });
-              if (persistConvo) {
-                void fetch(`/api/chats/${encodeURIComponent(persistConvo.id)}`, {
-                  method: "PUT",
-                  headers: {
-                    "Content-Type": "application/json",
-                    // B2 instrument (2026-08-17, KNOWN_BUGS #24): tags this
-                    // write with the turn that built the game, so the server's
-                    // `stage=persist chars=` line can be compared against
-                    // api/repair's `stage=deliver outChars=` on ONE trace.
-                    // That comparison is what will finally say whether a
-                    // repair that did not stick failed to arrive, arrived
-                    // with stale bytes, or was overwritten afterwards.
-                    ...(currentGameMessage(active.messages)?.traceId
-                      ? { "x-ari-trace": currentGameMessage(active.messages)!.traceId! }
-                      : {}),
-                  },
-                  body: JSON.stringify({ convo: persistConvo }),
-                }).catch((err) => console.warn("[chat] self-heal repair persist failed", err));
-              }
-            }}
             // 🐢 "Make it faster" (docs/2026-07-30_PRD_PreviewPerfPanel.md
             // addendum): the hint string already carries the real technical
             // context (heaviest model, instance count, animated) built in
             // ArtifactFrame from the latest perf snapshot — sent through the
             // ordinary chat pipeline exactly like a next-ask hint chip.
-            onFixSlowdown={(hint) => void handleSend(hint, undefined, { protectSceneFrom: artifact ?? undefined })}
+            onFixSlowdown={(hint) => void handleSend(hint)}
             // Proactive draw-call auto-fix (owner decision 2026-08-10): fires
             // itself the instant a fresh scene is draw-call-bound, no tap —
             // `silent` skips the child bubble since the child never asked.
@@ -2177,9 +2105,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             // so ArtifactFrame must never be allowed to fire this while a
             // real turn is already streaming — see shouldAutoFixSlowdown's
             // doc comment.
-            onAutoFixSlowdown={(hint) =>
-              void handleSend(hint, undefined, { silent: true, protectSceneFrom: artifact ?? undefined })
-            }
+            onAutoFixSlowdown={(hint) => void handleSend(hint, undefined, { silent: true })}
           />
         </div>
       )}

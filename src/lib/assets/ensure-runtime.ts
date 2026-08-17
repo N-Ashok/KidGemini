@@ -11,24 +11,16 @@
 // calls loadModel), not the marker, and is idempotent on already-injected HTML.
 
 import manifestJson from "./manifest.json";
-import { ensureStorageShim } from "./storage-shim";
 import type { AssetManifest } from "./manifest";
 import { THREE_MARKER, PHYSICS_MARKER } from "./markers";
-import {
-  buildResolutionGovernorScript,
-  hasCurrentResolutionGovernor,
-  stripStaleResolutionGovernor,
-} from "./resolution-governor";
 import {
   insertEarly,
   loadModelHelper,
   loadModelBatchHelper,
-  LOAD_MODEL_BATCH_VERSION,
   frameGovernor,
   webglContextGuard,
   WEBGL_GUARD_VERSION,
   LOAD_MODEL_HELPER_VERSION,
-  MODEL_RUNTIME_GLOBALS,
   parseAssetTables,
   stripAssetTables,
   countAssetTables,
@@ -39,57 +31,18 @@ import {
   parseAxisTables,
   stripAxisTables,
   countEdgeTables,
-  parseFacingTables,
-  stripFacingTables,
-  countFacingTables,
-  parseRealTables,
-  stripRealTables,
-  countRealTables,
   parseEdgeTables,
   stripEdgeTables,
 } from "./runtime-helpers";
 import { injectPerfProbe } from "./perf-probe";
-import { resolveModelName } from "./model-alias";
 
 const IMPORTS_THREE_RE = /\bfrom\s*["']three["']/;
 // Physics games import the second engine by its own bare specifier; an
 // unmapped one dies on the import line exactly like an unmapped "three".
 const IMPORTS_CANNON_RE = /\bfrom\s*["']cannon-es["']/;
-// ANY of the model APIs pulls the helper in — they all live in the same
-// injected block and all depend on loadModel internally.
-//
-// This used to be `/\bloadModel\s*\(/` alone, which matches neither
-// `placeModel(` nor `loadModelBatch(` nor `modelHeading(`. That was survivable
-// while loadModel was the only API a game called, and became a live bug on
-// 2026-08-15 when the prompt started telling the model to PREFER placeModel:
-// a game that used placeModel and never wrote the literal `loadModel(` got no
-// helper injected at all and died on `placeModel is not defined`. Found by a
-// round-trip test (strip -> re-floor), not in production, but it was already
-// deployed.
-// DERIVED from the MODEL half of the shared list (2026-08-17) — deliberately
-// NOT the full INJECTED_RUNTIME_GLOBALS, which also carries playSound and
-// playMusic. Audio is not 3D: a 2D game that plays a coin sound must never be
-// handed an import map and a module script importing "three". Using the full
-// list here did exactly that and shipped (BUG-FIX-LOG 2026-08-17); F.22-F.24
-// are the floor that keeps 2D out of this branch. Otherwise: derived, not
-// was a third private copy of the injected-globals list, and the copies had
-// already drifted apart once (KNOWN_BUGS #21). Building the regex from
-// INJECTED_RUNTIME_GLOBALS means a helper added there is automatically
-// recognised here, instead of a game that calls it getting no runtime at all
-// and dying on `<name> is not defined` — precisely the 2026-08-15 placeModel
-// failure this line's own comment describes below.
-const CALLS_LOADMODEL_RE = new RegExp(`\\b(?:${MODEL_RUNTIME_GLOBALS.join("|")})\\s*\\(`);
+const CALLS_LOADMODEL_RE = /\bloadModel\s*\(/;
 const CALLS_LOADMODELBATCH_RE = /\bloadModelBatch\s*\(/;
-// BOTH loader shapes (BUG_LOG 2026-08-17). `loadModelBatch` was invisible here
-// for as long as it has existed: `\bloadModel\s*\(` cannot match
-// `loadModelBatch("car", 60)`, because after `loadModel` comes `Batch`, not
-// `(`. Batching is how a game makes CROWDS — traffic, fleets, city blocks — so
-// the single call shape most likely to carry a newly-added model had no
-// healing at all, and on an edit turn (where the asset markers have been
-// stripped from the source) healing is the ONLY way a new model reaches
-// AR_ASSETS. The failure was silent end to end: loadModelBatch returns null,
-// the game's own `if (batch)` skips, and nothing appears.
-const LOADMODEL_ARG_RE = /\bloadModel(?:Batch)?\s*\(\s*["']([a-z0-9_]+)["']/gi;
+const LOADMODEL_ARG_RE = /\bloadModel\s*\(\s*["']([a-z0-9_]+)["']/gi;
 const ANY_IMPORTMAP_RE = /<script[^>]*type=["']importmap["'][^>]*>[\s\S]*?<\/script>/gi;
 const HAS_HELPER_RE = /window\.loadModel\s*=/;
 const HAS_LOADMODELBATCH_HELPER_RE = /window\.loadModelBatch\s*=/;
@@ -128,18 +81,6 @@ function stripStaleGlGuard(html: string): string {
   return html.replace(SCRIPT_BLOCK_RE, (block) => (block.includes("window.__arGlGuard") ? "" : block));
 }
 
-// Same pair for the loadModelBatch helper (2026-08-15). v1 shipped unstamped,
-// so "no stamp" must read as stale, not as absent — an unstamped copy is
-// precisely the broken one.
-const BATCH_HELPER_VERSION_RE = /window\.__arLoadModelBatchVersion\s*=\s*(\d+)/;
-function hasCurrentBatchHelper(html: string): boolean {
-  const m = html.match(BATCH_HELPER_VERSION_RE);
-  return !!m && Number(m[1]) >= LOAD_MODEL_BATCH_VERSION;
-}
-function stripStaleBatchHelper(html: string): string {
-  return html.replace(SCRIPT_BLOCK_RE, (block) => (block.includes("window.loadModelBatch =") ? "" : block));
-}
-
 // The SECOND black-screen cause (BUG-FIX-LOG 2026-07-23 follow-up, verified in a
 // real browser): a 3D game where the model put a <canvas> in the HTML AND let the
 // renderer append its own second canvas — the empty leading canvas (in flow, 100%
@@ -169,15 +110,7 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
   const usesThree = IMPORTS_THREE_RE.test(html) || html.includes(THREE_MARKER);
   const usesLoadModel = CALLS_LOADMODEL_RE.test(html);
   const usesPhysics = IMPORTS_CANNON_RE.test(html) || html.includes(PHYSICS_MARKER);
-
-  // The storage shim is NOT part of the 3D floor and must be applied first:
-  // the game it saves is usually a plain 2D one, which every line below this
-  // point declines to touch. A 2D game that reads a saved high score throws in
-  // the opaque-origin preview iframe and dies at init — title screen up, Start
-  // button dead (see storage-shim.ts).
-  html = ensureStorageShim(html);
-
-  if (!usesThree && !usesLoadModel && !usesPhysics) return html; // plain 2D — identity (plus any shim)
+  if (!usesThree && !usesLoadModel && !usesPhysics) return html; // plain 2D — identity
 
   // By NAME, never by type — two engine-type rows exist since 2026-07-29.
   const engine = manifest.assets.find((a) => a.type === "engine" && a.name === "three");
@@ -250,16 +183,6 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
     markup += webglContextGuard();
   }
 
-  // (2d) adaptive resolution governor (2026-08-15) — spend only as many pixels
-  // as the device can actually shade. The owner's Chromebook ran a 24-mesh,
-  // 63k-triangle, 23-draw-call game at 14-28fps purely on fill cost; the same
-  // scene at half the pixels doubles its frame rate. Like the two above, this
-  // is the only path that reaches the games that already exist.
-  if (!hasCurrentResolutionGovernor(out)) {
-    if (out.includes("__arResGovernor")) out = stripStaleResolutionGovernor(out);
-    markup += buildResolutionGovernorScript();
-  }
-
   // (3) the AR_ASSETS table — healed UNCONDITIONALLY when the game calls
   // loadModel (BUG-FIX-LOG 2026-08-06, the Sky Patrol bikes): edit turns used
   // to leave a SECOND, stale table later in document order that overwrote the
@@ -274,31 +197,10 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
     const union: Record<string, string> = {};
     for (const t of [...tables].reverse()) Object.assign(union, t);
     const urlByName = new Map(manifest.assets.map((a) => [a.name, a.url] as const));
-    const availableNames = new Set(
-      manifest.assets.filter((a) => a.type === "model").map((a) => a.name),
-    );
     for (const m of html.matchAll(LOADMODEL_ARG_RE)) {
       const name = m[1]!.toLowerCase();
       const url = urlByName.get(name);
-      if (url) {
-        union[name] = url;
-        continue;
-      }
-      // A name we do not have. Before giving up (which leaves loadModel
-      // returning null and the child looking at a hand-built placeholder),
-      // try to resolve it onto a real model — deterministically, no extra
-      // model call. Measured across every stored game: 2 of 99 distinct names
-      // were invented, `stegosaurus` x5 and `mermaid` x1. The first should
-      // simply be `dino`; the second correctly stays unmatched.
-      //
-      // The INVENTED name stays the key, so the game's own
-      // `loadModel("stegosaurus")` keeps working untouched — only the URL
-      // behind it becomes real. Nothing in the child's code is rewritten.
-      const resolved = resolveModelName(name, availableNames);
-      if (resolved.name) {
-        const resolvedUrl = urlByName.get(resolved.name);
-        if (resolvedUrl) union[name] = resolvedUrl;
-      }
+      if (url) union[name] = url; // unknown/hallucinated names omitted → loadModel returns null
     }
     for (const name of Object.keys(union)) {
       const current = urlByName.get(name);
@@ -391,45 +293,6 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
         markup += `<script>window.AR_EDGES=${JSON.stringify(edges)};</script>`;
       }
     }
-
-    // (3f) the AR_FACING table — which way each model's front points, behind
-    // modelFacing() and placeModel() (2026-08-15). Same reasoning as (3d):
-    // the v8 helper retrofits onto stored games, and without the table it
-    // would answer null for everything — i.e. the bug it exists to fix.
-    const facingByName = new Map(
-      manifest.assets.flatMap((a) => (a.type === "model" && a.facing ? [[a.name, a.facing] as const] : [])),
-    );
-    const facings: Record<string, string> = {};
-    for (const name of Object.keys(union)) {
-      const f = facingByName.get(name);
-      if (f) facings[name] = f;
-    }
-    const singleFacings = countFacingTables(out) === 1 ? parseFacingTables(out)[0] : undefined;
-    if (singleFacings === undefined || JSON.stringify(singleFacings) !== JSON.stringify(facings)) {
-      out = stripFacingTables(out);
-      if (Object.keys(facings).length > 0) {
-        markup += `<script>window.AR_FACING=${JSON.stringify(facings)};</script>`;
-      }
-    }
-
-    // (3g) the AR_REAL table — each model's true real-world size, behind
-    // modelMetres() (2026-08-15). AR_SIZES stays exactly as it is: live games
-    // divide by those numbers, so they cannot be redefined under them.
-    const realByName = new Map(
-      manifest.assets.flatMap((a) => (a.type === "model" && a.realSize ? [[a.name, a.realSize] as const] : [])),
-    );
-    const reals: Record<string, [number, number, number]> = {};
-    for (const name of Object.keys(union)) {
-      const r = realByName.get(name);
-      if (r) reals[name] = r;
-    }
-    const singleReals = countRealTables(out) === 1 ? parseRealTables(out)[0] : undefined;
-    if (singleReals === undefined || JSON.stringify(singleReals) !== JSON.stringify(reals)) {
-      out = stripRealTables(out);
-      if (Object.keys(reals).length > 0) {
-        markup += `<script>window.AR_REAL=${JSON.stringify(reals)};</script>`;
-      }
-    }
   }
 
   // (3a) loadModel helper — inject when the game calls it and either the
@@ -446,16 +309,7 @@ export function ensureAssetRuntime(html: string, manifest: AssetManifest = manif
 
   // (3b) loadModelBatch scaffolding — the bulk-instancing counterpart, only
   // injected when the game actually calls it (most games won't).
-  //
-  // Version-aware since 2026-08-15. This used to gate on the helper merely
-  // being PRESENT, which is the same trap that froze the WebGL guard on ~200
-  // stored games (2026-08-11) and the perf probe before it: any game that
-  // already carried the helper kept its ORIGINAL copy forever, through every
-  // edit and every deploy. That mattered the moment v1 turned out to place
-  // every batched prop rotated and sunk — the games needing the fix are
-  // exactly the ones a presence check would skip.
-  if (usesLoadModel && CALLS_LOADMODELBATCH_RE.test(out) && !hasCurrentBatchHelper(out)) {
-    if (HAS_LOADMODELBATCH_HELPER_RE.test(out)) out = stripStaleBatchHelper(out);
+  if (usesLoadModel && CALLS_LOADMODELBATCH_RE.test(out) && !HAS_LOADMODELBATCH_HELPER_RE.test(out)) {
     markup += loadModelBatchHelper();
   }
 

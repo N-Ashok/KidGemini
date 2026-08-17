@@ -229,33 +229,6 @@ describe("PreviewVerifyController — probe-click reload & guards", () => {
     expect(h.last().probesEnabled).toBe(false);
   });
 
-  // BUG-FIX-LOG 2026-08-13: a skipped verify (tab backgrounded at generation
-  // time, e.g. a long 3D build) never got a second chance — the owner had to
-  // notice a broken game themselves and paste a manual error report. Once the
-  // tab comes back into view, a real round can safely run (rAF ticks again).
-  it("retryIfSkipped starts a real round once the tab is visible again after a skip", () => {
-    const h = harness({});
-    h.controller.start("<html>game</html>", "a game", true);
-    expect(h.last().outcome).toBe("skipped");
-
-    h.controller.retryIfSkipped("<html>game</html>");
-    expect(h.last().phase).toBe("testing");
-    expect(h.last().probesEnabled).toBe(true);
-    expect(h.last().outcome).toBe(null); // no longer "skipped" — a real round is running
-  });
-
-  it("retryIfSkipped is a no-op when the last outcome wasn't a skip (never double-verifies)", async () => {
-    const h = harness({});
-    h.controller.start("<html>game</html>", "a game", false);
-    h.controller.handleMessage(CLEAN_RESULT);
-    await flush();
-    expect(h.last().outcome).toBe("clean");
-    const before = h.last();
-
-    h.controller.retryIfSkipped("<html>game</html>");
-    expect(h.last()).toBe(before); // unchanged — no new round, no re-verify
-  });
-
   it("V.11 — interrupted (tab backgrounded) no-loop reads pass through, no repair", async () => {
     const h = harness({ repair: () => ({ patchedHtml: "<html>p</html>", mode: "patch" }) });
     h.controller.start("<html>game</html>", "a game", false);
@@ -343,74 +316,5 @@ describe("PreviewVerifyController — probe-click reload & guards", () => {
     resolve({ patchedHtml: "<html>late</html>", mode: "patch" });
     await flush();
     expect(h.states.length).toBe(emitted); // nothing emitted after dispose
-  });
-});
-
-describe("healMidPlay — repairing the game the child is already playing (2026-08-15)", () => {
-  // Owner: "when there is an error the browser should automatically push to
-  // Ari and solve it. now more than ever, i see error reports [and broken
-  // games]." The heal only ever covered the load window: handleMessage drops
-  // everything once settled, so a mid-play throw reached nothing.
-  const settledHarness = async () => {
-    const h = harness({ repair: () => ({ patchedHtml: "<html>fixed</html>", mode: "patch" }) });
-    h.controller.start("<html>playing</html>", "a snake game", false);
-    h.controller.handleMessage(RESULT({ rafCountAtSettle: 10, pixel: "changing" }));
-    await flush();
-    return h;
-  };
-
-  it("swaps the fixed game in and reloads the iframe", async () => {
-    const h = await settledHarness();
-    const roundBefore = h.last().round;
-    const attempted = await h.controller.healMidPlay([LOAD_ERROR.message as never]);
-    expect(attempted).toBe(true);
-    expect(h.last().currentHtml).toBe("<html>fixed</html>");
-    // A round bump is what reloads the iframe with the fixed document.
-    expect(h.last().round).toBe(roundBefore + 1);
-    // Probes stay OFF so nothing ghost-clicks the child's own controls.
-    expect(h.last().probesEnabled).toBe(false);
-    expect(h.last().outcome).toBe("repaired");
-  });
-
-  it("shows a kid-facing line while it works, and clears it after", async () => {
-    const h = await settledHarness();
-    await h.controller.healMidPlay([LOAD_ERROR.message as never]);
-    expect(h.states.some((s) => (s.kidLine ?? "").includes("Fixing"))).toBe(true);
-    expect(h.last().kidLine).toBeNull();
-  });
-
-  it("leaves the game EXACTLY as it was when the repair fails", async () => {
-    // The whole risk of touching a document someone is playing: a failed heal
-    // must never take their game away.
-    const h = harness({}); // fetchRepair throws
-    h.controller.start("<html>playing</html>", "a snake game", false);
-    h.controller.handleMessage(RESULT({ rafCountAtSettle: 10, pixel: "changing" }));
-    await flush();
-    const before = h.last().currentHtml;
-    const roundBefore = h.last().round;
-    await h.controller.healMidPlay([LOAD_ERROR.message as never]);
-    expect(h.last().currentHtml).toBe(before);
-    expect(h.last().round).toBe(roundBefore);
-    expect(h.last().kidLine).toBeNull();
-  });
-
-  it("does nothing before verify has settled — that window has its own loop", async () => {
-    const h = harness({ repair: () => ({ patchedHtml: "<html>fixed</html>", mode: "patch" }) });
-    h.controller.start("<html>playing</html>", "a snake game", false);
-    const attempted = await h.controller.healMidPlay([LOAD_ERROR.message as never]);
-    expect(attempted).toBe(false);
-    expect(h.repairCalls()).toBe(0);
-  });
-
-  it("does nothing with no errors, and nothing when repair is disabled", async () => {
-    const h = await settledHarness();
-    expect(await h.controller.healMidPlay([])).toBe(false);
-
-    const off = harness({ repairEnabled: false, repair: () => ({ patchedHtml: "<html>x</html>", mode: "patch" }) });
-    off.controller.start("<html>playing</html>", "a game", false);
-    off.controller.handleMessage(RESULT({ rafCountAtSettle: 10, pixel: "changing" }));
-    await flush();
-    expect(await off.controller.healMidPlay([LOAD_ERROR.message as never])).toBe(false);
-    expect(off.repairCalls()).toBe(0);
   });
 });

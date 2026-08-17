@@ -3,60 +3,6 @@
 // preview floor (ensure-runtime.ts) and the server injector (inject.ts) share
 // ONE source of truth for the loadModel helper — the two can never drift.
 
-/** Every `window.*` name the injected runtime defines — the ONE list, kept
- *  here because this file is where they are actually assigned.
- *
- *  Two consumers, and they used to keep private copies that drifted
- *  (KNOWN_BUGS #21, 2026-08-17): three-import-lint's healer knew 5 of these
- *  and ensure-runtime's "does this game use the runtime" probe knew 11. The
- *  healer's gap cost a full ~50s corrective regeneration every time a game
- *  wrote `import { placeModel } from "three"` — and placeModel is the name
- *  prompt-catalog.ts tells the model to PREFER, so it is the likeliest one to
- *  be imported by mistake. Seen live:
- *    ⛔ unknown three imports: loadModel, placeModel, modelHeading
- *
- *  ADDING A NAME HERE IS A PROMISE that `window.<name> =` really is injected.
- *  Stripping an import for a name the runtime does NOT define converts a loud
- *  dead import line (which verify catches) into a silent play-time
- *  ReferenceError (which it does not) — that is the PointLight failure,
- *  BUG-FIX-LOG 2026-08-07. A test asserts both directions of this. */
-export const INJECTED_RUNTIME_GLOBALS = [
-  "loadModel",
-  "loadModelBatch",
-  "placeModel",
-  "modelSize",
-  "modelAxis",
-  "modelJoins",
-  "modelFacing",
-  "modelMetres",
-  "modelHeading",
-  "rotateToJoin",
-  "fitTile",
-  "playSound",
-  "playMusic",
-] as const;
-
-/** The MODEL half of the list above — everything except the audio helpers.
- *
- *  Two consumers ask two DIFFERENT questions of these names, and conflating
- *  them shipped a bug the same day the lists were merged (BUG-FIX-LOG
- *  2026-08-17, owner UAT "i made a 2d game and it came out with error"):
- *
- *   - three-import-lint asks "is this name an injected global, so an
- *     `import { x } from "three"` must be healed away?" — TRUE of all 13,
- *     audio included. It wants INJECTED_RUNTIME_GLOBALS.
- *   - ensure-runtime asks "does this game use the 3D RUNTIME, so it needs an
- *     import map, the loadModel helper and the asset tables?" — false for
- *     audio. `playSound` works in a plain 2D game and always has.
- *
- *  With the merged list, a 289-byte 2D canvas game whose only crime was
- *  calling `playSound("coin")` came back 34,755 bytes carrying a module script
- *  importing "three", so the browser fetched a 621 KB 3D engine for a game
- *  drawn with fillRect. Sound is not 3D. */
-export const MODEL_RUNTIME_GLOBALS = INJECTED_RUNTIME_GLOBALS.filter(
-  (n) => n !== "playSound" && n !== "playMusic",
-);
-
 /** Inserts markup as early as possible (right after <head>, else <html>) so a
  *  game's own `<script type="module">` and the import map that resolves it come
  *  before any module load begins. */
@@ -188,67 +134,6 @@ export function countAxisTables(html: string): number {
   return [...html.matchAll(arAxesBlockRe())].length;
 }
 
-// The injected FACING table (`<script>window.AR_FACING={...};</script>`),
-// added 2026-08-15 for the wrong-facing bug. Same shape rules as AR_AXES:
-// values are plain strings, so no `}` can appear inside one.
-const arFacingBlockRe = () => /<script[^>]*>\s*window\.AR_FACING\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/g;
-
-/** Every parseable AR_FACING table in the document, in document order. */
-export function parseFacingTables(html: string): Array<Record<string, string>> {
-  const tables: Array<Record<string, string>> = [];
-  for (const m of html.matchAll(arFacingBlockRe())) {
-    try {
-      const parsed: unknown = JSON.parse(m[1]!);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        tables.push(parsed as Record<string, string>);
-      }
-    } catch {
-      /* not our block shape — fail soft, same floor as parseAxisTables */
-    }
-  }
-  return tables;
-}
-
-/** Removes every AR_FACING table block. Callers re-emit exactly one. */
-export function stripFacingTables(html: string): string {
-  return html.replace(arFacingBlockRe(), "");
-}
-
-/** How many AR_FACING table blocks the document carries. */
-export function countFacingTables(html: string): number {
-  return [...html.matchAll(arFacingBlockRe())].length;
-}
-
-// The injected REAL-METRES table (`<script>window.AR_REAL={...};</script>`),
-// added 2026-08-15. Array values, exactly like AR_SIZES.
-const arRealBlockRe = () => /<script[^>]*>\s*window\.AR_REAL\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/g;
-
-/** Every parseable AR_REAL table in the document, in document order. */
-export function parseRealTables(html: string): Array<Record<string, [number, number, number]>> {
-  const tables: Array<Record<string, [number, number, number]>> = [];
-  for (const m of html.matchAll(arRealBlockRe())) {
-    try {
-      const parsed: unknown = JSON.parse(m[1]!);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        tables.push(parsed as Record<string, [number, number, number]>);
-      }
-    } catch {
-      /* not our block shape — fail soft */
-    }
-  }
-  return tables;
-}
-
-/** Removes every AR_REAL table block. Callers re-emit exactly one. */
-export function stripRealTables(html: string): string {
-  return html.replace(arRealBlockRe(), "");
-}
-
-/** How many AR_REAL table blocks the document carries. */
-export function countRealTables(html: string): number {
-  return [...html.matchAll(arRealBlockRe())].length;
-}
-
 // The injected tile-EDGE table (`<script>window.AR_EDGES={...};</script>`),
 // added 2026-08-09 for the SECOND poorly-formed-track bug (BUG-FIX-LOG).
 // AR_AXES answers "none" for every corner, which is true and useless — a model
@@ -350,7 +235,7 @@ export function countTriangles(obj: { traverse: (cb: (child: any) => void) => vo
  *  the directions it must connect. Three rounds of PROMPT teaching failed to
  *  make a generated track rotate its corners correctly (TECH_DEBT #97 — the
  *  fix is not more prose), so the calculation moved into the runtime. */
-export const LOAD_MODEL_HELPER_VERSION = 8;
+export const LOAD_MODEL_HELPER_VERSION = 7;
 
 /** The runtime helper 3D games call: resolves a catalog name via AR_ASSETS,
  *  loads the GLB with GLTFLoader + meshopt (models are meshopt-compressed),
@@ -394,7 +279,7 @@ export const LOAD_MODEL_HELPER_VERSION = 8;
  *  on a genuine load failure is unchanged — nothing is recorded on that path). */
 export function loadModelHelper(): string {
   return `<script type="module">
-  import { GLTFLoader, MeshoptDecoder, Box3 } from "three";
+  import { GLTFLoader, MeshoptDecoder } from "three";
   window.__arLoadModelVersion = ${LOAD_MODEL_HELPER_VERSION};
 // modelSize (2026-08-08, the fragmented-track fix): the measured metres a model
 // renders at scale 1, available BEFORE loading so a game can plan a layout. The
@@ -431,130 +316,6 @@ window.AR_EDGES = window.AR_EDGES || {};
 window.modelJoins = function (name) {
   var e = window.AR_EDGES[name];
   return (e && e.joins && e.joins.length) ? e : null;
-};
-// modelFacing (2026-08-15, the wrong-facing fix): which way a model's FRONT
-// points at rest — "+z", "-z", "+x" or "-x". The prompt used to assert that
-// vehicles and characters all face +Z; a render audit of the catalog shows
-// car faces -Z and airplane faces +X, so games that trusted the claim placed
-// them backwards or sideways. A bounding box cannot express this (it is
-// identical for a car facing either way), which is why no data existed before.
-// Unaudited answers null — then eyeball it, exactly as before.
-window.AR_FACING = window.AR_FACING || {};
-window.modelFacing = function (name) {
-  var f = window.AR_FACING[name];
-  return (f === "+x" || f === "-x" || f === "+z" || f === "-z") ? f : null;
-};
-// modelMetres (2026-08-15): the model's size in TRUE real-world metres.
-// modelSize() reports the published GLB's own extent, and the catalog mixes
-// kit units with metres — by those numbers a mountain (1.9) is smaller than a
-// car (2.56). Use modelMetres() to decide how big something SHOULD be, and
-// modelSize() to work out the scale that gets you there:
-//   var want = modelMetres("house"), have = modelSize("house");
-//   house.scale.setScalar(want.y / have.y);
-// Unknown answers null.
-window.AR_REAL = window.AR_REAL || {};
-window.modelMetres = function (name) {
-  var s = window.AR_REAL[name];
-  return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
-};
-// modelHeading (2026-08-15): the rotation.y that makes a model POINT along a
-// heading, given the way it was authored.
-//
-// placeModel fixes orientation once, at placement. It cannot help anything
-// that STEERS: a car updates rotation.y every frame from its own heading
-// variable, so it never goes near placeModel. That is the whole of a driving
-// game, and it is how a child's race game ended up with both cars driving in
-// reverse — the game moved them with the usual
-//   pos.x += Math.sin(heading) * speed;  pos.z += Math.cos(heading) * speed;
-// (so heading 0 means travelling +Z) while the car model faces -Z.
-//
-// Use it wherever you set rotation from a heading:
-//   car.rotation.y = modelHeading("car", state.heading);
-// An unaudited model returns the heading unchanged — no worse than today.
-window.modelHeading = function (name, heading) {
-  var facing = window.modelFacing(name);
-  // Radians to add so the model's own front ends up along +Z, which is where
-  // heading 0 points under the sin/cos convention above.
-  var offset = { "+z": 0, "+x": -Math.PI / 2, "-z": Math.PI, "-x": Math.PI / 2 }[facing];
-  return (heading || 0) + (offset || 0);
-};
-// placeModel (2026-08-15): load a model and put it in the world correctly —
-// standing on the ground, at a believable size, pointing where you want.
-//
-// Every one of those three had to be guessed per game before, and each guess
-// was independent: loadModel() does no normalisation of any kind (it clones
-// the template and returns it), nothing anywhere floors Y, the catalog's sizes
-// are not all in the same units, and no facing data existed. That is three
-// coin-flips per model per game.
-//
-// Deliberately a NEW function rather than a change to loadModel(): games
-// already stored hand-compensate for these quirks (one flips a crocodile with
-// rotation.y = Math.PI), and silently correcting loadModel would flip those
-// games BACK to wrong. Old calls behave exactly as before.
-//
-//   var car = await placeModel("car", { at: {x: 0, z: 10}, heading: "-z" });
-//   var h  = await placeModel("house", { at: {x: 8, z: 0}, metres: true });
-//
-//   at       {x, z}   where to stand it (y is computed so its base sits on 0)
-//   heading  "+z"|"-z"|"+x"|"-x"|radians   which way it should point
-//   metres   true     scale it to its real-world size (needs modelMetres)
-//   scale    number   an explicit scale instead, applied after metres
-//   y        number   ground height at that spot, if your terrain isn't flat
-//
-// Fails soft in every direction: an unknown name returns null, and any datum
-// that is missing is simply not applied.
-window.placeModel = async function (name, opts) {
-  opts = opts || {};
-  var obj = await window.loadModel(name);
-  if (!obj) return null;
-  try {
-    // 1. SIZE — real metres if we know them, then any explicit scale.
-    if (opts.metres) {
-      var want = window.modelMetres(name), have = window.modelSize(name);
-      if (want && have && have.y > 0 && have.x > 0 && have.z > 0) {
-        // Longest axis wins: a stylised model is not uniformly out, and
-        // matching the biggest dimension is what keeps it believable beside
-        // its neighbours.
-        var byX = want.x / have.x, byY = want.y / have.y, byZ = want.z / have.z;
-        obj.scale.setScalar(Math.max(byX, Math.max(byY, byZ)));
-      }
-    }
-    if (typeof opts.scale === "number" && opts.scale > 0) obj.scale.multiplyScalar(opts.scale);
-
-    // 2. HEADING — turn the model's own front onto the direction asked for.
-    // Order = the sequence a vector visits under a POSITIVE rotation.y, which
-    // three.js takes +Z to +X (verified empirically, not from memory). The
-    // first version of this used the tile helper's ["-z","+x","+z","-x"] and
-    // was 180 degrees wrong for every +x/-x model — airplane, bird, elephant,
-    // tank. The 0/180 cases are symmetric, so the placement proof passed 13/13
-    // while the quarter turns were inverted; that is why check-placement.mts
-    // now tests a +x model explicitly.
-    var order = ["+z", "+x", "-z", "-x"];
-    if (opts.heading !== undefined && opts.heading !== null) {
-      if (typeof opts.heading === "number") {
-        obj.rotation.y = opts.heading;
-      } else {
-        var from = window.modelFacing(name);
-        var a = order.indexOf(from), b = order.indexOf(opts.heading);
-        // Unaudited model: leave rotation alone rather than turn it by a guess.
-        if (a >= 0 && b >= 0) obj.rotation.y = ((b - a + 4) % 4) * (Math.PI / 2);
-      }
-    }
-
-    // 3. GROUND — measure the model AS TRANSFORMED and drop it so its lowest
-    // point rests on the ground. Measured, not read from a table: it has to
-    // account for the scale and rotation just applied.
-    obj.updateMatrixWorld(true);
-    var box = new Box3().setFromObject(obj);
-    var groundY = typeof opts.y === "number" ? opts.y : 0;
-    if (isFinite(box.min.y)) obj.position.y = groundY - box.min.y;
-    var at = opts.at || {};
-    if (typeof at.x === "number") obj.position.x = at.x;
-    if (typeof at.z === "number") obj.position.z = at.z;
-  } catch (e) {
-    console.warn("[ariantra] placeModel could not place:", name, e);
-  }
-  return obj;
 };
 // rotateToJoin: the one calculation every track needs and no game got right by
 // hand. Returns the rotation.y IN RADIANS that carries a piece's "from" edge
@@ -676,23 +437,9 @@ window.loadModel = async function (name) {
  *
  *  Capacity is fixed at call time (`count`) — no silent unbounded growth of
  *  the underlying InstancedMesh buffers. */
-/** Bump whenever buildModelBatchHelper's BEHAVIOR changes, so ensureAssetRuntime
- *  can replace a stale copy instead of seeing the marker and calling it done.
- *  v2 (2026-08-15): bake each part's in-model transform into the instance
- *  matrix — see the note in the helper body. v1 (unstamped) placed every
- *  batched model rotated, sunk and un-normalised.
- *  v3 (2026-08-17): the returned container carries the model's NAME. It was a
- *  bare `new Group()`, so `.name` was "" for every batch ever created, and a
- *  game that branched on `batch.mesh.name` to size a mixed flock had two dead
- *  arms and one scale for everything (owner's Mumbai Flight Sim — birds the
- *  size of trees). The bump is the migration: stored games pick the name up on
- *  their next preview render. */
-export const LOAD_MODEL_BATCH_VERSION = 3;
-
 export function loadModelBatchHelper(): string {
   return `<script type="module">
   import { InstancedMesh, Matrix4, Box3, Group, Vector3, Quaternion, Euler } from "three";
-window.__arLoadModelBatchVersion = ${LOAD_MODEL_BATCH_VERSION};
 window.loadModelBatch = async function (name, count) {
   try {
     if (typeof window.loadModel !== "function") { console.warn("[ariantra] loadModelBatch needs loadModel loaded first"); return null; }
@@ -706,58 +453,22 @@ window.loadModelBatch = async function (name, count) {
     if (!template) return null;
     if (template.animations.length) { console.warn("[ariantra] loadModelBatch does not support animated models:", name); return null; }
     const container = new Group();
-    // v3 (2026-08-17): the container answers to the model's name. A bare Group
-    // has name "", and generated games branch on it as the natural way to tell
-    // one batch from another in a shared update loop:
-    //   if (e.batch.mesh.name === "bird") batchScale = 0.5;
-    // Every such arm was dead, so a mixed flock got one scale. Cheap, additive,
-    // and it makes code the model already writes start working.
-    container.name = name;
     const parts = [];
-    // A mesh inside a GLB is almost never at the model's origin with unit
-    // scale: kits park parts under rotated/offset/scaled nodes, and the vendor
-    // step bakes the catalog's own normalisation (rotateYDeg / normalizeLongest
-    // / recenterXZ, scripts/vendor-models.mjs) into those same nodes. All of it
-    // lives in the NODE TRANSFORMS of the subtree loadModel() returns — none of
-    // it is in part.geometry. (loadModel itself normalises NOTHING: it clones
-    // the template and returns it. Corrected 2026-08-15 — an earlier version of
-    // this comment credited loadModel with the rescaling and a base-on-y=0
-    // flooring it has never done; nothing in the runtime floors Y.)
-    //
-    // v1 built each InstancedMesh from part.geometry alone and threw those
-    // transforms away, so every batched prop rendered rotated, sunk into the
-    // ground and at the kit's raw ~2-unit scale instead of its real size.
-    // Measured against loadModel() across the manifest: 267 of 271 batchable
-    // models placed differently (scripts/check-batch-parity.mts). snow_pine
-    // and mountain came out lying on their side; a batched airplane was 2m
-    // long instead of 36m. It also silently broke COLLISION in games that
-    // never touched collision code — they record a solid at the logical
-    // instance position while the mesh is drawn somewhere else, so the car
-    // stops at invisible walls and drives through visible houses.
-    // (Owner report 2026-08-15: "the trees were lying down", "the car goes
-    // through the mountains and houses", "the hills are on the road".)
-    //
-    // Fix: capture each part's matrix RELATIVE TO THE MODEL ROOT and bake it
-    // into every instance matrix. Deriving it from the live subtree — rather
-    // than re-implementing loadModel()'s normalisation here — means the two
-    // paths cannot drift apart again.
-    template.scene.updateMatrixWorld(true);
-    var rootInverse = new Matrix4().copy(template.scene.matrixWorld).invert();
     template.scene.traverse(function (child) {
       if (!child.isMesh || !child.geometry || !child.material) return;
-      parts.push({ mesh: child, local: new Matrix4().multiplyMatrices(rootInverse, child.matrixWorld) });
+      parts.push(child);
     });
     const meshes = parts.map(function (part) {
-      const im = new InstancedMesh(part.mesh.geometry, part.mesh.material, count);
+      const im = new InstancedMesh(part.geometry, part.material, count);
       im.count = count;
       container.add(im);
-      if (!part.mesh.geometry.boundingBox) part.mesh.geometry.computeBoundingBox();
+      if (!part.geometry.boundingBox) part.geometry.computeBoundingBox();
       return im;
     });
     try {
       var __arTriangles = 0;
       for (var __p = 0; __p < parts.length; __p++) {
-        var __geo = parts[__p].mesh.geometry;
+        var __geo = parts[__p].geometry;
         if (__geo.index) __arTriangles += __geo.index.count / 3;
         else if (__geo.attributes && __geo.attributes.position) __arTriangles += __geo.attributes.position.count / 3;
       }
@@ -771,7 +482,6 @@ window.loadModelBatch = async function (name, count) {
     var __arQuat = new Quaternion();
     var __arEuler = new Euler();
     var __arScale = new Vector3();
-    var __arPartMatrix = new Matrix4();
     return {
       mesh: container,
       setInstance: function (i, transform) {
@@ -783,27 +493,15 @@ window.loadModelBatch = async function (name, count) {
         __arQuat.setFromEuler(__arEuler);
         __arScale.set(scl.x != null ? scl.x : 1, scl.y != null ? scl.y : 1, scl.z != null ? scl.z : 1);
         matrix.compose(__arPos, __arQuat, __arScale);
-        // instance transform FIRST, then the part's own place inside the
-        // model — the same order the scene graph would apply them.
         for (var m = 0; m < meshes.length; m++) {
-          __arPartMatrix.multiplyMatrices(matrix, parts[m].local);
-          meshes[m].setMatrixAt(i, __arPartMatrix);
+          meshes[m].setMatrixAt(i, matrix);
           meshes[m].instanceMatrix.needsUpdate = true;
         }
       },
       boundsAt: function (i) {
         if (!parts.length) return new Box3();
-        // Union of EVERY part, not just the first: a model whose parts sit at
-        // different offsets (a house body + its roof) would otherwise report
-        // collision bounds covering only one piece of itself.
-        box.makeEmpty();
-        var partBox = new Box3();
-        for (var m = 0; m < meshes.length; m++) {
-          meshes[m].getMatrixAt(i, __arPartMatrix);
-          if (!parts[m].mesh.geometry.boundingBox) parts[m].mesh.geometry.computeBoundingBox();
-          partBox.copy(parts[m].mesh.geometry.boundingBox).applyMatrix4(__arPartMatrix);
-          box.union(partBox);
-        }
+        meshes[0].getMatrixAt(i, matrix);
+        box.copy(parts[0].geometry.boundingBox).applyMatrix4(matrix);
         return box;
       },
     };

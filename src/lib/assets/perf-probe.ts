@@ -38,12 +38,8 @@ export const PERF_SAMPLE_MS = 1_000;
  *  behavior, but the 2026-08-05 hidden-tab fix (below) needs to actually
  *  REACH games that were already previewed once (and so already carry an old
  *  probe), not just new ones. Bump this whenever buildPerfProbeScript()'s
- *  BEHAVIOR changes. v3 (2026-08-06): snapshots carry `playing` — see below.
- *  v5 (2026-08-15): the rAF wrap no longer defeats the frame governor's 60fps
- *  cap (KNOWN_BUGS #12) — every stored game carrying a v4 probe is currently
- *  running uncapped on a 120Hz device, so this bump is the whole delivery
- *  mechanism for that fix. */
-export const PERF_PROBE_VERSION = 5;
+ *  BEHAVIOR changes. v3 (2026-08-06): snapshots carry `playing` — see below. */
+export const PERF_PROBE_VERSION = 4;
 
 /** How recently the kid must have touched the game (pointer/key/touch inside
  *  the iframe) for a snapshot to count as "playing". Owner report 2026-08-06:
@@ -132,40 +128,16 @@ export function buildPerfProbeScript(): string {
   }
   var lastGlDraws = 0;
 
-  // FPS estimate: count rAF ticks in the last sample window.
-  //
-  // This does NOT "stack fine" on the frame governor, as it claimed until
-  // 2026-08-15 (KNOWN_BUGS #12). The governor throttles per callback via a
-  // WeakMap keyed on the function it is handed; a fresh closure per call —
-  // which is what the naive wrap below produced — means it never saw the same
-  // key twice, so its prev timestamp was always 0 and the 60fps cap never fired.
-  // On a 120Hz ProMotion device every 3D game therefore did twice the work,
-  // and any game moving per-frame ran twice as fast: exactly the heating the
-  // governor was built to stop.
-  //
-  // Two rules keep the callback's IDENTITY stable through this wrap:
-  //  1. memoise one wrapper per callback, so a game re-requesting the same
-  //     loop function always presents the governor the same key;
-  //  2. never re-wrap our own wrapper — the governor's skip path re-requests
-  //     through window.requestAnimationFrame (i.e. back through here) with the
-  //     wrapper it was given, and wrapping that again would both restart the
-  //     identity problem and double-count the frame.
+  // FPS estimate: count rAF ticks in the last sample window. Stacks fine on
+  // top of the frame governor's own wrap (both call straight through).
   var frames = 0;
   var origRaf = window.requestAnimationFrame;
   if (origRaf) {
-    var wrappedByCb = typeof WeakMap === "function" ? new WeakMap() : null;
     window.requestAnimationFrame = function (cb) {
-      if (typeof cb !== "function" || cb.__arPerfWrapped) return origRaf.call(window, cb);
-      var wrapped = wrappedByCb && wrappedByCb.get(cb);
-      if (!wrapped) {
-        wrapped = function (t) {
-          frames++;
-          return cb(t);
-        };
-        wrapped.__arPerfWrapped = 1;
-        if (wrappedByCb) wrappedByCb.set(cb, wrapped);
-      }
-      return origRaf.call(window, wrapped);
+      return origRaf.call(window, function (t) {
+        frames++;
+        return cb(t);
+      });
     };
   }
 

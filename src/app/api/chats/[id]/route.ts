@@ -13,7 +13,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { SqliteChatHistoryStore } from "@/lib/db";
 import { resolveChatUser } from "@/lib/chat-identity";
 import { sanitizeConversation, MAX_TITLE } from "@/lib/chat-history";
-import { TurnLog, adoptTraceId } from "@/lib/turn-log";
 
 export const runtime = "nodejs";
 
@@ -39,34 +38,6 @@ export async function PUT(req: NextRequest, { params }: IdParams) {
   if (!convo || convo.id !== params.id) {
     return NextResponse.json({ error: "invalid conversation" }, { status: 400 });
   }
-  // ── B2 INSTRUMENT (2026-08-17, KNOWN_BUGS #24) ──────────────────────────
-  //
-  // The bug: a self-heal produced a fixed game, and the STORED source did not
-  // change. Observed twice — stored frozen at 60,543 while repairs produced
-  // 60,531 and 60,282, then frozen at 70,718 while a repair produced 71,955 —
-  // and yet the FIRST repair of the session did persist (58,895 was picked up
-  // by the next edit). So it is conditional, and the plan for it says
-  // explicitly: root-cause it, do not guess.
-  //
-  // It is not guessable from the code alone, and it cannot be reproduced on
-  // demand. What it needs is the one number nobody has ever had: what actually
-  // reached storage, next to what the repair produced. `api/repair` already
-  // logs `stage=deliver outChars=`; this logs the counterpart. Comparing the
-  // two on one `trace=` settles it — either the write never arrives (a client
-  // path that never fires), or it arrives with the OLD bytes (a stale-state
-  // race), or it arrives correctly and something later overwrites it.
-  //
-  // Sizes and ids only — never a child's text or their game's contents.
-  const log = new TurnLog("api/chats", adoptTraceId(req.headers.get("x-ari-trace")), { userId });
-  const games = convo.messages.filter((m) => typeof m.artifactHtml === "string" && m.artifactHtml.length > 0);
-  const newest = games[games.length - 1];
-  log.ok("persist", {
-    convo: convo.id,
-    messages: convo.messages.length,
-    games: games.length,
-    newestGame: newest?.id,
-    chars: newest?.artifactHtml?.length,
-  });
   store.upsert(userId, convo, Date.now());
   return NextResponse.json({ ok: true });
 }

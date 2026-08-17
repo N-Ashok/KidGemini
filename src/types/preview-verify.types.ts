@@ -16,7 +16,6 @@ export type VerifyFailureCode =
   | "canvas_zero_size"
   | "canvas_static"
   | "start_occluded"
-  | "controls_occluded"
   | "start_no_loop"
   | "no_start_button";
 
@@ -53,27 +52,6 @@ export interface VerifyEvidence {
     occluder?: string | null;
     /** P6: rAF delta in the wait window after a direct .click() dispatch. */
     clickRafDelta?: number | null;
-  } | null;
-  /** P7 (2026-08-17) — the GAMEPLAY controls, occlusion-tested AFTER the start
-   *  click, once the start screen should be gone.
-   *
-   *  The probe only ever hit-tested the Start button. That is why the owner's
-   *  "the take off and land buttons are not working" survived four shipped
-   *  fixes: Start was reachable, so verify reported the game clean, while an
-   *  invisible layer sat over the flight controls. Nothing in the pipeline
-   *  could see it, because nothing looked.
-   *
-   *  null when the probe never got far enough to test them (no start control,
-   *  or the click was never dispatched). */
-  controls?: {
-    /** Visible, plausible control buttons found after the start click. */
-    found: number;
-    /** How many of those had something else on top at their centre point. */
-    occluded: number;
-    /** Simple selector of the first occluder, for the repair prompt. */
-    occluder?: string | null;
-    /** Label of the first occluded control, so the fix knows what broke. */
-    label?: string | null;
   } | null;
 }
 
@@ -117,13 +95,6 @@ export interface RepairRequest {
   errors: GameConsoleMessage[];
   /** The kid's original ask — every repair prompt carries it (§7). */
   originalRequest: string;
-  /** The chat turn this game came from, so the repair's log lines carry the
-   *  SAME `trace=` key as the turn that built it (2026-08-17). Without it a
-   *  repair could only be matched to its turn by comparing character counts
-   *  across timestamps by eye — which is what the 2026-08-17 investigation
-   *  actually had to do. Optional and untrusted: the server re-validates the
-   *  shape and issues a fresh id if it is anything other than one of ours. */
-  traceId?: string;
 }
 
 /** POST /api/repair response body. */

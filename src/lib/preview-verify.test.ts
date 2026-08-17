@@ -11,7 +11,6 @@ import {
   classifyVerify,
   demonstrablyRunning,
 } from "./preview-verify";
-import { repairFaultLine } from "./repair-prompt";
 import type { VerifyEvidence } from "@/types/preview-verify.types";
 import type { GameConsoleMessage } from "@/types/game-console.types";
 
@@ -138,7 +137,7 @@ describe("injectPreviewInstrumentation", () => {
 // ── probe script behavior (V rows needing a live run) ──────────────────────
 
 describe("verify script probes", () => {
-  it("V.8 — healthy game: loop runs on load, pixels change, and the controls still get checked", () => {
+  it("V.8 — healthy game: loop runs on load, pixels change, start probe never runs", () => {
     let frame = 0;
     const canvas = el({ tagName: "CANVAS", width: 400, height: 300, rect: { left: 0, top: 0, width: 400, height: 300 } });
     const { evidence, checks } = bootVerify({
@@ -152,26 +151,7 @@ describe("verify script probes", () => {
     expect(evidence).not.toBeNull();
     expect(evidence!.rafCountAtSettle).toBe(2);
     expect(evidence!.pixel).toBe("changing");
-    // CONTRACT CHANGE 2026-08-17 (P7). This used to assert `start` was null —
-    // "start probe skipped when loop runs". That skip is precisely why the
-    // owner's "the take off and land buttons are not working" was invisible
-    // through four shipped fixes: the loop ran and the canvas painted, so
-    // verify stopped looking, while an invisible layer sat over the flight
-    // controls. The probe now runs on the healthy path too, purely so the
-    // GAMEPLAY controls can be occlusion-tested — which cannot be done before
-    // Start is clicked, since verify always loads the game fresh and a start
-    // screen covering the controls is correct behaviour.
-    //
-    // COST, deliberately recorded: healthy games now get one ghost click plus
-    // CLICK_WAIT_MS, and the parent reloads any clicked document pristine, so
-    // that is one extra iframe mount per verify. It happens behind the
-    // "Testing your game…" cover, so the child sees a slightly longer cover
-    // rather than a flash. Watch it against the WebGL context budget
-    // (webglContextGuard) — extra mounts are the pressure that caused the
-    // 2026-08-10 blank-preview saga.
-    expect(evidence!.start).not.toBeNull();
-    expect(evidence!.start!.found).toBe(false); // this fixture has no Start control
-    expect(evidence!.controls ?? null).toBeNull(); // so nothing to test, and no false fault
+    expect(evidence!.start).toBeNull(); // start probe skipped when loop runs
     expect(classifyVerify({ errors: [], evidence, interrupted: false })).toEqual({ code: "clean" });
     expect(checks.find((c) => c.check === "loop")?.ok).toBe(true);
   });
@@ -361,12 +341,7 @@ describe("verify script probes", () => {
     });
     expect(evidence!.rafCountAtSettle).toBe(0);
     expect(evidence!.intervalCount).toBe(1);
-    // P7 contract change 2026-08-17 (see V.8): the start probe now runs on the
-    // healthy path too, so the gameplay controls can be occlusion-tested. This
-    // fixture has no Start control and no buttons, so the probe finds nothing
-    // and — the property that matters — invents no fault.
-    expect(evidence!.start!.found).toBe(false);
-    expect(evidence!.controls ?? null).toBeNull();
+    expect(evidence!.start).toBeNull(); // start probe skipped — loop considered running
     expect(classifyVerify({ errors: [], evidence, interrupted: false })).toEqual({ code: "clean" });
   });
 
@@ -470,151 +445,6 @@ describe("classifyVerify — error-driven rows", () => {
 
   it("missing result (verify script never finished) is inconclusive — never repair blind", () => {
     expect(classifyVerify({ errors: [], evidence: null, interrupted: false })).toEqual({ code: "inconclusive" });
-  });
-});
-
-// ── P7: the GAMEPLAY controls, not just Start (2026-08-17) ─────────────────
-//
-// The owner's "the take off and land buttons are not working" survived FOUR
-// shipped fixes. Every one aimed at the button logic; the logic was never the
-// bug. The probe only ever hit-tested Start — Start was reachable, so verify
-// reported the game clean while an invisible layer sat over the flight
-// controls. Nothing looked, so nothing saw it.
-//
-// A false positive here is worse than a miss (it sends a WORKING game to the
-// repair model), so the guards get as many tests as the detection.
-describe("the probe itself finds occluded gameplay controls", () => {
-  // Mirrors the owner's Mumbai Flight Sim: Start works, the loop runs, and a
-  // HUD wrapper lies across the flight buttons.
-  const startBtn = () => el({ tagName: "BUTTON", innerText: "Start", rect: { left: 150, top: 20, width: 100, height: 40 } });
-  const upBtn = () => el({ tagName: "BUTTON", innerText: "UP", rect: { left: 20, top: 400, width: 60, height: 60 } });
-  const landBtn = () => el({ tagName: "BUTTON", innerText: "LAND", rect: { left: 100, top: 400, width: 60, height: 60 } });
-  const hud = () => el({ tagName: "DIV", className: "hud-wrap", rect: { left: 0, top: 380, width: 400, height: 220 } });
-
-  it("P7.7 reports the buried controls, with a count and the occluder", () => {
-    const start = startBtn(), up = upBtn(), land = landBtn(), wrap = hud();
-    const { evidence } = bootVerify({
-      clickables: [start, up, land, wrap],
-      // Start is reachable; the two flight buttons are not. This is exactly
-      // the state that reported "clean" for four shipped fixes in a row.
-      elementFromPoint: (_x, y) => (y > 380 ? wrap : start),
-      game: (w) => w.requestAnimationFrame(() => {}),
-    });
-    expect(evidence!.controls).toBeTruthy();
-    expect(evidence!.controls!.occluded).toBe(2);
-    expect(evidence!.controls!.occluder).toContain("hud-wrap");
-    expect(classifyVerify({ errors: [], evidence, interrupted: false }).code).toBe("controls_occluded");
-  });
-
-  it("P7.8 does not flag controls that are genuinely on top", () => {
-    const start = startBtn(), up = upBtn();
-    const { evidence } = bootVerify({
-      clickables: [start, up],
-      elementFromPoint: (_x, y) => (y > 380 ? up : start),
-      game: (w) => w.requestAnimationFrame(() => {}),
-    });
-    expect(evidence!.controls!.occluded).toBe(0);
-    expect(classifyVerify({ errors: [], evidence, interrupted: false }).code).not.toBe("controls_occluded");
-  });
-
-  it("P7.9 ignores things that are not tap targets — the false-positive guard", () => {
-    // A wordy menu item, and a control too small to be a real button. Flagging
-    // either would send a WORKING game to the repair model, which is strictly
-    // worse than missing one.
-    const start = startBtn();
-    const wordy = el({ tagName: "BUTTON", innerText: "Go to the settings screen", rect: { left: 20, top: 400, width: 200, height: 40 } });
-    const tiny = el({ tagName: "BUTTON", innerText: "UP", rect: { left: 20, top: 500, width: 12, height: 12 } });
-    const wrap = hud();
-    const { evidence } = bootVerify({
-      clickables: [start, wordy, tiny, wrap],
-      elementFromPoint: (_x, y) => (y > 380 ? wrap : start),
-      game: (w) => w.requestAnimationFrame(() => {}),
-    });
-    expect(evidence!.controls).toBeNull(); // nothing qualified as a control
-    expect(classifyVerify({ errors: [], evidence, interrupted: false }).code).not.toBe("controls_occluded");
-  });
-
-  it("P7.10 an off-screen control (elementFromPoint returns null) is not occlusion", () => {
-    // elementFromPoint answers null for a point outside the viewport. Treating
-    // that as "covered" would flag every game with a scrolled-out control.
-    const start = startBtn(), up = upBtn();
-    const { evidence } = bootVerify({
-      clickables: [start, up],
-      elementFromPoint: (_x, y) => (y > 380 ? null : start),
-      game: (w) => w.requestAnimationFrame(() => {}),
-    });
-    expect(evidence!.controls!.occluded).toBe(0);
-  });
-});
-
-describe("classifyVerify — controls_occluded", () => {
-  const running: VerifyEvidence = {
-    rafCountAtSettle: 5,
-    rafCountFinal: 30,
-    canvas: { width: 360, height: 240 },
-    pixel: "changing",
-    start: { found: true, occluded: false, clickRafDelta: 12 },
-  };
-
-  it("P7.1 a happily-animating game with buried controls is NOT clean", () => {
-    // The exact production shape: every previous probe passes.
-    const evidence: VerifyEvidence = {
-      ...running,
-      controls: { found: 4, occluded: 2, occluder: "div.hud-wrap", label: "LAND" },
-    };
-    const out = classifyVerify({ errors: [], evidence, interrupted: false });
-    expect(out.code).toBe("controls_occluded");
-  });
-
-  it("P7.2 the repair instruction names the control, the occluder, and what NOT to touch", () => {
-    // The 2026-08-17 finding: informing the model is the whole fix. Every
-    // observed uninformed repair came back a no-op of a dozen characters.
-    const line = repairFaultLine({
-      failureCode: "controls_occluded",
-      evidence: { ...running, controls: { found: 4, occluded: 2, occluder: "div.hud-wrap", label: "LAND" } },
-      errors: [],
-    });
-    expect(line).toContain("LAND");
-    expect(line).toContain("div.hud-wrap");
-    expect(line).toMatch(/pointer-events/);
-    expect(line).toMatch(/Do NOT change the buttons/i);
-  });
-
-  it("P7.3 controls found but NONE occluded stays clean", () => {
-    const evidence: VerifyEvidence = { ...running, controls: { found: 4, occluded: 0, occluder: null } };
-    expect(classifyVerify({ errors: [], evidence, interrupted: false }).code).toBe("clean");
-  });
-
-  it("P7.4 a game with no on-screen controls at all stays clean", () => {
-    // Keyboard-only games exist. `controls: null` must never read as a fault.
-    expect(classifyVerify({ errors: [], evidence: { ...running, controls: null }, interrupted: false }).code)
-      .toBe("clean");
-    const { controls: _omitted, ...noField } = { ...running, controls: null };
-    expect(classifyVerify({ errors: [], evidence: noField as VerifyEvidence, interrupted: false }).code)
-      .toBe("clean");
-  });
-
-  it("P7.5 an interrupted (backgrounded) read is inconclusive, never a repair", () => {
-    // Same posture as every other probe: never repair on an unreliable read.
-    const evidence: VerifyEvidence = {
-      ...running,
-      controls: { found: 4, occluded: 2, occluder: "div.hud", label: "UP" },
-    };
-    expect(classifyVerify({ errors: [], evidence, interrupted: true }).code).toBe("inconclusive");
-  });
-
-  it("P7.6 a REAL failure still wins over an occluded control", () => {
-    // Ordering guard: a game that never looped has a more basic problem, and
-    // its controls are trivially "covered" by whatever screen is still up.
-    const evidence: VerifyEvidence = {
-      rafCountAtSettle: 0,
-      rafCountFinal: 0,
-      canvas: { width: 360, height: 240 },
-      pixel: null,
-      start: { found: true, occluded: true, occluder: "div.modal" },
-      controls: { found: 3, occluded: 3, occluder: "div.modal", label: "UP" },
-    };
-    expect(classifyVerify({ errors: [], evidence, interrupted: false }).code).toBe("start_occluded");
   });
 });
 

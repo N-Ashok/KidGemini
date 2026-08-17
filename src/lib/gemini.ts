@@ -2,8 +2,6 @@
 // Knows nothing about safety or persistence. Server-only.
 
 import "server-only";
-import fs from "node:fs";
-import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
 import type { ChatMessage, ChatModel, ImageAttachment, StreamChunk, TokenUsage } from "@/types/chat.types";
 import type { ChainSummary } from "@/types/model-ledger.types";
@@ -21,11 +19,10 @@ import {
   GAME_EDIT_STRICT_RETRY_SECTION, REPEATED_REQUEST_SECTION, FRESH_GAME_LINE,
 } from "./game-edit";
 import { PERSONAS, type PersonaId } from "./persona/persona";
-import { NEXT_ASK_EDIT_PROMPT_SECTION, NEXT_ASK_PROMPT_SECTION, NEXT_ASKS_PREFIX, resolveNextAsk } from "./next-ask-sentinel";
+import { NEXT_ASK_EDIT_PROMPT_SECTION, NEXT_ASK_PROMPT_SECTION, resolveNextAsk } from "./next-ask-sentinel";
 import { fallbackChain, isModelGone, shouldTryNextModel } from "./model-fallback";
 import { runOneShotChain, runStreamChain, type ProviderChunk, type FinishReason, type ProviderGenerator } from "./model-runner";
 import { chainFor, specFor } from "./model-registry";
-import { specCompilerEnabled, specCompilerModel, shouldCompileSpec, SPEC_COMPILER_SYSTEM_PROMPT, SPEC_COMPILER_MAX_OUTPUT_TOKENS } from "./spec-compiler";
 import { openaiAdapter } from "./providers/openai-adapter";
 import { anthropicAdapter } from "./providers/anthropic-adapter";
 import { moonshotAdapter } from "./providers/moonshot-adapter";
@@ -85,14 +82,6 @@ const BUILD_TIMEOUT_MS = 60_000;
  */
 export const ONESHOT_MAX_MODELS = 2;
 export const ONESHOT_TOTAL_BUDGET_MS = 150_000;
-
-/** Deeper than ONESHOT_MAX_MODELS on purpose (owner ask 2026-08-13, after the
- *  spec compiler's single lite-tier model 404'd in the asia-southeast1 Vertex
- *  region with nothing to fall back to): Pass 1 already tolerates 20s+
- *  latency, so reliability matters more here than shaving a few more seconds
- *  off a rare failure path — 3 gives it a real shot at reaching all three
- *  lite-generation fallbacks (spec-compiler.ts's specCompilerModel doc). */
-export const SPEC_COMPILE_MAX_MODELS = 3;
 
 export function oneShotBudgetMs(env: Record<string, string | undefined> = process.env): number {
   const override = Number(env.GEMINI_ONESHOT_BUDGET_MS);
@@ -269,52 +258,6 @@ const GAME_BUILD_CONTRACT = `respond with a single HTML document wrapped in a
   Render the score as an HTML element with id="score" (a real DOM element that
   updates as the player scores — not text drawn inside a canvas), so the
   Ariantra platform can track high scores automatically when it's published.
-- Show a START SCREEN before play begins: the game's name, one sentence
-  saying what the goal is, and its controls, dismissed by a clear Start/Play
-  button — a player who has never seen this game before must know what to do
-  before the first frame of actual play. If any status/message element shows
-  a welcome or instruction message, that message must be VISIBLE the moment
-  play begins, not hidden behind CSS that only reveals it once a later
-  gameplay event fires — an empty-looking styled box until the first random
-  trigger happens is a bug, not a subtle style choice.
-- NOTHING MAY COVER THE CONTROLS. Every element that spans the play area — the
-  start screen, a game-over panel, a HUD wrapper, a toast, any full-screen
-  container — must EITHER be removed / \`display:none\` while it is not the
-  active screen, OR carry \`pointer-events: none\` with \`pointer-events: auto\`
-  restored on its own buttons only. This is the single most common way a
-  finished-looking game is unplayable: the buttons render correctly and their
-  click handlers are perfect, so nothing looks or logs as broken — the taps
-  simply never arrive, because an invisible layer above them is eating every
-  one. A start screen that fades to \`opacity: 0\` but stays in the layout is
-  still covering the game. Whenever you add or move an overlay, satisfy
-  yourself that each on-screen control is still the topmost element at its own
-  coordinates.
-- ONE INPUT INTENT, ONE OUTCOME. For each action the player can take (climb,
-  dive, turn left, turn right, thrust, brake), the keyboard key AND the
-  on-screen button MUST write the SAME variable with the SAME value — bind
-  them to one shared intent, never to two separate expressions that can drift
-  apart. And the direction must be true on screen: pressing UP (or the up
-  button) moves the player UP on the screen, LEFT moves it toward the left
-  edge, RIGHT toward the right edge. Work the SIGN out rather than assuming
-  it — for a 3D game, decide which way the object actually travels for a
-  positive value before you commit to it. \`rotation.x = +pitch\` with the
-  model facing +Z sends the nose DOWN, not up; a positive rotation.y turns
-  from +Z toward +X, so the same +0.8 that reads as "left" in a variable name
-  can steer right. This is the single hardest bug for a child to describe or
-  for you to see later: both handlers fire, nothing errors, nothing is logged
-  — the game simply does the opposite of what the child pressed.
-- If the request names specific entities (a particular animal, vehicle,
-  character, hazard, or object), EVERY one of them must actually appear and
-  be interactive in the built game — an entity the request asked for that
-  got silently dropped is a bug, not an acceptable simplification.
-- DRAW EVERY FRAME. Your animation loop must reach its draw call
-  (\`renderer.render(scene, camera)\` for 3D, the canvas draw for 2D) on EVERY
-  frame — including while the start screen is still up, while the game is
-  paused, and after game over. Gate the SIMULATION on game state, never the
-  draw: an early \`return\` placed above the render call leaves the canvas
-  blank behind the start screen, so the child's first impression of the game
-  is an empty box. Write it as \`if (playing) { update(dt); }\` followed by the
-  render, not as \`if (!playing) return;\` with the render below it.
 - Start the game loop immediately and synchronously when the script loads —
   never wrap the setup or the loop in an async function or behind an await:
   canvas sizing, world generation and the first requestAnimationFrame must all
@@ -345,25 +288,6 @@ const GAME_BUILD_CONTRACT = `respond with a single HTML document wrapped in a
   short unique landmark is far easier to relocate exactly than a large block
   of gameplay logic — this makes future edits land cleanly instead of
   requiring the whole game to be rebuilt.
-- Build the HUD (score, health/status bars, on-screen buttons, messages) as
-  ONE reusable "panel" component, not several one-off boxes — this is what
-  makes a HUD look professionally designed instead of assembled from random
-  parts. Pick 4-6 hex colours for the WHOLE game (a CSS custom-property
-  palette on \`:root\`) and use only those. Give every HUD box the same
-  translucent-panel treatment: a semi-transparent background, a 1px
-  semi-transparent border, rounded corners, and \`backdrop-filter: blur(6px)\`
-  so it reads as glass over the game world, not an opaque sticker on top of
-  it. Label every stat in small uppercase letter-spaced text (e.g.
-  \`font-size:10px;letter-spacing:.06em;text-transform:uppercase;opacity:.7\`)
-  ABOVE its value or bar, never plain-cased inline text. Render any bar (health,
-  progress, cooldown) as a track element containing a fill element whose WIDTH
-  changes with a short CSS \`transition\` (150-250ms) — never redraw it on a
-  canvas. Give every button a matching translucent-panel style plus a hover
-  state, an active/pressed state (e.g. \`transform:translateY(1px)\`), and,
-  where a button toggles something (anchor down, sound on), a distinct "on"
-  state using one of the palette's accent colours as a solid fill. Use one
-  brief toast/status element for game messages (fixed position, fades in/out
-  via opacity transition) instead of \`alert()\` or scattered inline text.
 - Keep it wholesome; work fully offline unless a CDN library is allowed above.`;
 
 // Exported so tests can pin the child-safety instruction (it replaced the
@@ -371,11 +295,7 @@ const GAME_BUILD_CONTRACT = `respond with a single HTML document wrapped in a
 // the child-audience framing + the shared GAME_BUILD_CONTRACT — the resulting
 // text is byte-identical to the previous single literal (the prompt pins in
 // gemini.prompt.test.ts still hold).
-/** The child-audience framing and the SAFETY rules. Rides on EVERY turn of
- *  every kind — a build, an edit, and a plain chat — and is never trimmed. On
- *  a conversational turn it is the entire system prompt, so anything removed
- *  here is removed from the child's ordinary replies too. */
-export const CHILD_PERSONA_CORE = `You are a friendly, encouraging assistant for a child aged between 7 and 14.
+export const CHILD_SYSTEM_PROMPT = `You are a friendly, encouraging assistant for a child aged between 7 and 14.
 Be careful in the way you speak and be cautious about safety when answering,
 because you are talking to a child aged between 7 and 14.
 Speak simply and warmly. Keep answers short and clear. Be playful and curious.
@@ -389,87 +309,15 @@ open-source library from a public CDN with <script src> (e.g. chess.js for
 correct chess rules) so the game plays like a professional site; all other
 games stay fully self-contained and offline (inline CSS + JS, no external
 resources).
-Video-game action IS fine and welcome — shooters, guns and bullets, laser
-blasters, sword-and-shield adventures, dodging dino attacks, tank battles,
-army games. These are the games children actually play, and the library ships
-rifles, pistols, tanks and soldiers for exactly that: build what they asked
-for, and it should look realistic, not stylised (owner decision 2026-08-16).
-The one line that stays: no gore. Enemies are hit, defeated, "down" or out of
-the game — not bleeding, mutilated or suffering, and never real people or
-real events. Injury is never dwelt on.
+Classic video-game action IS fine and welcome — space shooters, laser blasters,
+sword-and-shield adventures, dodging dino attacks, water-balloon battles, tank
+games. Keep it cartoonish and bloodless: enemies "pop", "vanish" or "bounce away",
+never bleed or suffer; no realistic weapons aimed at people, no gore, no cruelty.
 If the ask is vague or open-ended ("make something cool", "a fun game"),
 pick one fun, concrete interpretation yourself and start building it
 immediately — do not list options or ask which one, and do not spend long
 weighing interpretations; the child can always ask for changes after playing.
-`;
-
-/** What an EDIT turn still needs from the build contract (2026-08-16, owner:
- *  "game build contract if executed already in the game, need not be there on
- *  the edit prompts").
- *
- *  Most of GAME_BUILD_CONTRACT describes decisions the game has ALREADY made —
- *  its controls, its responsive layout, its start screen, its HUD design, that
- *  the loop starts synchronously. Re-teaching them on every edit costs ~1,000
- *  tokens to describe what the model can simply read in the code.
- *
- *  It is not only waste: the contract opens with "respond with a single HTML
- *  document wrapped in a ```html code block", which on an edit turn flatly
- *  CONTRADICTS the patch contract's "return SEARCH/REPLACE blocks and nothing
- *  else". The model has been reading both on every edit.
- *
- *  What stays is what an edit can still get wrong: landmark comments (future
- *  SEARCH anchors), the score element the platform reads, factual accuracy for
- *  any content the edit adds, and staying offline. */
-const GAME_EDIT_CONTRACT = `keep these while you patch:
-- Above each logically distinct part of any code you ADD, put a short, distinct
-  landmark comment naming it, e.g. \`// --- PLAYER MOVEMENT ---\` — the next
-  edit finds code by matching a small exact chunk, and a short unique landmark
-  relocates far more reliably than a large block of gameplay logic.
-- Keep the score as an HTML element with id="score" (a real DOM element that
-  updates as the player scores) so the platform can track high scores.
-- If the change needs real-world facts (people or places from the Bible,
-  countries, animals, historical figures), use ONLY real, accurate ones —
-  never invent names or facts.
-- The game stays fully self-contained and offline: no new external resources
-  unless a CDN library was already allowed for a rule-heavy classic.
-- NOTHING YOU ADD MAY COVER THE CONTROLS. If this change adds or moves any
-  element that spans the play area — a screen, a panel, a HUD wrapper, a toast,
-  a full-screen container — it must EITHER be removed / \`display:none\` while
-  it is not the active screen, OR carry \`pointer-events: none\` with
-  \`pointer-events: auto\` restored on its own buttons only. An element left
-  lying over the game silently eats every tap: the buttons still look right and
-  their click handlers still work, so nothing appears broken and nothing is
-  logged — the taps just never arrive. \`opacity: 0\` does NOT make a layer
-  harmless; it must be gone from the layout or inert.
-- ONE INPUT INTENT, ONE OUTCOME. If this change touches the controls at all,
-  the keyboard key and the on-screen button for the same action must write the
-  SAME variable with the SAME value — one shared intent, never two separate
-  expressions that can drift apart. Check the existing code before you patch:
-  if they already disagree, that is the bug, fix it. And the direction must be
-  true on screen — UP moves the player UP on the screen, LEFT toward the left
-  edge, RIGHT toward the right edge. Work the SIGN out rather than assuming it:
-  \`rotation.x = +pitch\` with the model facing +Z sends the nose DOWN, and a
-  positive rotation.y turns from +Z toward +X, so a variable named "left" can
-  steer right. Nothing errors and nothing is logged when this is wrong — the
-  game just does the opposite of what the child pressed.
-- DRAW EVERY FRAME. Never move the draw call (\`renderer.render(scene, camera)\`
-  for 3D, the canvas draw for 2D) below an early \`return\` in the animation
-  loop, and if your change adds a new game state (paused, start screen, game
-  over) gate the SIMULATION on it, not the draw. A render that is skipped
-  leaves the canvas blank and the child sees an empty box.
-- Keep it wholesome.`;
-
-export const CHILD_SYSTEM_PROMPT = `${CHILD_PERSONA_CORE}
 If the child asks for a game, ${GAME_BUILD_CONTRACT}`;
-
-/** The base prompt for THIS turn: the full build contract on a fresh build (and
- *  on a plain-chat turn, where it is the fallback if the child turns out to be
- *  asking for a game), the slimmed edit contract on an edit. */
-export function personaBaseForTurn(persona: PersonaId, isEdit: boolean): string {
-  if (persona === "bible-teacher" || !isEdit) return personaBasePrompt(persona);
-  return `${CHILD_PERSONA_CORE}
-When you change the child's game, ${GAME_EDIT_CONTRACT}`;
-}
 
 // Bible-teacher persona (PRD-BIBLE-TEACHER §6). Audience is a VERIFIED-ADULT
 // Sunday-school / kids' Bible teacher building games FOR their class of children
@@ -497,7 +345,7 @@ The Bible's own stories carry real tension — David faces Goliath, the Israelit
 flee through the Red Sea, Daniel is thrown to the lions. You MAY portray that
 age-appropriate conflict honestly, because it is the story: but keep it wholesome
 and non-graphic for a young child — no gore, no blood, no cruelty, no realistic
-weapons aimed at people; danger is shown the gentle, "pop"/"vanish"/"escape"
+weapons aimed at people; danger is shown the cartoonish, "pop"/"vanish"/"escape"
 way, and courage, kindness and faith are what the game celebrates.
 The finished game is played by children, so its content stays wholesome: nothing
 scary, gory, sexual, hateful, or otherwise unsafe for a child.
@@ -530,30 +378,9 @@ export function buildTurnSystemInstruction(
   // keeps every existing call site (and the prompt-pin tests) unchanged.
   nextAsk = false,
 ): string {
-  const base = personaBaseForTurn(persona, isEdit);
+  const base = personaBasePrompt(persona);
   const sections = [
-    // THREE_PROMPT_SECTION is the BOOTSTRAP: how to stand a renderer up, size
-    // the canvas, light the scene. On an EDIT the renderer already exists in
-    // the code the model is reading, and re-teaching it costs ~1,000 tokens a
-    // turn to describe something the game already does (2026-08-16). The
-    // model/placement rules below stay on every turn, because edits add and
-    // move props constantly.
-    ...(gates.three && !isEdit ? [THREE_PROMPT_SECTION] : []),
-    ...(gates.three ? [modelsPromptSection()] : []),
-    // MOVEMENT FEEL rides on every 3D turn, unchanged. It is engine- and
-    // dimension-agnostic (velocity over time, delta clamping, jump feel) and
-    // its own test pins that it must not assume Three.js — gating it on
-    // "does this game import cannon-es" would strip movement guidance from
-    // the 96% of games that never do. An earlier version of this change did
-    // exactly that; the physics-playbook test caught it.
-    ...(gates.three ? [PHYSICS_PROMPT_SECTION] : []),
-    // Only the cannon-es ENGINE playbook is gated. Measured across 1,227
-    // stored game versions: 55% use three, 4% use physics — so these 253
-    // tokens were teaching a library the game never imports on 96% of 3D
-    // turns. Evidence-based (the child's words, or the game already
-    // importing cannon-es), so a real physics game keeps it on every
-    // follow-up turn.
-    ...(gates.physics ? [physicsEnginePromptSection()] : []),
+    ...(gates.three ? [THREE_PROMPT_SECTION, modelsPromptSection(), PHYSICS_PROMPT_SECTION, physicsEnginePromptSection()] : []),
     ...(gates.audio ? [audioPromptSection()] : []),
     ...(gates.save ? [SAVE_STATE_PROMPT_SECTION, PUBLISHED_SAVE_PROMPT_SECTION] : []),
     ...(multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),
@@ -602,57 +429,30 @@ export class GeminiError extends Error {
  * (api/chat/route.ts) must re-fence it before rendering, or the raw code's own
  * indentation gets misparsed as CommonMark indented code blocks (BUG-FIX-LOG 2026-07-14).
  */
-/** Recovers a `NEXT_ASKS:` sentinel the model leaked INSIDE the closing
- *  fence instead of after it (BUG-FIX-LOG 2026-08-12, TECH_DEBT #101 —
- *  confirmed live twice: production, 2026-08-10, and the first two-pass-
- *  pipeline UAT turn, 2026-08-12). Without this, the line becomes part of
- *  `artifactHtml` — rendering as stray visible text in the kid's game — and
- *  `parseNextAskLine` (which only ever sees the PROSE outside the fence)
- *  never finds it, so the suggestion chips silently don't show either.
- *  Truncating at the first `</html>` also cleans up a doubled closing tag
- *  seen in the same production incident. A safe no-op on well-formed output
- *  — the discarded trailer is normally empty — and anything that isn't
- *  recognizably a NEXT_ASKS line is dropped rather than risked as bogus
- *  chat prose. */
-function reclaimLeakedNextAsk(html: string): { html: string; sentinel: string | null } {
-  const close = html.match(/<\/html\s*>/i);
-  if (!close || close.index === undefined) return { html, sentinel: null };
-  const cut = close.index + close[0].length;
-  const trailer = html.slice(cut).trim();
-  if (!trailer) return { html, sentinel: null };
-  const cleaned = html.slice(0, cut).trim();
-  const sentinel = trailer.toUpperCase().startsWith(NEXT_ASKS_PREFIX.toUpperCase()) ? trailer : null;
-  return { html: cleaned, sentinel };
-}
-
 export function extractArtifact(text: string): { text: string; artifactHtml?: string; wasFenced?: boolean } {
   // Shared with game-edit.ts so the route can RECOGNIZE this default: fine on
   // a fresh build, misleading on a turn that replaced an existing game.
   const done = FRESH_GAME_LINE;
-  const withSentinel = (prose: string, sentinel: string | null) => (sentinel ? `${prose}\n${sentinel}`.trim() : prose);
 
   const closed = text.match(/```html\s*([\s\S]*?)```/i);
   if (closed) {
-    const { html, sentinel } = reclaimLeakedNextAsk((closed[1] ?? "").trim());
-    return { text: withSentinel(text.replace(closed[0], "").trim(), sentinel) || done, artifactHtml: html, wasFenced: true };
+    return { text: text.replace(closed[0], "").trim() || done, artifactHtml: closed[1]?.trim(), wasFenced: true };
   }
 
   const openOnly = text.match(/```html\s*([\s\S]*)$/i);
   if (openOnly && /<\w+[\s>/]/.test(openOnly[1] ?? "")) {
-    const { html, sentinel } = reclaimLeakedNextAsk((openOnly[1] ?? "").trim());
     return {
-      text: withSentinel(text.slice(0, openOnly.index).trim(), sentinel) || done,
-      artifactHtml: html,
+      text: text.slice(0, openOnly.index).trim() || done,
+      artifactHtml: (openOnly[1] ?? "").trim(),
       wasFenced: false,
     };
   }
 
   const docIdx = text.search(/<!doctype html|<html[\s>]/i);
   if (docIdx !== -1) {
-    const { html, sentinel } = reclaimLeakedNextAsk(text.slice(docIdx).replace(/```\s*$/, "").trim());
     return {
-      text: withSentinel(text.slice(0, docIdx).trim(), sentinel) || done,
-      artifactHtml: html,
+      text: text.slice(0, docIdx).trim() || done,
+      artifactHtml: text.slice(docIdx).replace(/```\s*$/, "").trim(),
       wasFenced: false,
     };
   }
@@ -689,7 +489,7 @@ const GEN_CONFIG = {
 // safety-posture change: thresholds are untouched (safety-config.test.ts);
 // this only corrects the classifier's misreading of ordinary kid content.
 export const CHILD_BUILDER_CONTEXT =
-  "Context: a child game designer is building their own fictional video game to play with friends. Any battles, rivals, or conflict are make-believe game mechanics, not real content.";
+  "Context: a child game designer is building their own fictional, cartoon-style game to play with friends. Any battles, rivals, or conflict are make-believe game mechanics, not real content.";
 
 // BUG-FIX-LOG 2026-08-05: a pasted "Ari — game error report" (this app's OWN
 // copyable report, error-report.ts) blocked repeatedly in production with
@@ -747,15 +547,6 @@ export class GeminiChatModel implements ChatModel {
     ? chainFor({ primary: this.model, tier: specFor(this.model)!.tier, env: process.env })
     : fallbackChain(this.model, process.env);
 
-  // Pass 1 of the two-pass pipeline (spec-compiler.ts) — its own primary +
-  // chain, independent of the builder model above. DeepSeek-primary by
-  // default; chainFor() drops it back to lite-tier Google/other models
-  // whenever its key or safety gate is closed, same as every other slot.
-  private compilerModel = specCompilerModel(process.env);
-  private compilerFallbacks = specFor(this.compilerModel)
-    ? chainFor({ primary: this.compilerModel, tier: specFor(this.compilerModel)!.tier, env: process.env })
-    : chainFor({ primary: "gemini-2.5-flash-lite", tier: "lite", env: process.env });
-
   // Non-Google generation adapters, keyed by provider. Google stays the native
   // path (buildContents/configFor) — it isn't in here. Each generator owns its
   // SDK/transport + request translation; the runner never sees a provider SDK.
@@ -786,12 +577,12 @@ export class GeminiChatModel implements ChatModel {
    *  GenerationRequest and back would only lose fidelity (thinking budgets,
    *  harm thresholds) that Gemini alone supports. */
   private toGenerationRequest(
-    input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean; activeGameMessageId?: string; persona?: PersonaId; compiledSpec?: string },
+    input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean; activeGameMessageId?: string; persona?: PersonaId },
   ): GenerationRequest {
     const config = this.configFor(input) as { systemInstruction: string; maxOutputTokens?: number };
     return {
       history: input.history.map((m) => ({ role: m.role === "child" ? "child" : "assistant", text: m.text })),
-      message: input.compiledSpec ?? input.message,
+      message: input.message,
       ...(input.image ? { image: { mimeType: input.image.mimeType, data: input.image.data } } : {}),
       systemInstruction: config.systemInstruction,
       maxOutputTokens: config.maxOutputTokens ?? 8192,
@@ -816,7 +607,7 @@ export class GeminiChatModel implements ChatModel {
    *  (BUG-FIX-LOG 2026-07-27, see the constant's comment) — the bible-teacher
    *  persona is a verified adult with its own relaxed thresholds and doesn't
    *  need it; ordinary (non-build) chat never needs it. */
-  private buildContents(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; persona?: PersonaId; compiledSpec?: string }) {
+  private buildContents(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; persona?: PersonaId }) {
     const isChild = (PERSONAS[input.persona ?? "default"] ?? PERSONAS.default).id === "default";
     // An error-report paste gets the more specific fix framing; every other
     // build turn keeps the battle framing verified live 2026-07-27.
@@ -837,10 +628,6 @@ export class GeminiChatModel implements ChatModel {
       : "";
     return buildChatContents({
       ...input,
-      // Pass 1's output replaces the TEXT sent to the model only — every
-      // gate above (safetyContext, catalog gates) was computed off the
-      // child's own words, so a compiled spec can never smuggle past them.
-      message: input.compiledSpec ?? input.message,
       ...(safetyContext ? { safetyContext } : {}),
       ...(modelNames ? { modelNames } : {}),
     });
@@ -1066,98 +853,11 @@ export class GeminiChatModel implements ChatModel {
     }
   }
 
-  /** Debug aid (owner ask 2026-08-12) — overwrites ONE file with the most
-   *  recently compiled spec so it can be read back after a UAT run instead
-   *  of scraping terminal scrollback or the (preview-only) console log
-   *  above. Best-effort: a write failure must never affect the turn. */
-  private dumpCompiledSpec(message: string, spec: string): void {
-    if (process.env.VITEST) return; // never let a test run touch the real file
-    try {
-      const file = process.env.SPEC_COMPILER_DUMP_FILE || path.join(process.cwd(), "logs", "last-spec-compile.md");
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, `<!-- request: ${message.replace(/\n/g, " ")} -->\n<!-- compiled: ${new Date().toISOString()} -->\n\n${spec}\n`);
-    } catch (err) {
-      console.warn(`[gemini] spec-compile dump failed (non-fatal): ${(err as Error).message}`);
-    }
-  }
-
-  /** Pass 1 of the two-pass build pipeline (owner ask 2026-08-12) — see
-   *  spec-compiler.ts for the prompt and the eligibility predicate. Returns
-   *  undefined (never throws) whenever Pass 1 doesn't apply or fails
-   *  outright: a broken compiler must never block a build, so the caller
-   *  always has the raw message to fall back to — same fail-open posture
-   *  as the Sparks gate. */
-  private async maybeCompileSpec(input: {
-    message: string;
-    history: ChatMessage[];
-    activeGameMessageId?: string;
-    forceRebuild?: boolean;
-    image?: ImageAttachment;
-  }): Promise<string | undefined> {
-    if (!specCompilerEnabled(process.env) || !shouldCompileSpec(input)) return undefined;
-    const ai = getClient();
-    const chain = [this.compilerModel, ...this.compilerFallbacks].slice(0, SPEC_COMPILE_MAX_MODELS);
-    try {
-      const res = await runOneShotChain<OneShotResult>({
-        chain,
-        totalBudgetMs: oneShotBudgetMs(),
-        label: "gemini.spec-compile",
-        primaryRetries: 1,
-        call: (model, retries) =>
-          withRetry(() => {
-            const provider = this.nonGoogleProvider(model);
-            if (provider) {
-              return this.generators[provider]!.generateOnce(model, {
-                history: [],
-                message: input.message,
-                systemInstruction: SPEC_COMPILER_SYSTEM_PROMPT,
-                maxOutputTokens: SPEC_COMPILER_MAX_OUTPUT_TOKENS,
-              });
-            }
-            return ai.models
-              .generateContent({
-                model,
-                contents: [{ role: "user", parts: [{ text: input.message }] }],
-                config: { systemInstruction: SPEC_COMPILER_SYSTEM_PROMPT, maxOutputTokens: SPEC_COMPILER_MAX_OUTPUT_TOKENS },
-              })
-              .then((r) => this.normalizeGoogle(r));
-          }, { label: "gemini.spec-compile", retries }),
-        slotDeadlineMs: CHAT_TIMEOUT_MS,
-        ...this.chainPolicy,
-        // No onLedger here on purpose: the caller's ledger sink (route.ts's
-        // mkLedger("chat")) records the BUILDER chain's decision — piping this
-        // chain's summary through the same sink would double-write a "chat"
-        // row per build turn under a different model, corrupting per-model
-        // chat stats. Pass 1 gets its own console instrumentation below
-        // instead; wire a dedicated ledger `kind` later if this needs a
-        // queryable history.
-      });
-      const spec = res.text.trim();
-      if (spec.length === 0) {
-        console.warn("[gemini] spec-compile (Pass 1) returned empty — falling back to the raw message");
-        return undefined;
-      }
-      console.log(`[gemini] spec-compile (Pass 1) ✓ ${input.message.length} chars → ${spec.length} chars — preview: ${spec.slice(0, 160).replace(/\n/g, " ")}…`);
-      this.dumpCompiledSpec(input.message, spec);
-      return spec;
-    } catch (err) {
-      console.warn(`[gemini] spec-compile (Pass 1) failed, falling back to the raw message: ${(err as Error).message}`);
-      return undefined;
-    }
-  }
-
   /** Streaming reply — yields answer deltas AND thought summaries as they're
    *  generated. Thought parts (part.thought, includeThoughts in builder mode)
    *  become the kid-facing planning line; they are NOT part of the answer. */
   async *replyStream(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; activeGameMessageId?: string; forceRebuild?: boolean; preferAlternateModel?: boolean; persona?: PersonaId; onLedger?: (summary: ChainSummary) => void; nextAsk?: boolean }): AsyncGenerator<StreamChunk> {
     const ai = getClient();
-    // Pass 1 (spec-compiler.ts): on a fresh build turn, with the flag on,
-    // compile the child's request into a build spec BEFORE Pass 2 below
-    // builds it. Every gating decision downstream (configFor's isEdit/gates,
-    // buildContents's safetyContext) still runs on the ORIGINAL message —
-    // only the text actually sent to the builder model changes.
-    const compiledSpec = await this.maybeCompileSpec(input);
-    const promptInput = compiledSpec ? { ...input, compiledSpec } : input;
     // "🔄 Different one" (PRD-INSTANT-ALTERNATE, on-demand option): lead the
     // chain with the FALLBACK model so the regeneration is a genuinely different
     // model's take, not the same primary re-rolled. Falls back to normal order
@@ -1180,7 +880,7 @@ export class GeminiChatModel implements ChatModel {
         // translation + the SDK/transport. OpenAI additionally moderates
         // (option A); Anthropic/Moonshot are prompt-only and stream directly.
         const provider = this.nonGoogleProvider(model);
-        if (provider) return this.generators[provider]!.openStream(model, this.toGenerationRequest({ ...promptInput, forceFullRegen: input.forceRebuild }));
+        if (provider) return this.generators[provider]!.openStream(model, this.toGenerationRequest({ ...input, forceFullRegen: input.forceRebuild }));
         // forceRebuild ("Change this one" after a new-game prompt, PRD §11):
         // suppress the edit/new-game prompt clause so the model builds the new
         // game fresh in place rather than re-asking or trying to patch.
@@ -1192,7 +892,7 @@ export class GeminiChatModel implements ChatModel {
           await withRetry(
             () => ai.models.generateContentStream({
               model,
-              contents: this.buildContents(promptInput),
+              contents: this.buildContents(input),
               config: finalConfig,
             }),
             { label: "gemini.chat.stream", retries },

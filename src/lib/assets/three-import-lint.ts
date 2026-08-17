@@ -7,7 +7,6 @@
 
 import { ASSET_HOST_ORIGIN } from "./manifest";
 import { CURATED_IMPORT_NAMES } from "./prompt-catalog";
-import { INJECTED_RUNTIME_GLOBALS } from "./runtime-helpers";
 
 /** The loader helper Ari itself injects imports these from "three" too —
  *  vendored via separate entry lines in scripts/vendor-three.mjs. */
@@ -213,11 +212,7 @@ const LOCAL_DECL_RE = (name: string) =>
  *  BUG-FIX-LOG 2026-08-07. `modelSize` joined on 2026-08-08 only once the
  *  model-sizing work actually shipped its `window.modelSize` helper — verify
  *  the helper exists before adding a name here. */
-// ONE list, defined where the globals are actually injected. This used to be
-// a private 5-name copy that drifted from the 13 the runtime really provides
-// (KNOWN_BUGS #21) — see INJECTED_RUNTIME_GLOBALS for the cost and the rule
-// for adding to it.
-const RUNTIME_GLOBALS = new Set<string>(INJECTED_RUNTIME_GLOBALS);
+const RUNTIME_GLOBALS = new Set(["loadModel", "loadModelBatch", "modelSize", "playSound", "playMusic"]);
 
 export function stripRuntimeGlobalImports(html: string): string {
   let out = html;
@@ -242,26 +237,12 @@ export function stripRuntimeGlobalImports(html: string): string {
   return out;
 }
 
-/** Matches one `<script type="module">...</script>` block, non-greedy so two
- *  separate module scripts (2026-08-12 finding: `injectAssets` inserts its
- *  own asset-loader shim as an EARLIER, separate `<script type="module">`
- *  ahead of the model's own game script) are captured individually rather
- *  than as one span. */
-const MODULE_SCRIPT_RE = /<script\b[^>]*type\s*=\s*(['"])module\1[^>]*>([\s\S]*?)<\/script>/gi;
+export function ensureThreeImports(html: string): string {
+  const imports = [...html.matchAll(NAMED_IMPORT_RE)];
+  if (imports.length === 0) return html;
 
-/** Heal the missing-import names within ONE script's own text against ONE of
- *  its own `three` import statements. Returns the healed script text, or the
- *  input unchanged if nothing was missing. */
-function healOneScript(scriptHtml: string): string {
-  const imports = [...scriptHtml.matchAll(NAMED_IMPORT_RE)];
-  if (imports.length === 0) return scriptHtml;
-
-  // Bindings this SAME script already has from "three" — module scripts do
-  // not share scope, so a sibling script's import can never satisfy a name
-  // this one uses (the bug this rewrite fixes: 2026-08-12 pilot found 7/15
-  // pipeline games and 2/5 Pro games shipped "X is not defined" because the
-  // healer treated the injected shim's import, elsewhere in the document, as
-  // if it covered the model's own game script).
+  // Every LOCAL binding the game already has from "three" (aliases count by
+  // their local name — that's the identifier the code actually uses).
   const bound = new Set<string>();
   for (const m of imports) {
     for (const raw of m[1]!.split(",")) {
@@ -275,32 +256,21 @@ function healOneScript(scriptHtml: string): string {
     if (bound.has(name) || missing.includes(name)) continue;
     const used =
       name === "MathUtils"
-        ? STATIC_USE_RE.test(scriptHtml)
-        : new RegExp(`(?<![.\\w])new\\s+${name}\\s*\\(`).test(scriptHtml);
+        ? STATIC_USE_RE.test(html)
+        : new RegExp(`(?<![.\\w])new\\s+${name}\\s*\\(`).test(html);
     if (!used) continue;
-    if (LOCAL_DECL_RE(name).test(scriptHtml)) continue; // the game made its own
+    if (LOCAL_DECL_RE(name).test(html)) continue; // the game made its own
     missing.push(name);
   }
-  if (missing.length === 0) return scriptHtml;
+  if (missing.length === 0) return html;
 
-  // Heal this script's FIRST three-import: insert before its closing brace,
-  // preserving the game's own formatting around it.
+  // Heal the FIRST three-import: insert before its closing brace, preserving
+  // the game's own formatting around it.
   const first = imports[0]!;
   const inner = first[1]!;
   const trimmedEnd = inner.replace(/\s+$/, "");
   const tail = inner.slice(trimmedEnd.length);
   const healedInner = `${trimmedEnd}, ${missing.join(", ")}${tail || " "}`;
   const healedStatement = first[0]!.replace(inner, healedInner);
-  return scriptHtml.replace(first[0]!, healedStatement);
-}
-
-export function ensureThreeImports(html: string): string {
-  if (![...html.matchAll(NAMED_IMPORT_RE)].length) return html;
-  // Heal EACH `<script type="module">` independently rather than the whole
-  // document as one span — see healOneScript for why this matters when the
-  // document has more than one module script.
-  return html.replace(MODULE_SCRIPT_RE, (whole, _quote, inner) => {
-    const healedInner = healOneScript(inner);
-    return healedInner === inner ? whole : whole.replace(inner, healedInner);
-  });
+  return html.replace(first[0]!, healedStatement);
 }

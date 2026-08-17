@@ -290,11 +290,9 @@ live (nothing routes off Google yet). Fix = derive `MODEL_PRICING` from
 **DeepSeek — BUILT 2026-08-12** (owner ask: "make deepseek functional in the
 fallback"). OpenAI-API-compatible, so it mirrors Moonshot: OpenAI SDK with a
 base-URL override (`deepseek-generation.ts`), error taxonomy delegated to
-`openaiAdapter` (`deepseek-adapter.ts`). Catalog rows `deepseek-v4-pro`
-(frontier) and `deepseek-v4-flash` (workhorse), ids + prices read from
-DeepSeek's pricing page and `/models` on 2026-08-12 — note DeepSeek's own
-published warning that a significant price increase is planned, so re-read
-before enabling. Safety: **`prompt-only`** — no moderation endpoint to front it with —
+`openaiAdapter` (`deepseek-adapter.ts`). Catalog rows `deepseek-reasoner`
+(frontier) and `deepseek-chat` (workhorse), prices best-effort — VERIFY before
+enabling. Safety: **`prompt-only`** — no moderation endpoint to front it with —
 so it is excluded from every chain unless `ALLOW_PROMPT_ONLY_SAFETY_MODELS=1`
 AND `DEEPSEEK_API_KEY` is set, and it carries the same China data-handling note
 as Kimi. Two DeepSeek-specific shapes are handled that Moonshot lacks:

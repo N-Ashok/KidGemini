@@ -66,35 +66,6 @@ const THREE_EXPORTS = [
   // (617.7 -> 619.0 KB, budget 650). Rotation and aiming maths is exactly what
   // the physics playbook pushes games toward, so this closes the gap it opened.
   'Quaternion', 'Euler', 'Matrix4', 'Vector2', 'MathUtils', 'Raycaster',
-  // 2026-08-16: curves. The SAME gap the two entries above describe, and this
-  // time we opened it ourselves — after the race-track tile kit was withheld
-  // (KNOWN_BUGS #15) the prompt teaches roads as GEOMETRY built along a list
-  // of points, which is exactly what CatmullRomCurve3 + TubeGeometry are for.
-  // The model reached for both, the import lint refused the game, the
-  // corrective retry produced them again, and two of thirteen golden prompts
-  // ended in "the model glitched, try again" — a curvy track and a chase
-  // camera. This is also what killed a child's "Village Turbo Racer" in
-  // production on 2026-08-15. Teaching curves while withholding the classes
-  // that draw them cannot work.
-  'CatmullRomCurve3', 'TubeGeometry',
-  // 2026-08-17: shadow-type constants and exponential fog. THE SAME
-  // self-inflicted gap as the curves above, found by the first two-turn golden
-  // run and countable for the first time because of the new structured
-  // logging (`grep -o 'bad=[A-Za-z0-9,]*' | sort | uniq -c`):
-  //   3 lint faults across 13 prompts — PCFSoftShadowMap x2, FogExp2 x1,
-  //   each costing a full corrective regeneration (~30s of a child's wait).
-  // Both are contradictions WE created. modelsPromptSection rule 4 says
-  // "Enable shadows: renderer.shadowMap.enabled = true", and the next line any
-  // competent three.js author writes is `renderer.shadowMap.type =
-  // PCFSoftShadowMap`. The scenery rule mentions fog, and `Fog` is exported
-  // while `FogExp2` is not — so a model reaching for exponential fog dies on
-  // its import line.
-  // The three sibling shadow constants ride along deliberately: a model
-  // choosing BasicShadowMap for speed must not die for picking a different
-  // valid answer to the question we asked it. All five are integer constants
-  // already inside the bundle, so the byte cost is ~0 against the 650 KB
-  // budget (unlike the texture API, KNOWN_BUGS #25, which is a real decision).
-  'PCFSoftShadowMap', 'PCFShadowMap', 'BasicShadowMap', 'VSMShadowMap', 'FogExp2',
 ];
 
 // ── stage 1: build ───────────────────────────────────────────────────────────
@@ -107,13 +78,6 @@ const THREE_EXPORTS = [
 // rootNames). WebGLRenderer/AnimationMixer are pulled out of the passthrough
 // export list and re-exported as thin subclasses instead.
 const WRAPPED_EXPORTS = ['WebGLRenderer', 'AnimationMixer'];
-
-// Exports the generated entry adds on top of THREE_EXPORTS (subpath re-exports
-// and the aliased InstancedMesh). Listed explicitly so the published-export
-// file below is the whole truth about what the served bundle provides.
-// SkeletonUtils/MeshoptDecoder are internal to runtime-helpers.ts and are
-// deliberately never taught, but they ARE exported, so they belong here.
-const EXTRA_PUBLISHED_EXPORTS = ['InstancedMesh', 'GLTFLoader', 'MeshoptDecoder', 'SkeletonUtils'];
 const PASSTHROUGH_EXPORTS = THREE_EXPORTS.filter((n) => !WRAPPED_EXPORTS.includes(n));
 
 const entry = [
@@ -276,21 +240,6 @@ const existing = manifest.assets.findIndex((a) => a.name === 'three');
 if (existing >= 0) manifest.assets[existing] = entryJson;
 else manifest.assets.push(entryJson);
 writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
-
-// The export list of the bundle that is now genuinely SERVED. Written here and
-// nowhere else — only a verified upload may change it. `curated-imports.test.ts`
-// checks the prompt's taught names against THIS file rather than against
-// THREE_EXPORTS above, because editing the recipe does not change the
-// content-hashed file every existing game already loads. Teaching a name in the
-// same commit that adds it to the recipe would advertise an export the live
-// bundle does not have — exactly the fault that killed a child's game on
-// 2026-08-15 (`CatmullRomCurve3`), arriving through the tool built to stop it.
-const publishedPath = join(repo, 'src/lib/assets/three-exports.published.json');
-writeFileSync(
-  publishedPath,
-  JSON.stringify({ url, exports: [...new Set(THREE_EXPORTS.concat(EXTRA_PUBLISHED_EXPORTS))].sort() }, null, 2) + '\n',
-);
-console.log(`✓ published export list written (${THREE_EXPORTS.length + EXTRA_PUBLISHED_EXPORTS.length} names) — commit it with the manifest`);
 
 execFileSync('npx', ['vitest', 'run', 'src/lib/assets/manifest.test.ts'], { cwd: repo, stdio: 'inherit' });
 console.log(`✓ manifest entry written and contract tests green — commit src/lib/assets/manifest.json`);

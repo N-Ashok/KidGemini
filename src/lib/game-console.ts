@@ -137,36 +137,3 @@ export function injectConsoleCapture(html: string): string {
 }
 
 export type { GameConsoleMessage };
-
-/**
- * One-line, log-safe summary of what actually broke — for the `err=` field on
- * `[api/repair] ▶`.
- *
- * BUG_LOG 2026-08-17. The err= logging added 2026-08-15 to make generation
- * faults countable ("sort | uniq -c over a week says which fault to fix at the
- * source") emitted `err="[object Object]"` for every error it caught, so the
- * instrument built to answer "what is breaking?" could not answer it. Two
- * defects in one expression:
- *
- *   1. `String(firstError)` — `errors` is GameConsoleMessage[], not string[],
- *      and stringifying the object yields "[object Object]".
- *   2. `errors[0]` — the FIRST captured line is often an ordinary console.log
- *      from the game's own startup, not the failure. repair-prompt.ts already
- *      selects correctly (`kind === "error" || "rejection"`); the log did not,
- *      so even once (1) is fixed it could report the wrong line.
- *
- * Privacy: `.text`/`.filename` come from generated game code and the browser's
- * own error events — never child-typed text. That property is why this line is
- * safe to log at all, so keep any future field additions to the same class.
- */
-export function formatRepairErrorSummary(errors: GameConsoleMessage[] | undefined): string {
-  const list = errors ?? [];
-  // Same selection rule as repair-prompt.ts's firstError — a real failure
-  // beats a console.log that merely arrived earlier.
-  const real = list.find((e) => e.kind === "error" || e.kind === "rejection") ?? list.find((e) => e.level === "error");
-  if (!real) return " err=none";
-  const where = real.filename ? ` @${real.filename.split("/").pop()}${real.line ? `:${real.line}` : ""}` : "";
-  const text = `${real.text ?? ""}${where}`.replace(/\s+/g, " ").trim().slice(0, 160);
-  const more = list.length > 1 ? ` (+${list.length - 1} more)` : "";
-  return ` err="${text}"${more}`;
-}

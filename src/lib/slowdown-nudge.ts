@@ -189,13 +189,7 @@ export function buildSlowdownHint(models: PerfModelEntry[], drawCalls?: number |
  * against; a soft-failed patch leaves docKey unchanged, so this can only ever
  * fire once per actual document, never loop).
  */
-export function shouldAutoFixSlowdown(args: AutoFixArgs): boolean {
-  // OFF (2026-08-16, owner report). See AUTO_FIX_ENABLED.
-  if (!AUTO_FIX_ENABLED) return false;
-  return autoFixBoundsAllow(args);
-}
-
-export interface AutoFixArgs {
+export function shouldAutoFixSlowdown(args: {
   docKey: string;
   lastAutoFixedDocKey: string | null;
   models: PerfModelEntry[];
@@ -211,77 +205,11 @@ export interface AutoFixArgs {
    *  the next snapshot once the kid's turn finishes, rather than being
    *  silently skipped forever for this docKey. */
   busy: boolean;
-  /** How many auto-fixes this conversation has already spent. */
-  autoFixCount?: number;
-  /** Draw calls measured when the LAST auto-fix fired, so we can tell whether
-   *  it actually helped. */
-  lastAutoFixDrawCalls?: number | null;
+}): boolean {
+  return (
+    !args.busy && args.docKey !== args.lastAutoFixedDocKey && isDrawCallBound(args.models, args.drawCalls)
+  );
 }
-
-/**
- * The bounds themselves, kept separate from the master switch so they stay
- * exercised and honest while the switch is off — if the owner turns the
- * proactive fix back on, it can never come back unbounded.
- */
-export function autoFixBoundsAllow(args: AutoFixArgs): boolean {
-  // WHY THE SWITCH ABOVE IS OFF (2026-08-16, owner report). Bounding the loop
-  // was not enough. Owner, after the repeated "I've tidied up the village" turns: "it broke the whole
-  // game. all the meshes were gone. that was bigger worry than sparks. kids
-  // don't know about sparks."
-  //
-  // That is the real cost. This path sends a SILENT model edit — the child did
-  // not ask for it, does not see it coming, and cannot connect the result to
-  // anything they did. When it goes wrong it takes their game with it, and a
-  // child has no way to say "undo the thing I never asked for". Two such edits
-  // are not meaningfully safer than five. An unasked-for edit that can delete a
-  // child's work is not a performance feature.
-  //
-  // What survives: the "Make it faster" BANNER, which the child taps. Same fix
-  // request, same hint text — but they chose it, they watch it happen, and the
-  // result belongs to them. That flow is untouched.
-  //
-  // Reversible in one line if the owner wants it back, and the bounds below
-  // stay in place and tested underneath it so it never returns unbounded.
-  if (args.busy) return false;
-  if (args.docKey === args.lastAutoFixedDocKey) return false;
-  if (!isDrawCallBound(args.models, args.drawCalls)) return false;
-
-  // BOUND THE LOOP (2026-08-16). The per-docKey guard above stops a tight
-  // retry on ONE document, but every successful fix mints a NEW docKey — so
-  // the guard resets and this can fire again, and again. Owner, watching a
-  // child play in production: "I've tidied up the way the village is built so
-  // your race zooms along even faster than before! — this kept appearing as i
-  // was riding the car". Each appearance is a real model turn: it interrupts
-  // her game, edits it under her, and spends Sparks.
-  const spent = args.autoFixCount ?? 0;
-  if (spent >= MAX_AUTO_FIXES_PER_SESSION) return false;
-
-  // And stop if the last attempt did not actually help. Same principle the
-  // resolution governor uses: the premise ("cutting draw calls will fix this")
-  // is measured, not assumed. If draw calls did not fall meaningfully after
-  // the previous fix, this scene is not going to be fixed by asking again.
-  const before = args.lastAutoFixDrawCalls;
-  const now = args.drawCalls;
-  if (typeof before === "number" && typeof now === "number" && now > before * AUTO_FIX_MUST_HELP_RATIO) {
-    return false;
-  }
-  return true;
-}
-
-/** Master switch for the PROACTIVE, silent auto-fix (the one the child never
- *  asked for). Off since 2026-08-16: it deleted every mesh from a child's game
- *  mid-play. The child-tapped "Make it faster" banner is a different path and
- *  is unaffected by this flag. */
-export const AUTO_FIX_ENABLED = false;
-
-/** Two attempts per conversation. The first is usually right; a third has
- *  never been the difference between a playable game and an unplayable one,
- *  and each one takes the game away from the child mid-play. */
-export const MAX_AUTO_FIXES_PER_SESSION = 2;
-
-/** A follow-up fix must have left draw calls at least 10% lower than the one
- *  before it, or we stop trying. */
-export const AUTO_FIX_MUST_HELP_RATIO = 0.9;
 
 /**
  * The chat turn sent when `shouldAutoFixSlowdown` fires — the SAME technical

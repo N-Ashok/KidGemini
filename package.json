@@ -17,12 +17,10 @@
     "eval:portability": "RUN_PORTABILITY_EVAL=1 vitest run src/lib/eval/portability.eval.test.ts",
     "check:backend": "node --env-file=.env scripts/check-model-backend.mjs",
     "assets:vendor-three": "node scripts/vendor-three.mjs",
-    "assets:check": "node scripts/assets-contract-check.mjs",
-    "eval:live-game": "RUN_LIVE_GAME=1 node --env-file=.env ./node_modules/.bin/vitest run src/lib/eval/live-game.eval.test.ts --coverage=false"
+    "assets:check": "node scripts/assets-contract-check.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.10.0",
-    "acorn": "^8.18.0",
     "better-sqlite3": "^11.3.0",
     "jose": "^6.2.3",
     "next": "^14.2.33",

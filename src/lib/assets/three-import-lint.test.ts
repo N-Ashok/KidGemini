@@ -13,18 +13,14 @@ import {
   unknownThreeImports,
   stripRuntimeGlobalImports,
 } from "./three-import-lint";
-import { loadModelHelper, loadModelBatchHelper, audioHelper, INJECTED_RUNTIME_GLOBALS } from "./runtime-helpers";
 
 const game = (imports: string) =>
   `<html><body><script type="module">import { ${imports} } from "three";\nconst x = 1;</script></body></html>`;
 
 describe("unknownThreeImports", () => {
   it("flags names the bundle does not export (the DoubleSide incident, pre-growth)", () => {
-    // LatheGeometry / OrbitControls are NOT vendored — classic model drift.
-    // (TubeGeometry moved into the bundle 2026-08-17, so it is no longer a
-    // valid specimen for this test — the lint must be pinned on a name that
-    // is genuinely absent, or it passes for the wrong reason.)
-    expect(unknownThreeImports(game("Scene, LatheGeometry"))).toEqual(["LatheGeometry"]);
+    // TubeGeometry / OrbitControls are NOT vendored — classic model drift.
+    expect(unknownThreeImports(game("Scene, TubeGeometry"))).toEqual(["TubeGeometry"]);
     expect(unknownThreeImports(game("OrbitControls"))).toEqual(["OrbitControls"]);
   });
 
@@ -288,8 +284,8 @@ describe("ensureThreeImports (used-but-not-imported heal)", () => {
   });
 
   it("never adds names outside the curated bundle exports — game classes and unvendored three classes alike", () => {
-    const html = playable("Scene", "const e = new EnemyTank(1); const s = new SpotLight(2); const t = new LatheGeometry(3);");
-    expect(ensureThreeImports(html)).toBe(html); // SpotLight/LatheGeometry aren't vendored — adding them would crash the import line
+    const html = playable("Scene", "const e = new EnemyTank(1); const s = new SpotLight(2); const t = new TubeGeometry(3);");
+    expect(ensureThreeImports(html)).toBe(html); // SpotLight/TubeGeometry aren't vendored — adding them would crash the import line
   });
 
   it("counts aliased imports by their LOCAL binding", () => {
@@ -297,35 +293,14 @@ describe("ensureThreeImports (used-but-not-imported heal)", () => {
     expect(ensureThreeImports(html)).toBe(html);
   });
 
-  it("heals EACH module script against its OWN usage — module scripts do not share scope", () => {
-    // 2026-08-12 genre-pilot finding: injectAssets inserts its own asset-
-    // loader shim as an earlier, separate `<script type="module">`. The old
-    // behaviour here ("collect bindings across ALL scripts, heal only the
-    // first") patched the WRONG script whenever a later script used a name
-    // the first script's import didn't have — the healed name landed in a
-    // sibling module that can never see it at runtime, so the game still
-    // threw "X is not defined" even though the healer reported nothing wrong.
-    // 7 of 15 pipeline games and 2 of 5 Pro games in that pilot broke this
-    // exact way. Each script must be healed against its OWN usage only.
+  it("collects bindings across ALL three import statements, healing only the first", () => {
     const html = `<html><body>
 <script type="module">import { Scene } from "three"; window.a = new Scene();</script>
 <script type="module">import { Mesh } from "three"; window.b = new Mesh(); window.c = new HemisphereLight(1);</script>
 </body></html>`;
     const out = ensureThreeImports(html);
-    expect(out).toContain('import { Scene } from "three"'); // untouched — Scene alone is used here
-    expect(out).toContain('import { Mesh, HemisphereLight } from "three"'); // healed — HemisphereLight is used HERE
-  });
-
-  it("a name used only in script A is never healed into script B's import, even though B also imports from three", () => {
-    const html = `<html><body>
-<script type="module">import { GLTFLoader, CylinderGeometry } from "three"; window.loadModel = () => new GLTFLoader();</script>
-<script type="module">import { Scene, WebGLRenderer } from "three"; const s = new Scene(); const c = new CylinderGeometry(1, 1, 2);</script>
-</body></html>`;
-    const out = ensureThreeImports(html);
-    // Script 1 already has CylinderGeometry (unused there, but present) — untouched.
-    expect(out).toContain('import { GLTFLoader, CylinderGeometry } from "three"');
-    // Script 2 actually USES CylinderGeometry but never imported it — must be healed HERE.
-    expect(out).toContain('import { Scene, WebGLRenderer, CylinderGeometry } from "three"');
+    expect(out).toContain('import { Scene, HemisphereLight } from "three"');
+    expect(out).toContain('import { Mesh } from "three"');
   });
 
   it("handles single-quoted specifiers and multi-line import lists", () => {
@@ -386,51 +361,6 @@ describe("stripRuntimeGlobalImports — runtime helpers are globals, never three
   it("strips an aliased global by its ORIGINAL name", () => {
     const html = `<script type="module">import { Scene, loadModel as lm } from "three";</script>`;
     expect(stripRuntimeGlobalImports(html)).toContain('import { Scene } from "three"');
-  });
-
-  // ── B4: ONE list, and it must not drift from the runtime ───────────────
-  //
-  // 2026-08-17, KNOWN_BUGS #21. This module kept its own private
-  // RUNTIME_GLOBALS of 5 names while runtime-helpers.ts actually injects 13.
-  // placeModel, modelHeading and modelFacing were missing — and placeModel is
-  // the one prompt-catalog.ts tells the model to PREFER, so it is the name
-  // most likely to be imported by mistake. Cost seen live:
-  //   ⛔ unknown three imports: loadModel, placeModel, modelHeading
-  //      — corrective retry @71804ms
-  // a ~50s full regeneration for a fault this healer exists to fix silently.
-  // The list now comes from runtime-helpers.ts, which is where the globals are
-  // actually defined, so the two cannot drift again.
-  it("strips placeModel/modelHeading/modelFacing — the three that were missing", () => {
-    const html = `<script type="module">import { Scene, placeModel, modelHeading, modelFacing } from "three";</script>`;
-    expect(stripRuntimeGlobalImports(html)).toContain('import { Scene } from "three"');
-  });
-
-  it("strips EVERY global the runtime actually injects, and nothing else", () => {
-    // The drift guard proper: iterate the shared list rather than a copy of
-    // it. A helper added to runtime-helpers.ts without teaching this healer is
-    // a ~50s corrective retry per occurrence, so the coupling is the point.
-    for (const name of INJECTED_RUNTIME_GLOBALS) {
-      const html = `<script type="module">import { Scene, ${name} } from "three";</script>`;
-      expect(stripRuntimeGlobalImports(html), `${name} is injected but not stripped`)
-        .toContain('import { Scene } from "three"');
-    }
-    // A real three export must still survive — the PointLight lesson
-    // (BUG-FIX-LOG 2026-08-07): stripping a name that is NOT a global turns a
-    // loud dead import into a silent play-time ReferenceError.
-    expect(INJECTED_RUNTIME_GLOBALS).not.toContain("PointLight");
-    expect(INJECTED_RUNTIME_GLOBALS).not.toContain("Scene");
-  });
-
-  it("every name in the shared list is really assigned by an injected helper", () => {
-    // The other direction of the same coupling, and the one that protects
-    // against the PointLight failure mode: a name may only be stripped if the
-    // runtime genuinely defines `window.<name> =`.
-    const runtime = loadModelHelper() + loadModelBatchHelper() + audioHelper();
-    for (const name of INJECTED_RUNTIME_GLOBALS) {
-      expect(runtime, `${name} is stripped but never injected`).toMatch(
-        new RegExp(`window\\.${name}\\s*=`),
-      );
-    }
   });
 
   it("leaves a clean three import byte-identical", () => {

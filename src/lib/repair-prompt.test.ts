@@ -3,7 +3,6 @@
 import { describe, it, expect } from "vitest";
 import {
   REPAIR_TAXONOMY,
-  REPAIR_SYSTEM_PROMPT,
   applyPatch,
   buildRepairPrompt,
   exhaustedQuestion,
@@ -43,10 +42,7 @@ describe("buildRepairPrompt", () => {
         html: "<html></html>",
       });
       expect(p).toContain("a dino racing game with turbo");
-      // The failure CODE must be named; the surrounding wording changed on
-      // 2026-08-17 when the prompt was reordered to source-first (B1 below),
-      // so this pins the fact, not the phrasing.
-      expect(p).toContain(code);
+      expect(p).toContain(`Failure: ${code}`);
     }
   });
 
@@ -223,98 +219,6 @@ describe("applyPatch — whitespace-tolerant fallback (KNOWN_BUGS #5 class fix, 
     if (r.ok) {
       expect(r.html).toContain("let x=2;");
       expect(r.html).toContain("let  x = 1;"); // the other one, untouched
-    }
-  });
-});
-
-
-// ── B1: the repair's FIRST attempt produced no patch, 5 times out of 5 ──────
-//
-// 2026-08-17, KNOWN_BUGS #23(b). Every observed repair in production logged
-// `rescued by strict retry (first: no_patch_in_reply)`. `no_patch_in_reply`
-// means the reply contained neither a SEARCH/REPLACE block NOR a full document
-// — i.e. the model answered in prose. So the first call was a wasted model
-// call (~3s and the child's Sparks) on EVERY single repair, and the rescue
-// rung did 100% of the work.
-//
-// Ruled out first: it is not a truncated thinking phase. GEN_CONFIG sets
-// `thinkingBudget: 0`, so the 4096-token output budget is all visible text.
-//
-// What is left is the CONTRACT, and there is a controlled comparison sitting
-// in the same codebase. `GAME_EDIT_STRICT_RETRY_SECTION` asks for the same
-// SEARCH/REPLACE format from the same models and demonstrably WORKS — it is
-// what rescues these very repairs. It differs in three ways, all of which the
-// repair prompt now adopts:
-//
-//   1. SOURCE FIRST, instruction LAST. The repair prompt put the diagnosis at
-//      the top and then ~15k tokens of game HTML, so the model's context ENDED
-//      on raw markup with the instruction far behind it. The working contract
-//      ends on the ask.
-//   2. It permits ONE short sentence before the blocks. The repair prompt said
-//      "No prose", and a model that opens with a helpful sentence has then
-//      already broken the contract — prose-only is a short step from there.
-//   3. It gives an ESCAPE HATCH. The repair prompt forbade returning a full
-//      file, while `applyPatch` has always ACCEPTED one (mode:"regeneration").
-//      Forbidding the fallback its own applier supports means a model that
-//      cannot patch has no valid output left, so it explains instead.
-//
-// HYPOTHESIS, stated as one: this is reasoned from a controlled in-repo
-// comparison and from production log counts, not from a live A/B. What proves
-// it is `stage=strict_retry rescued=true` becoming rare in the logs (see
-// docs/LOGGING.md). Until then the rescue rung still catches everything, so
-// the downside of being wrong is the status quo.
-describe("B1 — the repair contract mirrors the one that demonstrably works", () => {
-  const prompt = () =>
-    buildRepairPrompt({
-      failureCode: "start_occluded",
-      evidence: { rafCountAtSettle: 0, rafCountFinal: 0, canvas: null, pixel: null,
-        start: { found: true, x: 10, y: 20, occluded: true, occluder: "div.overlay" } },
-      errors: [],
-      originalRequest: "a flying game",
-      html: "<html><body>THE GAME SOURCE</body></html>",
-    });
-
-  it("R.1 puts the SOURCE first and the instruction LAST, so recency favours the ask", () => {
-    const p = prompt();
-    expect(p.indexOf("THE GAME SOURCE")).toBeLessThan(p.indexOf("div.overlay"));
-    // And the very end of the prompt is the instruction, not raw markup.
-    expect(p.trim().endsWith("</body></html>")).toBe(false);
-  });
-
-  it("R.2 still carries the full diagnosis and the child's original ask", () => {
-    const p = prompt();
-    expect(p).toContain("div.overlay");
-    expect(p).toContain("a flying game");
-    expect(p).toContain("THE GAME SOURCE");
-  });
-
-  it("R.3 the system prompt permits one short sentence before the blocks", () => {
-    expect(REPAIR_SYSTEM_PROMPT).toMatch(/one short.*sentence/i);
-  });
-
-  it("R.4 the system prompt names the last-resort full-document fallback", () => {
-    // applyPatch has always accepted this (mode: "regeneration"). Forbidding it
-    // left a model that cannot patch with no valid output at all.
-    expect(REPAIR_SYSTEM_PROMPT).toMatch(/last resort|only if/i);
-    expect(REPAIR_SYSTEM_PROMPT).toMatch(/whole|full|complete/i);
-  });
-
-  it("R.5 a reply that opens with a sentence still applies cleanly", () => {
-    // The behaviour that makes rule R.3 safe.
-    const html = "<html><body><p>hello</p></body></html>";
-    const reply = [
-      "Good spot — that panel was sitting over the button!",
-      "<<<<<<< SEARCH",
-      "<p>hello</p>",
-      "=======",
-      "<p>fixed</p>",
-      ">>>>>>> REPLACE",
-    ].join("\n");
-    const out = applyPatch(html, reply);
-    expect(out.ok).toBe(true);
-    if (out.ok) {
-      expect(out.mode).toBe("patch");
-      expect(out.html).toContain("<p>fixed</p>");
     }
   });
 });

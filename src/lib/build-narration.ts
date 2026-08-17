@@ -11,23 +11,18 @@ export interface BuildStepLabel {
 }
 
 /** First match wins — order is the tie-break when a line mentions more than one. */
-// WORD BOUNDARIES ARE NOT OPTIONAL (2026-08-16). Owner, from production:
-// "🛠️🏆 Pinpointing Draw Call Sources…" — the trophy came from /point/ matching
-// inside "Pinpointing". Unanchored fragments also gave 🦘 for "shopping",
-// ⚾ for "football" and 🎨 for "colorful"; every one of them mislabels what the
-// child is watching being built.
 const KEYWORD_EMOJI: Array<[RegExp, string]> = [
-  [/\bdinosaurs?\b/i, "🦖"],
-  [/\b(?:field|arena|stadium)s?\b/i, "🏟️"],
-  [/\b(?:swing|bat)s?\b/i, "🏏"],
-  [/\b(?:sound|audio|music)s?\b/i, "🔊"],
-  [/\b(?:score|point)s?\b/i, "🏆"],
-  [/\b(?:jump|hop)(?:s|ing)?\b/i, "🦘"],
-  [/\b(?:colou?r|paint)(?:s|ing|ed|ful)?\b/i, "🎨"],
-  [/\bballs?\b/i, "⚾"],
-  [/\b(?:sky|background)s?\b/i, "☁️"],
-  [/\b(?:character|player)s?\b/i, "🧍"],
-  [/\b(?:enemy|enemies|monsters?)\b/i, "👾"],
+  [/dinosaur/i, "🦖"],
+  [/field|arena|stadium/i, "🏟️"],
+  [/swing|\bbat\b/i, "🏏"],
+  [/sound|audio|music/i, "🔊"],
+  [/score|point/i, "🏆"],
+  [/jump|hop/i, "🦘"],
+  [/color|paint/i, "🎨"],
+  [/ball/i, "⚾"],
+  [/\bsky\b|background/i, "☁️"],
+  [/character|player/i, "🧍"],
+  [/enemy|monster/i, "👾"],
 ];
 
 const GENERIC_EMOJI = "🛠️";
@@ -53,16 +48,10 @@ export function buildUpdatingLine(input: {
     return `${emoji} ${text}`;
   }
   if (!input.askText) return undefined;
-  // A LONG ask is not quotable (2026-08-16). Owner, from production:
-  //
-  //   🛠️🛠️ Making "The game is good only issue is that the humans a…"
-  //
-  // The fallback quotes the child's own words, which reads well for a short
-  // instruction ("add buildings and grass") and badly for a sentence ABOUT the
-  // game — chopped mid-word, it announces that we are building her complaint.
-  // Below the budget, quote her. Above it, say nothing here and let the caller
-  // use its plain "Making your update…" line, which is always true.
-  if (input.askText.length > ASK_PREVIEW_MAX_CHARS) return undefined;
   const { emoji } = buildStepLabel(input.askText);
-  return `${emoji} Making "${input.askText}" — you can keep playing this one! ✨`;
+  const preview =
+    input.askText.length > ASK_PREVIEW_MAX_CHARS
+      ? `${input.askText.slice(0, ASK_PREVIEW_MAX_CHARS)}…`
+      : input.askText;
+  return `${emoji} Making "${preview}" — you can keep playing this one! ✨`;
 }

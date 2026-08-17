@@ -66,31 +66,6 @@ export const CURATED_IMPORT_NAMES = [
   // 89-message game was regenerated away. Placement composes via Matrix4
   // (already taught) — Object3D/DynamicDrawUsage stay unvendored.
   "InstancedMesh",
-  // 2026-08-17 — the bundle carrying these was rebuilt and verified on
-  // 2026-08-16 (KNOWN_BUGS #18) but sat unpublished until the owner ran the
-  // upload today, so until now the lint correctly blocked them. Production
-  // that same session: `⛔ unknown three imports: CatmullRomCurve3 —
-  // corrective retry`, then `import-lint retry did not come back clean —
-  // serving the original`, i.e. a game the pipeline KNEW was broken was served
-  // and crashed on its import line. A curve is also the right answer for the
-  // road/track class that four tile-based fixes failed to solve (#15): a
-  // ribbon extruded along a curve joins by construction, with no per-piece
-  // rotation to get wrong.
-  "CatmullRomCurve3", "TubeGeometry",
-  // 2026-08-17, published the same day (three.8f7c88.js, 622 KB, +1 KB) —
-  // contradictions WE created, found by the first two-turn golden run and
-  // countable only because of the new structured logging:
-  //   grep -o 'bad=[A-Za-z0-9,]*' logs/app.log | sort | uniq -c
-  //   2 bad=PCFSoftShadowMap
-  //   1 bad=FogExp2
-  // Rule 4 below tells the model to enable shadows, and the next line any
-  // three.js author writes is `renderer.shadowMap.type = PCFSoftShadowMap`.
-  // The scenery rule mentions fog, and `Fog` was exported while `FogExp2` was
-  // not. Each miss cost a full ~30s corrective regeneration for a fault our
-  // own prompt provoked. The three sibling shadow constants ride along so a
-  // model that picks BasicShadowMap for speed does not die for choosing a
-  // different valid answer to the question we asked it.
-  "PCFSoftShadowMap", "PCFShadowMap", "BasicShadowMap", "VSMShadowMap", "FogExp2",
 ];
 const CURATED_IMPORTS = CURATED_IMPORT_NAMES.join(", ");
 
@@ -120,15 +95,10 @@ should stay 2D, in which case skip the marker below.) To build in 3D:
    frame reads blank). Then \`renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));\`
    so high-density phones don't render 9x the pixels.
 4. Build the scene from the primitive shapes and solid colors above. Light
-   it with one AmbientLight (or HemisphereLight) for soft fill plus one
-   DirectionalLight as the sun — this is what gives a scene real depth
-   instead of looking flat-shaded. Enable shadows: \`renderer.shadowMap.enabled
-   = true\`, the sun light's \`castShadow = true\` with a modest
-   \`shadow.mapSize.set(1024, 1024)\`, and \`castShadow\`/\`receiveShadow\` on the
-   ground and the handful of objects that actually benefit (the player,
-   vehicles, large props) — not every single mesh in the scene, which is
-   still the real performance cost. No post-processing: that's still a
-   classic phone frame-killer.
+   it with exactly two lights — one AmbientLight (soft fill) plus one
+   DirectionalLight (depth) — and no more than that; no shadows (never set
+   castShadow/shadowMap) and no post-processing: they are the classic
+   phone frame-killers.
 5. Size the WebGLRenderer to its container on load AND on window resize
    (same responsive rule as canvas games — never a fixed pixel size), with
    the page itself at height:100dvh.
@@ -193,43 +163,16 @@ function categoryCountLines(available: Set<string>): string {
  *      category, so "a fun game" still sees the whole shape of the library;
  *   5. the core basics last.
  */
-/** Path TILES are withheld from the model entirely (owner decision
- *  2026-08-15: "keep the kit out of the llm's reach, don't ever use it").
- *
- *  A square-grid kit of 11 pieces cannot express a smooth curve or a loop:
- *  every join is a right angle at a fixed module size, so any track that is
- *  not axis-aligned has a seam BY CONSTRUCTION. Four rounds of fixes proved
- *  that the hard way — `pathAxis` (2026-08-08), `joins`/`joinOffsets`/`lane`
- *  plus `fitTile` (2026-08-09), the one-kit-one-scale rule, and
- *  `rotateToJoin` — and tracks still came out fragmented in a real child's
- *  game. The reliable shape is a road generated as geometry along a curve,
- *  which joins perfectly by definition and does loops for free.
- *
- *  Defined by DATA (`pathRole: "tile"`), not a name list, so a tile added to
- *  the manifest later is withheld automatically. `finish_line` is
- *  `pathRole: "prop"` and stays offered — it is a banner, not a road piece.
- *
- *  NOTE this withholds them from the PROMPT only. The manifest entries, the
- *  AR_ASSETS injection and the fitTile/modelJoins/modelAxis runtime helpers
- *  all remain, because ~200 stored games already call them and removing that
- *  path would break games that work today (CLAUDE.md rule 11). */
-function offerableModels(manifest: AssetManifest) {
-  return manifest.assets.filter((a) => a.type === "model" && a.pathRole !== "tile");
-}
-
 export function retrievedModelNames(input: {
   message: string;
   history: ChatMessage[];
   manifest?: AssetManifest;
 }): string[] {
   const manifest = input.manifest ?? (manifestJson as AssetManifest);
-  const available = new Set(offerableModels(manifest).map((a) => a.name));
-  // selectModelNames reads the manifest directly (name matches, tags, genres),
-  // so a child naming a tile outright would surface it despite `available`
-  // above — filter the final list against what may be offered at all.
-  const picked = new Set(
-    selectModelNames({ ...input, manifest }).filter((n) => available.has(n)),
+  const available = new Set(
+    manifest.assets.filter((a) => a.type === "model").map((a) => a.name),
   );
+  const picked = new Set(selectModelNames({ ...input, manifest }));
 
   // The spread: whatever selection found, top up with a sample from every
   // category so no category is ever invisible. Sampled from the FRONT of each
@@ -299,7 +242,7 @@ export function modelNamesBlock(names: readonly string[]): string {
 export function modelsPromptSection(
   manifest: AssetManifest = manifestJson as AssetManifest,
 ): string {
-  const models = offerableModels(manifest);
+  const models = manifest.assets.filter((a) => a.type === "model");
   if (models.length === 0) return "";
   const available = new Set(models.map((m) => m.name));
   const people = peopleModels(available);
@@ -323,83 +266,28 @@ what you need and use the names you are given.
    only names from that "Toy box —" line). NEVER invent a model name — an
    unlisted name silently loads nothing. If you need an object the toy box
    doesn't have, build it from the primitive shapes instead.
-1b. PREFER THE MODEL — the converse, and the half that matters more: if the
-   toy box HAS it, LOAD it; never build it from BoxGeometry. Buildings
-   especially — a city of boxes with painted-on window strips is how a 3D game
-   looks unfinished, and real buildings are in the box. A model also arrives
-   ALREADY PAINTED, with the glass and trim you would be faking: never replace
-   \`mesh.material\` (that discards its texture); to recolour, clone it and set
-   \`material.color\`.
-2. Load them with the built-in \`loadModel(name)\` — never import a loader
-   yourself. Returns a Promise of a ready-to-add object, or null on failure.
+2. Load them with the built-in \`loadModel(name)\` helper — do NOT import a
+   loader yourself. It returns a Promise of a ready-to-add object, or null
+   if loading failed.
 3. Start the game loop immediately with simple primitive placeholder shapes,
    and swap the real model in when it arrives — never use await before the
    first frame renders:
    \`loadModel("${models[0]!.name}").then((m) => { if (m) { m.scale.set(2, 2, 2); scene.add(m); player = m; } });\`
-   If \`m\` is null, keep the placeholder — the game must keep working.
-   SIZE THE PLACEHOLDER to a HUMAN reference, never an arbitrary number — a
-   standing human is ~1.7 units tall; scale every other placeholder against
-   that (a ball ≈0.22, a car ≈1.5 tall × 4.5 long, a house ≈3-6 tall).
-3b. HEAR THE INTENT: children rarely say "3D" — they say "realistic", "make
-   it look real", "lifelike", "not flat". All mean the REAL MODELS above with
-   depth and lighting, not a more detailed 2D drawing. EXCEPTION: if they
-   already have a working 2D game, improve it — never silently rebuild it in
-   3D over one word.
-4. \`placeModel(name, opts)\` puts a model in the world CORRECTLY — standing on
-   the ground, at a believable size, pointing where you want. Prefer it over
-   bare \`loadModel\` for anything you position:
-   \`const car = await placeModel("car", { at: {x: 0, z: 10}, heading: "-z" });
-    scene.add(car);   // placeModel positions it; YOU still add it to the scene
-    const house = await placeModel("house", { at: {x: 8, z: 0}, metres: true });
-    scene.add(house);\`
-   \`at\` {x,z} · \`heading\` "+z"/"-z"/"+x"/"-x" or radians · \`metres: true\`
-   for real-world size · \`scale\` a multiplier · \`y\` ground height. It measures
-   the model, so its base always rests on the ground.
-   NEVER assume or hand-write which way a model faces — they differ (\`car\` -Z,
-   \`airplane\` +X, \`dog\` +Z); \`modelFacing(name)\` gives it, null = unaudited.
-   \`rotation.y = Math.PI\` to "turn it round" is a guess that lands a game
-   driving backwards at its own camera. Placing it: \`placeModel\`'s \`heading\`.
-   STEERING it (rotation set every frame, where placeModel cannot help):
-   \`m.rotation.y = modelHeading(name, h)\`.
-   DRIVING SETUP — get these four consistent or the game feels wrong even when
-   each part looks right. Heading convention first: \`pos.x += sin(h)*v;
-   pos.z += cos(h)*v\`, so heading 0 travels +Z — a -Z car driven by a bare
-   \`rotation.y = h\` drives in reverse. Then:
-   (1) the model: \`rotation.y = modelHeading(name, h)\`;
-   (2) the camera: BEHIND along travel — \`pos - (sin(h), 0, cos(h)) * back\`,
-       raised a little, looking at the car. Size \`back\` FROM THE CAR, about
-       3-4 car lengths (\`modelSize(name).z * 3.5\`) — never a bare number like
-       12, a close chase in one game and a distant speck in another;
-   (3) build the WORLD at the car's scale too: a road a car can sit on is a
-       few car-widths across, not 30;
-   (4) controls: Up accelerates along the heading, Down brakes then reverses,
-       Left/Right steer. Never swap Up and Down.
-   SCENERY GOES WHERE THE PLAYER GOES. Place props ALONG the route, within
-   2-3 road-widths, spread over its WHOLE length. A village 10 road-widths to
-   the side is invisible; props only near the start leave the journey empty. If you use fog, set its far distance
-   BEYOND what you placed, or it erases the very things the child asked for.
-   SIZES COME IN TWO FLAVOURS, don't mix them up:
-   \`modelSize(name)\` = the model's own units as published — what it measures on
-   screen at scale 1. NEVER guess a size or spacing. Use it to work out a SCALE,
-   and to space things by their real footprint:
-   \`const w = modelSize("house").x; place(i * w * 1.5);\`
-   \`modelMetres(name)\` = how big it is in REAL LIFE — use it to decide how big
-   something SHOULD be. The catalog's units are NOT consistent between models:
-   by \`modelSize\` alone a mountain (1.9) is smaller than a car (2.56), so
-   sizing a scene from it puts a house next to a car at the wrong scale. Either
-   pass \`metres: true\`, or scale explicitly: \`obj.scale.setScalar(modelMetres(n).y / modelSize(n).y)\`.
-   Both answer null when unknown — then eyeball it.
-   ROADS AND TRACKS ARE GEOMETRY YOU BUILD, never props you tile — there is no
-   road piece in the library, do not look for one. Lay the route out as a plain
-   ARRAY of points and walk it yourself: for each segment add a flat box
-   centred on it, turned to face the next point, as wide as the road. Use ONLY
-   the imports listed above — there is NO curve class in this build (no
-   \`CatmullRomCurve3\`, no \`Curve\`, no \`TubeGeometry\`), importing one is a
-   missing export, which stops the whole file parsing and leaves the child a
-   game whose Start button does nothing. For a smooth bend, add more points. Neighbouring segments
-   share an edge, so it is seamless and closes into a loop when the last point
-   meets the first. Kerbs, centre lines and banking are the same
-   walk with a narrower strip offset or tilted.
+   If \`m\` is null, simply keep the placeholder — the game must keep working
+   without the model.
+4. \`modelSize(name)\` gives REAL metres \`{x, y, z}\` before you load (null =
+   unknown, eyeball it). NEVER guess a size or spacing — a road piece is ~1 m,
+   not 10. Scale by want ÷ actual; tile edge-to-edge by stepping the footprint:
+   \`const w = modelSize("road_straight").x; place(i * w);\`
+   VEHICLES/CHARACTERS face +Z — steer with \`rotation.y\`. ROAD TILES DON'T:
+   \`modelAxis(name)\` gives the run axis ("x"/"z"/"none"/null); kits differ and
+   a square tile's size can't reveal it.
+   TRACKS: ONE kit (\`road_*\` OR \`race_track_*\`), every piece scaled by the
+   SAME number. NEVER guess a rotation — name the directions the road LEAVES
+   each cell and \`fitTile\` does it (a 2 m piece covers TWO 1 m cells):
+   \`// corner with track to the north and east:
+    t.rotation.y = fitTile("race_track_corner", ["-z", "+x"]);\`
+   null = wrong PIECE there. \`modelJoins(n)\` = edges + lane width.
 5. Some models carry NAMED animations in \`m.animations\` — don't blindly play
    \`m.animations[0]\`: it's often an idle pose, or even an attack, so picking
    it for a "running" character makes it look like it's attacking instead of

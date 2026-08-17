@@ -136,60 +136,6 @@ export function buildVerifyScript(): string {
     return best;
   }
 
-  // P7 (2026-08-17) — the GAMEPLAY controls, not just Start.
-  //
-  // The owner's "the take off and land buttons are not working" survived four
-  // shipped fixes because verify only ever hit-tested the Start button: Start
-  // was reachable, the game reported clean, and an invisible layer sat over
-  // the flight controls the whole time. Nothing looked, so nothing saw it.
-  //
-  // Conservative BY DESIGN — a false positive here sends a WORKING game to the
-  // repair model, which is strictly worse than missing one. So: only elements
-  // that are really tap targets (>= 24x24, visible), only real control words
-  // or arrow glyphs, never the Start control itself, and the check runs AFTER
-  // the start click so a legitimately-covering start screen is already gone.
-  function findControls(startEl) {
-    var re = /^(up|down|left|right|jump|fire|shoot|brake|boost|take ?off|land|start|stop|go|pause|action|thrust|climb|dive|turn)$/i;
-    var glyphs = /[\u2190-\u21FF\u25B2-\u25C4\u2B05-\u2B07]/;
-    var els = document.querySelectorAll("button, [role=button]");
-    var out = [];
-    for (var i = 0; i < els.length; i++) {
-      var el = els[i];
-      if (el === startEl || (startEl && startEl.contains && startEl.contains(el))) continue;
-      var text = ((el.innerText || el.textContent || el.value || "") + "").trim();
-      // A control is a SHORT label or an arrow glyph. Anything wordy is a menu
-      // item or a link, and guessing about those is how false positives start.
-      if (!text || text.length > 12) continue;
-      if (!re.test(text) && !glyphs.test(text)) continue;
-      var r = el.getBoundingClientRect();
-      if (r.width < 24 || r.height < 24) continue; // not a real tap target
-      out.push({ el: el, label: text, rect: r });
-    }
-    return out;
-  }
-
-  function controlsProbe(startEl) {
-    try {
-      var controls = findControls(startEl);
-      if (!controls.length) return null;
-      var occluded = 0, occluder = null, label = null;
-      for (var i = 0; i < controls.length; i++) {
-        var c = controls[i];
-        var cx = c.rect.left + c.rect.width / 2, cy = c.rect.top + c.rect.height / 2;
-        var hit = document.elementFromPoint ? document.elementFromPoint(cx, cy) : null;
-        // No hit at all is NOT occlusion — elementFromPoint returns null for a
-        // point outside the viewport, which a scrolled control legitimately is.
-        if (!hit) continue;
-        if (hit === c.el || c.el.contains(hit) || (hit.contains && hit.contains(c.el))) continue;
-        occluded++;
-        if (!occluder) { occluder = selectorOf(hit); label = c.label; }
-      }
-      return { found: controls.length, occluded: occluded, occluder: occluder, label: label };
-    } catch (e) {
-      return null; // a probe bug must never fail a healthy game
-    }
-  }
-
   function selectorOf(el) {
     if (!el || !el.tagName) return null;
     var s = el.tagName.toLowerCase();
@@ -210,8 +156,7 @@ export function buildVerifyScript(): string {
       canvas: null,
       pixel: null,
       pixelAfterClick: null,
-      start: null,
-      controls: null
+      start: null
     };
     post({ type: "check", check: "loop", ok: loopRan });
 
@@ -258,10 +203,6 @@ export function buildVerifyScript(): string {
       try { btn.click(); } catch (e) { /* handler threw — the error trap has it */ }
       setTimeout(function () {
         evidence.start.clickRafDelta = rafCount - before;
-        // AFTER the click, deliberately: before it, a start screen is supposed
-        // to be covering everything, and testing then would flag every healthy
-        // game in the library.
-        evidence.controls = controlsProbe(btn);
         after();
       }, ${CLICK_WAIT_MS});
     }
@@ -276,24 +217,7 @@ export function buildVerifyScript(): string {
           evidence.pixel = (s1 === "tainted" || s2 === "tainted") ? "tainted"
             : (s1 === s2 ? "static" : "changing");
           post({ type: "check", check: "drawing", ok: evidence.pixel !== "static" });
-          // P7 (2026-08-17): a HEALTHY-looking game still gets the start probe,
-          // purely so its gameplay controls can be occlusion-tested.
-          //
-          // This used to finish() here, and that is exactly why the owner's
-          // "the take off and land buttons are not working" was invisible for
-          // four shipped fixes: the loop ran, the canvas painted, so verify
-          // stopped looking — while an invisible layer sat over the flight
-          // controls the whole time.
-          //
-          // The controls CANNOT be tested before this click. Verify always
-          // loads the game fresh, so its start screen is up, and a start
-          // screen covering the controls is correct behaviour, not a fault.
-          // Clicking Start is the only way to see the state the child plays
-          // in. The cost is one ghost click plus CLICK_WAIT_MS on games that
-          // would previously have finished here; the parent already reloads
-          // any clicked document pristine (the clicked event predates this),
-          // so the child never sees the probed copy.
-          if (evidence.pixel !== "static") { startProbe(finish); return; }
+          if (evidence.pixel !== "static") { finish(); return; }
           // Static with a RUNNING loop is often a title screen idling on its
           // Start button — static by design, not broken (found live, first
           // real generation). Click Start and re-sample before condemning.
@@ -310,9 +234,7 @@ export function buildVerifyScript(): string {
         }, ${PIXEL_WINDOW_MS});
         return;
       }
-      // A running DOM-only game (no canvas to judge). Same reasoning as above:
-      // its buttons are the whole interface, so they are worth testing.
-      startProbe(finish);
+      finish();
       return;
     }
 
@@ -397,20 +319,6 @@ export function classifyVerify(input: {
   if (evidence.canvas && (evidence.canvas.width === 0 || evidence.canvas.height === 0)) {
     return { code: "canvas_zero_size", evidence, errors };
   }
-  // P7 (2026-08-17) — a game can pass every existing probe and still be
-  // unplayable. The loop runs, the canvas paints, Start was reachable; an
-  // invisible layer sits over the flight controls. That is the owner's "the
-  // take off and land buttons are not working", which survived four shipped
-  // fixes aimed at the button LOGIC, because the logic was never the bug.
-  //
-  // Checked BEFORE the pixel branch: a game whose controls are buried is
-  // usually still animating happily, so `pixel === "changing"` would otherwise
-  // return `clean` and this would never be reached.
-  if ((evidence.controls?.occluded ?? 0) > 0) {
-    if (interrupted) return { code: "inconclusive" };
-    return { code: "controls_occluded", evidence, errors };
-  }
-
   if (evidence.pixel === "static") {
     if (interrupted) return { code: "inconclusive" };
     // Title-screen guard: a running loop idling on a start screen is static

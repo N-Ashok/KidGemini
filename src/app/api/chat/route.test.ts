@@ -341,43 +341,6 @@ describe("POST /api/chat — guest trial (10K) with layered abuse control", () =
     expect(replyStreamMock).not.toHaveBeenCalled();
   });
 
-  it("G.3b the IP cap honours the env override — the harness lever, proven at the route", async () => {
-    // Added 2026-08-16 so the golden-prompt harness can finish a local run.
-    // The gate still RUNS and still counts; only the number moves. Pinned here
-    // rather than only in gate.config.test.ts because the thing that matters is
-    // the route's behaviour, not the helper's return value.
-    authMock.mockResolvedValue(null);
-    usedByUser.mockReturnValue(0);
-    usedByIp.mockReturnValue(IP_GUEST_TOKEN_CAP); // would wall at the shipped cap
-    replyStreamMock.mockReturnValue(one("Hello!"));
-    const prev = process.env.IP_GUEST_TOKEN_CAP;
-    process.env.IP_GUEST_TOKEN_CAP = "5000000";
-    try {
-      const res = await POST(makeReq({ message: "hello", history: [] }));
-      expect(res.status).toBe(200);
-    } finally {
-      if (prev === undefined) delete process.env.IP_GUEST_TOKEN_CAP;
-      else process.env.IP_GUEST_TOKEN_CAP = prev;
-    }
-  });
-
-  it("G.3c a junk override does NOT open the gate — it falls back to the shipped cap", async () => {
-    // The direction that matters for a paywall: fail closed on a typo.
-    authMock.mockResolvedValue(null);
-    usedByUser.mockReturnValue(0);
-    usedByIp.mockReturnValue(IP_GUEST_TOKEN_CAP);
-    const prev = process.env.IP_GUEST_TOKEN_CAP;
-    process.env.IP_GUEST_TOKEN_CAP = "lots";
-    try {
-      const res = await POST(makeReq({ message: "hello", history: [] }));
-      expect(res.status).toBe(401);
-      expect(replyStreamMock).not.toHaveBeenCalled();
-    } finally {
-      if (prev === undefined) delete process.env.IP_GUEST_TOKEN_CAP;
-      else process.env.IP_GUEST_TOKEN_CAP = prev;
-    }
-  });
-
   it("G.5 the guest tallies use a rolling 2-day window (limit RESETS — not lifetime)", async () => {
     authMock.mockResolvedValue(null);
     replyStreamMock.mockReturnValue(one("Hello!"));
@@ -652,10 +615,7 @@ describe("POST /api/chat — a game must never load a library from an external C
     `<script>const g = new THREE.CapsuleGeometry(1.5, 3, 4, 8);</script></body></html>`;
   const CLEAN_GAME =
     `<!doctype html><html><body><!--USES_THREE--><canvas id="scene"></canvas>\n` +
-    // A comment, not bare text — valid JS syntax (BUG-FIX-LOG 2026-08-13's
-    // js-syntax-lint correctly flagged the old bare "CLEAN GAME" as a real
-    // syntax error; the marker just needs to still be a substring of the doc).
-    `<script type="module">import { Scene, CapsuleGeometry } from "three";\n/* CLEAN GAME */</script></body></html>`;
+    `<script type="module">import { Scene, CapsuleGeometry } from "three";\nCLEAN GAME</script></body></html>`;
 
   const doneOf = (text: string) => JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
 
@@ -692,31 +652,6 @@ describe("POST /api/chat — a game must never load a library from an external C
   // The relative form of the same bypass, found by running all 312 stored
   // conversations through the browser harness: a game that invented a local
   // multi-file three.js layout and died on "Failed to resolve module specifier".
-  it("XS.3 a build whose retry STILL has an unknown three import is NOT served (2026-08-16)", async () => {
-    // The Village Turbo Racer failure, pinned. The build imported
-    // LatheGeometry (not exported by this platform's bundle), the lint
-    // caught it, the corrective retry produced it AGAIN, and the pipeline
-    // served the original anyway. The child's console:
-    //   "does not provide an export named 'LatheGeometry'"
-    //   "startGame is not defined"
-    // — a missing export is a PARSE error, so nothing in the module ran and
-    // the Start button did nothing. A dead game is worse than an honest
-    // "that tangled me up, try again", so it must not be delivered.
-    const CURVE_GAME =
-      `<!doctype html><html><body><canvas id="c"></canvas>\n` +
-      `<script type="module">import { Scene, LatheGeometry } from "three";\nfunction startGame(){}</script></body></html>`;
-    replyStreamMock.mockReturnValue(one("Here!\n```html" + CURVE_GAME + "```"));
-    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: CURVE_GAME, wasFenced: false }));
-    // the corrective retry comes back with the SAME bad import
-    replyMock.mockResolvedValue({ text: "same again", artifactHtml: CURVE_GAME, wasFenced: false });
-
-    const res = await POST(makeReq({ message: "make me a race game with a curvy track", history: [] }));
-    const done = doneOf(await res.text());
-
-    expect(done.artifactHtml ?? null).toBeNull();
-    expect(done.text).toContain("tangled");
-  });
-
   it("XS.4 a build importing files that don't exist gets the same corrective retry", async () => {
     const DANGLING =
       `<!doctype html><html><body><canvas id="c"></canvas>\n` +
@@ -732,82 +667,6 @@ describe("POST /api/chat — a game must never load a library from an external C
     expect(done.artifactHtml).toContain("CLEAN GAME");
     expect(done.artifactHtml).not.toContain("./three.module.js");
     expect(replyMock.mock.calls[0]![0].message).toContain("./three.module.js");
-  });
-
-  // ── B4: the healer must run BEFORE the lint reads the artifact ─────────
-  //
-  // KNOWN_BUGS #21, 2026-08-17. `stripRuntimeGlobalImports` exists precisely
-  // so that `import { loadModel } from "three"` — a category error, since we
-  // inject those as window globals — is fixed deterministically and for free.
-  // But it lived inside `toDeliverable`, which runs AFTER this lint has
-  // already read the RAW artifact. So the healer never prevented a single one
-  // of the ~50s corrective regenerations it was written to retire. Seen live:
-  //   ⛔ unknown three imports: loadModel, placeModel, modelHeading
-  //      — corrective retry @71804ms
-  // A minute of a child's time, twice over, for a fault we could already fix
-  // in a millisecond.
-  it("XS.5 a build importing runtime globals from three is HEALED, not regenerated", async () => {
-    const GLOBALS_GAME =
-      `<!doctype html><html><body><!--USES_THREE--><canvas id="scene"></canvas>\n` +
-      `<script type="module">import { Scene, loadModel, placeModel, modelHeading } from "three";\n` +
-      `/* CLEAN GAME */ loadModel("car");</script></body></html>`;
-    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: GLOBALS_GAME, wasFenced: false }));
-    replyStreamMock.mockReturnValue(one("Here!\n```html" + GLOBALS_GAME + "```"));
-
-    const res = await POST(makeReq({ message: "make a 3D game", history: [] }));
-    const done = doneOf(await res.text());
-
-    // No model call at all — this is a deterministic fix, not a retry.
-    expect(replyMock).not.toHaveBeenCalled();
-    // And the delivered game no longer imports the globals from "three".
-    expect(done.artifactHtml).not.toMatch(/import\s*\{[^}]*loadModel[^}]*\}\s*from\s*["']three["']/);
-    expect(done.artifactHtml).toContain('loadModel("car")'); // the CALL survives
-  });
-
-  // ── the turn trace (2026-08-17 owner ask: a log system that says WHERE) ──
-  it("TR.1 every turn gets a trace id, handed to the client so a repair can join it", async () => {
-    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: CLEAN_GAME, wasFenced: false }));
-    replyStreamMock.mockReturnValue(one("Here!\n```html" + CLEAN_GAME + "```"));
-
-    const res = await POST(makeReq({ message: "make a 3D game", history: [] }));
-    const done = doneOf(await res.text());
-
-    // Shape must match what api/repair will accept back (adoptTraceId), or
-    // the correlation silently degrades to a fresh id on every repair.
-    expect(done.traceId).toMatch(/^[2-9a-z]{8}$/);
-  });
-
-  it("TR.2 two turns get different traces, so one grep is one turn", async () => {
-    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: CLEAN_GAME, wasFenced: false }));
-    replyStreamMock.mockReturnValue(one("Here!\n```html" + CLEAN_GAME + "```"));
-
-    const a = doneOf(await (await POST(makeReq({ message: "one", history: [] }))).text());
-    replyStreamMock.mockReturnValue(one("Here!\n```html" + CLEAN_GAME + "```"));
-    const b = doneOf(await (await POST(makeReq({ message: "two", history: [] }))).text());
-
-    expect(a.traceId).not.toBe(b.traceId);
-  });
-
-  it("TR.3 the SAME trace appears on this turn's server log lines", async () => {
-    // The property that makes the id worth anything: `grep trace=<id>` must
-    // return the turn's story. Before this, nothing tied a line to a request
-    // and turns were matched to their repairs by eye.
-    const lines: string[] = [];
-    const spy = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => void lines.push(a.join(" ")));
-    try {
-      extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: CLEAN_GAME, wasFenced: false }));
-      replyStreamMock.mockReturnValue(one("Here!\n```html" + CLEAN_GAME + "```"));
-      const done = doneOf(await (await POST(makeReq({ message: "make a 3D game", history: [] }))).text());
-
-      const mine = lines.filter((l) => l.includes(`trace=${done.traceId}`));
-      expect(mine.length).toBeGreaterThan(1);
-      // And the stage vocabulary is there, so a gap can be read as a stage
-      // that never completed rather than needing the pipeline memorised.
-      expect(mine.join("\n")).toMatch(/stage=start\b/);
-      expect(mine.join("\n")).toMatch(/stage=deliver\b/);
-    } finally {
-      spy.mockRestore();
-    }
   });
 
   it("XS.3 a correct pipeline game ships untouched, with NO corrective retry (guard never misfires)", async () => {
@@ -1414,7 +1273,7 @@ describe("POST /api/chat — patch-based feature edits", () => {
 // retry — so a dead-on-arrival game never reaches the kid.
 describe("POST /api/chat — three-import lint", () => {
   const BAD_IMPORT_GAME =
-    '<!doctype html><html><body><script type="module">import { Scene, LatheGeometry } from "three";</script></body></html>';
+    '<!doctype html><html><body><script type="module">import { Scene, TubeGeometry } from "three";</script></body></html>';
   const CLEAN_GAME =
     '<!doctype html><html><body><script type="module">import { Scene } from "three";</script></body></html>';
 
@@ -1426,7 +1285,7 @@ describe("POST /api/chat — three-import lint", () => {
     replyStreamMock.mockReturnValue(one("Here!\n```html\n" + BAD_IMPORT_GAME + "\n```"));
     extractArtifactMock.mockImplementation((t: string) => ({
       text: "Here!",
-      artifactHtml: t.includes("LatheGeometry") ? BAD_IMPORT_GAME : undefined,
+      artifactHtml: t.includes("TubeGeometry") ? BAD_IMPORT_GAME : undefined,
       wasFenced: true,
     }));
     replyMock.mockResolvedValue({ text: "Fixed!", artifactHtml: CLEAN_GAME, wasFenced: true });
@@ -1436,7 +1295,7 @@ describe("POST /api/chat — three-import lint", () => {
     const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
 
     expect(replyMock).toHaveBeenCalledTimes(1);
-    expect(replyMock.mock.calls[0]![0].message).toContain("LatheGeometry"); // told exactly what crashed
+    expect(replyMock.mock.calls[0]![0].message).toContain("TubeGeometry"); // told exactly what crashed
     expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
     expect(done.artifactHtml).toBe(ensureAssetRuntime(CLEAN_GAME)); // clean retry, import map floored in
   });
@@ -1451,7 +1310,7 @@ describe("POST /api/chat — three-import lint", () => {
     const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
 
     // Served, visible, repairable — not dropped. The import map is floored in, so
-    // the specifier resolves; the unknown NAMED export (LatheGeometry) is the
+    // the specifier resolves; the unknown NAMED export (TubeGeometry) is the
     // remaining issue the kid can repair — the floor is 'no worse', never a dead end.
     expect(done.artifactHtml).toBe(ensureAssetRuntime(BAD_IMPORT_GAME));
   });
@@ -1474,7 +1333,7 @@ describe("POST /api/chat — three-import lint", () => {
     ];
     const patchReply =
       "Added a track! 🎮\n<<<<<<< SEARCH\n<div>OLD_FEATURE</div>\n=======\n" +
-      '<script type="module">import { LatheGeometry } from "three";</script>\n>>>>>>> REPLACE';
+      '<script type="module">import { TubeGeometry } from "three";</script>\n>>>>>>> REPLACE';
     replyStreamMock.mockReturnValue(one(patchReply));
 
     const res = await POST(makeReq({ message: "add a tube track", history }));

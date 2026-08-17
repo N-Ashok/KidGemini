@@ -23,8 +23,6 @@ import { injectPreviewRuntime, type PreviewTheme } from "@/lib/preview-runtime";
 import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
 import { keyToPanelAction, previewDisplay, UPDATING_LINE } from "@/lib/preview-pane";
 import { buildErrorReport, hasExtremeError } from "@/lib/error-report";
-import { shouldHealMidPlay, breakingErrors } from "@/lib/midplay-heal";
-import { repairEnabled } from "@/lib/verify-policy";
 import { usePreviewVerify } from "./usePreviewVerify";
 import { usePerfProbe } from "./usePerfProbe";
 import { useGameSaveChannel } from "./useGameSaveChannel";
@@ -68,10 +66,6 @@ interface ArtifactFrameProps {
   onSignIn?: () => void;
   /** The kid's ask that produced this game — repair prompts carry it (§7). */
   originalRequest?: string;
-  /** Trace id of the chat turn that produced this game (2026-08-17). Passed
-   *  through to /api/repair so a self-heal lands on the same log thread as
-   *  the build. Diagnostic only — never shown to the child. */
-  traceId?: string;
   onClose: () => void;
   /** Desktop full-screen toggle (PRD-PREVIEW-PANE) — owned by the container,
       which restyles the panel wrapper; this component only shows the button. */
@@ -114,14 +108,6 @@ interface ArtifactFrameProps {
    *  A SLOT rather than props: the tab's own state (sheet, mic, nudge) belongs
    *  to the container, and this panel stays presentational. Absent = flag off. */
   helpTab?: React.ReactNode;
-  /** Fired once per generation, ONLY when the self-heal loop actually fixed
-   *  something (outcome "repaired") — never on "clean" (nothing to save) or
-   *  "failed"/"bailed" (nothing worked). BUG-FIX-LOG 2026-08-13: without this,
-   *  a successful in-browser patch lived only in this component's own state
-   *  and vanished on the next reload — the container persists it back to the
-   *  stored message (turn-recovery.ts's applyRepairedArtifact). Absent =
-   *  feature inert, same convention as onCaptureIdea/helpTab. */
-  onRepaired?: (html: string) => void;
   /** Reported once per generation, when the verify/repair loop settles: what
    *  the machine concluded, plus the SAME bounded diagnosis the grown-up
    *  "copy error details" button produces. The container needs both — to decide
@@ -198,7 +184,6 @@ export function ArtifactFrame({
   signInLocked,
   onSignIn,
   originalRequest,
-  traceId,
   onClose,
   expanded,
   onToggleExpand,
@@ -220,7 +205,6 @@ export function ArtifactFrame({
   onIdeaInterrupted,
   onIdeaDraftConsumed,
   helpTab,
-  onRepaired,
   onDiagnostics,
   previewTheme = "default",
   bibleTeacher = false,
@@ -292,7 +276,7 @@ export function ArtifactFrame({
     return () => window.removeEventListener("keydown", onKey);
   }, [expanded, onToggleExpand]);
 
-  const { state, iframeRef, onIframeLoad, docKey, healMidPlay } = usePreviewVerify(html ?? "", originalRequest ?? "", traceId);
+  const { state, iframeRef, onIframeLoad, docKey } = usePreviewVerify(html ?? "", originalRequest ?? "");
   // Perf Panel (docs/2026-07-30_PRD_PreviewPerfPanel.md) — debug-only, same
   // gate as the console tab. Harmless to mount unconditionally: it's just a
   // message listener until a snapshot arrives, and the injected probe script
@@ -346,13 +330,6 @@ export function ArtifactFrame({
   // in a tight loop). Also dispatches `fixTapped` so the fps-based banner's
   // cooldown suppresses it from ALSO popping right after.
   const lastAutoFixedDocKeyRef = useRef<string | null>(null);
-  // Session-scoped, NOT per document: every successful fix mints a new docKey,
-  // so the per-docKey guard alone let this fire over and over while a child
-  // was playing (owner report 2026-08-16 — the same "I've tidied up the
-  // village" sentence appearing again and again mid-race, each one a real
-  // model turn that edited her game under her).
-  const autoFixCountRef = useRef(0);
-  const lastAutoFixDrawCallsRef = useRef<number | null>(null);
   useEffect(() => {
     if (!perfSnapshot || !onAutoFixSlowdown) return;
     if (
@@ -362,15 +339,11 @@ export function ArtifactFrame({
         models: perfSnapshot.models ?? [],
         drawCalls: perfSnapshot.drawCalls ?? null,
         busy: busy ?? false,
-        autoFixCount: autoFixCountRef.current,
-        lastAutoFixDrawCalls: lastAutoFixDrawCallsRef.current,
       })
     ) {
       return;
     }
     lastAutoFixedDocKeyRef.current = docKey;
-    autoFixCountRef.current += 1;
-    lastAutoFixDrawCallsRef.current = perfSnapshot.drawCalls ?? null;
     dispatchSlowdown({ type: "fixTapped", now: Date.now() });
     onAutoFixSlowdown(buildAutoFixHint(perfSnapshot.models ?? [], perfSnapshot.drawCalls ?? null));
   }, [perfSnapshot, docKey, onAutoFixSlowdown, busy]);
@@ -550,44 +523,6 @@ export function ArtifactFrame({
   }, [settled, docKey, tab, iframeRef]);
 
 
-  // MID-PLAY SELF-HEAL (2026-08-15, owner decision). Until now the auto-heal
-  // covered only the load window: the verify controller settles and then
-  // discards every console message, so a game that broke while the child was
-  // PLAYING was never sent to Ari — it only lit up the error affordance. Owner:
-  // "when there is an error the browser should automatically push to Ari and
-  // solve it... now more than ever, i see error reports [and broken games]."
-  //
-  // The decision lives in midplay-heal.ts (pure, tested); this only supplies
-  // the live signals. `busy` is passed deliberately — the 2026-08-11 incident
-  // was a background effect firing a turn while the child's own edit streamed,
-  // and every passive trigger must check it for itself.
-  const settledAtRef = useRef<number | null>(null);
-  const midPlayHealsRef = useRef<Record<string, number>>({});
-  useEffect(() => {
-    settledAtRef.current = settled ? Date.now() : null;
-  }, [settled, docKey]);
-  useEffect(() => {
-    if (!settled) return;
-    const settledAt = settledAtRef.current;
-    if (settledAt === null) return;
-    const errors = breakingErrors(consoleMessages);
-    const spent = midPlayHealsRef.current[docKey] ?? 0;
-    if (
-      !shouldHealMidPlay({
-        enabled: repairEnabled(),
-        settled,
-        busy: Boolean(busy),
-        healsThisDoc: spent,
-        msSinceSettle: Date.now() - settledAt,
-        hardErrorCount: errors.length,
-      })
-    ) {
-      return;
-    }
-    midPlayHealsRef.current[docKey] = spent + 1;
-    void healMidPlay(errors);
-  }, [consoleMessages, settled, busy, docKey, healMidPlay]);
-
   const errorCount = consoleMessages.filter((m) => m.level === "error").length;
   // "Something unexpected happened" — the game threw, or verify gave up.
   // Only then are grown-up details reachable (owner request 2026-07-20): the
@@ -620,14 +555,8 @@ export function ArtifactFrame({
   // numbers would make the stuck signal fire while the machine is still trying.
   const onDiagnosticsRef = useRef(onDiagnostics);
   onDiagnosticsRef.current = onDiagnostics;
-  const onRepairedRef = useRef(onRepaired);
-  onRepairedRef.current = onRepaired;
   useEffect(() => {
     if (state.phase !== "done" || !state.outcome) return;
-    // Persist BEFORE the diagnostics report below — a repaired game is the
-    // one outcome where currentHtml differs from what the container already
-    // has, and saving it is more urgent than the Help-tab bookkeeping.
-    if (state.outcome === "repaired") onRepairedRef.current?.(state.currentHtml);
     onDiagnosticsRef.current?.({
       generationId: docKey,
       verifyFailed: state.outcome === "failed" || state.outcome === "bailed",
@@ -944,14 +873,7 @@ export function ArtifactFrame({
           reads as deliberate rather than stale. */}
       {busy && tab === "preview" && (
         <div className="border-b border-sky-100 bg-sky-50 px-4 py-1.5 text-sm text-sky-800">
-          {/* ONLY when the line brings no emoji of its own (2026-08-16).
-              buildUpdatingLine already prefixes a derived one, so this
-              hardcoded hammer doubled it on every single build — the owner saw
-              "🛠️🛠️ Making …" and "🛠️🏆 Pinpointing …" in production. The
-              plain UPDATING_LINE fallback has no emoji, so it still gets one. */}
-          {!updatingLine && (
-            <span className="mr-1 inline-block animate-bounce" aria-hidden>🛠️</span>
-          )}
+          <span className="mr-1 inline-block animate-bounce" aria-hidden>🛠️</span>
           {/* A QUEUED idea building gets named (PRD-IDEA-QUEUE-V2 §4.2) — the
               game swap that follows must be narrated, never a silent switch. */}
           {updatingLine ?? UPDATING_LINE}

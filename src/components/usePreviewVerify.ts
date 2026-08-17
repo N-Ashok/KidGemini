@@ -6,7 +6,6 @@
 // 2026-07-10). This hook only wires browser events in and state out.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { GameConsoleMessage } from "@/types/game-console.types";
 import {
   PreviewVerifyController,
   type VerifyControllerState,
@@ -35,7 +34,7 @@ function initialState(html: string): VerifyControllerState {
   };
 }
 
-export function usePreviewVerify(html: string, originalRequest: string, traceId?: string) {
+export function usePreviewVerify(html: string, originalRequest: string) {
   const [state, setState] = useState<VerifyControllerState>(() => initialState(html));
   const controllerRef = useRef<PreviewVerifyController | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -48,12 +47,6 @@ export function usePreviewVerify(html: string, originalRequest: string, traceId?
   // carries the ask that produced THAT html.
   const requestRef = useRef(originalRequest);
   requestRef.current = originalRequest;
-  // Same ref treatment as originalRequest, and for the same reason: putting it
-  // in the effect deps would dispose the controller and re-cover a game that
-  // has not changed. Read at fetch time, so a repair always reports the trace
-  // of the turn that produced the html being repaired.
-  const traceRef = useRef(traceId);
-  traceRef.current = traceId;
 
   // Each game html gets its own generation: `round` restarts with every
   // controller instance, so round alone COLLIDES across games (v1 can end at
@@ -69,11 +62,7 @@ export function usePreviewVerify(html: string, originalRequest: string, traceId?
         const res = await fetch("/api/repair", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          // The chat turn's trace rides along so this repair's server log
-          // lines share a `trace=` key with the build that produced the game
-          // (2026-08-17). Untrusted on the server, which re-validates the
-          // shape; omitted entirely when we don't have one.
-          body: JSON.stringify(traceRef.current ? { ...req, traceId: traceRef.current } : req),
+          body: JSON.stringify(req),
           signal: AbortSignal.timeout(REPAIR_FETCH_TIMEOUT_MS),
         });
         if (!res.ok) throw new Error(`repair ${res.status}`);
@@ -90,15 +79,7 @@ export function usePreviewVerify(html: string, originalRequest: string, traceId?
     controllerRef.current = controller;
     const onMessage = (event: MessageEvent) => controller.handleMessage(event.data);
     const onVisibility = () => {
-      if (document.hidden) {
-        controller.markInterrupted(); // V.11
-      } else {
-        // BUG-FIX-LOG 2026-08-13: a generation whose verify was SKIPPED
-        // because the tab was hidden at start() (V.10) otherwise never got a
-        // second chance — the kid/owner had to notice a broken game
-        // themselves. rAF ticks normally again now, so a real round is safe.
-        controller.retryIfSkipped(html);
-      }
+      if (document.hidden) controller.markInterrupted(); // V.11
     };
     window.addEventListener("message", onMessage);
     document.addEventListener("visibilitychange", onVisibility);
@@ -125,20 +106,5 @@ export function usePreviewVerify(html: string, originalRequest: string, traceId?
     );
   }, []);
 
-  // Mid-play heal (2026-08-15): the caller decides WHETHER (midplay-heal.ts),
-  // the controller does the work. Exposed as a stable callback so an effect in
-  // ArtifactFrame can fire it without re-subscribing.
-  const healMidPlay = useCallback(
-    (errors: readonly GameConsoleMessage[]) =>
-      controllerRef.current?.healMidPlay(errors) ?? Promise.resolve(false),
-    [],
-  );
-
-  return {
-    state,
-    iframeRef,
-    onIframeLoad,
-    docKey: previewDocKey(generationRef.current, state.round),
-    healMidPlay,
-  };
+  return { state, iframeRef, onIframeLoad, docKey: previewDocKey(generationRef.current, state.round) };
 }

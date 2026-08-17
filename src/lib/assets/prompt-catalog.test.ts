@@ -17,31 +17,20 @@ import type { ChatMessage } from "@/types/chat.types";
 import { CHILD_SYSTEM_PROMPT, buildTurnSystemInstruction } from "../gemini";
 import { ASSET_HOST_ORIGIN, type AssetManifest } from "./manifest";
 import realManifest from "./manifest.json";
-import published from "./three-exports.published.json";
 
 describe("THREE_PROMPT_SECTION — marker + import contract", () => {
   it("teaches the exact opt-in marker", () => {
     expect(THREE_PROMPT_SECTION).toContain(THREE_MARKER);
   });
 
-  // Was: "teaches every name in scripts/vendor-three.mjs". Retargeted at the
-  // PUBLISHED list on 2026-08-16. The vendoring script is the RECIPE for the
-  // next bundle; every game loads a content-hashed file already on
-  // assets.ariantra.com, and editing the recipe does not change it. Under the
-  // old coupling, adding an export to the recipe FORCED the prompt to teach it
-  // in the same commit — advertising a name the served bundle does not have,
-  // which is exactly what killed a child's game on 2026-08-15
-  // (`CatmullRomCurve3`). The recipe now leads, the upload follows, and the
-  // teaching comes last. See curated-imports.test.ts for the other direction.
-  it("teaches every name the SERVED bundle exports (lockstep with three-exports.published.json)", () => {
-    const names = published.exports.filter(
-      // Internal to runtime-helpers.ts and deliberately never taught to the
-      // model — it calls loadModel()/placeModel(), never the loaders.
-      (n) => !["GLTFLoader", "MeshoptDecoder", "SkeletonUtils"].includes(n),
-    );
+  it("teaches every name the vendored bundle actually exports (lockstep with vendor-three.mjs)", () => {
+    const vendorSource = readFileSync(join(__dirname, "../../../scripts/vendor-three.mjs"), "utf8");
+    const listMatch = vendorSource.match(/const THREE_EXPORTS = \[([\s\S]*?)\];/);
+    expect(listMatch).not.toBeNull();
+    const names = [...listMatch![1]!.matchAll(/'([A-Za-z0-9]+)'/g)].map((m) => m[1]!);
     expect(names.length).toBeGreaterThan(10);
     for (const name of names) {
-      expect(THREE_PROMPT_SECTION, `prompt must teach "${name}" (the served bundle exports it)`).toContain(name);
+      expect(THREE_PROMPT_SECTION, `prompt must teach "${name}" (it is exported by the bundle)`).toContain(name);
     }
   });
 
@@ -62,15 +51,14 @@ describe("THREE_PROMPT_SECTION — §7 render budget on kid hardware", () => {
   it("caps the pixel ratio at 2", () => {
     expect(THREE_PROMPT_SECTION).toMatch(/Math\.min\(\s*(window\.)?devicePixelRatio,\s*2\s*\)/);
   });
-  it("allows shadows with a modest map size, still forbids post-processing", () => {
-    expect(THREE_PROMPT_SECTION).toMatch(/shadowMap\.enabled/i);
-    expect(THREE_PROMPT_SECTION).toMatch(/castShadow/);
-    expect(THREE_PROMPT_SECTION).toMatch(/shadow\.mapSize/);
+  it("forbids shadows and post-processing", () => {
+    expect(THREE_PROMPT_SECTION).toMatch(/no shadows/i);
     expect(THREE_PROMPT_SECTION).toMatch(/post-processing/i);
   });
-  it("requires ambient/hemisphere fill plus one directional sun light", () => {
-    expect(THREE_PROMPT_SECTION).toMatch(/AmbientLight|HemisphereLight/);
+  it("limits lights to ambient + one directional", () => {
+    expect(THREE_PROMPT_SECTION).toMatch(/AmbientLight/);
     expect(THREE_PROMPT_SECTION).toMatch(/DirectionalLight/);
+    expect(THREE_PROMPT_SECTION).toMatch(/at most (one|two)|only .* lights|no more than/i);
   });
   it("keeps poly count low for phones", () => {
     expect(THREE_PROMPT_SECTION).toMatch(/low|handful/i);
@@ -173,18 +161,6 @@ describe("modelsPromptSection — the catalog version-locks with the manifest (P
     expect(section).toMatch(/never\s+(use\s+)?await|placeholder/i);
   });
 
-  // BUG-FIX-LOG 2026-08-12 (a generated soccer game's placeholder ball read
-  // roughly beach-ball-sized next to its human-sized placeholder character):
-  // rule 4 already forbids guessing a CATALOG model's size once modelSize()
-  // can answer, but the PLACEHOLDER shape drawn before any model loads (rule
-  // 3) had no size guidance at all — the model just picked an arbitrary
-  // radius. A human-scale reference anchors every placeholder's size to the
-  // same real-world unit a kid would expect.
-  it("gives placeholder shapes a human-scale reference so a ball/prop doesn't come out arbitrarily huge or tiny", () => {
-    expect(section).toMatch(/human/i);
-    expect(section).toMatch(/1\.[5-8]\s*(units?|m\b|metres?|meters?)/i);
-  });
-
   it("teaches AnimationMixer for animated models (dino walks)", () => {
     expect(section).toContain("AnimationMixer");
   });
@@ -244,17 +220,7 @@ describe("modelsPromptSection — the catalog version-locks with the manifest (P
 // FULL manifest, so those names always worked — we were simply not telling it.
 describe("the catalog teaches the WHOLE library (so the LLM can design against it)", () => {
   const real = realManifest as AssetManifest;
-  // Path TILES are withheld from the model entirely (owner decision
-  // 2026-08-15: "keep the kit out of the llm's reach, don't ever use it"), so
-  // the offered library is the manifest MINUS pathRole:"tile". They remain in
-  // the manifest and in the runtime helpers for the ~200 stored games that
-  // already call them.
-  const realModels = real.assets
-    .filter((a) => a.type === "model" && a.pathRole !== "tile")
-    .map((a) => a.name);
-  const tileModels = real.assets
-    .filter((a) => a.type === "model" && a.pathRole === "tile")
-    .map((a) => a.name);
+  const realModels = real.assets.filter((a) => a.type === "model").map((a) => a.name);
   const section = modelsPromptSection(real);
 
   // REPLACED 2026-08-09 by the hybrid: the guarantee is no longer "every name
@@ -276,16 +242,6 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     expect(unreachable).toEqual([]);
   });
 
-  it("and CANNOT reach a path tile, however the child asks", () => {
-    // The whole point of the withholding: even naming the piece must not
-    // surface it, or the model will try to build a track out of squares again.
-    expect(tileModels.length).toBeGreaterThan(0);
-    for (const tile of tileModels) {
-      const names = retrievedModelNames({ message: `make a track with ${tile}`, history: [], manifest: real });
-      expect(names).not.toContain(tile);
-    }
-  });
-
   // Regression, 2026-08-08 (BUG-FIX-LOG fragmented race tracks): the section
   // used to say "models load at their own natural size — set m.scale and
   // m.position so they fit your scene", which is an instruction to guess with
@@ -299,14 +255,11 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     expect(section).not.toMatch(/load at their own natural size/);
   });
 
-  it("teaches roads as GEOMETRY, never as tiles (owner decision 2026-08-15)", () => {
-    // "keep the kit out of the llm's reach, don't ever use it." A square-grid
-    // kit cannot express a smooth curve or a loop — every join is a right
-    // angle at a fixed module, so a non-axis-aligned track seams by
-    // construction, which four rounds of fixes could not change.
-    expect(section).toMatch(/ROADS AND TRACKS ARE GEOMETRY YOU BUILD/);
-    expect(section).toMatch(/there is no\s+road piece in the library/);
-    expect(section).not.toMatch(/fitTile|modelJoins|race_track_|road_straight/);
+  it("shows tiles being stepped by their measured footprint, not by a made-up number", () => {
+    expect(section).toMatch(/edge-to-edge/);
+    // .x, not .z (2026-08-08): road_straight RUNS along X, so stepping it by
+    // its z would lay the row across the road — the very bug being fixed.
+    expect(section).toMatch(/modelSize\("road_straight"\)\.x/);
   });
 
   it("does not depend on the child's message — this is what makes the prefix cacheable", () => {
@@ -330,41 +283,6 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // the documented revisit the PRD demanded (measured by this test during
     // implementation, not assumed). Model NAMES still dominate the section;
     // an accidental bulk import still trips this.
-    // Raised 2820 -> 2900 (2026-08-16): the no-curve-class rule. A child's
-    // "Village Turbo Racer" shipped DEAD because the build imported
-    // CatmullRomCurve3, which this platform's three bundle does not export —
-    // a missing export is a parse error, so the module never ran and the
-    // Start button did nothing ("startGame is not defined"). The roads
-    // teaching added the evening before invited exactly that by talking about
-    // laying a route out; it now says, by name, that there is no curve class
-    // and to walk a plain array instead. ~30 tokens to close a whole-game
-    // failure. Measured 2889.
-    // Raised 2700 -> 2820 (2026-08-15, same evening): SCENERY PLACEMENT. A
-    // 65-second screen recording of a child racing her own game showed an
-    // empty world for the whole run, while Ari's replies said it had added
-    // trees, a village, a lake and ducks across four separate turns. Measured
-    // in the stored game: the props were real, but the houses and trees sat
-    // at x = +/-65..90 beside an 8-wide road, and scene.fog ended at 150 — so
-    // the child drove past none of them. Chickens and dogs existed only in
-    // the first 290 units of an 850-unit track. This is the rule that turns
-    // "I added it!" into something she can actually see. Measured 2808.
-    // Raised 2600 -> 2700 (2026-08-15, same day): the DRIVING SETUP block —
-    // the owner's race game had a correct-looking chase camera that still felt
-    // wrong, because `back = 12` was a bare number in a world built ~10x the
-    // car's scale, leaving the car a speck in an empty field. Measured in a
-    // real browser (camera trailed correctly at ~12 units; the car is 2.56
-    // units long while the track spans 145). The block ties heading, model
-    // rotation, camera distance-in-car-lengths, world scale and the Up/Down
-    // mapping together, because getting any one of them out of step is what
-    // produces "the cars are going in the reverse direction". Measured 2696.
-    // Raised 2525 -> 2600 (2026-08-15): four faults were taught this day, each
-    // traced to a specific broken game — per-model FACING (a child's kart
-    // driving at the camera), modelHeading for anything that STEERS (both cars
-    // in a race game driving in reverse), intent ("realistic" means 3D), and
-    // chase-camera placement. The section simultaneously LOST the tile-kit
-    // teaching when the road kit was withheld, so this is +28 net over the old
-    // ceiling for four distinct fault classes. Fault-driven teaching, not
-    // catalog creep — measured 2553.
     // Raised 2300 → 2350 (2026-08-06, BUG-FIX-LOG rotor no-op): rule 7 now
     // states that rigid models have NO named parts and a name lookup is a
     // silent no-op — verified against the live helicopter GLB (one mesh,
@@ -433,7 +351,7 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // (teach the RULES, look the CATALOG up on demand), not more prose. Layer
     // 2 golden prompts (PRD §4) is what would catch a regression here without
     // spending another token.
-    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_900);
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_525);
   });
 });
 
@@ -676,32 +594,13 @@ describe("the facing convention is taught (2026-08-06)", () => {
   // exactly the falsehood that broke every road build: the city kit's
   // road_straight runs along X. The facing rule is now scoped to
   // vehicles/characters, and tiles get modelAxis() instead.
-  it("never claims a blanket facing, and teaches modelFacing/placeModel instead", () => {
-    // 2026-08-15: the prompt used to assert "VEHICLES/CHARACTERS face +Z"
-    // unconditionally. A top-down render audit disproved it — `car` faces -Z
-    // (180 degrees out) and `airplane` faces +X (90 degrees out), while
-    // `crocodile` and `dog` do face +Z. A bounding box cannot express a
-    // direction, so before AR_FACING there was no datum anywhere that could
-    // tell a game which way a model points, and every game re-guessed it
-    // (TECH_DEBT #91: wrong-facing models recurring across unrelated games).
+  it("scopes +Z facing to vehicles/characters and teaches modelAxis for tiles", () => {
     const section = modelsPromptSection(realManifest as AssetManifest);
-    expect(section).toContain("modelFacing(name)");
-    expect(section).toContain("placeModel");
-    // modelAxis() was tile-only guidance and went with the kit (2026-08-15).
-    expect(section).not.toContain("modelAxis(name)");
-    // Neither blanket claim may come back — both were false.
+    expect(section).toContain("VEHICLES/CHARACTERS face +Z");
+    expect(section).toContain("rotation.y");
+    expect(section).toContain("modelAxis(name)");
+    // The universal claim must never come back — it was never true.
     expect(section).not.toMatch(/Every model faces \+Z/);
-    expect(section).not.toMatch(/VEHICLES\/CHARACTERS face \+Z/);
-  });
-
-  it("does not call the catalog's own units REAL metres, and teaches modelMetres", () => {
-    // The other half of the same report: 238 of 296 sized models are raw kit
-    // units, not metres, so `modelSize` alone makes a mountain (1.9) smaller
-    // than a car (2.56). Calling it "REAL metres" is what let the model size a
-    // whole scene from it.
-    const section = modelsPromptSection(realManifest as AssetManifest);
-    expect(section).toContain("modelMetres(name)");
-    expect(section).not.toMatch(/modelSize\(name\)` gives REAL metres/);
   });
 });
 
@@ -770,54 +669,5 @@ describe("the category-map hybrid — the block that rides at the end of the con
 
   it("is empty for an empty selection (zero tokens, never a dangling label)", () => {
     expect(modelNamesBlock([])).toBe("");
-  });
-});
-
-describe("the prompt never teaches a three import the bundle lacks (2026-08-16)", () => {
-  it("names the curve classes as FORBIDDEN, since the bundle does not export them", () => {
-    // The Village Turbo Racer failure: the model reached for CatmullRomCurve3
-    // to lay out a road, which is not exported, so the module failed to parse
-    // and the child's Start button did nothing.
-    const section = modelsPromptSection(realManifest as AssetManifest);
-    expect(section).toMatch(/no curve class/i);
-    expect(section).toContain("CatmullRomCurve3");
-    // and it must say so as a prohibition, not as a suggestion to use it
-    expect(section).toMatch(/NO curve class in this build/);
-  });
-});
-
-describe("A4 — prefer the library model over hand-built primitives (2026-08-17)", () => {
-  // The owner's Mumbai Flight Sim: a city of 600 BoxGeometry blocks with
-  // hand-built glowing "window" boxes, while `skyscraper`, `office_building`,
-  // `apartment` and `shop` sat in the toy box — an earlier version of the SAME
-  // game had used all four. Owner: "the skyscrapers have windows in the model
-  // why is it not coming through in the game?"
-  //
-  // Two causes, both fixed on 2026-08-17. The first was mechanical (the toy
-  // box line lost the game's own models once the marker was stripped — see
-  // model-select.ts). The second is here: the prompt told the model what to do
-  // when the toy box LACKS a thing ("build it from the primitive shapes
-  // instead") and never once told it what to do when the toy box HAS it. The
-  // asymmetry read as a licence to hand-build anything.
-  const section = () => modelsPromptSection(realManifest as AssetManifest);
-
-  it("states the converse rule: if the toy box has it, LOAD it", () => {
-    expect(section()).toMatch(/PREFER THE MODEL|prefer the (ready-made )?model/i);
-    expect(section()).toMatch(/BoxGeometry/);
-  });
-
-  it("names buildings specifically — the case that actually failed", () => {
-    expect(section()).toMatch(/building/i);
-  });
-
-  it("says a loaded model arrives already painted, and how to tint it safely", () => {
-    // The other half of the same instinct: having hand-built the blocks, the
-    // model then hand-built window bands. A real model brings its own
-    // textures; REPLACING mesh.material throws them away and yields the flat
-    // block the child was already looking at.
-    const s = section();
-    expect(s).toMatch(/material/);
-    expect(s).toMatch(/never replace|do not replace/i);
-    expect(s).toMatch(/material\.color/);
   });
 });

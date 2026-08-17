@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { editReplyProse, streamingDisplayText } from "./game-edit";
 import { applyPatch } from "./repair-prompt";
-import {
-  NEXT_ASKS_PREFIX, hidePartialNextAskLine, parseNextAskLine, reclaimLeadingNextAsk, resolveNextAsk,
-} from "./next-ask-sentinel";
+import { NEXT_ASKS_PREFIX, hidePartialNextAskLine, parseNextAskLine, resolveNextAsk } from "./next-ask-sentinel";
 
 const VALID_LINE = `${NEXT_ASKS_PREFIX} Add a power-up | Make the dragon faster | What if it happened underwater?`;
 
@@ -66,47 +64,6 @@ describe("parseNextAskLine", () => {
   it("trims whitespace around each idea", () => {
     const result = parseNextAskLine(`${NEXT_ASKS_PREFIX}   a   |  b  |  c  `);
     expect(result!.ideas).toEqual(["a", "b", "c"]);
-  });
-});
-
-// BUG-FIX-LOG 2026-08-13: a second placement failure, distinct from
-// 2026-08-12's leaked-inside-the-fence bug — this time the model put the
-// sentinel as the very FIRST line of its reply, before the ```html fence
-// even opens. The existing trailing-only machinery (parseNextAskLine, the
-// route's pre-strip guard) only ever looks at the LAST line, so a leading
-// sentinel sailed straight into the chat bubble as raw, ugly text. This
-// moves it to the end so everything downstream recovers it exactly as if
-// the model had followed the instruction.
-describe("reclaimLeadingNextAsk", () => {
-  const VALID_LINE = `${NEXT_ASKS_PREFIX} Add a power-up | Make the dragon faster | What if it happened underwater?`;
-
-  it("moves a leading sentinel line to the end", () => {
-    const reply = `${VALID_LINE}\n\n\`\`\`html\n<!doctype html><html></html>\n\`\`\``;
-    const result = reclaimLeadingNextAsk(reply);
-    expect(result.startsWith(VALID_LINE)).toBe(false);
-    expect(result.trimEnd().endsWith(VALID_LINE)).toBe(true);
-    expect(result).toContain("```html");
-  });
-
-  it("the reclaimed text is recoverable by the SAME parseNextAskLine the trailing path uses", () => {
-    const reply = `${VALID_LINE}\n\n\`\`\`html\n<!doctype html><html></html>\n\`\`\``;
-    const parsed = parseNextAskLine(reclaimLeadingNextAsk(reply));
-    expect(parsed).not.toBeNull();
-    expect(parsed!.ideas).toEqual(["Add a power-up", "Make the dragon faster", "What if it happened underwater?"]);
-  });
-
-  it("is a no-op when the first line isn't the sentinel (the well-formed, trailing case)", () => {
-    const reply = `Here's your game! 🎮\n\n${VALID_LINE}`;
-    expect(reclaimLeadingNextAsk(reply)).toBe(reply);
-  });
-
-  it("is a no-op when the sentinel is the only line (nothing to move it ahead of)", () => {
-    expect(reclaimLeadingNextAsk(VALID_LINE)).toBe(VALID_LINE);
-  });
-
-  it("is a no-op on plain prose with no sentinel at all", () => {
-    const reply = "Here's your game! 🎮";
-    expect(reclaimLeadingNextAsk(reply)).toBe(reply);
   });
 });
 

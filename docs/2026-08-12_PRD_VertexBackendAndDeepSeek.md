@@ -49,9 +49,9 @@ Kimi.
 4. **DeepSeek is OpenAI-API-compatible**, so it reuses the OpenAI request/SSE
    shape and `buildMessages` — the same arrangement Moonshot already uses. The
    adapter delegates the entire error taxonomy to `openaiAdapter`.
-5. **DeepSeek has two shape differences** from Moonshot that matter: its
-   reasoning models stream chain-of-thought in a separate
-   `reasoning_content` delta, and it reports cache hits as
+5. **DeepSeek has two shape differences** from Moonshot that matter:
+   `deepseek-reasoner` streams chain-of-thought in a separate
+   `reasoning_content` delta, and reports cache hits as
    `prompt_cache_hit_tokens`. Reading the first as answer text would print the
    model's private reasoning into a child's chat and wrap every generated game
    in thinking prose. Both handled; DS.2/DS.3/DS.6 pin them.
@@ -96,24 +96,17 @@ Callers wrap the throw back into their existing error type (`GeminiError`,
 
 Mirrors Moonshot exactly, minus the two shape differences in §2.5.
 
-Catalog rows (`model-registry.ts`). Ids and prices READ on 2026-08-12 from
-api-docs.deepseek.com/quick_start/pricing, cross-checked against
-`/api/list-models`, which returns exactly these two — the older
-`deepseek-chat` / `deepseek-reasoner` names are gone from the current API and
-must not be re-added from memory:
+Catalog rows (`model-registry.ts`), prices best-effort 2026-08-12, **VERIFY
+before enabling** — they affect order within a tier, never the safety gate:
 
-| id | tier | in (miss) / out $/Mtok | cached in | safety |
-|---|---|---|---|---|
-| `deepseek-v4-pro` | frontier | 0.435 / 0.87 | 0.003625 | prompt-only |
-| `deepseek-v4-flash` | workhorse | 0.14 / 0.28 | 0.0028 | prompt-only |
+| id | tier | in/out $/Mtok | safety |
+|---|---|---|---|
+| `deepseek-reasoner` | frontier | 0.55 / 2.19 | prompt-only |
+| `deepseek-chat` | workhorse | 0.27 / 1.10 | prompt-only |
 
-⚠ The same page carries DeepSeek's notice that it plans "a significant
-increase" to API pricing. Prices affect order within a tier, never the safety
-gate — but re-read before trusting any margin number.
-
-`deepseek-v4-flash` undercuts every workhorse in the catalog (and on output
-price, every model in it), which makes it the sharpest available test of
-whether price can beat the safety gate — R.29 asserts it cannot.
+`deepseek-chat` undercuts every workhorse in the catalog, which makes it the
+sharpest available test of whether price can beat the safety gate — R.29 asserts
+it cannot.
 
 ### 3.3 The instrument (`scripts/check-model-backend.mjs`, new)
 
@@ -160,7 +153,7 @@ and is explicitly **out of scope here** pending an explicit decision (§6).
 11. **DeepSeek pinned via `MODEL_FALLBACK_CHAIN` without the flag.** Still
     excluded — an explicit chain overrides ORDER, never the gates. → R.11 +
     R.26.
-12. **A DeepSeek reasoning model serves a game-build turn.** `reasoning_content` is
+12. **`deepseek-reasoner` serves a game-build turn.** `reasoning_content` is
     dropped from the text stream; reasoning tokens are reported as
     `thoughtTokens` so the cost line stays honest. → DS.2, DS.3, DS.6.
 13. **DeepSeek refuses (429 / quota / retired id).** Inherits the OpenAI
@@ -193,7 +186,7 @@ and is explicitly **out of scope here** pending an explicit decision (§6).
 - **Region/model availability.** Not every preview id lands on Vertex at the
   same time as AI Studio. **Revisit at:** every model-id change, by running
   `check:backend --model <id>` on both backends.
-- **DeepSeek tiering.** `deepseek-v4-pro` is tiered `frontier` on positioning,
+- **DeepSeek tiering.** `deepseek-reasoner` is tiered `frontier` on reputation,
   not on a measured game-build comparison. **Revisit before:** it ever serves a
   build turn — run `npm run eval:portability` first.
 

@@ -78,21 +78,6 @@ export const REPAIR_TAXONOMY: Record<VerifyFailureCode, TaxonomyEntry> = {
     },
     kidLine: "The Start button was hiding behind something. Fixing it…",
   },
-  controls_occluded: {
-    instruction: ({ evidence }) => {
-      const c = evidence?.controls;
-      return (
-        `The game's on-screen control button${c?.label ? ` "${c.label}"` : "s"} ` +
-        `${(c?.occluded ?? 0) > 1 ? `(${c!.occluded} of them) ` : ""}` +
-        `${c?.occluder ? `sit under "${c.occluder}"` : "sit under another element"}, ` +
-        `so taps never reach them and the child cannot play. Give that covering element ` +
-        `\`pointer-events: none\` (restoring \`pointer-events: auto\` on its own buttons), or ` +
-        `remove/\`display:none\` it once play begins. Do NOT change the buttons or their ` +
-        `handlers — they work; something is lying on top of them.`
-      );
-    },
-    kidLine: "Your game's buttons were hiding under something. Fixing it…",
-  },
   start_no_loop: {
     instruction: () =>
       `Clicking Start ran its handler, but requestAnimationFrame was still never called. The flag the ` +
@@ -110,37 +95,9 @@ export function exhaustedQuestion(): string {
 }
 
 /** System prompt for the repair call — §7.1: minimal patch, never a rewrite. */
-/**
- * The repair contract.
- *
- * DELIBERATELY MIRRORS `GAME_EDIT_STRICT_RETRY_SECTION` (game-edit.ts), which
- * asks the same models for the same SEARCH/REPLACE format and demonstrably
- * works — it is the rung that rescues these very repairs in production.
- *
- * The version before this one forbade all prose and forbade returning a whole
- * file, and produced `no_patch_in_reply` on 5 of 5 observed first attempts:
- * the model answered in prose every time, and the rescue rung did 100% of the
- * work. Two changes, both copied from the contract that works:
- *
- *  - ONE short sentence is allowed first. A model that opens with a helpful
- *    line has otherwise already broken the contract, and prose-only is a short
- *    step from there.
- *  - The whole-document fallback is now NAMED as a last resort. `applyPatch`
- *    has always accepted one (mode: "regeneration"), so forbidding it left a
- *    model that cannot patch with no valid output at all — nothing to do but
- *    explain itself.
- *
- * Stated plainly: this is a HYPOTHESIS drawn from a controlled in-repo
- * comparison and production log counts, not a live A/B. It is confirmed when
- * `stage=strict_retry rescued=true` becomes rare in the logs (docs/LOGGING.md).
- * If it is wrong, the rescue rung still catches everything, so the downside is
- * the status quo.
- */
 export const REPAIR_SYSTEM_PROMPT = `You wrote an HTML game for a child and an automated check found a problem.
 Fix ONLY the reported problem — the child is watching this game take shape and must not lose it.
-Reply with, in this order:
-First, ONE short sentence about the fix, on its own line (no code).
-Then the fix as one or more blocks in EXACTLY this format:
+Return the fix as one or more blocks in EXACTLY this format, and nothing else:
 <<<<<<< SEARCH
 (lines copied EXACTLY, character for character, from the current source)
 =======
@@ -149,21 +106,7 @@ Then the fix as one or more blocks in EXACTLY this format:
 Rules:
 - The SEARCH text must match the current source exactly and uniquely.
 - Make the smallest possible change. Do not rename, restyle, or "improve" anything else.
-- Everything you do not change stays byte-for-byte identical.
-- No markdown fences, and nothing after the last block.
-- Whatever you ADD or MOVE must not break the game in a new way. Three that
-  cost real children their games, so they are worth a second's thought:
-  anything covering the play area needs \`pointer-events: none\` (with
-  \`pointer-events: auto\` on its own buttons) or must be removed when it is
-  not the active screen, or it silently eats every tap; a keyboard key and the
-  on-screen button for the same action must write the SAME variable with the
-  same value, and UP must move the player up on screen; and the draw call
-  (\`renderer.render(scene, camera)\`, or the canvas draw) must still run on
-  EVERY frame — never leave it below an early \`return\`.
-- ONLY as a last resort, if the fix genuinely cannot be expressed as blocks,
-  reply with the complete corrected HTML document instead — the whole file,
-  starting at <!doctype html> and ending at </html>, with no SEARCH/REPLACE
-  markers anywhere in it.`;
+- No prose, no markdown fences, no full file.`;
 
 /** The user content of a repair call. R.5: always carries the kid's original
  *  request so a fix never drifts from intent. */
@@ -175,23 +118,15 @@ export function buildRepairPrompt(input: {
   html: string;
 }): string {
   const entry = REPAIR_TAXONOMY[input.failureCode];
-  // SOURCE FIRST, INSTRUCTION LAST (2026-08-17, KNOWN_BUGS #23(b)).
-  //
-  // This used to lead with the diagnosis and end with ~15k tokens of game
-  // HTML, so the model's context finished on raw markup with the instruction
-  // far behind it. `GAME_EDIT_STRICT_RETRY_SECTION`'s composed prompt — the
-  // one that actually lands patches in production — is the other way round:
-  // `Current game source:\n<html>\n\nThe child asked: <ask>`. Matching that
-  // shape costs nothing and puts the ask where recency helps it.
   return [
-    `Current game source:`,
-    input.html,
-    ``,
-    `An automated check found this problem: ${input.failureCode}`,
+    `Failure: ${input.failureCode}`,
     entry.instruction({ evidence: input.evidence, errors: input.errors }),
     ``,
     `The child originally asked for: "${input.originalRequest}"`,
-    `Keep the game exactly what they asked for, and fix only the problem above.`,
+    `Keep the game exactly what they asked for.`,
+    ``,
+    `Current source:`,
+    input.html,
   ].join("\n");
 }
 
@@ -314,32 +249,4 @@ export function applyPatch(html: string, reply: string): PatchResult {
   }
 
   return { ok: false, reason: "no_patch_in_reply" };
-}
-
-/**
- * The one-paragraph diagnosis of WHAT is wrong — the same text
- * buildRepairPrompt() puts in front of the first attempt, exposed on its own
- * for the strict-retry rung in api/repair/route.ts.
- *
- * BUG_LOG 2026-08-17. That rung does 100% of the repair work in production (the
- * first attempt came back `no_patch_in_reply` on 4 of 4 observed repairs), and
- * it was composing its own fault line as `String(errors[0])` — "[object
- * Object]", since `errors` is GameConsoleMessage[] — falling back to a bare
- * `the game fails with: <code>`. So the model actually fixing the game never
- * saw the diagnosis the taxonomy had already written for it: which element is
- * covering the button, at which coordinates, and that the click handler is fine
- * and must not be touched. Every observed start_occluded repair was a no-op of
- * a dozen characters, and the probe re-failed on the repair's own output.
- *
- * Same source of truth for both attempts, so the two can never drift again.
- */
-export function repairFaultLine(input: {
-  failureCode: VerifyFailureCode;
-  evidence: VerifyEvidence | null;
-  errors: GameConsoleMessage[];
-}): string {
-  return REPAIR_TAXONOMY[input.failureCode].instruction({
-    evidence: input.evidence,
-    errors: input.errors,
-  });
 }

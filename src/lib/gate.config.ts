@@ -64,31 +64,6 @@ export const GUEST_COOKIE_MAX_AGE_S = 60 * 60 * 24 * 365; // 1 year
 export const IP_GUEST_TOKEN_CAP = 20_000;
 
 /**
- * The cap actually enforced, read per request so it can be tuned without a
- * rebuild — same pattern as `guestTokenLimitFor` above.
- *
- * Added 2026-08-16 for the golden-prompt harness: it calls `/api/chat` as an
- * anonymous guest and spent this allowance after four generated games, so the
- * only check that can catch "the generated GAME is wrong" could never finish a
- * run. Setting `IP_GUEST_TOKEN_CAP` high on a dev machine lets it complete.
- *
- * This is a TUNABLE, NOT A BYPASS. The gate still runs, still counts, still
- * walls — only the number moves, and only where the variable is set.
- * Production sets nothing and keeps 20,000.
- *
- * FAILS CLOSED on anything unusable — missing, empty, junk, zero, negative,
- * Infinity all fall back to the shipped cap. A paywall that fails OPEN on a
- * typo gives the app away.
- */
-export function ipGuestTokenCap(
-  env: Record<string, string | undefined> = process.env,
-): number {
-  const raw = env.IP_GUEST_TOKEN_CAP;
-  const n = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : IP_GUEST_TOKEN_CAP;
-}
-
-/**
  * Signed-in daily token budget — the pay funnel's next stage, CONFIG-READY BUT
  * OFF (0 = unlimited). Flip by setting the SIGNED_IN_DAILY_TOKEN_LIMIT env var
  * (e.g. 50000): exceeding it returns HTTP 402 → the upgrade/paywall screen.

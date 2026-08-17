@@ -14,7 +14,6 @@ import {
   insertEarly,
   loadModelHelper,
   loadModelBatchHelper,
-  LOAD_MODEL_BATCH_VERSION,
   LOAD_MODEL_HELPER_VERSION,
   MAX_TRACKED_INSTANCES,
   parseSizeTables,
@@ -169,103 +168,20 @@ describe("loadModelBatchHelper — generated script shape", () => {
     expect(script).toMatch(/template\.animations\.length[\s\S]*?does not support animated models/);
   });
 
-  // NOTE (2026-08-15): the three tests below used to pin the script's exact
-  // TEXT — `new InstancedMesh(part.geometry, …)` and
-  // `box.copy(parts[0].geometry.boundingBox)` — which is how the placement bug
-  // survived: they asserted the broken expression as though it were the spec,
-  // so they passed for as long as the bug existed and failed the moment it was
-  // fixed. Behaviour that regexes cannot see is covered by
-  // scripts/check-batch-parity.mts, which compares batched against single
-  // placement for every model in a real browser.
   it("creates one InstancedMesh per distinct geometry\\/material part and adds it to a container added once", () => {
-    expect(script).toMatch(/new InstancedMesh\(part\.mesh\.geometry, part\.mesh\.material, count\)/);
+    expect(script).toMatch(/new InstancedMesh\(part\.geometry, part\.material, count\)/);
     expect(script).toMatch(/container\.add\(im\)/);
   });
 
-  it("captures each part's transform INSIDE the model, relative to the model root", () => {
-    // Without this, a batched prop loses the node transforms that stand it
-    // upright, sit it on the ground and scale it to real-world metres.
-    expect(script).toMatch(/template\.scene\.updateMatrixWorld\(true\)/);
-    expect(script).toMatch(/rootInverse[\s\S]*?template\.scene\.matrixWorld[\s\S]*?invert\(\)/);
-    expect(script).toMatch(/local:\s*new Matrix4\(\)\.multiplyMatrices\(rootInverse, child\.matrixWorld\)/);
-  });
-
-  it("setInstance bakes the part transform into the instance matrix and flags it dirty", () => {
+  it("setInstance writes a composed TRS matrix into every part's InstancedMesh and flags it dirty", () => {
     expect(script).toMatch(/matrix\.compose\(__arPos, __arQuat, __arScale\)/);
-    // instance transform FIRST, then the part's place within the model.
-    expect(script).toMatch(/__arPartMatrix\.multiplyMatrices\(matrix, parts\[m\]\.local\)/);
-    expect(script).toMatch(/meshes\[m\]\.setMatrixAt\(i, __arPartMatrix\)/);
+    expect(script).toMatch(/meshes\[m\]\.setMatrixAt\(i, matrix\)/);
     expect(script).toMatch(/meshes\[m\]\.instanceMatrix\.needsUpdate = true/);
   });
 
-  it("boundsAt unions EVERY part, so a multi-part model reports its whole collision box", () => {
+  it("boundsAt derives a Box3 from the geometry's boundingBox transformed by the instance matrix (the Box3.setFromObject replacement)", () => {
     expect(script).toMatch(/boundsAt:\s*function\s*\(i\)/);
-    expect(script).toMatch(/box\.makeEmpty\(\)/);
-    expect(script).toMatch(/box\.union\(partBox\)/);
-  });
-
-  it("exposes modelFacing/modelMetres and a placeModel that uses them", () => {
-    // 2026-08-15. Before this the runtime had no facing datum at all and no
-    // way to floor a model onto the ground, so every game guessed both.
-    const helper = loadModelHelper();
-    expect(helper).toMatch(/window\.modelFacing\s*=/);
-    expect(helper).toMatch(/window\.modelMetres\s*=/);
-    expect(helper).toMatch(/window\.placeModel\s*=/);
-    // The heading maths must go through the measured facing, not a constant.
-    expect(helper).toMatch(/window\.modelFacing\(name\)/);
-    // The ground floor is MEASURED after scale+rotation, not read from a table.
-    expect(helper).toMatch(/new Box3\(\)\.setFromObject\(obj\)/);
-    expect(helper).toMatch(/obj\.position\.y = groundY - box\.min\.y/);
-  });
-
-  it("placeModel leaves rotation alone when the model has no audited facing", () => {
-    // A confident wrong turn is worse than no turn: an unaudited model must
-    // come out exactly as loadModel would have given it.
-    const helper = loadModelHelper();
-    expect(helper).toMatch(/if \(a >= 0 && b >= 0\) obj\.rotation\.y/);
-  });
-
-  it("placeModel is a NEW api, and loadModel still normalises nothing", () => {
-    // Deliberate: stored games hand-compensate for these quirks (one flips a
-    // crocodile with rotation.y = Math.PI). Auto-correcting loadModel would
-    // flip those games BACK to wrong — see CLAUDE.md rule 11.
-    const helper = loadModelHelper();
-    const loadModelBody = helper.slice(helper.indexOf("window.loadModel = async"));
-    const upToPlace = loadModelBody.slice(0, loadModelBody.indexOf("window.placeModel"));
-    expect(upToPlace).not.toMatch(/rotation\.y\s*=/);
-    expect(upToPlace).not.toMatch(/position\.y\s*=/);
-    expect(upToPlace).not.toMatch(/scale\.(setScalar|multiplyScalar)/);
-  });
-
-  it("names the container after the model, so a game's per-type logic can actually fire", () => {
-    // 2026-08-17, from the owner's Mumbai Flight Sim. `loadModelBatch` returned
-    // `{ mesh: container }` where container is a bare `new Group()` — `.name`
-    // is "". Generated games reasonably branch on it to size a mixed flock:
-    //   if (e.batch.mesh.name === 'bird')       batchScale = 0.5;   // never true
-    //   if (e.batch.mesh.name.includes('tree')) batchScale = 5.0;   // never true
-    // Neither arm could ever run, so every moving batch in that game was forced
-    // to one scale each frame — birds the size of trees. The model wrote
-    // correct code against a field we left empty.
-    const body = script.slice(script.indexOf("const container = new Group()"));
-    expect(body).toMatch(/container\.name = name/);
-    // AFTER construction and BEFORE the object is handed back, or it is not
-    // observable to the game that reads `batch.mesh.name`.
-    expect(body.indexOf("container.name = name")).toBeLessThan(body.indexOf("mesh: container"));
-  });
-
-  it("stamps a version so ensureAssetRuntime can replace a stale copy in a stored game", () => {
-    expect(script).toMatch(
-      new RegExp(`window\\.__arLoadModelBatchVersion = ${LOAD_MODEL_BATCH_VERSION}`),
-    );
-  });
-
-  it("the batch version is at least 3 — naming the container is a behaviour change", () => {
-    // The bump IS the migration: ensureAssetRuntime strips the older block and
-    // injects this one on the next preview render, so ~200 stored games pick
-    // the name up without a restamp campaign. Without the bump the fix reaches
-    // only games built after the deploy — which is the exact trap that froze
-    // the WebGL guard on every stored game (2026-08-11).
-    expect(LOAD_MODEL_BATCH_VERSION).toBeGreaterThanOrEqual(3);
+    expect(script).toMatch(/box\.copy\(parts\[0\]\.geometry\.boundingBox\)\.applyMatrix4\(matrix\)/);
   });
 
   it("fails soft (returns null, warns) rather than throwing on a bad name or a load failure", () => {
@@ -380,13 +296,11 @@ describe("loadModelHelper — modelSize(name)", () => {
   // rotateToJoin() to stored games — which IS the migration for the reported
   // broken race track (BUG-FIX-LOG). A child re-opening it gets a model that
   // can finally answer which way a corner turns.
-  it("bumped the helper version so stored games get the new accessors retrofitted", () => {
+  it("bumped the helper version so stored games get modelSize + modelAxis + modelJoins + fitTile retrofitted", () => {
     // Without the bump, ensureAssetRuntime leaves an existing older helper
     // alone and the new capability never reaches any game that already exists.
-    // v7: modelSize + modelAxis + modelJoins + fitTile.
-    // v8 (2026-08-15): modelFacing + modelMetres + placeModel.
-    expect(LOAD_MODEL_HELPER_VERSION).toBe(8);
-    expect(script).toContain("window.__arLoadModelVersion = 8");
+    expect(LOAD_MODEL_HELPER_VERSION).toBe(7);
+    expect(script).toContain("window.__arLoadModelVersion = 7");
   });
 
   it("answers null rather than a made-up number for an unmeasured model", () => {

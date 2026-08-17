@@ -12,17 +12,9 @@
 import { describe, it, expect } from "vitest";
 import { ensureAssetRuntime } from "./ensure-runtime";
 import { PERF_PROBE_MARKER, buildPerfProbeScript } from "./perf-probe";
-import { buildResolutionGovernorScript } from "./resolution-governor";
 import manifestJson from "./manifest.json";
 import type { AssetManifest } from "./manifest";
-import {
-  countSizeTables,
-  parseSizeTables,
-  webglContextGuard,
-  WEBGL_GUARD_VERSION,
-  LOAD_MODEL_BATCH_VERSION,
-  LOAD_MODEL_HELPER_VERSION,
-} from "./runtime-helpers";
+import { countSizeTables, parseSizeTables, webglContextGuard, WEBGL_GUARD_VERSION } from "./runtime-helpers";
 
 const manifest = manifestJson as AssetManifest;
 const ENGINE = manifest.assets.find((a) => a.type === "engine")!.url;
@@ -62,16 +54,14 @@ describe("ensureAssetRuntime — the three-importmap floor", () => {
 
   it("F.3 idempotent: a fully-floored 3D game is unchanged", () => {
     // The floor grew a fourth element on 2026-07-30 (the perf probe, after the
-    // 2026-07-29 governor), a FIFTH on 2026-08-10 (the WebGL context guard)
-    // and a SIXTH on 2026-08-15 (the adaptive resolution governor). The
-    // property under test is unchanged: running the floor over already-floored
-    // HTML must be a no-op.
+    // 2026-07-29 governor) and a FIFTH on 2026-08-10 (the WebGL context
+    // guard). The property under test is unchanged: running the floor over
+    // already-floored HTML must be a no-op.
     const injected = page(
       `<script type="importmap">${JSON.stringify({ imports: { three: ENGINE } })}</script>` +
         `<style>/*ari-3d-canvas-floor*/canvas:not(:last-of-type){display:none!important}</style>` +
         `<script>window.__arFrameGovernor = 1;</script>` +
         webglContextGuard() +
-        buildResolutionGovernorScript() +
         `${PERF_PROBE_MARKER}<script>${buildPerfProbeScript()}</script>` +
         `<script type="module">import { Scene } from "three";</script>`,
     );
@@ -278,178 +268,6 @@ window.loadModel = async function (name) {
     expect(ensureAssetRuntime(out)).toBe(out); // idempotent
   });
 
-  it("F.14b a game carrying the ORIGINAL unstamped batch helper is upgraded, not left alone", () => {
-    // The 2026-08-15 bug: v1's loadModelBatch dropped each part's in-model
-    // transform, so every batched prop rendered rotated/sunk/un-normalised
-    // ("the trees were lying down", "the car goes through the houses").
-    // Gating on the helper's mere PRESENCE — as this did — means the games
-    // that HAVE the broken helper are exactly the ones the fix skips. Same
-    // trap as the WebGL guard (2026-08-11) and the perf probe before it.
-    const stale = page(
-      `<script type="module">import { Scene } from "three"; loadModel("tree"); loadModelBatch("tree", 40);</script>` +
-        `<script type="module">window.loadModelBatch = async function () { /* v1, unstamped */ return null; };</script>`,
-    );
-    const out = ensureAssetRuntime(stale);
-    expect(out).toContain(`window.__arLoadModelBatchVersion = ${LOAD_MODEL_BATCH_VERSION}`);
-    expect(out).not.toContain("/* v1, unstamped */");
-    // Exactly one helper — a stale copy left in place would run alongside
-    // (and after) the fresh one and win.
-    expect(out.match(/window\.loadModelBatch\s*=/g)?.length).toBe(1);
-    expect(ensureAssetRuntime(out)).toBe(out); // and settles
-  });
-
-  // ── the 2D floor: sound is NOT 3D (BUG-FIX-LOG 2026-08-17) ──────────────
-  //
-  // Owner UAT, same day the bug was introduced: "i made a 2d game and it came
-  // out with error". Measured on a 289-byte 2D canvas game whose only crime
-  // was calling playSound("coin"): it came back 34,755 bytes, carrying an
-  // import map, the loadModel helper and a <script type="module"> importing
-  // "three" — so the browser then fetched a 621 KB 3D engine for a game that
-  // draws with ctx.fillRect.
-  //
-  // Cause, and the lesson: ensure-runtime's "does this game use the 3D
-  // runtime?" probe was rebuilt from INJECTED_RUNTIME_GLOBALS during the
-  // KNOWN_BUGS #21 de-duplication. That list is RIGHT for its other consumer
-  // (three-import-lint's healer — playSound and playMusic genuinely ARE
-  // injected globals and must be stripped from a `from "three"` import), and
-  // WRONG here. Two consumers, two questions, one list: de-duplicating them
-  // silently widened this one.
-  //
-  // Most 3D work cannot break 2D, which is exactly why 2D needs its own
-  // explicit floor rather than trusting that nothing reached it.
-  it("F.22 a 2D game that only calls playSound gets NO 3D runtime at all", () => {
-    const twoD = page(
-      `<script>const ctx = c.getContext("2d"); function onCatch(){ playSound("coin"); } requestAnimationFrame(onCatch);</script>`,
-    );
-    const out = ensureAssetRuntime(twoD);
-    expect(out).not.toContain("importmap");
-    expect(out).not.toContain("window.loadModel =");
-    expect(out).not.toContain('from "three"');
-    expect(out).not.toContain("window.AR_ASSETS");
-  });
-
-  it("F.23 the same for playMusic, and for both together", () => {
-    for (const call of [`playMusic("theme")`, `playSound("coin"); playMusic("theme")`]) {
-      const out = ensureAssetRuntime(page(`<script>function go(){ ${call}; }</script>`));
-      expect(out, call).not.toContain("importmap");
-      expect(out, call).not.toContain("window.loadModel =");
-    }
-  });
-
-  it("F.24 but a 3D game that ALSO plays sound still gets the full runtime", () => {
-    // The other side of the same boundary — narrowing the probe must not cost
-    // a real 3D game its runtime.
-    const out = ensureAssetRuntime(
-      page(`<script type="module">import { Scene } from "three"; loadModel("car"); playSound("coin");</script>`),
-    );
-    expect(out).toContain("importmap");
-    expect(out).toContain("window.loadModel =");
-  });
-
-  it("F.14d a stored game on the PREVIOUS stamped batch helper (v2) is re-floored to the named-container one", () => {
-    // 2026-08-17. v2 is the version ~200 stored 3D games are carrying right
-    // now, and it hands back an unnamed Group — so any game that branches on
-    // `batch.mesh.name` has dead code. Presence is not enough and neither is
-    // "has a stamp": the guard must compare the NUMBER, or every one of those
-    // games stays on v2 forever.
-    const stale = page(
-      `<script type="module">import { Scene } from "three"; loadModel("tree"); loadModelBatch("tree", 40);</script>` +
-        `<script type="module">window.__arLoadModelBatchVersion = 2;\nwindow.loadModelBatch = async function () { /* v2, no container.name */ return null; };</script>`,
-    );
-    const out = ensureAssetRuntime(stale);
-    expect(out).toContain(`window.__arLoadModelBatchVersion = ${LOAD_MODEL_BATCH_VERSION}`);
-    expect(out).not.toContain("/* v2, no container.name */");
-    expect(out).toContain("container.name = name");
-    expect(out.match(/window\.loadModelBatch\s*=/g)?.length).toBe(1);
-    expect(ensureAssetRuntime(out)).toBe(out); // and settles
-  });
-
-  it("F.14c a game already carrying the CURRENT batch helper is left byte-identical", () => {
-    const raw = page(
-      `<script type="module">import { Scene } from "three"; loadModel("tree"); loadModelBatch("tree", 40);</script>`,
-    );
-    const once = ensureAssetRuntime(raw);
-    expect(once).toContain(`window.__arLoadModelBatchVersion = ${LOAD_MODEL_BATCH_VERSION}`);
-    expect(ensureAssetRuntime(once)).toBe(once);
-  });
-
-  it("F.18 a game using an audited model gets AR_FACING and AR_REAL floored in", () => {
-    // 2026-08-15. These two tables are the whole delivery mechanism for the
-    // facing/scale fix: the v8 helper retrofits onto stored games, and without
-    // the tables modelFacing()/modelMetres() answer null for everything — i.e.
-    // exactly the bug they exist to close.
-    const raw = page(`<script type="module">import { Scene } from "three"; loadModel("car");</script>`);
-    const out = ensureAssetRuntime(raw);
-    expect(out).toMatch(/window\.AR_FACING=/);
-    expect(out).toContain('"car":"-z"'); // measured, and NOT the +Z the prompt used to assert
-    expect(out).toMatch(/window\.AR_REAL=/);
-    expect(ensureAssetRuntime(out)).toBe(out); // settles
-  });
-
-  it("F.19 a model with no audited facing contributes no AR_FACING row", () => {
-    // Absent must stay absent: placeModel then leaves rotation alone, which is
-    // strictly better than turning a model by a guess.
-    const raw = page(`<script type="module">import { Scene } from "three"; loadModel("canoe");</script>`);
-    const out = ensureAssetRuntime(raw);
-    expect(out).not.toMatch(/"canoe":"[+-][xz]"/);
-  });
-
-  it("F.20 a game that uses ONLY placeModel still gets the helper (live bug, 2026-08-15)", () => {
-    // The gate was `/\bloadModel\s*\(/`, which matches neither `placeModel(`
-    // nor `loadModelBatch(` nor `modelHeading(`. Survivable while loadModel
-    // was the only API a game called — and a live bug the moment the prompt
-    // started telling the model to PREFER placeModel: such a game got NO
-    // helper injected and died on "placeModel is not defined".
-    const raw = page(
-      `<script type="module">import { Scene } from "three"; const car = await placeModel("car", { at: { x: 0, z: 0 } });</script>`,
-    );
-    const out = ensureAssetRuntime(raw);
-    expect(out).toContain("window.loadModel =");
-    expect(out).toContain("window.placeModel =");
-    expect(out).toMatch(/window\.AR_ASSETS=/); // and its asset table
-  });
-
-  it("F.21 the same for loadModelBatch-only and modelHeading-only games", () => {
-    for (const call of [`loadModelBatch("tree", 40)`, `modelHeading("car", h)`, `modelSize("house").x`]) {
-      const out = ensureAssetRuntime(page(`<script type="module">import { Scene } from "three"; ${call};</script>`));
-      expect(out, call).toContain("window.loadModel =");
-    }
-  });
-
-  it("F.22 a name that merely CONTAINS an api name does not trigger injection", () => {
-    // `myLoadModelWrapper()` is the child's own function, not our API.
-    const out = ensureAssetRuntime(page(`<script type="module">import { Scene } from "three"; myLoadModelWrapper();</script>`));
-    expect(out).not.toContain("window.loadModel =");
-  });
-
-  it("F.23 an INVENTED model name resolves to a real asset (stegosaurus -> dino)", () => {
-    // Measured in production: `stegosaurus` was asked for 5 times and got
-    // nothing, leaving the child a hand-built placeholder. The invented name
-    // stays the KEY — the game's own loadModel("stegosaurus") is untouched —
-    // and only the URL behind it becomes real.
-    const raw = page(`<script type="module">import { Scene } from "three"; loadModel("stegosaurus");</script>`);
-    const out = ensureAssetRuntime(raw);
-    const table = JSON.parse(out.match(/window\.AR_ASSETS=(\{.*?\});/)![1]!);
-    expect(Object.keys(table)).toContain("stegosaurus");
-    expect(table.stegosaurus).toContain("dino");
-    // and the game's code is NOT rewritten
-    expect(out).toContain('loadModel("stegosaurus")');
-  });
-
-  it("F.24 a name with no honest match stays absent — placeholder, not a wrong model", () => {
-    const out = ensureAssetRuntime(page(`<script type="module">import { Scene } from "three"; loadModel("mermaid");</script>`));
-    const m = out.match(/window\.AR_ASSETS=(\{.*?\});/);
-    const table = m ? JSON.parse(m[1]!) : {};
-    expect(table.mermaid).toBeUndefined();
-  });
-
-  it("F.25 a real name is never diverted by the resolver", () => {
-    const out = ensureAssetRuntime(page(`<script type="module">import { Scene } from "three"; loadModel("car"); loadModel("tree");</script>`));
-    const table = JSON.parse(out.match(/window\.AR_ASSETS=(\{.*?\});/)![1]!);
-    expect(table.car).toContain("car.");
-    expect(table.tree).toContain("tree.");
-  });
-
   it("F.15 a game that only calls loadModel (no batch) does NOT get the batch helper floored in", () => {
     const raw = page(`<script type="module">import { Scene } from "three"; loadModel("car");</script>`);
     const out = ensureAssetRuntime(raw);
@@ -475,7 +293,7 @@ window.loadModel = async function (name) { return null; };
         `<script type="module">import { Scene } from "three"; loadModel("car");</script>`,
     );
     const out = ensureAssetRuntime(stored);
-    expect(out).toContain(`window.__arLoadModelVersion = ${LOAD_MODEL_HELPER_VERSION}`);
+    expect(out).toContain("window.__arLoadModelVersion = 7");
     expect(out).toContain("window.modelSize");
     // The helper alone would be useless — it must find real metres to read.
     const carSize = manifest.assets.find((a) => a.name === "car")!.size;
@@ -628,59 +446,6 @@ window.loadModel = async function (name) { return null; };
     // The map must NOT be pointlessly relocated on every render — that would
     // rewrite every stored game forever and defeat the idempotence check.
     const healed = ensureAssetRuntime(storedWithDeepMap(3));
-    expect(ensureAssetRuntime(healed)).toBe(healed);
-  });
-});
-
-// ── loadModelBatch names must reach AR_ASSETS too ────────────────────────────
-// BUG_LOG 2026-08-17, the Mumbai flight simulator. The child asked four times
-// over for "moving cars and bikes travelling in the roads" and got four
-// confident confirmations ("I've added a whole fleet of moving cars, taxis and
-// trucks!") and no cars, ever.
-//
-// Mechanism: on an EDIT turn the stored source has NO asset markers —
-// injectAssets strips them (inject.ts's `stripAssetMarkers`) — so a model newly
-// added by an edit reaches AR_ASSETS only through the healing pass below. That
-// pass scanned `LOADMODEL_ARG_RE = /\bloadModel\s*\(/`, which cannot match
-// `loadModelBatch("car", 60)`: after `loadModel` comes `Batch`, not `(`.
-//
-// So the ONE call shape used for crowds, traffic and fleets had no safety net
-// at all. `loadModelBatch` then hits `if (!template) return null`, the game's
-// own `if (batch) {…}` skips the block, and nothing appears — no error, no
-// warning, nothing for the child or the model to see. A single `loadModel("x")`
-// added by the same edit turn WAS healed, which is exactly why the spaceship
-// arrived that same session while the fleet of cars never did.
-describe("ensureAssetRuntime — batch-loaded models reach AR_ASSETS", () => {
-  const editedGame = (call: string) =>
-    page(
-      `<script type="importmap">${JSON.stringify({ imports: { three: ENGINE } })}</script>` +
-        `<script>window.AR_ASSETS={"airplane":"https://assets.ariantra.com/m/airplane.glb"};</script>` +
-        `<script type="module">import { Scene } from "three";\n${call}</script>`,
-    );
-
-  it("B.1 heals a model the edit turn added via loadModelBatch (the reported bug)", () => {
-    const out = ensureAssetRuntime(editedGame(`const traffic = await loadModelBatch("car", 60);`));
-    const table = JSON.parse(out.match(/window\.AR_ASSETS=(\{.*?\});/)![1]!);
-    expect(table.car, "a batch-loaded car must get a real URL, or no cars ever appear").toBe(CAR);
-    // and the model the game already had is not lost in the process
-    expect(table.airplane).toBeTruthy();
-  });
-
-  it("B.2 still heals the plain loadModel form (unchanged behaviour)", () => {
-    const out = ensureAssetRuntime(editedGame(`loadModel("car").then(m => scene.add(m));`));
-    const table = JSON.parse(out.match(/window\.AR_ASSETS=(\{.*?\});/)![1]!);
-    expect(table.car).toBe(CAR);
-  });
-
-  it("B.3 resolves an ALIAS used in a batch call — the child asked for buses", () => {
-    // `bus` -> `van` in MODEL_ALIASES; there is no `bus` model in the library.
-    const out = ensureAssetRuntime(editedGame(`const buses = await loadModelBatch("bus", 12);`));
-    const table = JSON.parse(out.match(/window\.AR_ASSETS=(\{.*?\});/)![1]!);
-    expect(table.bus, "the invented name stays the key; only the URL behind it becomes real").toBeTruthy();
-  });
-
-  it("B.4 settles immediately — healing a batch name is idempotent", () => {
-    const healed = ensureAssetRuntime(editedGame(`const traffic = await loadModelBatch("car", 60);`));
     expect(ensureAssetRuntime(healed)).toBe(healed);
   });
 });

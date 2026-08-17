@@ -55,11 +55,6 @@ export interface ChatMessage {
    *  chose to send them, so the client needs no flag-awareness of its own,
    *  just render-if-present (ChatPanel.container.tsx). */
   nextAskHints?: string[];
-  /** The server-side trace id of the turn that produced this message
-   *  (2026-08-17). Carried back to /api/repair when this game later
-   *  self-heals, so the build, its edits and every repair share ONE
-   *  `trace=` key in logs/app.log. Diagnostic only — never rendered. */
-  traceId?: string;
   createdAt: number;
 }
 

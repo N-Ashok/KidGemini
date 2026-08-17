@@ -81,68 +81,6 @@ describe("selectModelNames — explicit names and iteration history always win",
     expect(picked).toContain("skyscraper"); // history text still carries "city"
   });
 
-  // ── A4: the DELIVERED artifact has no markers ──────────────────────────
-  //
-  // 2026-08-17, from the owner's Mumbai Flight Sim. The test above passes a
-  // history artifact carrying `<!--USES_MODELS: ...-->`. No stored artifact
-  // ever looks like that: injectAssets STRIPS the markers before delivery
-  // (stripAssetMarkers), so on every real edit turn step 1 of selectModelNames
-  // matched nothing and the game's OWN models fell out of the toy box line.
-  //
-  // The prompt then tells the model, truthfully as far as it knows, "Only
-  // these; never invent a name" and "If you need an object the toy box doesn't
-  // have, build it from the primitive shapes instead" — so it dutifully
-  // hand-built 600 BoxGeometry skyscrapers with glowing window boxes, and the
-  // owner asked "the skyscrapers have windows in the model why is it not
-  // coming through in the game?". The model never had them to use.
-  //
-  // Measured before the fix: the delivered-shape case below returned NONE of
-  // the three buildings; the marker-shape case returned all three. Third bug
-  // of the same day from reading the stripped marker instead of the call sites
-  // (see ensure-runtime's LOADMODEL_ARG_RE and model-swap-lint's own note).
-  const deliveredCity = `<html><head><script>window.AR_ASSETS={"skyscraper":"u"};</script></head>
-    <script type="module">
-      loadModelBatch("skyscraper", 40);
-      loadModel("house");
-      placeModel("tower", { at: { x: 0, z: 0 } });
-    </script></html>`;
-
-  it("a model the DELIVERED game loads is kept, though the marker is long stripped", () => {
-    // NOTE the history text deliberately carries NO city/building word. The
-    // marker-based test above says `msg("child", "3d city game")`, and "city"
-    // pulls the buildings genre in on its own — so that test would keep
-    // passing with step 1 deleted entirely. Genre leakage is exactly how this
-    // gap stayed invisible; the artifact must be the only thing that can
-    // supply these names.
-    const history = [
-      msg("child", "make a flying game"),
-      msg("assistant", "Here's your game! 🎮", deliveredCity),
-    ];
-    const picked = selectModelNames({ message: "add some turbulence", history, manifest: big });
-    expect(picked).toContain("skyscraper");
-  });
-
-  it("all three call shapes count — loadModel, loadModelBatch AND placeModel", () => {
-    // placeModel is the one the prompt now tells the model to PREFER, and it
-    // is the shape neither this selector nor the swap lint could see.
-    const history = [msg("assistant", "🎮", deliveredCity)];
-    const picked = selectModelNames({ message: "add some turbulence", history, manifest: big });
-    expect(picked).toContain("skyscraper"); // loadModelBatch
-    expect(picked).toContain("house"); // loadModel
-    expect(picked).toContain("tower"); // placeModel
-  });
-
-  it("an invented name in the code is not smuggled into the toy box", () => {
-    // Fail-closed: the selector offers only names the manifest can resolve, or
-    // the model would be told a hallucination is available.
-    const history = [
-      msg("assistant", "🎮", `<script>loadModel("unicorn_castle"); loadModel("dino");</script>`),
-    ];
-    const picked = selectModelNames({ message: "make it faster", history, manifest: big });
-    expect(picked).not.toContain("unicorn_castle");
-    expect(picked).toContain("dino");
-  });
-
   it("keywords in earlier child messages still count", () => {
     const history = [msg("child", "i want a racing game"), msg("assistant", "ok!")];
     const picked = selectModelNames({ message: "with a dog driving", history, manifest: big });

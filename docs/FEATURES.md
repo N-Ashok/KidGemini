@@ -23,39 +23,6 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 
 ## Chat (home `/`)
 - Gemini-powered kids chat: text + voice (TTS playback, regenerate last answer)
-- **Two-pass build pipeline — Pass 1 spec compiler** (2026-08-12, owner ask;
-  `src/lib/spec-compiler.ts`, wired into `GeminiChatModel.replyStream` in
-  `gemini.ts`). **OFF by default** (`SPEC_COMPILER_ENABLED=1`) —
-  `docs/2026-08-12_PRD_GenrePlaybookPipeline.md` is still unapproved for live
-  traffic. When on: a fresh build turn (not an edit, not a 3D conversion, not
-  a forced in-place rebuild, no image) first goes through Pass 1 — a compiler
-  model turns the child's one-line request into a numbered build spec (§2.3
-  of the PRD: measured 6.2 KB → 41.6 KB, 3/11 → 11/11 features, for
-  $0.041) — and Pass 2 (the ordinary builder call, unchanged) builds from
-  that spec instead of the raw words. Every safety/gating decision
-  (`configFor`'s catalog gates, `buildContents`'s child-safety context) still
-  runs on the child's ORIGINAL message; only the text handed to the builder
-  changes. Pass 1's model (`SPEC_COMPILER_MODEL`) defaults to
-  `gemini-2.5-flash-lite` — revised 2026-08-12 from an initial DeepSeek
-  default after a local UAT run measured DeepSeek stalling the full 30s
-  one-shot timeout before falling back (~30-60s added per build). DeepSeek
-  stays available as an explicit opt-in (`SPEC_COMPILER_MODEL=
-  deepseek-v4-flash`) once its reliability is proven — `model-registry.ts`'s
-  `chainFor()` still drops it to lite-tier Google/other models whenever
-  `DEEPSEEK_API_KEY` / `ALLOW_PROMPT_ONLY_SAFETY_MODELS` are unset. Pass 1
-  failing outright never blocks a build (fails open to the raw message).
-  UAT confirmed 2026-08-12: 41-char request → 4,650-char spec → 16 KB game
-  (vs a ~6.2 KB no-compile baseline); total turn time on the DeepSeek-primary
-  config was 97.5s, which is why the default moved to Lite. Same-day owner
-  feedback on that first run's art direction/scene ("pathetic... generic")
-  led to rewriting §7/§8 of the compiler prompt to demand a bespoke,
-  per-game visual identity (a named illustration style + an invented,
-  setting-specific colour story) instead of checklist-style generic output
-  — the validated structural rules (padding-bottom, transition timing, no
-  `alert()`) are unchanged. `Game/logs/last-spec-compile.md` is now
-  overwritten with the full compiled spec on every Pass 1 success (debug
-  aid, `SPEC_COMPILER_DUMP_FILE` to relocate) so a run's actual output is
-  reviewable without scraping terminal scrollback.
 - **Server-side chat history** (2026-07-13, TECH_DEBT #26 shipped): every
   conversation (messages + generated game HTML) persists in SQLite keyed by
   the account (signed-in) or the guest device cookie — chats survive cleared
@@ -886,45 +853,6 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   real game, hidden-tab rendering went 53.3 fps → 0. Published arcade games are
   static S3 HTML and cannot be reached. Also new: a rule against letting dead
   objects fill a spawn cap, after a tank game deadlocked into an empty arena
-- **Model facing, real-world size, and `placeModel()`** (2026-08-15; owner: "the llm is not
-  getting the axis, size, direction correct"): three things a generated game had to guess, each
-  independently, every time. **Facing** was asserted by the prompt ("VEHICLES/CHARACTERS face
-  +Z") and never known — a render audit shows `car` faces -Z, `airplane` +X, `elephant` -X,
-  while most vehicles and animals do face +Z; a bounding box cannot express a direction, so no
-  datum existed. **Size** was described as "REAL metres" but 238 of 296 sized models are raw kit
-  units, which is how `mountain` (1.9) ends up smaller than `car` (2.56) and a house narrower
-  than one. **Ground** had no data at all and nothing floors a model. Now: `facing` and
-  `realSize` ship in the manifest (69 models audited by render, 111 given real sizes, 16
-  explicitly recorded as un-auditable and why) as `AR_FACING`/`AR_REAL` with `modelFacing()` /
-  `modelMetres()`, and `placeModel(name, {at, heading, metres, scale, y})` loads a model, scales
-  it, turns its own front onto the heading you asked for, and measures the result so its base
-  rests on the ground. `modelSize()` is unchanged and `placeModel` is a NEW function rather than
-  a change to `loadModel` — stored games hand-compensate for these quirks, and correcting
-  `loadModel` under them would flip those games back to wrong. Injected via `ensureAssetRuntime`
-  (helper v8), so stored games get it on their next preview render. Proved in a real browser by
-  `scripts/check-placement.mts` (13/13): base y=0, a car asked south turns exactly 180 degrees,
-  the house dwarfs it at real scale.
-- **Adaptive resolution governor** (2026-08-15, `src/lib/assets/resolution-governor.ts`;
-  owner report: "in production the 3d games are slow", on a **Chromebook**): every 3D game
-  renders at full device resolution, because the playbook has the model call
-  `setPixelRatio(Math.min(devicePixelRatio, 2))`. On a weak integrated GPU that is the whole
-  problem — the reported game had nothing to cut (24 meshes, 63k triangles, 23 draw calls,
-  0.6ms of JS per frame, 60fps on an M2), yet ran 14-28fps in production. Measured: at an
-  880x1400 drawing buffer it managed 30fps on a fill-limited renderer and 59fps at half the
-  pixels, while switching to cheap non-PBR shading moved it 30 → 32, i.e. nothing. So the
-  governor watches rAF ticks and spends only the pixels the device can afford, walking a ladder
-  (2 → 1.5 → 1 → 0.75): down after 2s under 50fps, back up only after 5s at 58fps+, never above
-  the ratio the game itself chose, and it stops retrying a level that has failed twice.
-  Samples taken while `document.hidden`, unfocused, or at 0fps are ignored, and — after a real
-  browser caught it walking an M2 to the floor because an occluded window was throttled to
-  30fps — the premise is MEASURED, not assumed: every downshift checks whether it actually
-  bought at least 10% more frames, and if it did not, the pixels go straight back and cutting
-  is disabled for a minute. Levels that fail back off geometrically rather than being banned,
-  so a transient stall can never pin a fast machine at low resolution. **Silent by owner decision** — no kid-facing banner, no
-  server report; the game simply gets smooth. Injected via `ensureAssetRuntime`, the same route
-  as the frame governor and WebGL guard, so the ~200 stored games get it without regeneration.
-  Verified on the child's real stored game under a fill-limited renderer: 37fps → 53fps, with
-  the governor dropping the buffer to 660x1050 on its own.
 - **Preview Perf Panel** (2026-07-30,
   `docs/2026-07-30_PRD_PreviewPerfPanel.md`; owner ask: a 3D cricket game with
   24 separately-animated characters heated up a laptop, with no way to tell
@@ -1221,61 +1149,6 @@ server-to-server contract as `arcade-partner.ts`).
   after sign-in (param survives the Auth.js round-trip) Checkout auto-opens
   for that pack — repeatable, no "already paid" gate, since packs are
   top-ups, not a single active plan (`upgrade-deeplink.test.ts`)
-
-## Preview & fix safety (2026-08-16 — one-pager: `2026-08-16_ONE-PAGER_SafetyQualityAndCostBatch.md`)
-- **Nothing edits a child's game unless she asked.** The proactive draw-call
-  auto-fix is OFF (`AUTO_FIX_ENABLED`, `src/lib/slowdown-nudge.ts`) — it fired
-  on merely opening a draw-call-bound game, looped (its one-shot guard was
-  keyed on `docKey`, and every fix mints a new one), and stripped every mesh
-  out of a child's game mid-play. Its bounds (`MAX_AUTO_FIXES_PER_SESSION`,
-  `AUTO_FIX_MUST_HELP_RATIO`) live on in `autoFixBoundsAllow` and stay tested
-  underneath the switch. The child-tapped "Make it faster" banner is unchanged
-- **A speed fix can never make the game worse** (`src/lib/scene-census.ts`):
-  `sceneCensus()` counts COPIES IN THE WORLD (`loadModelBatch(name, n)` = n,
-  `new InstancedMesh(…, n)` = n) before and after, and `censusRegression()`
-  discards the result — keeping the running game on screen — if a model name
-  vanished or the world shrank below 60%. Counting copies rather than
-  construction calls is the point: a CORRECT instancing fix deletes hundreds
-  of `new Mesh(...)` calls by design. Scoped to the two "make it faster" paths
-  (`handleSend(..., { protectSceneFrom })`); an ordinary edit may still remove
-  things on request
-- **Games that save a high score survive the preview**
-  (`src/lib/assets/storage-shim.ts`): the preview iframe is
-  `sandbox="allow-scripts"` with no `allow-same-origin`, an opaque origin where
-  reading `localStorage` THROWS — the title screen painted and the Start button
-  did nothing. `ensureStorageShim()` installs a memory-backed stand-in ahead of
-  the game's first script, tries the real API first (published games untouched),
-  and runs BEFORE the plain-2D early return, since those are the games that need
-  it. Scores don't persist — they can't — but the game plays
-- **The build-progress line no longer leaks**: one emoji instead of two
-  (`ArtifactFrame` no longer doubles the derived one), word-anchored keywords
-  (🏆 came from `/point/` inside "Pinpointing"), an `ENGINEER_JARGON` reject in
-  `kid-thought.ts` so "identifying the root cause of the draw calls" never
-  reaches a child, and no quoting of an ask too long to quote
-
-## Generation quality & cost (2026-08-16)
-- **Edit turns cost ~9,900 tokens, down from ~21,000**
-  (`src/lib/assets/strip-runtime.ts`): our injected runtime is stripped from the
-  copy the model reads (~8,470 tokens/edit). The child's own code survives
-  byte-identical, or every SEARCH/REPLACE patch quoting it would miss. Plus a
-  persona split (`CHILD_PERSONA_CORE` always rides; the build contract is
-  dropped on edit turns)
-- **Invented model names resolve deterministically**
-  (`src/lib/assets/model-alias.ts`): `resolveModelName()` maps `stegosaurus` →
-  `dino` with no extra model call, and prefers NO match over a wrong one — a
-  missing model leaves the game's placeholder, a wrong one puts a strange
-  object in the child's world
-- **What the prompt may teach is pinned to what is SERVED**
-  (`src/lib/assets/three-exports.published.json`, written only by a verified
-  bundle upload): editing the vendoring recipe does not change the
-  content-hashed bundle every game already loads, and advertising a name the
-  live bundle lacks is what killed a child's game on 2026-08-15
-  (`CatmullRomCurve3`). Now a test failure instead
-- **The golden-prompt harness can complete a run**: `ipGuestTokenCap()` makes
-  the per-IP guest cap env-overridable (`IP_GUEST_TOKEN_CAP`, local dev only,
-  fails closed on junk), and the runner judges the DELIVERED artifact rather
-  than the streamed text, reports pipeline refusals as their own category, and
-  exits non-zero on a partial run
 
 ## Ariantra integration
 - Shared Ariantra header on every page (`ArNav`): Home · Games · Games-Lab ·

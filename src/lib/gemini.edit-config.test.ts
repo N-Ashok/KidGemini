@@ -26,7 +26,7 @@ vi.mock("./retry", () => ({
   withTimeout: (fn: () => unknown) => fn(),
 }));
 
-import { CHILD_PERSONA_CORE, CHILD_SYSTEM_PROMPT, buildTurnSystemInstruction, GeminiChatModel } from "./gemini";
+import { CHILD_SYSTEM_PROMPT, buildTurnSystemInstruction, GeminiChatModel } from "./gemini";
 import { GAME_EDIT_PROMPT_SECTION } from "./game-edit";
 
 describe("buildTurnSystemInstruction — isEdit param", () => {
@@ -39,43 +39,14 @@ describe("buildTurnSystemInstruction — isEdit param", () => {
     expect(full).toContain(GAME_EDIT_PROMPT_SECTION);
   });
 
-  it("isEdit=true still carries the child-safety base prompt (safety rules never dropped)", () => {
-    // The intent of this test is unchanged and is the important one: the
-    // child-audience framing and safety rules ride on EVERY turn. What changed
-    // on 2026-08-16 is that the ~1,000-token BUILD contract (controls,
-    // responsive layout, start screen, HUD design) no longer rides on edits —
-    // the game already made those decisions, and the contract's opening line
-    // ("respond with a single HTML document") flatly contradicts the patch
-    // contract. Safety is a different thing from the build spec, and only the
-    // build spec was trimmed.
+  it("isEdit=true still carries the full child-safety base prompt (safety rules never dropped)", () => {
     const full = buildTurnSystemInstruction({ three: false, audio: false }, false, true);
-    expect(full.startsWith(CHILD_PERSONA_CORE)).toBe(true);
-    expect(full).toContain("Never produce anything scary, gory, sexual, hateful, or unsafe.");
+    expect(full.startsWith(CHILD_SYSTEM_PROMPT)).toBe(true);
   });
 
-  it("isEdit=true drops the FRESH-BUILD contract but keeps what an edit can break", () => {
+  it("isEdit=true with everything else off is exactly base + edit section", () => {
     const full = buildTurnSystemInstruction({ three: false, audio: false }, false, true);
-    // Gone: decisions the game already made.
-    expect(full).not.toContain("respond with a single HTML document");
-    expect(full).not.toContain("Show a START SCREEN");
-    expect(full).not.toContain("backdrop-filter: blur(6px)");
-    // Kept: things an edit can still get wrong.
-    expect(full).toContain("landmark comment");
-    expect(full).toContain('id="score"');
-    expect(full).toContain("self-contained and offline");
-  });
-
-  it("a FRESH build still carries the whole build contract", () => {
-    const build = buildTurnSystemInstruction({ three: false, audio: false }, false, false);
-    expect(build.startsWith(CHILD_SYSTEM_PROMPT)).toBe(true);
-    expect(build).toContain("respond with a single HTML document");
-  });
-
-  it("a plain-chat base keeps the full contract as its fallback", () => {
-    // configFor's non-builder branch sends personaBasePrompt: if the router
-    // called it chat but the child does ask for a game, the contract must
-    // still be there.
-    expect(CHILD_SYSTEM_PROMPT).toContain("respond with a single HTML document");
+    expect(full).toBe(`${CHILD_SYSTEM_PROMPT}\n\n${GAME_EDIT_PROMPT_SECTION}`);
   });
 });
 

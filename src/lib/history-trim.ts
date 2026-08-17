@@ -11,7 +11,6 @@
 // Pure function — no I/O, no framework imports (extractArtifact is pure too).
 
 import { extractArtifact } from "./gemini";
-import { stripInjectedRuntime } from "./assets/strip-runtime";
 import type { ChatMessage } from "@/types/chat.types";
 
 /** Last N messages sent to the model (≈ 6 back-and-forth turns). */
@@ -45,20 +44,7 @@ function stripGame(m: ChatMessage): ChatMessage {
  *  unchanged (never double-inlined). */
 function withInlineGame(m: ChatMessage): ChatMessage {
   if (!m.artifactHtml || extractArtifact(m.text).artifactHtml !== undefined) return m;
-  // Inline the game WITHOUT our injected runtime (2026-08-16). Measured on
-  // real stored games, that runtime is ~8,400 of the ~21,000 input tokens an
-  // edit turn costs — the loadModel/placeModel helper, the asset tables, the
-  // perf probe, the WebGL guard and the governors, all code we wrote and
-  // inject ourselves, replayed so the model can read our WebGL guard while
-  // moving a house. The model never edits any of it and ensureAssetRuntime
-  // puts it all back on delivery.
-  //
-  // SAFE FOR PATCHING because the strip only removes whole injected blocks
-  // and leaves the child's own code byte-identical: a SEARCH block quoting
-  // the game still matches the stored html applyPatch runs against. See
-  // strip-runtime.test.ts, which pins exactly that.
-  const source = stripInjectedRuntime(m.artifactHtml);
-  return { ...m, text: `${m.text}\n\`\`\`html\n${source}\n\`\`\``.trim() };
+  return { ...m, text: `${m.text}\n\`\`\`html\n${m.artifactHtml}\n\`\`\``.trim() };
 }
 
 /** Index of the message holding the CURRENT game — normally the newest one,

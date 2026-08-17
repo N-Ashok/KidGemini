@@ -45,32 +45,19 @@ describe("isGameEditTurn — a build-shaped turn that already has a game to edit
     expect(isGameEditTurn("make the car faster", history)).toBe(true);
   });
 
-  // CHANGED 2026-08-15 (KNOWN_BUGS #13), by owner decision. This used to
-  // assert the opposite — that "what do pandas eat?" IS an edit turn — on the
-  // reasoning that no keyword rule reliably separates "make the player jump
-  // higher" from a panda question, so the artifact in history was the signal
-  // and the hedged edit prompt would sort out the rest.
-  //
-  // In production it did not sort it out: the off-topic branch fired on 15 of
-  // 419 edit turns in the older half of the pm2 log and only 4 of 860 in the
-  // recent half, and the owner reported the symptom directly — "when kids
-  // don't ask for a game, it don't reply. it still generates games." One
-  // hedging sentence cannot outweigh ~390 lines of build contract.
-  //
-  // So the keyword rule now exists (looksLikePlainChat), deliberately narrow:
-  // an unmistakable question or greeting carrying no change word at all. The
-  // hedge stays as the second line of defence for everything it does not
-  // catch, and the route still accepts a plain-prose reply as chat.
-  it("a plain question is NOT an edit turn, even once a game exists", () => {
+  // Matches isGameBuildTurn's own documented tradeoff (builder-mode.ts):
+  // once a game exists, ANY message is treated as build-shaped, because
+  // there's no reliable keyword rule that tells "make the player jump
+  // higher" apart from "what do pandas eat" — the artifact in history is
+  // the signal, deliberately over-inclusive. Robustness against a truly
+  // off-topic message routed here isn't isGameEditTurn's job: the edit
+  // prompt itself is hedged ("if this message isn't about the game, just
+  // answer normally"), and the route treats a plain-prose reply
+  // (applyPatch's no_patch_in_reply) as ordinary chat rather than forcing a
+  // wasted regeneration — see api/chat/route.test.ts.
+  it("is (over-inclusively, like isGameBuildTurn) true for any message once a game exists", () => {
     const history = [msg("child", "make me a racing game"), msg("assistant", GAME_V1)];
-    expect(isGameEditTurn("what do pandas eat?", history)).toBe(false);
-  });
-
-  it("but anything change-shaped still is — that is the expensive mistake to avoid", () => {
-    const history = [msg("child", "make me a racing game"), msg("assistant", GAME_V1)];
-    expect(isGameEditTurn("can you make the car red?", history)).toBe(true);
-    expect(isGameEditTurn("the car but blue", history)).toBe(true);
-    expect(isGameEditTurn("make it realistic", history)).toBe(true);
+    expect(isGameEditTurn("what do pandas eat?", history)).toBe(true);
   });
 });
 
@@ -198,26 +185,9 @@ describe("GAME_EDIT_PROMPT_SECTION — the patch contract for feature-edit turns
   // isGameEditTurn is deliberately over-inclusive (see above) — this hedge is
   // what keeps an off-topic message ("what do pandas eat?") routed here from
   // being forced into patch format; the model should just answer normally.
-  it("hedges: plain chat gets an ANSWER, not a patch — stated first, and again last", () => {
-    // Strengthened 2026-08-15 (KNOWN_BUGS #13). Owner: "it used to answer kids
-    // on regular chat... when kids don't ask for a game, it don't reply. it
-    // still generates games." The hedge was one sentence competing with ~390
-    // lines of build contract, and production showed it losing: the off-topic
-    // branch fired on 15 of 419 edit turns in the older half of the pm2 log
-    // and only 4 of 860 in the recent half. It is now an explicit (A)/(B)
-    // decision BEFORE the patch rules, and repeated after them, because the
-    // last thing in a long instruction block is the easiest to remember.
-    const first200 = GAME_EDIT_PROMPT_SECTION.slice(0, 200);
-    expect(first200).toMatch(/FIRST, decide what this message actually is/);
-    expect(GAME_EDIT_PROMPT_SECTION).toMatch(/simply ANSWER them/);
-    // Concrete examples of (B) — an abstract "isn't about the game" is what
-    // the model was already failing to apply.
-    expect(GAME_EDIT_PROMPT_SECTION).toMatch(/why is the sky blue/i);
-    expect(GAME_EDIT_PROMPT_SECTION).toMatch(/Do not touch the game/);
-    // Restated at the very end, after all the patch machinery.
-    const last400 = GAME_EDIT_PROMPT_SECTION.slice(-400);
-    expect(last400).toMatch(/applies ONLY if the child asked you to change the game/);
-    expect(last400).toMatch(/leave the game alone/);
+  it("hedges: if the message isn't actually about the game, just answer normally instead of forcing a patch", () => {
+    expect(GAME_EDIT_PROMPT_SECTION).toMatch(/if (this|the) (message|request) (is|isn't|is not)/i);
+    expect(GAME_EDIT_PROMPT_SECTION).toMatch(/answer normally|just (reply|answer)/i);
   });
 
   // KNOWN_BUGS #5 class fix (2026-07-27): tells the model to anchor its SEARCH
@@ -227,17 +197,6 @@ describe("GAME_EDIT_PROMPT_SECTION — the patch contract for feature-edit turns
   // likely to have a transcription slip than the code itself.
   it("tells the model to anchor SEARCH text on a nearby landmark comment when one exists", () => {
     expect(GAME_EDIT_PROMPT_SECTION).toMatch(/landmark comment/i);
-  });
-
-  // BUG-FIX-LOG 2026-08-12 ("Drag the ball" instruction survived a rebuild to
-  // WASD-move-then-click controls): "change only what this request needs"
-  // read literally excludes on-screen instructional text as "unrelated" even
-  // when the mechanic it describes was just replaced — the kid ends up being
-  // told to do something that no longer works. Narrow carve-out: instructions
-  // ARE part of the same change when they describe the thing being changed.
-  it("carves out on-screen instructional text as part of a mechanic-changing edit, not 'unrelated'", () => {
-    expect(GAME_EDIT_PROMPT_SECTION).toMatch(/instruction/i);
-    expect(GAME_EDIT_PROMPT_SECTION).toMatch(/no longer (true|accurate|matches|correct)/i);
   });
 });
 
