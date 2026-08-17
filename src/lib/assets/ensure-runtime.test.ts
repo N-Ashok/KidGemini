@@ -565,3 +565,56 @@ window.loadModel = async function (name) { return null; };
     expect(ensureAssetRuntime(healed)).toBe(healed);
   });
 });
+
+// ── loadModelBatch names must reach AR_ASSETS too ────────────────────────────
+// BUG_LOG 2026-08-17, the Mumbai flight simulator. The child asked four times
+// over for "moving cars and bikes travelling in the roads" and got four
+// confident confirmations ("I've added a whole fleet of moving cars, taxis and
+// trucks!") and no cars, ever.
+//
+// Mechanism: on an EDIT turn the stored source has NO asset markers —
+// injectAssets strips them (inject.ts's `stripAssetMarkers`) — so a model newly
+// added by an edit reaches AR_ASSETS only through the healing pass below. That
+// pass scanned `LOADMODEL_ARG_RE = /\bloadModel\s*\(/`, which cannot match
+// `loadModelBatch("car", 60)`: after `loadModel` comes `Batch`, not `(`.
+//
+// So the ONE call shape used for crowds, traffic and fleets had no safety net
+// at all. `loadModelBatch` then hits `if (!template) return null`, the game's
+// own `if (batch) {…}` skips the block, and nothing appears — no error, no
+// warning, nothing for the child or the model to see. A single `loadModel("x")`
+// added by the same edit turn WAS healed, which is exactly why the spaceship
+// arrived that same session while the fleet of cars never did.
+describe("ensureAssetRuntime — batch-loaded models reach AR_ASSETS", () => {
+  const editedGame = (call: string) =>
+    page(
+      `<script type="importmap">${JSON.stringify({ imports: { three: ENGINE } })}</script>` +
+        `<script>window.AR_ASSETS={"airplane":"https://assets.ariantra.com/m/airplane.glb"};</script>` +
+        `<script type="module">import { Scene } from "three";\n${call}</script>`,
+    );
+
+  it("B.1 heals a model the edit turn added via loadModelBatch (the reported bug)", () => {
+    const out = ensureAssetRuntime(editedGame(`const traffic = await loadModelBatch("car", 60);`));
+    const table = JSON.parse(out.match(/window\.AR_ASSETS=(\{.*?\});/)![1]!);
+    expect(table.car, "a batch-loaded car must get a real URL, or no cars ever appear").toBe(CAR);
+    // and the model the game already had is not lost in the process
+    expect(table.airplane).toBeTruthy();
+  });
+
+  it("B.2 still heals the plain loadModel form (unchanged behaviour)", () => {
+    const out = ensureAssetRuntime(editedGame(`loadModel("car").then(m => scene.add(m));`));
+    const table = JSON.parse(out.match(/window\.AR_ASSETS=(\{.*?\});/)![1]!);
+    expect(table.car).toBe(CAR);
+  });
+
+  it("B.3 resolves an ALIAS used in a batch call — the child asked for buses", () => {
+    // `bus` -> `van` in MODEL_ALIASES; there is no `bus` model in the library.
+    const out = ensureAssetRuntime(editedGame(`const buses = await loadModelBatch("bus", 12);`));
+    const table = JSON.parse(out.match(/window\.AR_ASSETS=(\{.*?\});/)![1]!);
+    expect(table.bus, "the invented name stays the key; only the URL behind it becomes real").toBeTruthy();
+  });
+
+  it("B.4 settles immediately — healing a batch name is idempotent", () => {
+    const healed = ensureAssetRuntime(editedGame(`const traffic = await loadModelBatch("car", 60);`));
+    expect(ensureAssetRuntime(healed)).toBe(healed);
+  });
+});

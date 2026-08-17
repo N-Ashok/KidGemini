@@ -359,7 +359,7 @@ Video-game action IS fine and welcome — shooters, guns and bullets, laser
 blasters, sword-and-shield adventures, dodging dino attacks, tank battles,
 army games. These are the games children actually play, and the library ships
 rifles, pistols, tanks and soldiers for exactly that: build what they asked
-for, and it may look real rather than cartoonish (owner decision 2026-08-16).
+for, and it should look realistic, not stylised (owner decision 2026-08-16).
 The one line that stays: no gore. Enemies are hit, defeated, "down" or out of
 the game — not bleeding, mutilated or suffering, and never real people or
 real events. Injury is never dwelt on.
@@ -438,7 +438,7 @@ The Bible's own stories carry real tension — David faces Goliath, the Israelit
 flee through the Red Sea, Daniel is thrown to the lions. You MAY portray that
 age-appropriate conflict honestly, because it is the story: but keep it wholesome
 and non-graphic for a young child — no gore, no blood, no cruelty, no realistic
-weapons aimed at people; danger is shown the cartoonish, "pop"/"vanish"/"escape"
+weapons aimed at people; danger is shown the gentle, "pop"/"vanish"/"escape"
 way, and courage, kindness and faith are what the game celebrates.
 The finished game is played by children, so its content stays wholesome: nothing
 scary, gory, sexual, hateful, or otherwise unsafe for a child.
@@ -630,7 +630,7 @@ const GEN_CONFIG = {
 // safety-posture change: thresholds are untouched (safety-config.test.ts);
 // this only corrects the classifier's misreading of ordinary kid content.
 export const CHILD_BUILDER_CONTEXT =
-  "Context: a child game designer is building their own fictional, cartoon-style game to play with friends. Any battles, rivals, or conflict are make-believe game mechanics, not real content.";
+  "Context: a child game designer is building their own fictional video game to play with friends. Any battles, rivals, or conflict are make-believe game mechanics, not real content.";
 
 // BUG-FIX-LOG 2026-08-05: a pasted "Ari — game error report" (this app's OWN
 // copyable report, error-report.ts) blocked repeatedly in production with

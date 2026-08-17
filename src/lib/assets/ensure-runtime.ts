@@ -67,7 +67,16 @@ const IMPORTS_CANNON_RE = /\bfrom\s*["']cannon-es["']/;
 // deployed.
 const CALLS_LOADMODEL_RE = /\b(?:loadModel|loadModelBatch|placeModel|modelHeading|modelFacing|modelMetres|modelSize|modelAxis|modelJoins|fitTile|rotateToJoin)\s*\(/;
 const CALLS_LOADMODELBATCH_RE = /\bloadModelBatch\s*\(/;
-const LOADMODEL_ARG_RE = /\bloadModel\s*\(\s*["']([a-z0-9_]+)["']/gi;
+// BOTH loader shapes (BUG_LOG 2026-08-17). `loadModelBatch` was invisible here
+// for as long as it has existed: `\bloadModel\s*\(` cannot match
+// `loadModelBatch("car", 60)`, because after `loadModel` comes `Batch`, not
+// `(`. Batching is how a game makes CROWDS — traffic, fleets, city blocks — so
+// the single call shape most likely to carry a newly-added model had no
+// healing at all, and on an edit turn (where the asset markers have been
+// stripped from the source) healing is the ONLY way a new model reaches
+// AR_ASSETS. The failure was silent end to end: loadModelBatch returns null,
+// the game's own `if (batch)` skips, and nothing appears.
+const LOADMODEL_ARG_RE = /\bloadModel(?:Batch)?\s*\(\s*["']([a-z0-9_]+)["']/gi;
 const ANY_IMPORTMAP_RE = /<script[^>]*type=["']importmap["'][^>]*>[\s\S]*?<\/script>/gi;
 const HAS_HELPER_RE = /window\.loadModel\s*=/;
 const HAS_LOADMODELBATCH_HELPER_RE = /window\.loadModelBatch\s*=/;

@@ -19,6 +19,7 @@ import {
 import { stripAssetMarkers } from "@/lib/assets/markers";
 import { applyPatch } from "@/lib/repair-prompt";
 import { injectAssets } from "@/lib/assets/inject";
+import { unrequestedModelSwaps } from "@/lib/assets/model-swap-lint";
 import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
 import { danglingModuleSpecifiers, ensureThreeImports, externalScriptSrcs, newDanglingModuleSpecifiers, newExternalScriptSrcs, newUnknownThreeImports, unknownThreeImports, stripRuntimeGlobalImports } from "@/lib/assets/three-import-lint";
 import { findJsSyntaxError } from "@/lib/js-syntax-lint";
@@ -774,6 +775,19 @@ export async function POST(req: NextRequest) {
       if (patchBadModules.length) {
         console.warn(`[api/chat] ⛔ patch introduces dangling module imports: ${patchBadModules.join(", ")} @${ms()}ms`);
       }
+      // Unrequested-model-swap lint (BUG_LOG 2026-08-17, "Mumbai Flight
+      // Simulator"): every lint above asks whether the patch still RUNS. This
+      // one asks whether it is still the child's GAME. A clean patch that drops
+      // the aeroplane twenty turns of work were built around — because the
+      // model liked another mesh better — is a failed edit, and takes the same
+      // strict-retry path as a bad import.
+      const patchModelSwaps =
+        applied.ok && applied.mode === "patch"
+          ? unrequestedModelSwaps({ before: currentHtml, after: applied.html, message })
+          : [];
+      if (patchModelSwaps.length) {
+        console.warn(`[api/chat] ⛔ patch drops models the child never asked to change: ${patchModelSwaps.join(", ")} @${ms()}ms`);
+      }
       if (detectsNewGame(full)) {
         // The model self-declared this is a whole NEW game, not an edit (PRD §11).
         // Ask before any destructive rebuild — nothing is touched: the current
@@ -788,7 +802,8 @@ export async function POST(req: NextRequest) {
         applied.mode === "patch" &&
         patchBadImports.length === 0 &&
         patchBadScripts.length === 0 &&
-        patchBadModules.length === 0
+        patchBadModules.length === 0 &&
+        patchModelSwaps.length === 0
       ) {
         console.log(`[api/chat] ✓ edit patch @${ms()}ms`);
         displayText = editReplyProse(full); // the kid-facing sentence only — never the raw hunks
@@ -850,6 +865,8 @@ export async function POST(req: NextRequest) {
             ? `external_scripts:${patchBadScripts.join("+")}`
             : patchBadModules.length
             ? `dangling_modules:${patchBadModules.join("+")}`
+            : patchModelSwaps.length
+            ? `unrequested_model_swap:${patchModelSwaps.join("+")}`
             : applied.ok
               ? `incomplete ${applied.mode} output`
               : applied.reason;
@@ -881,7 +898,23 @@ export async function POST(req: NextRequest) {
           if (rungBadBypass.length) {
             console.warn(`[api/chat] ⛔ strict rung introduces a pipeline bypass: ${rungBadBypass.join(", ")} @${ms()}ms`);
           }
-          if (rungApplied.ok && rungApplied.mode === "patch" && rungBadImports.length === 0 && rungBadBypass.length === 0) {
+          // Same gate as the patch path above (BUG_LOG 2026-08-17): without it
+          // the cheap rung is a second, unguarded door for the very swap the
+          // branch before just rejected.
+          const rungModelSwaps =
+            rungApplied.ok && rungApplied.mode === "patch"
+              ? unrequestedModelSwaps({ before: currentHtml, after: rungApplied.html, message })
+              : [];
+          if (rungModelSwaps.length) {
+            console.warn(`[api/chat] ⛔ strict rung drops models the child never asked to change: ${rungModelSwaps.join(", ")} @${ms()}ms`);
+          }
+          if (
+            rungApplied.ok &&
+            rungApplied.mode === "patch" &&
+            rungBadImports.length === 0 &&
+            rungBadBypass.length === 0 &&
+            rungModelSwaps.length === 0
+          ) {
             console.log(`[api/chat] ✓ edit patch (cheap strict rung, before rebuild) @${ms()}ms`);
             displayText = editReplyProse(rung.text);
             deliverableHtml = toDeliverable(rungApplied.html);
@@ -892,7 +925,9 @@ export async function POST(req: NextRequest) {
                 ? `bad_imports:${rungBadImports.join("+")}`
                 : rungBadBypass.length
                   ? `pipeline_bypass:${rungBadBypass.join("+")}`
-                  : `mode=${rungApplied.mode}`
+                  : rungModelSwaps.length
+                    ? `unrequested_model_swap:${rungModelSwaps.join("+")}`
+                    : `mode=${rungApplied.mode}`
               : rungApplied.reason;
             console.log(`[api/chat] cheap strict rung declined (${why}) — full regeneration @${ms()}ms`);
           }

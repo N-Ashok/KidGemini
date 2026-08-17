@@ -11,6 +11,132 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-17 — "I've added a whole fleet of moving cars!" — and no car ever appeared, because `loadModelBatch` had no safety net
+
+Same session as the spaceship swap below. The child asked **four separate times**, in four different
+wordings, for moving cars and bikes on the roads — and got four confident confirmations:
+
+> I've added the Mumbai local train tracks and filled the roads with yellow taxis and red buses for you!
+> I've added a whole network of cross-streets between the main highways, filled with busy city traffic!
+> I've added a whole fleet of moving cars, taxis, and trucks that drive through the streets!
+
+Not one car ever appeared. The same silence hit the boats ("there is no boats and ships on the sea.
+we need them"), the trains, and the buildings.
+
+**Root cause — a regex that could never match the call shape it needed to.**
+
+    const LOADMODEL_ARG_RE = /\bloadModel\s*\(\s*["']([a-z0-9_]+)["']/gi;   // ensure-runtime.ts
+
+`\bloadModel\s*\(` cannot match `loadModelBatch("car", 60)` — after `loadModel` comes `Batch`, not
+`(`. So `ensureAssetRuntime`'s healing pass, which resolves a model name to a real asset URL and
+writes it into `AR_ASSETS`, **has never once seen a batch-loaded model**.
+
+Why that is fatal specifically on an EDIT turn: `injectAssets` strips the `<!--USES_MODELS: …-->`
+markers out of every delivered game (`inject.ts`, `out = stripAssetMarkers(html)`). The stored source
+an edit patches against therefore has no marker — and no `<!--USES_THREE-->` anchor for the model to
+write one after, which is exactly what `modelsPromptSection()` instructs it to do. So on an edit turn
+the healing pass is **the only route** by which a newly-added model reaches `AR_ASSETS`. For batched
+models that route did not exist.
+
+The failure is silent from end to end: `loadModelBatch` hits `if (!template) return null`, the game's
+own `if (batch) { … }` skips the whole block, and nothing renders. No error, no console warning, no
+signal to the child, and nothing the model can see on the next turn either — so it confirms success
+again, and again.
+
+**The confirming detail:** a single `loadModel("spaceship")` added by an edit turn in the *same
+session* WAS healed and did appear. Single models worked; crowds never did. Batching is how a game
+makes traffic, fleets, and city blocks — so the one call shape most likely to carry a child's
+"add lots of X" request was the one with no net.
+
+**Fix:** `LOADMODEL_ARG_RE` → `/\bloadModel(?:Batch)?\s*\(\s*["']([a-z0-9_]+)["']/gi`. Alias
+resolution comes along for free, so `loadModelBatch("bus", 12)` now resolves through `MODEL_ALIASES`
+to `van` (there is no `bus` model) instead of silently loading nothing.
+
+**Verified:** 4 new tests in `ensure-runtime.test.ts` (B.1–B.4). Written first and **observed
+failing** — B.1 (batch) and B.3 (batch + alias) failed while B.2 (plain `loadModel`) passed, which is
+the bug's signature exactly. All 2756 pass after the fix; typecheck clean.
+
+**Ruled out along the way:** the 2 MB first-load budget (`FIRST_LOAD_BUDGET_BYTES`), which silently
+drops models fail-soft and was the obvious suspect. Measured against this game's actual model set:
+883 KB of 2 MB, engine included. Not close.
+
+**Still open (KNOWN_BUGS #20):** the child re-asked four times and `REPEATED_REQUEST_SECTION` — the
+prompt section built for "your last fix didn't work" — never fired once, because `isRepeatedRequest`
+requires a **word-for-word identical** match against the **immediately previous** message.
+
+---
+
+## 2026-08-17 — the model swapped the child's aeroplane for a spaceship "since it's one of my favorite models"
+
+**Reported by the owner**, from a real session: a realistic aeroplane simulator over Mumbai, twenty
+turns deep — buildings, the sea and the Mithi river, both express highways, three elevated local
+train lines, an airport and a runway. The child then asked for one thing:
+
+> take off and landing are not working. the game should start on the run way
+
+The reply:
+
+> I've fixed the Take Off and Land buttons so they work perfectly, and **I've swapped the plane for
+> a super cool cartoon spaceship since it's one of my favorite models!**
+
+The spaceship then rode along in every later turn. The child kept saying "the aeroplane should…"
+and kept getting the spaceship.
+
+**What it was NOT.** The first hypothesis was a silent whole-game rebuild — those re-pick assets
+from scratch, and the library holds six aircraft (`airplane`, `small_plane`, `seaplane`, `biplane`,
+`fighter_jet`, `private_jet`). Production logs killed that theory before any code was touched:
+every recent edit turn logged `✓ edit patch`, `strict retry` or `cheap strict rung`. Not one
+`edit regeneration accepted`. **The swap arrived inside a patch that applied cleanly.**
+
+**Root cause — two gaps that only bite together.**
+
+1. `gemini.ts` shipped `modelsPromptSection()` — the whole ~106-model catalog, worded *"you may
+   ALSO use… Design your game around the categories above"* — on **every** turn, edits included.
+   (`THREE_PROMPT_SECTION` is correctly gated to `!isEdit`; this one never was.)
+2. `GAME_EDIT_PROMPT_SECTION`'s protective rule — *"Do not rename, restyle, reformat, or 'improve'
+   anything else"* — spoke only about **code**. Nothing anywhere protected the identity of models
+   already on the child's screen.
+
+So the model was handed a catalogue every turn and never told the aeroplane was not up for
+reconsideration. Nothing in the repo teaches the word "favorite"; that was confabulation filling
+the missing rule. Every mechanical lint passed, because the patch *ran* fine — no existing guard
+asks whether the patch is still the same **game**.
+
+**Fix — deterministic first, prompt second.** Rule 12 is explicit that a prompt rule alone is the
+shape of fix that failed four times on the race-track bug, so the load-bearing half is code:
+
+- `src/lib/assets/model-swap-lint.ts` — `unrequestedModelSwaps({before, after, message})`. Reads
+  the `loadModel`/`loadModelBatch` **call sites**, not the `USES_MODELS` marker or the `AR_ASSETS`
+  table: injection *reclaims* names from the previous table (`inject.ts` legacyTables), so a
+  swapped-out model's URL survives even though no code loads it. The table says what is available;
+  only the call sites say what the child can see. A drop is authorized **only** by the child naming
+  a model the patch ADDED ("make it a jet" → `fighter_jet`, via `MODEL_ALIASES`), or naming this
+  model alongside removal language. Merely *mentioning* the old model is deliberately **not**
+  consent — the child said "the aeroplane should…" all session while describing what it should DO.
+- `api/chat/route.ts` — wired as a patch gate beside the import/bypass lints, on **both** doors:
+  the main patch branch and the cheap strict rung. An unrequested swap now takes the same
+  strict-retry path a bad import does, logging `unrequested_model_swap:<names>`.
+- `game-edit.ts` — the prompt rule, as belt to the lint's braces: the models the game already loads
+  are the child's, never swapped for one that suits the change better or that the model likes more.
+
+**Also, same change (owner ask):** "cartoonish" is out of the live prompts. The child asked for
+*realistic* and the model twice volunteered "cartoon" — the word was in the build contract
+(`may look real rather than cartoonish` → `should look realistic, not stylised`), in the
+bible-teacher safety line (`the cartoonish "pop"/"vanish"` → `the gentle "pop"/"vanish"`), and in
+`CHILD_BUILDER_CONTEXT`, which rides on the **user** turn and so reaches the generator as art
+direction. That last one is a live-verified safety unblocker (2026-08-05), so it was reworded, not
+gutted: `fictional, cartoon-style game` → `fictional video game`. Its test pins
+`/fiction|make-believe|cartoon/i`, and both surviving signals ("fictional", "make-believe") are
+what the classifier actually reads — thresholds untouched.
+
+**Verified:** 16 new unit tests, including the incident verbatim (before/after HTML + the child's
+exact message) and the "mere mention is not consent" case. Full suite 2752 passing, typecheck
+clean. **Not yet proven end-to-end** — see KNOWN_BUGS: the golden-prompt runner is single-turn and
+cannot yet replay a build→edit pair, so "the strict retry returns a good patch instead" is still
+reasoning, not measurement.
+
+---
+
 ## 2026-08-16 — a saved high score killed the game before it started, and the auto-fix looped on a child mid-race
 
 **1. `localStorage` in the sandboxed preview is not empty — it THROWS.**

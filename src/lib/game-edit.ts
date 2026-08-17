@@ -329,6 +329,7 @@ Rules:
   is much less likely to be mistyped than a large block of code copied from
   memory.
 - Change only what this request needs. Do not rename, restyle, reformat, or "improve" anything else — the child is proud of the game exactly as it plays right now.
+- The 3D models this game ALREADY loads are the child's game. NEVER swap, replace or drop one because another model would suit the change better, look cooler, or is one you like more — if their game flies an \`airplane\`, every later turn still flies that same \`airplane\`. Change a model ONLY when the child asked for that specific change ("make it a jet"). You may still ADD a new model the request genuinely needs.
 - EXCEPTION: if this change alters HOW the game is played or controlled, any on-screen instruction text describing the OLD way is no longer accurate and must be updated in the same patch — a text label is part of the change, not "something else", the moment it stops being true.
 - Everything you don't put in a REPLACE block must stay byte-for-byte identical.
 - No prose after the patch blocks, no markdown fences, no full HTML document.
