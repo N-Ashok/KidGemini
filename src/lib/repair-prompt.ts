@@ -250,3 +250,31 @@ export function applyPatch(html: string, reply: string): PatchResult {
 
   return { ok: false, reason: "no_patch_in_reply" };
 }
+
+/**
+ * The one-paragraph diagnosis of WHAT is wrong — the same text
+ * buildRepairPrompt() puts in front of the first attempt, exposed on its own
+ * for the strict-retry rung in api/repair/route.ts.
+ *
+ * BUG_LOG 2026-08-17. That rung does 100% of the repair work in production (the
+ * first attempt came back `no_patch_in_reply` on 4 of 4 observed repairs), and
+ * it was composing its own fault line as `String(errors[0])` — "[object
+ * Object]", since `errors` is GameConsoleMessage[] — falling back to a bare
+ * `the game fails with: <code>`. So the model actually fixing the game never
+ * saw the diagnosis the taxonomy had already written for it: which element is
+ * covering the button, at which coordinates, and that the click handler is fine
+ * and must not be touched. Every observed start_occluded repair was a no-op of
+ * a dozen characters, and the probe re-failed on the repair's own output.
+ *
+ * Same source of truth for both attempts, so the two can never drift again.
+ */
+export function repairFaultLine(input: {
+  failureCode: VerifyFailureCode;
+  evidence: VerifyEvidence | null;
+  errors: GameConsoleMessage[];
+}): string {
+  return REPAIR_TAXONOMY[input.failureCode].instruction({
+    evidence: input.evidence,
+    errors: input.errors,
+  });
+}

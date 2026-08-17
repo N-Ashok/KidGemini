@@ -277,6 +277,18 @@ const GAME_BUILD_CONTRACT = `respond with a single HTML document wrapped in a
   play begins, not hidden behind CSS that only reveals it once a later
   gameplay event fires — an empty-looking styled box until the first random
   trigger happens is a bug, not a subtle style choice.
+- NOTHING MAY COVER THE CONTROLS. Every element that spans the play area — the
+  start screen, a game-over panel, a HUD wrapper, a toast, any full-screen
+  container — must EITHER be removed / \`display:none\` while it is not the
+  active screen, OR carry \`pointer-events: none\` with \`pointer-events: auto\`
+  restored on its own buttons only. This is the single most common way a
+  finished-looking game is unplayable: the buttons render correctly and their
+  click handlers are perfect, so nothing looks or logs as broken — the taps
+  simply never arrive, because an invisible layer above them is eating every
+  one. A start screen that fades to \`opacity: 0\` but stays in the layout is
+  still covering the game. Whenever you add or move an overlay, satisfy
+  yourself that each on-screen control is still the topmost element at its own
+  coordinates.
 - If the request names specific entities (a particular animal, vehicle,
   character, hazard, or object), EVERY one of them must actually appear and
   be interactive in the built game — an entity the request asked for that
@@ -398,6 +410,15 @@ const GAME_EDIT_CONTRACT = `keep these while you patch:
   never invent names or facts.
 - The game stays fully self-contained and offline: no new external resources
   unless a CDN library was already allowed for a rule-heavy classic.
+- NOTHING YOU ADD MAY COVER THE CONTROLS. If this change adds or moves any
+  element that spans the play area — a screen, a panel, a HUD wrapper, a toast,
+  a full-screen container — it must EITHER be removed / \`display:none\` while
+  it is not the active screen, OR carry \`pointer-events: none\` with
+  \`pointer-events: auto\` restored on its own buttons only. An element left
+  lying over the game silently eats every tap: the buttons still look right and
+  their click handlers still work, so nothing appears broken and nothing is
+  logged — the taps just never arrive. \`opacity: 0\` does NOT make a layer
+  harmless; it must be gone from the layout or inert.
 - Keep it wholesome.`;
 
 export const CHILD_SYSTEM_PROMPT = `${CHILD_PERSONA_CORE}

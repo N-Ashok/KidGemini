@@ -11,6 +11,72 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-17 — the buttons were never broken: an invisible layer ate every tap, and the repair was told to fix "[object Object]"
+
+Found by watching production live while the owner built a game. It closes a bug that had already
+survived **four** shipped "I've fixed the Take Off and Land buttons!" replies.
+
+**The symptom that misled everyone (owner, and me):** taps did nothing. Every fix aimed at the click
+handlers. The handlers were fine the whole time — `[api/repair] ▶ code=start_occluded … err=none`,
+**`err=none` on every single occurrence**. Nothing threw. The probe does a real browser hit-test and
+kept finding a *different* element at the button's coordinates: something invisible was lying on top
+of the controls, swallowing every tap.
+
+**Root cause 1 — a feature shipped without its prerequisite (KNOWN_BUGS #22).** Commit `9452e2c`
+(2026-08-14/15) added *"Show a START SCREEN before play begins"* and *"Build the HUD (score,
+health/status bars, on-screen buttons, messages)"* to the build contract — i.e. it started telling
+the model to put full-screen layers **on top of the game**. Grepped every prompt that reaches the
+model: **`pointer-events` appeared in none of them.** Measured, this is exactly when it began:
+
+    repair codes by day — start_occluded had NEVER occurred before Aug 15
+    Aug 1-12 : load_error only (33 on Aug 5, 36 on Aug 8, then 1-2/day)
+    Aug 15   : 5 start_occluded  ← first ever
+    Aug 17   : 8 start_occluded, in ONE session — 4 of 4 generations
+
+**Root cause 2 — the repair was blind (KNOWN_BUGS #23).** The self-heal ran every time and fixed
+nothing: patches of **+10, +12, −12 chars**, with the probe re-failing on the repair's *own output*
+(60,543 → 60,531 → still occluded; 61,878 → 61,888 → still occluded). 0-for-3 verified, then
+`MAX_REPAIR_ATTEMPTS = 2` trips and it gives up. Why: the first attempt returned `no_patch_in_reply`
+on **4 of 4** repairs, so the **strict-retry rung does 100% of the real work** — and it built its own
+prompt as `String(errors[0])`, which is `"[object Object]"` (`errors` is `GameConsoleMessage[]`, not
+`string[]`), falling back to a bare `the game fails with: <code>`. The model actually fixing the game
+was being told:
+
+> "The game is broken. Fix this error and change nothing else: **[object Object]**"
+
+while `REPAIR_TAXONOMY` already held the precise diagnosis it never saw — *"The Start button at (x,y)
+is covered by `<selector>`, so taps never reach it. Give that element `pointer-events: none` … Do NOT
+change the button's click handler — it works."*
+
+**Fixes.**
+
+- **Prevention** (`gemini.ts`): a "NOTHING MAY COVER THE CONTROLS" rule in the build contract **and**
+  in `GAME_EDIT_CONTRACT`. Both escapes are spelled out (remove/`display:none`, or `pointer-events:
+  none` with `auto` on its own buttons), the trap is named (looks right, logs nothing, taps never
+  arrive), and `opacity: 0`-but-still-in-layout is called out.
+- **Cure** (`repair-prompt.ts` + `api/repair/route.ts`): new `repairFaultLine()` — the same taxonomy
+  diagnosis both attempts now read from, so they cannot drift again.
+- **Instrument** (`game-console.ts`): `formatRepairErrorSummary()` fixes the `err="[object Object]"`
+  log AND a second defect — it read `errors[0]`, often the game's own startup `console.log` rather
+  than the failure; it now uses the same `kind === "error" | "rejection"` rule, and appends
+  `file:line`.
+
+**The test that earned its keep.** `P.5` failed on first run: the rule was in the build contract, but
+edit turns get the slimmed `GAME_EDIT_CONTRACT` — and **4 of 4 occlusions came from an EDIT**, not a
+first build. Without that test this would have shipped looking correct and changed nothing for the
+owner. Now pinned in both paths.
+
+**Verified:** 15 new tests; 2771 passing; typecheck clean. Live confirmation arrived mid-fix — a
+production `load_error` logged `err="[object Object]" (+19 more)`.
+
+**NOT verified:** that an informed repair actually succeeds. The fix removes the *reason* repairs
+failed; proof is `start_occluded` firing once and not recurring on the repair's own output. Prevention
+(#22) is the load-bearing half — see KNOWN_BUGS #24 (repairs are also not persisted) and the probe
+gap: it only hit-tests the START button, so an overlay covering the gameplay controls (take-off/land,
+up/down) is still never detected.
+
+---
+
 ## 2026-08-17 — "I've added a whole fleet of moving cars!" — and no car ever appeared, because `loadModelBatch` had no safety net
 
 Same session as the spaceship swap below. The child asked **four separate times**, in four different

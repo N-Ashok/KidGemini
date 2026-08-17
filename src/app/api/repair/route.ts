@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { GeminiChatModel } from "@/lib/gemini";
 import { SqliteUsageStore } from "@/lib/db";
 import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
+import { formatRepairErrorSummary } from "@/lib/game-console";
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
@@ -23,6 +24,7 @@ import {
   REPAIR_TAXONOMY,
   applyPatch,
   buildRepairPrompt,
+  repairFaultLine,
 } from "@/lib/repair-prompt";
 import type { RepairRequest, RepairResponse } from "@/types/preview-verify.types";
 
@@ -77,10 +79,15 @@ export async function POST(req: NextRequest) {
   // One truncated line makes them countable: `sort | uniq -c` over a week says
   // which fault to fix at the source instead of healing it forever.
   // It is a JS error string from generated code, so it carries no user text.
-  const firstError = (errors ?? [])[0];
-  const errorSummary = firstError
-    ? ` err="${String(firstError).replace(/\s+/g, " ").slice(0, 160)}"${(errors ?? []).length > 1 ? ` (+${(errors ?? []).length - 1} more)` : ""}`
-    : " err=none";
+  //
+  // BUG_LOG 2026-08-17: this line shipped as `String(errors[0])` and emitted
+  // `err="[object Object]"` for every error it caught — `errors` is
+  // GameConsoleMessage[], not string[] — so the instrument built to make
+  // generation faults countable could not name a single one. It also read
+  // errors[0], which is often the game's own startup console.log rather than
+  // the failure. Both fixed in formatRepairErrorSummary, which now uses the
+  // same selection rule repair-prompt.ts already used.
+  const errorSummary = formatRepairErrorSummary(errors);
   console.log(
     `[api/repair] ▶ code=${failureCode} userId=${userId} htmlChars=${html.length}${errorSummary}`,
   );
@@ -140,9 +147,18 @@ export async function POST(req: NextRequest) {
     // model does not understand this fault, and asking again just spends the
     // child's time.
     const firstReason = patched.reason;
-    const faultLine = firstError
-      ? String(firstError).replace(/\s+/g, " ").slice(0, 300)
-      : `the game fails with: ${failureCode}`;
+    // BUG_LOG 2026-08-17: this line WAS `String(errors[0])` — "[object Object]",
+    // since errors is GameConsoleMessage[] — falling back to a bare
+    // `the game fails with: <code>`. This rung does 100% of the repair work in
+    // production (4 of 4 observed first attempts returned no_patch_in_reply),
+    // so the model actually fixing the game was told "Fix this error and change
+    // nothing else: [object Object]" while REPAIR_TAXONOMY already held the
+    // precise diagnosis — which element covers the button, at what coordinates,
+    // and that the click handler works and must not be touched. Every observed
+    // start_occluded repair came back a no-op of a dozen characters and the
+    // probe re-failed on the repair's own output. Same source of truth as the
+    // first attempt now, so the two cannot drift again.
+    const faultLine = repairFaultLine({ failureCode, evidence: evidence ?? null, errors: errors ?? [] });
     try {
       const retry = await chatModel.strictEditRetry({
         currentHtml: html,
