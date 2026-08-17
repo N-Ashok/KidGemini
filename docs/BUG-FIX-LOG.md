@@ -11,6 +11,42 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-17 — the publish sheet's keyboard flapped open and shut once a second on mobile, and "use a different web address" was untypable
+
+- **Reported:** owner, mobile — "not able to publish the game because of constant opening and
+  closing of keyboard" and "use a different url in the publish don't work".
+- **Root cause — one bug, two symptoms.** `useModalA11y` listed `onClose` in its focus effect's
+  dependency array, and `ArtifactFrame.tsx:1258` passed `onClose={() => setPublishing(false)}` —
+  a fresh function identity on every render. So the effect tore down and re-ran on every
+  ArtifactFrame render: cleanup does `returnFocus.focus()` (keyboard closes), setup does
+  `focusableWithin(box)[0].focus()` (keyboard opens). ArtifactFrame re-renders **once a second**
+  while a game runs — `perf-probe.ts:224` is a 1s `setInterval` posting fps snapshots, and the
+  game keeps running behind the sheet — and again on every resize via its `ResizeObserver`. On a
+  phone the on-screen keyboard opening IS a viewport resize, so the loop sustained itself.
+  The same refocus always lands on the FIRST focusable, which is the game-name input — so the
+  custom web-address field below it could never hold focus for more than a second. That is the
+  whole of "use a different url doesn't work"; the checkbox was fine.
+- **Fix (hook).** The callback lives in `onCloseRef`, updated by its own effect, and is gone from
+  the focus effect's deps. Escape calls `onCloseRef.current()`. The hook no longer depends on any
+  caller remembering to memoise — fixing only the call site would leave the trap for the next one.
+- **Fix (call sites).** `stopPublishing`/`stopInviting` are `useCallback`-memoised anyway, so the
+  sheet stops re-rendering for nothing. The identical defect was found and fixed in the platform
+  repo's own copy of the hook, where `CatalogClient` was pulling focus off the running game
+  (platform `docs/BUG_LOG.md` #55).
+- **Second, smaller defect in the same flow.** Ticking "Use a different web address" set the slug
+  source to an empty field, which disabled Next instantly with nothing on screen saying why; and
+  `nameToSlug()` returns `""` below two usable characters, so typing "a" left the button dead
+  while the hint underneath read "Your game will live at .ariantra.com". Both now come from one
+  pure function, `publishBlockReason()` (`lib/publish-flow.ts`), so the disabled state and the
+  sentence explaining it cannot disagree.
+- **Tests:** `src/components/modal-focus-stability.test.ts` (K.1–K.6) — verified red before the
+  fix and green after, by re-adding `onClose` to the deps. `src/lib/publish-flow.test.ts`
+  (P.1–P.10). Note: the first draft of the K-test extractor matched a `focusableWithin(box)`
+  written inside an explanatory *comment* and reported a false pass — it now strips comments
+  before slicing, the same trap that bit the prompt-rule tests earlier this week.
+
+---
+
 ## 2026-08-11 — the scalable fix for the chat-history size cap: recent artifacts stay inline, older ones are externalized and pulled on demand
 
 - **Context:** same-day follow-up to the entry immediately below (the 2MB→20MB stopgap). A

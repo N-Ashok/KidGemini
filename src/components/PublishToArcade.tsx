@@ -11,7 +11,7 @@ import { whatsappShareUrl } from "@/lib/share-links";
 import { GAME_CATEGORIES } from "@/lib/game-categories";
 import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
 import { signIn, verifyAge, useSession } from "@/lib/useAriantraSession";
-import { INITIAL_PUBLISH_STEP, stepAfterGamesLoad, type PublishStep } from "@/lib/publish-flow";
+import { INITIAL_PUBLISH_STEP, publishBlockReason, stepAfterGamesLoad, type PublishStep } from "@/lib/publish-flow";
 import { fetchPublishCelebration } from "@/lib/publish-celebration";
 import SparksCelebrationCard from "@/components/SparksCelebrationCard";
 
@@ -179,6 +179,18 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
   const slug = updateTarget ? updateTarget.slug : nameToSlug(useCustomSlug ? customSlug : name);
   const displayName = updateTarget ? updateTarget.name : name;
   const isUpdate = updateTarget !== null || check.state === "mine"; // republishing the kid's own game
+  // One source for "can we go on?" and "why not?" (lib/publish-flow.ts) — they
+  // used to be an inline `disabled={…}` expression and no explanation at all,
+  // so ticking "use a different web address" killed the button silently.
+  const blockReason = publishBlockReason({
+    name,
+    category,
+    check: check.state,
+    useCustomSlug,
+    customSlug,
+    bibleGame,
+    isUpdate,
+  });
 
   // Debounced availability check while the kid types.
   useEffect(() => {
@@ -564,14 +576,25 @@ export function PublishToArcade({ html, suggestedName, onClose, bibleGame = fals
                   className="w-full rounded-xl border-2 border-orange-500 px-4 py-3 text-base font-bold outline-none"
                 />
                 <p className="mt-1 text-xs text-neutral-400">
-                  {customSlug ? `Your game will live at ${nameToSlug(customSlug)}.ariantra.com` : "Type an address for your game"}
+                  {/* Only promise an address when there IS one — nameToSlug()
+                      returns "" for anything under two usable characters, and
+                      this line used to read "Your game will live at
+                      .ariantra.com" while the button sat greyed out. */}
+                  {nameToSlug(customSlug)
+                    ? `Your game will live at ${nameToSlug(customSlug)}.ariantra.com`
+                    : "Type an address for your game, like my-cool-game"}
                 </p>
               </div>
             )}
+            {/* A greyed-out button that says nothing is a dead end (CLAUDE.md
+                §5). Same source as `disabled` below so they can't disagree. */}
+            {blockReason && (
+              <p className="mb-2 text-center text-xs font-bold text-neutral-500" role="status">
+                {blockReason}
+              </p>
+            )}
             <button
-              // Category is required only in the general flow; the Bible surface
-              // fixes it, so a bible publish never needs a category pick.
-              disabled={!slug || (!bibleGame && !category) || check.state === "taken" || check.state === "copyright"}
+              disabled={blockReason !== null}
               // Every publish asks for the PIN (owner decision 2026-08-01) — no
               // fast path, even if a grown-up is currently verified elsewhere.
               onClick={() => setStep("pin")}

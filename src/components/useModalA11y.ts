@@ -66,6 +66,24 @@ export function useModalA11y({ onClose, closeOnEscape = true, enabled = true }: 
   // Captured in a ref so the restore isn't affected by re-renders.
   const returnFocusRef = useRef<Element | null>(null);
 
+  // The callback lives in a ref and NOT in the effect's deps (owner report
+  // 2026-08-17, BUG-FIX-LOG same date). With `onClose` in the deps, a caller
+  // that passes an inline arrow — which every caller did — re-ran this whole
+  // effect on every one of its own renders. Each re-run is a cleanup
+  // (returnFocus.focus()) followed by a setup (firstFocusable.focus()), i.e. a
+  // blur and a refocus. On a phone that is the on-screen keyboard closing and
+  // reopening, and since ArtifactFrame re-renders once a second (perf probe)
+  // AND on every resize — which the keyboard itself causes — it never settled.
+  // It also made the publish sheet's second text field untypable: the refocus
+  // always lands on focusableWithin(box)[0], the first one.
+  //
+  // Fixing only the call site would leave the trap for the next caller, so the
+  // hook is made independent of the callback's identity here.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     const box = boxRef.current;
     if (!enabled || !box) return;
@@ -88,7 +106,7 @@ export function useModalA11y({ onClose, closeOnEscape = true, enabled = true }: 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape" && closeOnEscape) {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== "Tab") return;
@@ -108,7 +126,9 @@ export function useModalA11y({ onClose, closeOnEscape = true, enabled = true }: 
       const back = returnFocusRef.current;
       if (back instanceof HTMLElement && back.isConnected) back.focus();
     };
-  }, [onClose, closeOnEscape, enabled]);
+    // `onClose` is deliberately absent — see onCloseRef above. Adding it back
+    // reintroduces the once-a-second blur/refocus loop.
+  }, [closeOnEscape, enabled]);
 
   return boxRef;
 }

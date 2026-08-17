@@ -38,3 +38,79 @@ export function stepAfterGamesLoad(args: {
   if (args.hasPresetTarget) return "name";
   return args.gameCount > 0 ? "choose" : "name";
 }
+
+/** The name-availability answer the sheet is holding, as far as this decision
+ *  cares. `checking`/`unknown` deliberately do NOT block — an unanswered check
+ *  must never claim a name is gone, and publish re-validates server-side. */
+export type NameCheckState = "idle" | "checking" | "free" | "taken" | "mine" | "copyright" | "unknown";
+
+export interface PublishBlockInput {
+  /** The display name typed on the name step. */
+  name: string;
+  /** The chosen category, or null if the kid hasn't picked one. */
+  category: string | null;
+  check: NameCheckState;
+  /** "Use a different web address" is ticked. */
+  useCustomSlug?: boolean;
+  /** What was typed into that address field (raw, pre-slug). */
+  customSlug?: string;
+  /** Bible-teacher surface fixes the category — no picker, so none required. */
+  bibleGame?: boolean;
+  /** Republishing an existing game: name and category already belong to it. */
+  isUpdate?: boolean;
+}
+
+/**
+ * Why the "Next" button can't be pressed yet — or null when it can.
+ *
+ * Owner report 2026-08-17 ("use a different url in the publish don't work"):
+ * the button's `disabled` was computed inline from `!slug || !category || …`
+ * and nothing on screen said which of those was the problem. Ticking "Use a
+ * different web address" swapped the slug source to an empty field and killed
+ * the button on the spot, with a full name field sitting right above it — so
+ * it read as the checkbox being broken.
+ *
+ * One function so the disabled state and the sentence under it cannot drift:
+ * the component disables on `!== null` and prints the string. Kid-facing copy
+ * (CLAUDE.md §5 — a failure says what to do next), so it is written to be read
+ * by an eight-year-old, not to be precise.
+ */
+export function publishBlockReason(input: PublishBlockInput): string | null {
+  const { check, isUpdate = false, bibleGame = false } = input;
+
+  // A name that belongs to someone else — or to a film studio — blocks
+  // regardless of everything below; it's the only thing the kid must change.
+  if (check === "taken") return "Someone already has that name — try another name!";
+  if (check === "copyright") return "That name belongs to a big company — pick your own and it'll be cooler!";
+
+  // An update reuses the existing game's name, address and category.
+  if (isUpdate) return null;
+
+  if (input.useCustomSlug) {
+    const typed = (input.customSlug ?? "").trim();
+    if (!typed) return "Type the web address you want, like my-cool-game";
+    // Two usable characters minimum — nameToSlug() returns "" below that, and
+    // "" quietly became a dead button plus a hint reading ".ariantra.com".
+    if (slugify(typed).length < 2) return "That address needs at least 2 letters or numbers, like my-cool-game";
+  } else if (!slugify(input.name)) {
+    return "Give your game a name first!";
+  }
+
+  if (!bibleGame && !input.category) return "Pick what kind of game it is";
+
+  return null;
+}
+
+/** The slug rule, duplicated as a length check only. Kept local rather than
+ *  importing lib/arcade so this module stays pure/dependency-free; arcade.ts's
+ *  nameToSlug remains the one that actually produces the address. */
+function slugify(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40)
+    .replace(/-$/, "");
+}

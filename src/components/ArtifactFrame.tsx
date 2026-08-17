@@ -11,7 +11,7 @@
 // trace); the console is a debug tool now, hidden unless localStorage
 // "kidgemini:debug" = "1" (grown-ups only — see docs).
 
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { PublishToArcade } from "./PublishToArcade";
 import { InviteToTest } from "./InviteToTest";
 import { MULTIPLAYER_MARKER } from "@/lib/multiplayer-gate";
@@ -218,6 +218,15 @@ export function ArtifactFrame({
   const [tab, setTab] = useState<Tab>("preview");
   const [publishing, setPublishing] = useState(false);
   const [inviting, setInviting] = useState(false);
+  // Memoised on purpose (owner report 2026-08-17): this component re-renders
+  // once a second while a game runs (the perf probe) and again on every
+  // resize, and an inline `() => setPublishing(false)` handed to the sheet is
+  // a new identity each time — which re-ran the sheet's focus effect and
+  // flapped the mobile keyboard. useModalA11y no longer depends on the
+  // callback's identity, but a stable one also stops re-rendering the whole
+  // sheet for nothing.
+  const stopPublishing = useCallback(() => setPublishing(false), []);
+  const stopInviting = useCallback(() => setInviting(false), []);
   // Fullscreen decluttering: kids in full screen mostly touch two things —
   // Exit Full Screen and the Idea mic tab (which floats over the game, not
   // in this bar). Everything else (tabs, device switcher, Rotate, Publish,
@@ -1255,11 +1264,11 @@ export function ArtifactFrame({
       )}
 
       {publishing && (
-        <PublishToArcade html={state.currentHtml} suggestedName={titleOf(state.currentHtml)} bibleGame={bibleTeacher} editTarget={editTarget} chatId={chatId} onClose={() => setPublishing(false)} />
+        <PublishToArcade html={state.currentHtml} suggestedName={titleOf(state.currentHtml)} bibleGame={bibleTeacher} editTarget={editTarget} chatId={chatId} onClose={stopPublishing} />
       )}
 
       {inviting && (
-        <InviteToTest html={state.currentHtml} suggestedName={titleOf(state.currentHtml)} onClose={() => setInviting(false)} />
+        <InviteToTest html={state.currentHtml} suggestedName={titleOf(state.currentHtml)} onClose={stopInviting} />
       )}
     </aside>
   );
