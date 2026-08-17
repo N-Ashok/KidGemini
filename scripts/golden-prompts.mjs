@@ -55,37 +55,51 @@ const only = argv.filter((a) => !a.startsWith('--'));
 const selected = only.length ? prompts.filter((p) => only.includes(p.id)) : prompts;
 if (!selected.length) throw new Error(`no prompt matched ${only.join(', ')} — see golden/prompts.json`);
 
-mkdirSync(runsDir, { recursive: true });
 
-const files = [];
-const failures = [];
-const refusals = [];
-for (const p of selected) {
-  process.stdout.write(`  generating ${p.id} … `);
+// ── Two-turn mode (2026-08-17, KNOWN_BUGS #19) ──────────────────────────────
+//
+// This harness could only ever express ONE turn, and every fault found on
+// 2026-08-17 was introduced by an EDIT: the aeroplane silently swapped for a
+// spaceship, the added cars that never appeared, the buttons an overlay ate,
+// the buildings replaced by hand-built boxes. An edit also gets a DIFFERENT
+// (slimmed) contract from a build, so a rule pinned only on the build path
+// looks correct and does nothing — which is exactly what happened to the
+// pointer-events rule before its edit-turn test caught it.
+//
+// The model-name diff is the part that turns a judgement into a NUMBER. A
+// child cannot be asked "did the plane stay a plane?"; comparing which models
+// the code LOADS before and after can be.
+
+// Mirrors LOAD_MODEL_RE + the placeModel shape in src/lib/assets/model-swap-lint.ts
+// and src/lib/assets/model-select.ts. Duplicated deliberately: this is an
+// on-demand .mjs dev tool that cannot import the TypeScript source. Reads CALL
+// SITES, never the marker or AR_ASSETS — injection reclaims old names, so a
+// swapped-out model's URL survives in the table even though no code loads it.
+const LOADED_MODEL_RE = /\b(?:loadModel|loadModelBatch|placeModel)\s*\(\s*['"`]([a-z0-9_]+)['"`]/gi;
+
+function loadedModelNames(html) {
+  const names = new Set();
+  for (const m of html.matchAll(LOADED_MODEL_RE)) names.add(m[1].toLowerCase());
+  return names;
+}
+
+/** Words a child could plausibly have used for a model name. */
+function mentions(message, name) {
+  const words = [name, name.replace(/_/g, ' '), name.split('_').pop()];
+  return words.some((w) => new RegExp(`\\b${w}\\b`, 'i').test(message));
+}
+
+/** One real turn against the running app. Returns {html, refused, text}. */
+async function turn({ message, history }) {
   const res = await fetch(`${BASE}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ message: p.text, history: [] }),
+    body: JSON.stringify({ message, history }),
   }).catch((e) => {
     throw new Error(`could not reach ${BASE} — is \`npm run dev\` running? (${e.message})`);
   });
-  if (!res.ok) {
-    // NEVER abort the whole run on one prompt (2026-08-16). The first real run
-    // of the expanded 13-prompt set died on prompt 5 with a guest `ip_limit`
-    // 401 — and took the four games it had ALREADY generated down with it,
-    // unverified. Model calls cost money; throwing away work that is already
-    // paid for is the one thing this harness must not do. Record the failure,
-    // keep going, and verify whatever was produced.
-    failures.push({ id: p.id, why: `${res.status} ${(await res.text()).slice(0, 200)}` });
-    console.log(`FAILED — ${res.status}`);
-    continue;
-  }
-  // /api/chat streams NDJSON ({"type":"delta"} … {"type":"done"}), it does not
-  // return one JSON object — res.json() threw on the very first delta, so this
-  // harness had never actually completed a run (fixed 2026-08-09, while using
-  // it to verify the category-map hybrid). Reassemble the stream the way the
-  // browser client does: accumulate deltas, prefer whatever final frame
-  // carries the artifact.
+  if (!res.ok) return { html: '', refused: false, status: res.status, text: (await res.text()).slice(0, 200) };
+
   const raw = await res.text();
   let streamed = '';
   let body = {};
@@ -99,31 +113,48 @@ for (const p of selected) {
     if (frame.type === 'done') done = frame;
     if (frame.artifactHtml || frame.html) body = frame;
   }
-  // JUDGE WHAT IS DELIVERED, NOT WHAT WAS STREAMED (2026-08-16). The route
-  // can REFUSE a finished game — an unknown three import, a CDN module
-  // specifier, a syntax error: all fatal, all unparseable in a browser, so it
-  // sends `done` with artifactHtml:null and a "try again" line instead
-  // (BUG-FIX-LOG 2026-08-15). The model's fenced HTML is still sitting in the
-  // stream, and an earlier version of this harness fished it out and saved it
-  // — so the runs on disk were files NO CHILD WOULD EVER SEE, and the harness
-  // reported a defect the pipeline had already handled correctly. A golden run
-  // must measure the product, not the model.
   const refused = done !== null && !done.artifactHtml && !done.html;
   const fenced = streamed.match(/```html\s*([\s\S]*?)(?:```|$)/i)?.[1];
   const html = refused
     ? ''
     : (body.artifactHtml ?? body.html ?? fenced ?? (/<!doctype html|<html/i.test(streamed) ? streamed : ''));
+  return { html, refused, status: 200, text: done?.text ?? body.text ?? '' };
+}
+
+mkdirSync(runsDir, { recursive: true });
+
+const files = [];
+const failures = [];
+const refusals = [];
+const editFaults = [];
+for (const p of selected) {
+  process.stdout.write(`  generating ${p.id} … `);
+  // Same one-turn helper the edit below uses — the NDJSON reassembly and the
+  // "judge what is DELIVERED, not what was streamed" rule live in one place
+  // now, so the build and edit paths cannot drift apart.
+  const built = await turn({ message: p.text, history: [] });
+  if (built.status !== 200) {
+    // NEVER abort the whole run on one prompt (2026-08-16). The first real run
+    // of the expanded 13-prompt set died on prompt 5 with a guest `ip_limit`
+    // 401 — and took the four games it had ALREADY generated down with it,
+    // unverified. Model calls cost money; throwing away work that is already
+    // paid for is the one thing this harness must not do.
+    failures.push({ id: p.id, why: `${built.status} ${built.text}` });
+    console.log(`FAILED — ${built.status}`);
+    continue;
+  }
+  const html = built.html;
   if (!html) {
-    if (refused) {
+    if (built.refused) {
       // Not a harness failure and not a silent pass: the pipeline caught a
       // fatal game and served a retry line instead. Correct behaviour — and
       // still a bad turn for the child, so it is counted and reported.
       console.log('REFUSED BY THE PIPELINE (correct — a fatal game was not served)');
-      console.log(`    the child would see: ${(done.text ?? '').slice(0, 120)}`);
-      refusals.push({ id: p.id, shown: (done.text ?? '').slice(0, 120) });
+      console.log(`    the child would see: ${built.text.slice(0, 120)}`);
+      refusals.push({ id: p.id, shown: built.text.slice(0, 120) });
     } else {
       console.log('NO GAME RETURNED');
-      console.log(`    the model replied without an artifact: ${(body.text ?? '').slice(0, 160)}`);
+      console.log(`    the model replied without an artifact: ${built.text.slice(0, 160)}`);
     }
     continue;
   }
@@ -132,6 +163,59 @@ for (const p of selected) {
   files.push(file);
   const prior = ledger[p.id];
   console.log(`${html.length} bytes${prior ? ` (last accepted: ${prior.bytes} bytes, ${prior.acceptedAt.slice(0, 10)})` : ' (never accepted)'}`);
+
+  // ── the SECOND turn, where the faults actually enter ─────────────────────
+  if (!p.edit) continue;
+  process.stdout.write(`  editing   ${p.id} … `);
+  const edited = await turn({
+    message: p.edit.text,
+    history: [
+      { role: 'child', text: p.text },
+      { role: 'assistant', text: 'Here is your game!', artifactHtml: html },
+    ],
+  });
+  if (edited.status !== 200) {
+    failures.push({ id: `${p.id}:edit`, why: `${edited.status} ${edited.text}` });
+    console.log(`FAILED — ${edited.status}`);
+    continue;
+  }
+  if (!edited.html) {
+    if (edited.refused) {
+      console.log('REFUSED BY THE PIPELINE (correct — a fatal edit was not served)');
+      refusals.push({ id: `${p.id}:edit`, shown: edited.text.slice(0, 120) });
+    } else {
+      // A soft-fail: the patch never applied and the game was left untouched.
+      // Not a crash, and still a turn where the child asked for something and
+      // got nothing — which is precisely the failure the owner kept hitting.
+      console.log('NO GAME RETURNED — the edit was lost (soft-fail)');
+      editFaults.push({ id: p.id, why: 'the edit produced no game — the child\'s ask did nothing' });
+    }
+    continue;
+  }
+  const editFile = join(runsDir, `${p.id}.edit.html`);
+  writeFileSync(editFile, edited.html);
+  files.push(editFile);
+
+  // THE MEASUREMENT: which models did the game stop loading, and did the child
+  // ask for that? An unrequested swap is now a number, not a judgement.
+  const before = loadedModelNames(html);
+  const after = loadedModelNames(edited.html);
+  const dropped = [...before].filter((n) => !after.has(n));
+  const added = [...after].filter((n) => !before.has(n));
+  const unrequested = dropped.filter((n) => !mentions(p.edit.text, n));
+  console.log(`${edited.html.length} bytes · models ${before.size}→${after.size}` +
+    `${added.length ? ` +${added.join(',')}` : ''}${dropped.length ? ` -${dropped.join(',')}` : ''}`);
+  if (unrequested.length) {
+    console.log(`    ✖ UNREQUESTED MODEL SWAP: ${unrequested.join(', ')} — the child never mentioned these`);
+    editFaults.push({ id: p.id, why: `dropped ${unrequested.join(', ')} without being asked` });
+  }
+  // An edit that ADDS a thing the child named must actually load a model for
+  // it — the "add lots of cars and bikes" case, silent for as long as the
+  // loadModelBatch healing gap existed.
+  if (/\badd\b/i.test(p.edit.text) && added.length === 0 && dropped.length === 0) {
+    console.log('    ⚠ the edit added NO new model — check the child got what they asked for');
+    editFaults.push({ id: p.id, why: 'an "add" edit introduced no new model at all' });
+  }
 }
 
 if (refusals.length) {
@@ -139,6 +223,12 @@ if (refusals.length) {
   console.log('  The lints did their job — nothing broken reached a child — but the child got a');
   console.log('  "try again" line instead of a game, so these are real bad turns:');
   for (const r of refusals) console.log(`    ${r.id}: ${r.shown}`);
+}
+
+if (editFaults.length) {
+  console.log(`\n✖ ${editFaults.length} EDIT turn(s) went wrong. Edits get the slimmed edit contract,`);
+  console.log('  and every fault found on 2026-08-17 entered on an edit rather than a build:');
+  for (const e of editFaults) console.log(`    ${e.id}: ${e.why}`);
 }
 
 if (failures.length) {
@@ -154,11 +244,39 @@ if (!files.length) {
 }
 
 console.log('\nVerifying in a real browser …\n');
+// playwright-core lives in the SIBLING platform repo, not here (2026-08-17).
+// Without this the verifier cannot start, and the run then reported
+// "✖ At least one golden game does not RUN" — which is FALSE, and is the
+// worst thing a safety net can say. A tool that cries wolf about the
+// environment teaches its reader to discount it when it reports a real fault;
+// curated-imports.test.ts makes exactly this argument about false alarms.
+// So: point it at the sibling install if it is not resolvable here, and keep
+// "the verifier could not start" strictly distinct from "a game is broken".
+const verifyEnv = { ...process.env };
+if (!verifyEnv.PLAYWRIGHT_CORE_DIR) {
+  const sibling = join(repo, '../Ariantra-Platform/node_modules/playwright-core');
+  if (existsSync(sibling)) verifyEnv.PLAYWRIGHT_CORE_DIR = sibling;
+}
 try {
-  execFileSync('node', [join(repo, 'scripts/verify-game-html.mjs'), ...files], { stdio: 'inherit', cwd: repo });
-} catch {
-  console.error('\n✖ At least one golden game does not RUN. That is a hard failure — it is the');
-  console.error('  class of fault every string-assertion test in this repo is blind to.');
+  execFileSync('node', [join(repo, 'scripts/verify-game-html.mjs'), ...files], {
+    stdio: 'inherit',
+    cwd: repo,
+    env: verifyEnv,
+  });
+} catch (err) {
+  // status === null means the process could not be spawned or died on a
+  // signal; a non-zero status is the verifier's own verdict on the games.
+  const brokenGames = typeof err.status === 'number' && err.status !== 0;
+  if (brokenGames) {
+    console.error('\n✖ At least one golden game does not RUN. That is a hard failure — it is the');
+    console.error('  class of fault every string-assertion test in this repo is blind to.');
+  } else {
+    console.error('\n⚠ The browser verifier could not START, so the games above are UNVERIFIED.');
+    console.error('  This is an environment problem, not a verdict on the games — do not read');
+    console.error('  it as a pass OR as a failure. Most likely playwright-core is missing:');
+    console.error('    PLAYWRIGHT_CORE_DIR=../Ariantra-Platform/node_modules/playwright-core \\');
+    console.error('      node scripts/verify-game-html.mjs golden/runs/*.html');
+  }
   process.exit(1);
 }
 
@@ -166,6 +284,12 @@ console.log('\nEvery golden game runs clean. Now LOOK at them — mechanical che
 console.log('a track whose corners do not meet:');
 for (const f of files) console.log(`  open ${f}`);
 console.log('\nHappy with one? Record it:  node scripts/golden-prompts.mjs --accept <id>');
+// An unrequested model swap or a lost edit is a MECHANICAL fault, not a matter
+// of taste — it fails the run without a human having to notice it.
+if (editFaults.length) {
+  console.error(`\n✖ ${editFaults.length} edit fault(s) — see above.`);
+  process.exit(1);
+}
 // A partial run is not a pass. Exit non-zero so an unattended invocation cannot
 // be read as "all 13 golden prompts are clean" when only four of them ran.
 if (failures.length || refusals.length) process.exit(2);

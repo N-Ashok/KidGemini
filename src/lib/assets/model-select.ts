@@ -169,6 +169,26 @@ export const PROMPT_MODEL_CAP = 30;
 
 const ARTIFACT_MODELS = /<!--USES_MODELS:([a-z0-9_,\s]*)-->/gi;
 
+/** The three call shapes a generated game uses to name a library model:
+ *  `loadModel("x")`, `loadModelBatch("x", n)` and `placeModel("x", opts)` —
+ *  the last being the one prompt-catalog.ts now tells the model to PREFER.
+ *
+ *  Read ALONGSIDE the marker, and it is the shape that actually matters: the
+ *  marker is stripped from the artifact at delivery (stripAssetMarkers), so
+ *  every artifact in a real history has call sites and NO marker. Matching
+ *  only the marker meant step 1 below found nothing on every genuine edit
+ *  turn, the game's own models dropped out of the toy box line, and the prompt
+ *  then told the model — truthfully, from its side — that they did not exist.
+ *  It followed the next instruction and hand-built them out of BoxGeometry.
+ *  That is the owner's 2026-08-17 "the skyscrapers have windows in the model
+ *  why is it not coming through in the game?": three buildings its earlier
+ *  version had used, replaced by 600 hand-lit cubes.
+ *
+ *  Marker kept as well, not replaced: it is the only signal on HTML that has
+ *  not been through injection yet (CLAUDE.md rule 11 — add the new source
+ *  ahead of the old, keep the old as a fallback). */
+const ARTIFACT_MODEL_CALLS = /\b(?:loadModel|loadModelBatch|placeModel)\s*\(\s*['"`]([a-z0-9_]+)['"`]/gi;
+
 /**
  * FALLBACK PATH — not currently wired into the prompt (see the header note).
  *
@@ -192,12 +212,21 @@ export function selectModelNames(input: {
 
   const picked = new Set<string>();
   // 1. Models the game being iterated on already uses — dropping one would
-  //    make the model unable to keep its own game working.
+  //    make the model unable to keep its own game working. Read from BOTH the
+  //    marker (pre-injection HTML) and the loadModel/loadModelBatch/placeModel
+  //    CALL SITES (post-injection HTML, i.e. everything actually stored). See
+  //    ARTIFACT_MODEL_CALLS above for why the call sites had to be added.
+  //    Unknown names are dropped by `availableSet`, so a hallucinated
+  //    `loadModel("unicorn_castle")` can never be offered back as real.
   for (const match of artifacts.matchAll(ARTIFACT_MODELS)) {
     for (const raw of (match[1] ?? "").split(",")) {
       const name = raw.trim().toLowerCase();
       if (availableSet.has(name)) picked.add(name);
     }
+  }
+  for (const match of artifacts.matchAll(ARTIFACT_MODEL_CALLS)) {
+    const name = match[1]!.toLowerCase();
+    if (availableSet.has(name)) picked.add(name);
   }
   // 2. Models the kid named outright.
   for (const name of available) {

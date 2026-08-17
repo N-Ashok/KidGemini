@@ -11,7 +11,10 @@ human) should read this before writing code. **Read the relevant docs BEFORE tou
 code**: product intent in `docs/PRD.md`; visual language in `docs/DESIGN_SYSTEM.md`; system
 map and hosting in `docs/ARCHITECTURE.md`; feature overview in `docs/FEATURES.md`; the exact
 LLM prompt sent on every child turn in `docs/PROMPT_MANAGEMENT.md` (read before changing any
-prompt string or the assembly/gating logic); known
+prompt string or the assembly/gating logic); **how to find out where something
+broke in production** in `docs/LOGGING.md` (the `trace=` key, the stage
+vocabulary, and the grep recipes — read this FIRST when debugging a live
+report, and before adding any log line); known
 issues in `docs/KNOWN_BUGS.md` and `docs/SCALABILITY_ISSUES.md`; deferred work in
 `../Ariantra-Platform/docs/TECH_DEBT.md` (cross-repo register — add to it when deferring).
 

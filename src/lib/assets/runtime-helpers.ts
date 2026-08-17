@@ -3,6 +3,60 @@
 // preview floor (ensure-runtime.ts) and the server injector (inject.ts) share
 // ONE source of truth for the loadModel helper — the two can never drift.
 
+/** Every `window.*` name the injected runtime defines — the ONE list, kept
+ *  here because this file is where they are actually assigned.
+ *
+ *  Two consumers, and they used to keep private copies that drifted
+ *  (KNOWN_BUGS #21, 2026-08-17): three-import-lint's healer knew 5 of these
+ *  and ensure-runtime's "does this game use the runtime" probe knew 11. The
+ *  healer's gap cost a full ~50s corrective regeneration every time a game
+ *  wrote `import { placeModel } from "three"` — and placeModel is the name
+ *  prompt-catalog.ts tells the model to PREFER, so it is the likeliest one to
+ *  be imported by mistake. Seen live:
+ *    ⛔ unknown three imports: loadModel, placeModel, modelHeading
+ *
+ *  ADDING A NAME HERE IS A PROMISE that `window.<name> =` really is injected.
+ *  Stripping an import for a name the runtime does NOT define converts a loud
+ *  dead import line (which verify catches) into a silent play-time
+ *  ReferenceError (which it does not) — that is the PointLight failure,
+ *  BUG-FIX-LOG 2026-08-07. A test asserts both directions of this. */
+export const INJECTED_RUNTIME_GLOBALS = [
+  "loadModel",
+  "loadModelBatch",
+  "placeModel",
+  "modelSize",
+  "modelAxis",
+  "modelJoins",
+  "modelFacing",
+  "modelMetres",
+  "modelHeading",
+  "rotateToJoin",
+  "fitTile",
+  "playSound",
+  "playMusic",
+] as const;
+
+/** The MODEL half of the list above — everything except the audio helpers.
+ *
+ *  Two consumers ask two DIFFERENT questions of these names, and conflating
+ *  them shipped a bug the same day the lists were merged (BUG-FIX-LOG
+ *  2026-08-17, owner UAT "i made a 2d game and it came out with error"):
+ *
+ *   - three-import-lint asks "is this name an injected global, so an
+ *     `import { x } from "three"` must be healed away?" — TRUE of all 13,
+ *     audio included. It wants INJECTED_RUNTIME_GLOBALS.
+ *   - ensure-runtime asks "does this game use the 3D RUNTIME, so it needs an
+ *     import map, the loadModel helper and the asset tables?" — false for
+ *     audio. `playSound` works in a plain 2D game and always has.
+ *
+ *  With the merged list, a 289-byte 2D canvas game whose only crime was
+ *  calling `playSound("coin")` came back 34,755 bytes carrying a module script
+ *  importing "three", so the browser fetched a 621 KB 3D engine for a game
+ *  drawn with fillRect. Sound is not 3D. */
+export const MODEL_RUNTIME_GLOBALS = INJECTED_RUNTIME_GLOBALS.filter(
+  (n) => n !== "playSound" && n !== "playMusic",
+);
+
 /** Inserts markup as early as possible (right after <head>, else <html>) so a
  *  game's own `<script type="module">` and the import map that resolves it come
  *  before any module load begins. */
@@ -626,8 +680,14 @@ window.loadModel = async function (name) {
  *  can replace a stale copy instead of seeing the marker and calling it done.
  *  v2 (2026-08-15): bake each part's in-model transform into the instance
  *  matrix — see the note in the helper body. v1 (unstamped) placed every
- *  batched model rotated, sunk and un-normalised. */
-export const LOAD_MODEL_BATCH_VERSION = 2;
+ *  batched model rotated, sunk and un-normalised.
+ *  v3 (2026-08-17): the returned container carries the model's NAME. It was a
+ *  bare `new Group()`, so `.name` was "" for every batch ever created, and a
+ *  game that branched on `batch.mesh.name` to size a mixed flock had two dead
+ *  arms and one scale for everything (owner's Mumbai Flight Sim — birds the
+ *  size of trees). The bump is the migration: stored games pick the name up on
+ *  their next preview render. */
+export const LOAD_MODEL_BATCH_VERSION = 3;
 
 export function loadModelBatchHelper(): string {
   return `<script type="module">
@@ -646,6 +706,13 @@ window.loadModelBatch = async function (name, count) {
     if (!template) return null;
     if (template.animations.length) { console.warn("[ariantra] loadModelBatch does not support animated models:", name); return null; }
     const container = new Group();
+    // v3 (2026-08-17): the container answers to the model's name. A bare Group
+    // has name "", and generated games branch on it as the natural way to tell
+    // one batch from another in a shared update loop:
+    //   if (e.batch.mesh.name === "bird") batchScale = 0.5;
+    // Every such arm was dead, so a mixed flock got one scale. Cheap, additive,
+    // and it makes code the model already writes start working.
+    container.name = name;
     const parts = [];
     // A mesh inside a GLB is almost never at the model's origin with unit
     // scale: kits park parts under rotated/offset/scaled nodes, and the vendor

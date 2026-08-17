@@ -785,3 +785,39 @@ describe("the prompt never teaches a three import the bundle lacks (2026-08-16)"
     expect(section).toMatch(/NO curve class in this build/);
   });
 });
+
+describe("A4 — prefer the library model over hand-built primitives (2026-08-17)", () => {
+  // The owner's Mumbai Flight Sim: a city of 600 BoxGeometry blocks with
+  // hand-built glowing "window" boxes, while `skyscraper`, `office_building`,
+  // `apartment` and `shop` sat in the toy box — an earlier version of the SAME
+  // game had used all four. Owner: "the skyscrapers have windows in the model
+  // why is it not coming through in the game?"
+  //
+  // Two causes, both fixed on 2026-08-17. The first was mechanical (the toy
+  // box line lost the game's own models once the marker was stripped — see
+  // model-select.ts). The second is here: the prompt told the model what to do
+  // when the toy box LACKS a thing ("build it from the primitive shapes
+  // instead") and never once told it what to do when the toy box HAS it. The
+  // asymmetry read as a licence to hand-build anything.
+  const section = () => modelsPromptSection(realManifest as AssetManifest);
+
+  it("states the converse rule: if the toy box has it, LOAD it", () => {
+    expect(section()).toMatch(/PREFER THE MODEL|prefer the (ready-made )?model/i);
+    expect(section()).toMatch(/BoxGeometry/);
+  });
+
+  it("names buildings specifically — the case that actually failed", () => {
+    expect(section()).toMatch(/building/i);
+  });
+
+  it("says a loaded model arrives already painted, and how to tint it safely", () => {
+    // The other half of the same instinct: having hand-built the blocks, the
+    // model then hand-built window bands. A real model brings its own
+    // textures; REPLACING mesh.material throws them away and yields the flat
+    // block the child was already looking at.
+    const s = section();
+    expect(s).toMatch(/material/);
+    expect(s).toMatch(/never replace|do not replace/i);
+    expect(s).toMatch(/material\.color/);
+  });
+});

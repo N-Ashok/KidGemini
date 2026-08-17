@@ -11,6 +11,192 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-17 (evening) — a rule that reaches only one prompt is not a rule
+
+Owner question, after two days of fixes: *"what will fail that we corrected in the
+last 2 days ... like the cartoonish items"* — i.e. if generation goes two-pass,
+which of these fixes quietly stop applying?
+
+Answering it properly meant enumerating **every prompt that can produce or alter a
+game a child plays**. There are five, and two of them carried none of the rules:
+
+| surface | had the artifact rules? |
+|---|---|
+| build turn | ✅ |
+| edit turn (slimmed contract) | ✅ |
+| strict-edit retry — 3 call sites, incl. the rung that does 100% of repair work | ✅ via `personaBasePrompt` |
+| **`api/repair` first attempt** | ❌ none |
+| **spec compiler** (pass 1, gated off) | ❌ none |
+
+`SPEC_COMPILER_SYSTEM_PROMPT` §2 mandates a **START SCREEN** and said nothing about
+`pointer-events` — the exact pairing that caused the occlusion bug when it landed in
+the build contract on `9452e2c`. Turning pass 1 on would have reintroduced that
+fault at scale, silently, with every existing test green.
+
+**The generalisation.** `P.5` caught the pointer-events rule reaching only the build
+contract — by luck, because someone thought to check the second path. `src/lib/
+prompt-surfaces.ts` now enumerates the surfaces once, and `prompt-surfaces.test.ts`
+asserts every artifact invariant against every one of them. A rule may be skipped
+only via an `exempt` entry carrying a written reason, which renders as a passing
+test with the reason in its name — visible in the run output, not buried.
+
+Dormant surfaces are held to the same standard on purpose: "it was gated off" is no
+comfort to the child who gets the first broken game after a flag flips.
+
+It found **7 real gaps on its first run**, all now closed. `S.5` pins the causal pair
+directly: any surface that mandates a start screen must teach `pointer-events` in the
+same breath.
+
+**On the two-pass question itself:** pass 1 is build-only (`spec-compiler.ts:63`
+returns false on edit turns), and every fault found in the last two days entered on
+an EDIT — so two-pass would have caught none of them, and none of the plumbing fixes
+are made redundant by it. It also adds a third place every prompt rule must live,
+which is what this test now polices.
+
+---
+
+## 2026-08-17 (evening) — the new instruments earn out on their first run
+
+Not a bug fix: a record of what the two things built this afternoon — the two-turn
+golden runner and the structured logging — found within an hour of existing.
+
+**The logging made a recurring fault countable.** Three `unknown three imports`
+events across 13 prompts had, until today, been three lines of prose scattered
+through a log. One command now names them:
+
+```
+$ grep -o 'bad=[A-Za-z0-9,]*' logs/app.log | sort | uniq -c | sort -rn
+   2 bad=PCFSoftShadowMap
+   1 bad=FogExp2
+```
+
+Each is a full corrective regeneration (~30s of a child's wait), and each is a
+**contradiction we created**: `modelsPromptSection` rule 4 says "Enable shadows",
+and the next line any three.js author writes is `renderer.shadowMap.type =
+PCFSoftShadowMap`; the scenery rule mentions fog, and `Fog` is exported while
+`FogExp2` is not. Recipe updated and measured at **622 KB (+1 KB, budget 650)**;
+publishing is owner-gated and the lockstep test forbids teaching the names before
+the upload lands.
+
+**The two-turn runner found faults nothing else could see.** Its whole point is
+that an edit gets a different contract from a build, and every fault found today
+entered on an edit. First run: **no unrequested model swaps** in any of the three
+edit turns — the aeroplane→spaceship class did not reproduce — but two edits
+added nothing at all (KNOWN_BUGS #28). "Add lots of cars and bikes" produced
+models 2→2 with no bike; "add some tall buildings" added a second
+`placeModel("house")` rather than reaching for `skyscraper`. Checked before
+filing: the toy-box line *does* ride on edit turns, and "bikes" *does* trigger
+the racing genre, so the names were available — this is generation quality, not
+the plumbing fixed earlier today.
+
+**The browser pass found two more (#29, #30)**, both of which had been *delivered*
+to a child as finished games: `THREE.Object4D is not a constructor` — a
+hallucinated member on a `import * as THREE` namespace, which the import lint
+ignores by design because it "cannot crash the import line" (true; it crashes at
+runtime instead) — and a game that invented
+`https://assets.mixkit.co/models/crocodile.glb`, got a 403, and silently lost the
+crocodile the child asked for. Both are deterministically checkable against data
+we already have, and both are filed with the fix sketched.
+
+**One harness bug fixed in passing.** `playwright-core` lives in the sibling
+platform repo, so the verifier could not start — and the run reported
+"✖ At least one golden game does not RUN", which was false. A safety net that
+cries wolf about its own environment teaches its reader to discount it when it
+reports something real (the argument `curated-imports.test.ts` already makes
+about false alarms). It now resolves the sibling install and keeps "the verifier
+could not start" strictly separate from "a game is broken".
+
+---
+
+## 2026-08-17 (later) — three bugs, one shape: reading a marker that delivery had already stripped
+
+Follow-on work from the session above, built from `docs/2026-08-17_PRD_GenerationPipelineRemediation.md`.
+The interesting part is that three separate reports turned out to be **the same mistake made in three
+places**: code that asked `<!--USES_MODELS: …-->` what a game uses, when `injectAssets` strips that
+marker before delivery. Every stored artifact has call sites and no marker.
+
+| Where | Symptom the owner reported |
+|---|---|
+| `ensure-runtime.ts` (fixed earlier today) | "I have been asking the game for moving cars and bikes on the road but it didnot provide yet" |
+| `model-select.ts` (fixed here) | "the skyscrapers have windows in the model why is it not coming through in the game?" |
+| `model-swap-lint.ts` (written today, correctly, from the start) | "the aeroplane changed which is not what i wanted" |
+
+**The buildings, measured not guessed.** `retrievedModelNames` was run against two artifacts differing
+only in whether the marker was present. With it: `skyscraper`, `office_building`, `apartment` all
+survive into the toy-box line. Without it — i.e. every real edit turn — **none of them do**. The
+prompt then tells the model "Only these; never invent a name", and one rule later, "If you need an
+object the toy box doesn't have, build it from the primitive shapes instead." The model followed both
+instructions exactly and hand-built 600 `BoxGeometry` blocks with painted-on window strips. It never
+had the buildings to use. Fixed by reading the `loadModel`/`loadModelBatch`/`placeModel` **call
+sites** as well as the marker (kept as a fallback for pre-injection HTML — CLAUDE.md rule 11).
+
+The pre-existing test for that code passed a marker-carrying artifact **and** a history message
+saying "3d city game" — so "city" pulled the buildings in by genre and the test would have passed
+with the whole mechanism deleted. The new test says "make a flying game" instead.
+
+**A second asymmetry, in the prompt itself.** It told the model what to do when the toy box LACKS a
+thing and never once what to do when it HAS one. `1b. PREFER THE MODEL` now closes that, plus the
+other half of the same instinct: a loaded model arrives already painted, so never replace
+`mesh.material` (that discards its texture and hands back the flat block you were avoiding).
+
+**Paid for, not waved through.** `modelsPromptSection` sits under a token ceiling whose own test says
+"THE NEXT RAISE SHOULD NOT HAPPEN" and "a ceiling raised whenever it binds is not a ceiling". The new
+rule was funded by compressing redundancy elsewhere in the same section (a heading convention stated
+twice, a filler sentence, two long-winded passages) — net zero. One over-trim removed a pinned
+fail-soft phrase and the test caught it immediately.
+
+### Also fixed
+
+**`batch.mesh.name` was always `""`.** `loadModelBatch` returned a bare `new Group()`, so generated
+games branching on it — `if (e.batch.mesh.name === 'bird') batchScale = 0.5;` — had dead code and a
+mixed flock got one scale. One line, plus `LOAD_MODEL_BATCH_VERSION` 2→3 so ~200 stored games pick it
+up on their next preview render.
+
+**The controls were inverted, and nobody had said they must not be.** From the owner's own game:
+`(keys['ArrowUp'] || btns.down) ? 0.6 : …` with `rotation.x = pitch` — positive pitch descends, so the
+DOWN button was right and ArrowUp was backwards. Both handlers fired perfectly; they disagreed about
+which way is up. New contract rule `ONE INPUT INTENT, ONE OUTCOME`, pinned in **both** the build and
+edit contracts. Same for `DRAW EVERY FRAME` (the owner's game had `renderer.render` below an early
+`return`, so the canvas was blank behind the start screen).
+
+**The verify probe only ever hit-tested Start.** That is why "the take off and land buttons are not
+working" survived four fixes: Start was reachable, so the game reported clean while a layer sat over
+the flight controls. New `controls_occluded` code with its own repair instruction. It required a real
+contract change — the probe now clicks Start on healthy games too, because the controls cannot be
+tested before the start screen is gone. Logged as a cost in KNOWN_BUGS #27.
+
+**`RUNTIME_GLOBALS` drift, and a healer that ran too late.** One shared `INJECTED_RUNTIME_GLOBALS`
+(13 names) now feeds both the import healer and `ensure-runtime`'s probe, tested in both directions.
+And the lint reads the *healed* HTML, so `import { placeModel } from "three"` is fixed in a
+millisecond instead of costing a ~50s corrective regeneration (`@71804ms`, live).
+
+### And the thing the owner asked for mid-session: a real log system
+
+> *"i need log system proper in all the code so when it fails, i will know where to look for"*
+
+There was never a shortage of log lines — 161 of them. What was missing was the ability to answer
+"which turn was that?", "how far did it get?" and "what actually broke?". During this very
+investigation a chat turn was matched to its repair **by comparing character counts across
+timestamps by eye**.
+
+`src/lib/turn-log.ts` gives every request an 8-character `trace=` key, carried on every line it
+emits, returned to the browser, stored on the message, and sent back with any `/api/repair` call that
+game later makes — so a build, its edits and its self-heals sit on one greppable thread. Lines are
+`stage=… outcome=… ms=… key=value`, so faults are countable (`grep -o 'stage=[a-z_]* outcome=fail' |
+sort | uniq -c`) rather than buried in prose. Stage names mean a *missing* stage is itself the
+finding — a turn that logs `start` and never `deliver` died in between.
+
+Privacy is part of the format, not a convention on top of it: these are children's sessions, so a
+field value is never free text from a child — `chars=`, not the message.
+
+`describeError` exists because `String(err)` on a plain object is `"[object Object]"`, which is
+precisely what shipped to production this morning as the only record of what broke. The field type
+forbids objects outright, so it cannot recur. Runbook: **`docs/LOGGING.md`**.
+
+**Impact:** 2,828 tests pass, typecheck clean. Nothing deployed — awaiting the owner's word.
+
+---
+
 ## 2026-08-17 — the buttons were never broken: an invisible layer ate every tap, and the repair was told to fix "[object Object]"
 
 Found by watching production live while the owner built a game. It closes a bug that had already

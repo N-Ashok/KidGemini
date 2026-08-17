@@ -21,6 +21,7 @@ import { applyPatch } from "@/lib/repair-prompt";
 import { injectAssets } from "@/lib/assets/inject";
 import { unrequestedModelSwaps } from "@/lib/assets/model-swap-lint";
 import { ensureAssetRuntime } from "@/lib/assets/ensure-runtime";
+import { TurnLog, describeError } from "@/lib/turn-log";
 import { danglingModuleSpecifiers, ensureThreeImports, externalScriptSrcs, newDanglingModuleSpecifiers, newExternalScriptSrcs, newUnknownThreeImports, unknownThreeImports, stripRuntimeGlobalImports } from "@/lib/assets/three-import-lint";
 import { findJsSyntaxError } from "@/lib/js-syntax-lint";
 import { CURATED_IMPORT_NAMES } from "@/lib/assets/prompt-catalog";
@@ -56,6 +57,22 @@ const turnResults = new SqliteTurnResultStore();
 const estTokens = (t: string) => Math.ceil(t.length / 4);
 
 export async function POST(req: NextRequest) {
+  // ── the turn's trace (2026-08-17, owner ask: "i need log system proper in
+  // all the code so when it fails, i will know where to look for") ──────────
+  //
+  // Created before anything else can log, so EVERY line this request emits —
+  // gate refusals, the model call, each patch rung, the lint, delivery —
+  // carries the same `trace=` key. `grep trace=k3f9a2xr logs/app.log` is then
+  // the whole ordered story of one turn, and a repair the child's browser
+  // triggers later carries the same key (api/repair adopts it), so a build,
+  // its edits and its self-heals finally sit on one thread.
+  //
+  // Before this, correlation did not exist at all: the 2026-08-17
+  // investigation matched a chat turn to its repair by comparing character
+  // counts across timestamps by eye. That is workable with one owner on the
+  // box and pure guesswork with ten children.
+  const log = new TurnLog("api/chat");
+  const trace = `trace=${log.trace}`;
   const geo = resolveGeo(req);
   let body: { message?: string; attachmentText?: string; attachmentName?: string; history?: ChatMessage[]; image?: unknown; replyId?: unknown; activeGameMessageId?: unknown; forceRebuild?: unknown; differentVersion?: unknown; persona?: unknown };
   try {
@@ -76,7 +93,7 @@ export async function POST(req: NextRequest) {
     try {
       op();
     } catch (err) {
-      console.warn(`[api/chat] turn-result write failed (ignored): ${(err as Error).message}`);
+      console.warn(`[api/chat] ${trace} turn-result write failed (ignored): ${(err as Error).message}`);
     }
   };
 
@@ -123,7 +140,7 @@ export async function POST(req: NextRequest) {
   if (body.image !== undefined) {
     const v = validateImageAttachment(body.image);
     if (!v.ok) {
-      console.log(`[api/chat] ⛔ image rejected (${v.reason})`);
+      console.log(`[api/chat] ${trace} ⛔ image rejected (${v.reason})`);
       return NextResponse.json(
         { error: "bad_image", message: "That picture didn't work — try a photo or screenshot (JPG or PNG). 📷" },
         { status: 400 },
@@ -136,7 +153,7 @@ export async function POST(req: NextRequest) {
   // Signed-in users are unlimited and keyed by their Google account. Guests are keyed by an
   // httpOnly device cookie and capped at GUEST_TOKEN_LIMIT total tokens (chat + safety). The
   // client cannot bypass this — the check and the tally both live here on the server.
-  const session = await safeAuth();
+  const session = await safeAuth(trace);
   const signedIn = Boolean(session);
 
   // Fail-closed persona resolution (PRD-BIBLE-TEACHER §4, defense in depth): the
@@ -166,7 +183,7 @@ export async function POST(req: NextRequest) {
       const dayStart = new Date().setUTCHours(0, 0, 0, 0);
       const usedToday = usage.tokensUsedByUserSince(userId, dayStart);
       if (usedToday >= dailyLimit) {
-        console.log(`[api/chat] ⛔ daily budget userId=${userId} used=${usedToday}/${dailyLimit} → 402`);
+        console.log(`[api/chat] ${trace} ⛔ daily budget userId=${userId} used=${usedToday}/${dailyLimit} → 402`);
         return NextResponse.json(
           { error: "payment_required", reason: "daily_budget",
             message: "You've used today's free tokens — upgrade to keep chatting, or come back tomorrow! ⭐" },
@@ -199,7 +216,7 @@ export async function POST(req: NextRequest) {
     if (geo.ip) {
       const rl = rateLimit.hit(geo.ip, Date.now());
       if (rl.state === "blocked") {
-        console.log(`[api/chat] ⛔ rate-limit ip=${geo.ip} until=${rl.until} mustPay=${rl.mustPay}`);
+        console.log(`[api/chat] ${trace} ⛔ rate-limit ip=${geo.ip} until=${rl.until} mustPay=${rl.mustPay}`);
         return rl.mustPay
           ? NextResponse.json(
               { error: "payment_required", reason: "strikes",
@@ -219,7 +236,7 @@ export async function POST(req: NextRequest) {
       const ipCap = ipGuestTokenCap(); // shipped 20,000; env-tunable per request
       const ipUsed = usage.guestTokensUsedByIp(geo.ip, Date.now() - GUEST_WINDOW_MS);
       if (ipUsed >= ipCap) {
-        console.log(`[api/chat] ⛔ gate: ip=${geo.ip} used=${ipUsed}/${ipCap} → 401`);
+        console.log(`[api/chat] ${trace} ⛔ gate: ip=${geo.ip} used=${ipUsed}/${ipCap} → 401`);
         return NextResponse.json(
           { error: "auth_required", reason: "ip_limit",
             message: "Please sign in to continue using Ari ✨" },
@@ -237,9 +254,9 @@ export async function POST(req: NextRequest) {
     // (PRD §3a); the per-IP token cap above backstops serial-incognito.
     if (requestedPersona !== "bible-teacher") {
       const asks = usage.chatTurnsByUser(guestId, Date.now() - GUEST_WINDOW_MS);
-      console.log(`[api/chat] guest ${guestId} asks=${asks}/${GUEST_ASK_LIMIT}`);
+      console.log(`[api/chat] ${trace} guest ${guestId} asks=${asks}/${GUEST_ASK_LIMIT}`);
       if (asks >= GUEST_ASK_LIMIT) {
-        console.log(`[api/chat] ⛔ gate: guest one-ask limit → 401 sign-in wall`);
+        console.log(`[api/chat] ${trace} ⛔ gate: guest one-ask limit → 401 sign-in wall`);
         return NextResponse.json(
           { error: "auth_required", reason: "guest_limit",
             message: "Your game is waiting! Sign in free to see it, keep it forever, and get 2,000 free Sparks to keep building ✨" },
@@ -253,9 +270,9 @@ export async function POST(req: NextRequest) {
     // behind the one-ask rule.
     const guestLimit = guestTokenLimitFor(requestedPersona);
     const used = usage.tokensUsedByUser(guestId, Date.now() - GUEST_WINDOW_MS);
-    console.log(`[api/chat] guest ${guestId} used=${used}/${guestLimit} tokens (persona=${requestedPersona ?? "default"})`);
+    console.log(`[api/chat] ${trace} guest ${guestId} used=${used}/${guestLimit} tokens (persona=${requestedPersona ?? "default"})`);
     if (used >= guestLimit) {
-      console.log(`[api/chat] ⛔ gate: guest over device limit → 401 sign-in wall`);
+      console.log(`[api/chat] ${trace} ⛔ gate: guest over device limit → 401 sign-in wall`);
       return NextResponse.json(
         { error: "auth_required", reason: "guest_limit",
           message: "Please sign in to continue using Ari ✨" },
@@ -268,7 +285,9 @@ export async function POST(req: NextRequest) {
 
   const t0 = Date.now();
   const ms = () => Date.now() - t0;
-  console.log(`[api/chat] ▶ start userId=${userId} chars=${message.length} image=${image ? image.mimeType : "no"} chatModel=${chatModelName}`);
+  // NOTE chars=, never the message itself: these logs describe children's
+  // sessions, so a field value is never free text from a child.
+  log.ok("start", { userId, chars: message.length, image: image ? image.mimeType : undefined, model: chatModelName });
 
   // Per-request model-decision ledger (owner ask 2026-07-21). Each model-call
   // EPISODE this turn fires — the streamed answer, plus any strict-edit retry or
@@ -387,7 +406,7 @@ export async function POST(req: NextRequest) {
         geo, requestText: message, outputText, blocked: false,
       });
       billTurnSparks("fallback", model, promptTokens, outputTokens, real, costUsd);
-      console.log(`[api/chat] 💸 billed losing call ${model} (kind=fallback, ${outputTokens} out tok) @${ms()}ms`);
+      console.log(`[api/chat] ${trace} 💸 billed losing call ${model} (kind=fallback, ${outputTokens} out tok) @${ms()}ms`);
     } catch { /* bookkeeping must never break a turn */ }
   }
 
@@ -396,7 +415,7 @@ export async function POST(req: NextRequest) {
   // an attached file's full contents (KNOWN_BUGS #7/#12: that used to be what
   // got scanned, and an oversized attachment could false-positive the rules).
   const inRules = rules.classifySync({ text: childText, origin: "child" });
-  console.log(`[api/chat] input-rules action=${inRules.action} persona=${persona.id} @${ms()}ms`);
+  console.log(`[api/chat] ${trace} input-rules action=${inRules.action} persona=${persona.id} @${ms()}ms`);
   // Adult authoring mode (verified-adult bible-teacher persona, PRD §4): the
   // teacher is an adult author of their OWN typing, so a PII soft-block is not a
   // child-safety concern and there is no parent to alert — only HARD blocks
@@ -420,7 +439,7 @@ export async function POST(req: NextRequest) {
   // the build in a fresh chat seeded with the 2D game and sends it with
   // forceRebuild, which skips this guard. The 2D game is never touched.
   if (!forceRebuild && isThreeConversionTurn(message, history, activeGameMessageId)) {
-    console.log(`[api/chat] 🎮 2D→3D conversion — a new game, offering fresh chat @${ms()}ms`);
+    console.log(`[api/chat] ${trace} 🎮 2D→3D conversion — a new game, offering fresh chat @${ms()}ms`);
     return ndjson((send) => {
       send({ type: "done", text: THREE_D_NEW_GAME_LINE, artifactHtml: null, threeDNewGame: true });
     }, guestCookieHeader(setGuestCookie));
@@ -438,7 +457,7 @@ export async function POST(req: NextRequest) {
   if (sparksToken) {
     const gate = await fetchGate(sparksToken);
     if (gate.status === 200 && gate.data.canStart === false) {
-      console.log(`[api/chat] ⚡ sparks exhausted — turn refused @${ms()}ms`);
+      console.log(`[api/chat] ${trace} ⚡ sparks exhausted — turn refused @${ms()}ms`);
       return ndjson((send) => {
         send({ type: "paywall", text: SPARKS_OVER_LINE, sparksOver: true });
       }, guestCookieHeader(setGuestCookie));
@@ -454,7 +473,7 @@ export async function POST(req: NextRequest) {
     let servedModel = chatModelName; // fallback/hedge can swap the model mid-turn
     if (replyId) trackTurn(() => turnResults.start(replyId, userId, Date.now()));
     try {
-      console.log(`[api/chat] streaming… @${ms()}ms`);
+      console.log(`[api/chat] ${trace} streaming… @${ms()}ms`);
       // nextAsk is an EXPLICIT opt-in, deliberately set ONLY on this one true
       // primary stream — never on any retry/regeneration one-shot below
       // (BUG-FIX-LOG 2026-07-28: see gemini.ts's configFor for why those must
@@ -474,7 +493,7 @@ export async function POST(req: NextRequest) {
           // carry the answer the kid actually keeps.
           full = "";
           send({ type: "restart" });
-          console.warn(`[api/chat] ↻ mid-answer model restart @${ms()}ms — partial wiped`);
+          console.warn(`[api/chat] ${trace} ↻ mid-answer model restart @${ms()}ms — partial wiped`);
           continue;
         }
         if (chunk.kind === "usage") {
@@ -499,7 +518,7 @@ export async function POST(req: NextRequest) {
         // 2026-07-22) — the info to tell a genuine block from a false-positive
         // on benign content (a pastor's Bible game). No posture change.
         const ratings = err.safetyInfo ?? "no ratings reported";
-        console.warn(`[api/chat] ⛔ model output safety-blocked @${ms()}ms [${ratings}] — redirecting (fail closed)`);
+        console.warn(`[api/chat] ${trace} ⛔ model output safety-blocked @${ms()}ms [${ratings}] — redirecting (fail closed)`);
         alert("model", full || message, { category: null, severity: "high", action: "hard_block", reason: `model output blocked by the provider (finishReason SAFETY) — ${ratings}` });
         if (replyId) trackTurn(() => turnResults.fail(replyId, userId, Date.now()));
         // A verified-adult teacher gets an HONEST, actionable explanation (they
@@ -510,12 +529,12 @@ export async function POST(req: NextRequest) {
         send({ type: "blocked", text: blockedText });
         return;
       }
-      console.error(`[api/chat] ✖ stream error @${ms()}ms: ${(err as Error).message}`);
+      log.fail("stream", err);
       if (replyId) trackTurn(() => turnResults.fail(replyId, userId, Date.now()));
       send({ type: "error", text: "Oops! Something went wrong. Let's try again." });
       return;
     }
-    console.log(`[api/chat] stream done @${ms()}ms chars=${full.length}`);
+    log.ok("stream", { chars: full.length });
 
     // 3D games get their engine import map here — an asset-host URL string
     // spliced in, nothing read, nothing fetched (src/lib/assets/inject.ts).
@@ -529,7 +548,7 @@ export async function POST(req: NextRequest) {
       try {
         const injected = injectAssets(rawHtml);
         if (injected.dropped?.length) {
-          console.warn(`[api/chat] asset names dropped fail-soft: ${injected.dropped.join(", ")}`);
+          log.warn("inject", { dropped: injected.dropped.join(",") });
         }
         // Marker insurance (2026-07-18): real SDK multiplayer code without the
         // opt-in marker = an invite button that never appears. Self-gating —
@@ -550,7 +569,7 @@ export async function POST(req: NextRequest) {
         // that used to be the only cure.
         return ensureMultiplayerMarker(ensureAssetRuntime(ensureThreeImports(stripRuntimeGlobalImports(injected.html))));
       } catch (err) {
-        console.error(`[api/chat] ✖ asset injection failed @${ms()}ms (serving raw artifact): ${(err as Error).message}`);
+        log.fail("inject", err, { served: "raw_artifact" });
         return ensureMultiplayerMarker(ensureAssetRuntime(ensureThreeImports(stripRuntimeGlobalImports(rawHtml))));
       }
     }
@@ -577,13 +596,13 @@ export async function POST(req: NextRequest) {
 
     async function completeTruncatedBuild(art: string | undefined): Promise<RecoveredBuild> {
       if (!art || !looksTruncatedDocument(art)) return null;
-      console.warn(`[api/chat] ⚠ build output incomplete (opened <html>, no </html>, ${art.length} chars) — corrective retry @${ms()}ms`);
+      console.warn(`[api/chat] ${trace} ⚠ build output incomplete (opened <html>, no </html>, ${art.length} chars) — corrective retry @${ms()}ms`);
       // Diagnostic (2026-07-23): a truncation this SHORT (well under the 24576
       // output cap) means the model stopped early on its own, not a size limit.
       // Dump the head+tail of what it produced so we can tell a genuine partial
       // game from a stub / an in-HTML refusal / a wrong-shaped response.
-      console.warn(`[api/chat]   ⤷ truncated HEAD: ${JSON.stringify(art.slice(0, 200))}`);
-      console.warn(`[api/chat]   ⤷ truncated TAIL: ${JSON.stringify(art.slice(-160))}`);
+      console.warn(`[api/chat] ${trace}   ⤷ truncated HEAD: ${JSON.stringify(art.slice(0, 200))}`);
+      console.warn(`[api/chat] ${trace}   ⤷ truncated TAIL: ${JSON.stringify(art.slice(-160))}`);
       // Pass 1: same scope, told to finish COMPLETE + COMPACT.
       try {
         const retry = await chatModel.reply({
@@ -606,12 +625,12 @@ export async function POST(req: NextRequest) {
         });
         trackTurn(() => recordUsage("chat", servedModel, message, retry.text, false, retry.usage));
         if (retry.artifactHtml && !looksTruncatedDocument(retry.artifactHtml)) {
-          console.log(`[api/chat] ✓ completeness corrective retry produced a whole game (alternate model) @${ms()}ms`);
+          console.log(`[api/chat] ${trace} ✓ completeness corrective retry produced a whole game (alternate model) @${ms()}ms`);
           return { status: "recovered", reply: retry, reduced: false };
         }
-        console.warn(`[api/chat] retry STILL incomplete — auto-splitting into a working starter build @${ms()}ms`);
+        console.warn(`[api/chat] ${trace} retry STILL incomplete — auto-splitting into a working starter build @${ms()}ms`);
       } catch (err) {
-        console.warn(`[api/chat] completeness retry unavailable (${(err as Error).message}) — auto-splitting into a working starter build @${ms()}ms`);
+        console.warn(`[api/chat] ${trace} completeness retry unavailable (${(err as Error).message}) — auto-splitting into a working starter build @${ms()}ms`);
       }
       // Pass 2 (auto-split, owner ask 2026-07-23): don't dead-end — build a
       // WORKING game NOW with a small representative subset. It finishes because
@@ -635,13 +654,13 @@ export async function POST(req: NextRequest) {
         });
         trackTurn(() => recordUsage("chat", servedModel, message, starter.text, false, starter.usage));
         if (starter.artifactHtml && !looksTruncatedDocument(starter.artifactHtml)) {
-          console.log(`[api/chat] ✓ auto-split starter build finished — shipping with an "add the rest" offer @${ms()}ms`);
+          console.log(`[api/chat] ${trace} ✓ auto-split starter build finished — shipping with an "add the rest" offer @${ms()}ms`);
           return { status: "recovered", reply: starter, reduced: true };
         }
-        console.warn(`[api/chat] starter build STILL incomplete — NOT shipping a blank game @${ms()}ms`);
+        console.warn(`[api/chat] ${trace} starter build STILL incomplete — NOT shipping a blank game @${ms()}ms`);
         return { status: "incomplete" };
       } catch (err) {
-        console.warn(`[api/chat] starter build unavailable (${(err as Error).message}) — NOT shipping a blank game @${ms()}ms`);
+        console.warn(`[api/chat] ${trace} starter build unavailable (${(err as Error).message}) — NOT shipping a blank game @${ms()}ms`);
         return { status: "incomplete" };
       }
     }
@@ -700,7 +719,7 @@ export async function POST(req: NextRequest) {
       // all. A persistent "inSource=false" streak means the model is looking
       // at a DIFFERENT version than we're patching (the history-trim bug).
       console.log(
-        `[api/chat] edit turn: source=${activeGameMessageId ? `pinned:${activeGameMessageId}` : "newest"} len=${currentHtml.length} reply chars=${full.length}`,
+        `[api/chat] ${trace} edit turn: source=${activeGameMessageId ? `pinned:${activeGameMessageId}` : "newest"} len=${currentHtml.length} reply chars=${full.length}`,
       );
       const logSearchMiss = (reply: string) => {
         const firstSearch = reply.match(/<{7} SEARCH\n([\s\S]*?)\n={7}/)?.[1];
@@ -724,7 +743,7 @@ export async function POST(req: NextRequest) {
         const reason = reconcileAssetMarkersWithReason(currentHtml, reply);
         const reconcileBailed = "bailed" in reason ? reason.bailed : "rescued";
         console.warn(
-          `[api/chat]   first SEARCH head: "${head}" inSource=${inSource} afterMarkerStrip=${afterMarkerStrip} searchSpansHead=${searchSpansHead} reconcileBailed=${reconcileBailed}`,
+          `[api/chat] ${trace}   first SEARCH head: "${head}" inSource=${inSource} afterMarkerStrip=${afterMarkerStrip} searchSpansHead=${searchSpansHead} reconcileBailed=${reconcileBailed}`,
         );
       };
       let applied = applyPatch(currentHtml, full);
@@ -744,7 +763,7 @@ export async function POST(req: NextRequest) {
             // adds nothing, so the common case stays byte-identical.
             applied = reconciled.markers ? { ...retry, html: retry.html + reconciled.markers } : retry;
             console.log(
-              `[api/chat] ✓ edit patch after asset-marker reconciliation${reconciled.markers ? " (+new assets)" : ""} @${ms()}ms`,
+              `[api/chat] ${trace} ✓ edit patch after asset-marker reconciliation${reconciled.markers ? " (+new assets)" : ""} @${ms()}ms`,
             );
           }
         }
@@ -756,7 +775,7 @@ export async function POST(req: NextRequest) {
       const patchBadImports =
         applied.ok && applied.mode === "patch" ? newUnknownThreeImports(currentHtml, applied.html) : [];
       if (patchBadImports.length) {
-        console.warn(`[api/chat] ⛔ patch introduces unknown three imports: ${patchBadImports.join(", ")} @${ms()}ms`);
+        console.warn(`[api/chat] ${trace} ⛔ patch introduces unknown three imports: ${patchBadImports.join(", ")} @${ms()}ms`);
       }
       // Pipeline-bypass lint (BUG_LOG 2026-08-09 "Calvin"): same reasoning one
       // step out — a patch that INTRODUCES an off-origin <script src> pulls the
@@ -766,14 +785,14 @@ export async function POST(req: NextRequest) {
       const patchBadScripts =
         applied.ok && applied.mode === "patch" ? newExternalScriptSrcs(currentHtml, applied.html) : [];
       if (patchBadScripts.length) {
-        console.warn(`[api/chat] ⛔ patch introduces external scripts: ${patchBadScripts.join(", ")} @${ms()}ms`);
+        console.warn(`[api/chat] ${trace} ⛔ patch introduces external scripts: ${patchBadScripts.join(", ")} @${ms()}ms`);
       }
       // Same class, relative form: a patch that imports a file which will never
       // exist at play time (`./main.js`) kills the module the same way.
       const patchBadModules =
         applied.ok && applied.mode === "patch" ? newDanglingModuleSpecifiers(currentHtml, applied.html) : [];
       if (patchBadModules.length) {
-        console.warn(`[api/chat] ⛔ patch introduces dangling module imports: ${patchBadModules.join(", ")} @${ms()}ms`);
+        console.warn(`[api/chat] ${trace} ⛔ patch introduces dangling module imports: ${patchBadModules.join(", ")} @${ms()}ms`);
       }
       // Unrequested-model-swap lint (BUG_LOG 2026-08-17, "Mumbai Flight
       // Simulator"): every lint above asks whether the patch still RUNS. This
@@ -786,14 +805,14 @@ export async function POST(req: NextRequest) {
           ? unrequestedModelSwaps({ before: currentHtml, after: applied.html, message })
           : [];
       if (patchModelSwaps.length) {
-        console.warn(`[api/chat] ⛔ patch drops models the child never asked to change: ${patchModelSwaps.join(", ")} @${ms()}ms`);
+        console.warn(`[api/chat] ${trace} ⛔ patch drops models the child never asked to change: ${patchModelSwaps.join(", ")} @${ms()}ms`);
       }
       if (detectsNewGame(full)) {
         // The model self-declared this is a whole NEW game, not an edit (PRD §11).
         // Ask before any destructive rebuild — nothing is touched: the current
         // game stays in the preview (done carries a null artifact, which
         // nextArtifact keeps) until the child picks "New game" or "Change this one".
-        console.log(`[api/chat] 🎮 new-game request self-declared — offering fresh chat @${ms()}ms`);
+        console.log(`[api/chat] ${trace} 🎮 new-game request self-declared — offering fresh chat @${ms()}ms`);
         displayText = NEW_GAME_PROMPT_LINE;
         deliverableHtml = null;
         newGamePrompt = true;
@@ -805,7 +824,7 @@ export async function POST(req: NextRequest) {
         patchBadModules.length === 0 &&
         patchModelSwaps.length === 0
       ) {
-        console.log(`[api/chat] ✓ edit patch @${ms()}ms`);
+        log.ok("patch", { rung: "direct" });
         displayText = editReplyProse(full); // the kid-facing sentence only — never the raw hunks
         deliverableHtml = toDeliverable(applied.html);
       } else if (applied.ok && applied.mode === "regeneration" && looksLikeCompleteDocument(applied.html)) {
@@ -826,16 +845,16 @@ export async function POST(req: NextRequest) {
           trackTurn(() => recordUsage("chat", servedModel, message, retry.text, false, retry.usage));
           const retryApplied = applyPatch(currentHtml, retry.text);
           if (retryApplied.ok && retryApplied.mode === "patch") {
-            console.log(`[api/chat] ✓ edit patch (strict retry) @${ms()}ms`);
+            log.ok("patch", { rung: "strict_retry" });
             displayText = editReplyProse(retry.text);
             deliverableHtml = toDeliverable(retryApplied.html);
           } else {
             const why = retryApplied.ok ? `mode=${retryApplied.mode}` : retryApplied.reason;
-            console.log(`[api/chat] edit regeneration accepted (strict retry declined: ${why}) @${ms()}ms`);
+            console.log(`[api/chat] ${trace} edit regeneration accepted (strict retry declined: ${why}) @${ms()}ms`);
             logSearchMiss(retry.text);
           }
         } catch (err) {
-          console.warn(`[api/chat] strict edit retry unavailable (${(err as Error).message}) — accepting rewrite @${ms()}ms`);
+          console.warn(`[api/chat] ${trace} strict edit retry unavailable (${(err as Error).message}) — accepting rewrite @${ms()}ms`);
         }
       } else if (!applied.ok && applied.reason === "no_patch_in_reply" && !looksLikeAttemptedEdit(full)) {
         // isGameEditTurn is deliberately over-inclusive (true for ANY message
@@ -848,7 +867,7 @@ export async function POST(req: NextRequest) {
         // patch/code traces (a truncated SEARCH block, a code fence, raw
         // HTML) is a malformed attempt, not off-topic chat — see the else
         // branch below (BUG-FIX-LOG 2026-07-18 follow-up: "multiple blocks").
-        console.log(`[api/chat] edit turn was off-topic chat (no patch attempted) @${ms()}ms`);
+        console.log(`[api/chat] ${trace} edit turn was off-topic chat (no patch attempted) @${ms()}ms`);
         displayText = full;
         deliverableHtml = null;
       } else {
@@ -896,7 +915,7 @@ export async function POST(req: NextRequest) {
                 ]
               : [];
           if (rungBadBypass.length) {
-            console.warn(`[api/chat] ⛔ strict rung introduces a pipeline bypass: ${rungBadBypass.join(", ")} @${ms()}ms`);
+            console.warn(`[api/chat] ${trace} ⛔ strict rung introduces a pipeline bypass: ${rungBadBypass.join(", ")} @${ms()}ms`);
           }
           // ADVISORY here, blocking on the main patch branch above — the two
           // doors have opposite fallbacks (owner decision 2026-08-17, from a
@@ -918,7 +937,7 @@ export async function POST(req: NextRequest) {
               ? unrequestedModelSwaps({ before: currentHtml, after: rungApplied.html, message })
               : [];
           if (rungModelSwaps.length) {
-            console.warn(`[api/chat] ⚠ strict rung drops models the child never asked to change: ${rungModelSwaps.join(", ")} — ACCEPTED anyway (last rescue before soft-fail) @${ms()}ms`);
+            console.warn(`[api/chat] ${trace} ⚠ strict rung drops models the child never asked to change: ${rungModelSwaps.join(", ")} — ACCEPTED anyway (last rescue before soft-fail) @${ms()}ms`);
           }
           if (
             rungApplied.ok &&
@@ -926,7 +945,7 @@ export async function POST(req: NextRequest) {
             rungBadImports.length === 0 &&
             rungBadBypass.length === 0
           ) {
-            console.log(`[api/chat] ✓ edit patch (cheap strict rung, before rebuild) @${ms()}ms`);
+            log.ok("patch", { rung: "cheap_strict" });
             displayText = editReplyProse(rung.text);
             deliverableHtml = toDeliverable(rungApplied.html);
             rescued = true;
@@ -938,10 +957,10 @@ export async function POST(req: NextRequest) {
                   ? `pipeline_bypass:${rungBadBypass.join("+")}`
                   : `mode=${rungApplied.mode}`
               : rungApplied.reason;
-            console.log(`[api/chat] cheap strict rung declined (${why}) — full regeneration @${ms()}ms`);
+            console.log(`[api/chat] ${trace} cheap strict rung declined (${why}) — full regeneration @${ms()}ms`);
           }
         } catch (err) {
-          console.warn(`[api/chat] cheap strict rung unavailable (${(err as Error).message}) — full regeneration @${ms()}ms`);
+          console.warn(`[api/chat] ${trace} cheap strict rung unavailable (${(err as Error).message}) — full regeneration @${ms()}ms`);
         }
 
         if (rescued) {
@@ -956,7 +975,7 @@ export async function POST(req: NextRequest) {
           // floor was a fresh build. Keep the child's game untouched, say so
           // honestly, and invite a rephrase. The regen path (with its own
           // truncation guard) still exists for FRESH builds only.
-          console.warn(`[api/chat] patch failed (${reason}) — soft-fail, game untouched @${ms()}ms`);
+          log.fail("patch", undefined, { reason, effect: "soft_fail_game_untouched" });
           displayText = EDIT_FAILED_SOFT;
           deliverableHtml = null;
         }
@@ -1036,9 +1055,26 @@ export async function POST(req: NextRequest) {
       // purpose: Calvin had already waited ~70s through a model stub and a
       // truncation recovery before this point, and a second corrective round
       // would have added another full regeneration to that.
-      const badImports = artifactHtml ? unknownThreeImports(artifactHtml) : [];
-      const badScripts = artifactHtml ? externalScriptSrcs(artifactHtml) : [];
-      const badModules = artifactHtml ? danglingModuleSpecifiers(artifactHtml) : [];
+      // HEAL FIRST, then lint (KNOWN_BUGS #21, 2026-08-17).
+      //
+      // `stripRuntimeGlobalImports` removes `import { loadModel } from "three"`
+      // — a category error, since we inject those as window globals — and it
+      // is deterministic, instant and already proven. But it only ran inside
+      // `toDeliverable`, which is BELOW this lint. So the lint read the raw
+      // artifact, saw names the bundle does not export, and spent a ~50s
+      // corrective regeneration on a fault the next function call would have
+      // fixed for free. It never once prevented the retry it was written to
+      // retire. Live: `⛔ unknown three imports: loadModel, placeModel,
+      // modelHeading — corrective retry @71804ms`.
+      //
+      // Linting the HEALED copy, not the raw one, is the whole fix. Delivery
+      // still strips (toDeliverable is unchanged and idempotent), so nothing
+      // downstream moves; only the DECISION to regenerate is now made against
+      // the artifact as it will actually be served.
+      const lintHtml = artifactHtml ? stripRuntimeGlobalImports(artifactHtml) : artifactHtml;
+      const badImports = lintHtml ? unknownThreeImports(lintHtml) : [];
+      const badScripts = lintHtml ? externalScriptSrcs(lintHtml) : [];
+      const badModules = lintHtml ? danglingModuleSpecifiers(lintHtml) : [];
       // Deterministic pre-delivery syntax check (owner ask 2026-08-13, after a
       // real generated game crashed on load with `Invalid or unexpected
       // token` — nothing in the pipeline caught it before the kid saw a
@@ -1048,19 +1084,22 @@ export async function POST(req: NextRequest) {
       // import/script lints above, not a separate sequential one (Calvin
       // precedent, 2026-08-09) — the kid has already waited through a full
       // generation by this point.
-      const syntaxError = artifactHtml ? findJsSyntaxError(artifactHtml) : null;
+      // Also the healed copy: removing a whole `import {...} from "three"`
+      // statement is a source edit, so parsing the raw artifact could in
+      // principle disagree with what actually ships.
+      const syntaxError = lintHtml ? findJsSyntaxError(lintHtml) : null;
       if ((badImports.length || badScripts.length || badModules.length || syntaxError) && artifactHtml) {
         if (badImports.length) {
-          console.warn(`[api/chat] ⛔ unknown three imports: ${badImports.join(", ")} — corrective retry @${ms()}ms`);
+          log.warn("lint", { fault: "unknown_three_imports", bad: badImports.join(",") });
         }
         if (badScripts.length) {
-          console.warn(`[api/chat] ⛔ external scripts (pipeline bypass): ${badScripts.join(", ")} — corrective retry @${ms()}ms`);
+          console.warn(`[api/chat] ${trace} ⛔ external scripts (pipeline bypass): ${badScripts.join(", ")} — corrective retry @${ms()}ms`);
         }
         if (badModules.length) {
-          console.warn(`[api/chat] ⛔ dangling module imports (pipeline bypass): ${badModules.join(", ")} — corrective retry @${ms()}ms`);
+          console.warn(`[api/chat] ${trace} ⛔ dangling module imports (pipeline bypass): ${badModules.join(", ")} — corrective retry @${ms()}ms`);
         }
         if (syntaxError) {
-          console.warn(`[api/chat] ⛔ JS syntax error: ${syntaxError.message} — corrective retry @${ms()}ms`);
+          log.warn("lint", { fault: "js_syntax_error", detail: syntaxError.message, line: syntaxError.line });
         }
         // Is this actually a 3D game? A bad three-import proves it; otherwise
         // look for the marker or a three usage in the artifact. A 2D game that
@@ -1113,7 +1152,7 @@ export async function POST(req: NextRequest) {
             danglingModuleSpecifiers(corrective.artifactHtml).length === 0 &&
             !findJsSyntaxError(corrective.artifactHtml)
           ) {
-            console.log(`[api/chat] ✓ import-lint corrective retry @${ms()}ms`);
+            log.ok("lint_retry", { rescued: true });
             displayText = !corrective.wasFenced
               ? `${corrective.text}\n\n\`\`\`html\n${corrective.artifactHtml}\n\`\`\``.trim()
               : corrective.text;
@@ -1159,16 +1198,16 @@ export async function POST(req: NextRequest) {
             const fatal = stillBadImports.length > 0 || stillBadModules.length > 0 || Boolean(stillSyntax);
             if (fatal) {
               console.warn(
-                `[api/chat] ⛔ retry STILL fatal (${[...stillBadImports, ...stillBadModules, stillSyntax?.message].filter(Boolean).join(", ")}) — refusing to serve a game that cannot parse @${ms()}ms`,
+                `[api/chat] ${trace} ⛔ retry STILL fatal (${[...stillBadImports, ...stillBadModules, stillSyntax?.message].filter(Boolean).join(", ")}) — refusing to serve a game that cannot parse @${ms()}ms`,
               );
               displayText = MODEL_GLITCH_RETRY;
               deliverableHtml = null;
             } else {
-              console.warn(`[api/chat] import-lint retry did not come back clean — serving the original @${ms()}ms`);
+              log.fail("lint_retry", undefined, { served: "original_known_broken" });
             }
           }
         } catch (err) {
-          console.warn(`[api/chat] import-lint retry unavailable (${(err as Error).message}) — serving the original @${ms()}ms`);
+          console.warn(`[api/chat] ${trace} import-lint retry unavailable (${(err as Error).message}) — serving the original @${ms()}ms`);
         }
       }
       }
@@ -1207,6 +1246,11 @@ export async function POST(req: NextRequest) {
       type: "done",
       text: displayText,
       artifactHtml: deliverableHtml,
+      // The turn's trace, handed to the client so that a self-heal the
+      // browser fires MINUTES later (api/repair) logs under the SAME key as
+      // the turn that built the game (2026-08-17). Not secret and not
+      // trusted on the way back — api/repair re-validates the shape.
+      traceId: log.trace,
       ...(newGamePrompt ? { newGamePrompt: true } : {}),
       ...(nextAskHints ? { nextAskHints } : {}),
     });
@@ -1232,20 +1276,36 @@ export async function POST(req: NextRequest) {
         screenTime.recordPing(userId, now);
         screenTime.recomputeAndMaybeAlert(userId, userLabel, now);
       } catch (err) {
-        console.warn(`[api/chat] screen-time tracking failed (ignored): ${(err as Error).message}`);
+        console.warn(`[api/chat] ${trace} screen-time tracking failed (ignored): ${(err as Error).message}`);
       }
     }
-    console.log(`[api/chat] ✓ shown by ${servedModel}${servedModel === chatModelName ? "" : " (fallback)"} @${ms()}ms`);
+    // WHAT WE ACTUALLY HANDED THE CHILD (2026-08-17, after a 2D game came back
+    // broken and the logs had nothing to say about it). `outcome=ok` only ever
+    // meant "the pipeline did not throw" — it said nothing about the artifact.
+    //
+    // `chars` and `threeD` are the two facts that would have named that bug in
+    // one grep: a 2D game is a few KB and threeD=false, and the regression made
+    // it 34 KB with threeD=true because injection decided a game calling
+    // playSound needed a 3D import map. Cheap, and it is the shape of fault
+    // (right pipeline, wrong artifact) that nothing here could see before.
+    const deliveredChars = deliverableHtml?.length;
+    const deliveredThreeD = deliverableHtml ? deliverableHtml.includes('type="importmap"') : undefined;
+    log.ok("deliver", {
+      model: servedModel,
+      fallback: servedModel !== chatModelName,
+      chars: deliveredChars,
+      threeD: deliveredThreeD,
+    });
   }, guestCookieHeader(setGuestCookie));
 }
 
 /** Resolve the shared Ariantra SSO session, but never throw — if auth is
  *  misconfigured (e.g. AUTH_JWT_SECRET unset) we fail safe to "guest". */
-async function safeAuth() {
+async function safeAuth(trace = "trace=none") {
   try {
     return await getAriantraSession();
   } catch (err) {
-    console.warn(`[api/chat] session unavailable, treating as guest: ${(err as Error).message}`);
+    console.warn(`[api/chat] ${trace} stage=session outcome=warn err=${describeError(err)}`);
     return null;
   }
 }

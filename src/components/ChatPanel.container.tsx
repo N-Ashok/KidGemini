@@ -1129,6 +1129,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
       newGamePrompt?: boolean,
       threeDNewGame?: boolean,
       nextAskHints?: string[],
+      traceId?: string,
     ) =>
       patchActive((c) => ({
         ...c,
@@ -1141,6 +1142,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
                 ...(newGamePrompt ? { newGamePrompt: true } : {}),
                 ...(threeDNewGame ? { threeDNewGame: true } : {}),
                 ...(nextAskHints ? { nextAskHints } : {}),
+                ...(traceId ? { traceId } : {}),
               }
             : m,
         ),
@@ -1249,7 +1251,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
           const line = buffer.slice(0, nl).trim();
           buffer = buffer.slice(nl + 1);
           if (!line) continue;
-          const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null; newGamePrompt?: boolean; threeDNewGame?: boolean; nextAskHints?: string[]; sparksOver?: boolean };
+          const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null; newGamePrompt?: boolean; threeDNewGame?: boolean; nextAskHints?: string[]; sparksOver?: boolean; traceId?: string };
           if (ev.type === "thinking") {
             if (ev.text) setThinking(ev.text);
           } else if (ev.type === "delta") {
@@ -1279,7 +1281,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
                 artifactHtml = null; // the running game stays; nothing swaps under the kid
               }
             }
-            setReply(ev.text ?? acc, artifactHtml ?? undefined, ev.newGamePrompt, ev.threeDNewGame, ev.nextAskHints);
+            setReply(ev.text ?? acc, artifactHtml ?? undefined, ev.newGamePrompt, ev.threeDNewGame, ev.nextAskHints, ev.traceId);
             setPreview((a) => nextArtifact({ type: "done", artifactHtml }, a));
             // Community Help's second stuck signal (stuck-signal.ts): asks that
             // produced NO new game. A turn that swapped the artifact clears the
@@ -2044,6 +2046,11 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             // The kid's latest ask — self-healing repair prompts carry it so a
             // fix never drifts from intent (PRD §7 / R.5).
             originalRequest={[...active.messages].reverse().find((m) => m.role === "child")?.text ?? ""}
+            // The turn that BUILT the game the kid is looking at — not the
+            // newest turn — so a self-heal logs under the same trace as the
+            // build it is repairing, even after Continue-from-here pins an
+            // older version.
+            traceId={currentGameMessage(active.messages)?.traceId}
             onClose={() => {
               setArtifact(null);
               setExpandState({ expanded: false });
@@ -2139,7 +2146,19 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
               if (persistConvo) {
                 void fetch(`/api/chats/${encodeURIComponent(persistConvo.id)}`, {
                   method: "PUT",
-                  headers: { "Content-Type": "application/json" },
+                  headers: {
+                    "Content-Type": "application/json",
+                    // B2 instrument (2026-08-17, KNOWN_BUGS #24): tags this
+                    // write with the turn that built the game, so the server's
+                    // `stage=persist chars=` line can be compared against
+                    // api/repair's `stage=deliver outChars=` on ONE trace.
+                    // That comparison is what will finally say whether a
+                    // repair that did not stick failed to arrive, arrived
+                    // with stale bytes, or was overwritten afterwards.
+                    ...(currentGameMessage(active.messages)?.traceId
+                      ? { "x-ari-trace": currentGameMessage(active.messages)!.traceId! }
+                      : {}),
+                  },
                   body: JSON.stringify({ convo: persistConvo }),
                 }).catch((err) => console.warn("[chat] self-heal repair persist failed", err));
               }

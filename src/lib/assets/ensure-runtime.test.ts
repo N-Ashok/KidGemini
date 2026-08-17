@@ -298,6 +298,72 @@ window.loadModel = async function (name) {
     expect(ensureAssetRuntime(out)).toBe(out); // and settles
   });
 
+  // ── the 2D floor: sound is NOT 3D (BUG-FIX-LOG 2026-08-17) ──────────────
+  //
+  // Owner UAT, same day the bug was introduced: "i made a 2d game and it came
+  // out with error". Measured on a 289-byte 2D canvas game whose only crime
+  // was calling playSound("coin"): it came back 34,755 bytes, carrying an
+  // import map, the loadModel helper and a <script type="module"> importing
+  // "three" — so the browser then fetched a 621 KB 3D engine for a game that
+  // draws with ctx.fillRect.
+  //
+  // Cause, and the lesson: ensure-runtime's "does this game use the 3D
+  // runtime?" probe was rebuilt from INJECTED_RUNTIME_GLOBALS during the
+  // KNOWN_BUGS #21 de-duplication. That list is RIGHT for its other consumer
+  // (three-import-lint's healer — playSound and playMusic genuinely ARE
+  // injected globals and must be stripped from a `from "three"` import), and
+  // WRONG here. Two consumers, two questions, one list: de-duplicating them
+  // silently widened this one.
+  //
+  // Most 3D work cannot break 2D, which is exactly why 2D needs its own
+  // explicit floor rather than trusting that nothing reached it.
+  it("F.22 a 2D game that only calls playSound gets NO 3D runtime at all", () => {
+    const twoD = page(
+      `<script>const ctx = c.getContext("2d"); function onCatch(){ playSound("coin"); } requestAnimationFrame(onCatch);</script>`,
+    );
+    const out = ensureAssetRuntime(twoD);
+    expect(out).not.toContain("importmap");
+    expect(out).not.toContain("window.loadModel =");
+    expect(out).not.toContain('from "three"');
+    expect(out).not.toContain("window.AR_ASSETS");
+  });
+
+  it("F.23 the same for playMusic, and for both together", () => {
+    for (const call of [`playMusic("theme")`, `playSound("coin"); playMusic("theme")`]) {
+      const out = ensureAssetRuntime(page(`<script>function go(){ ${call}; }</script>`));
+      expect(out, call).not.toContain("importmap");
+      expect(out, call).not.toContain("window.loadModel =");
+    }
+  });
+
+  it("F.24 but a 3D game that ALSO plays sound still gets the full runtime", () => {
+    // The other side of the same boundary — narrowing the probe must not cost
+    // a real 3D game its runtime.
+    const out = ensureAssetRuntime(
+      page(`<script type="module">import { Scene } from "three"; loadModel("car"); playSound("coin");</script>`),
+    );
+    expect(out).toContain("importmap");
+    expect(out).toContain("window.loadModel =");
+  });
+
+  it("F.14d a stored game on the PREVIOUS stamped batch helper (v2) is re-floored to the named-container one", () => {
+    // 2026-08-17. v2 is the version ~200 stored 3D games are carrying right
+    // now, and it hands back an unnamed Group — so any game that branches on
+    // `batch.mesh.name` has dead code. Presence is not enough and neither is
+    // "has a stamp": the guard must compare the NUMBER, or every one of those
+    // games stays on v2 forever.
+    const stale = page(
+      `<script type="module">import { Scene } from "three"; loadModel("tree"); loadModelBatch("tree", 40);</script>` +
+        `<script type="module">window.__arLoadModelBatchVersion = 2;\nwindow.loadModelBatch = async function () { /* v2, no container.name */ return null; };</script>`,
+    );
+    const out = ensureAssetRuntime(stale);
+    expect(out).toContain(`window.__arLoadModelBatchVersion = ${LOAD_MODEL_BATCH_VERSION}`);
+    expect(out).not.toContain("/* v2, no container.name */");
+    expect(out).toContain("container.name = name");
+    expect(out.match(/window\.loadModelBatch\s*=/g)?.length).toBe(1);
+    expect(ensureAssetRuntime(out)).toBe(out); // and settles
+  });
+
   it("F.14c a game already carrying the CURRENT batch helper is left byte-identical", () => {
     const raw = page(
       `<script type="module">import { Scene } from "three"; loadModel("tree"); loadModelBatch("tree", 40);</script>`,

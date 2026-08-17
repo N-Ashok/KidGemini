@@ -19,6 +19,7 @@ import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
 import { readGuestId } from "@/lib/chat-identity";
+import { TurnLog, adoptTraceId, describeError, formatValue } from "@/lib/turn-log";
 import {
   REPAIR_SYSTEM_PROMPT,
   REPAIR_TAXONOMY,
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
 
   // Fail-closed validation: only a known failure code with a plausible game
   // source gets a Gemini call.
-  const { html, failureCode, evidence, errors, originalRequest } = body;
+  const { html, failureCode, evidence, errors, originalRequest, traceId } = body;
   if (
     typeof html !== "string" || !html.trim() || html.length > MAX_HTML_CHARS ||
     typeof failureCode !== "string" || !(failureCode in REPAIR_TAXONOMY) ||
@@ -71,7 +72,12 @@ export async function POST(req: NextRequest) {
     html,
   });
 
-  const t0 = Date.now();
+  // One correlated log for this repair. `trace` continues the CHAT turn that
+  // produced the game when the client sends it, so `grep trace=<id> app.log`
+  // shows the build, its edits and every repair attempt in one ordered story
+  // (2026-08-17 owner ask). An absent or malformed id starts a fresh trace
+  // rather than failing the request — a repair must never die over telemetry.
+  const log = new TurnLog("api/repair", adoptTraceId(traceId), { userId, code: failureCode });
   // Log WHAT broke, not just that something did (2026-08-15). The errors array
   // has always been received and passed to the repair prompt, but never
   // logged — so across 366 load_errors in production nobody could see the
@@ -88,9 +94,7 @@ export async function POST(req: NextRequest) {
   // the failure. Both fixed in formatRepairErrorSummary, which now uses the
   // same selection rule repair-prompt.ts already used.
   const errorSummary = formatRepairErrorSummary(errors);
-  console.log(
-    `[api/repair] ▶ code=${failureCode} userId=${userId} htmlChars=${html.length}${errorSummary}`,
-  );
+  log.ok("request", { htmlChars: html.length, err: errorSummary.trim() || undefined });
 
   let reply: string;
   let realUsage: { promptTokens: number; outputTokens: number; thoughtTokens: number; cachedTokens: number } | undefined;
@@ -99,7 +103,7 @@ export async function POST(req: NextRequest) {
     reply = r.text;
     realUsage = r.usage;
   } catch (err) {
-    console.error(`[api/repair] ✖ gemini failed @${Date.now() - t0}ms: ${(err as Error).message}`);
+    log.fail("model", err);
     return NextResponse.json({ error: "repair_failed" } satisfies RepairResponse, { status: 502 });
   }
 
@@ -127,7 +131,7 @@ export async function POST(req: NextRequest) {
       geo, requestText: `repair:${failureCode}`, outputText: reply.slice(0, 4_000), blocked: false,
     });
   } catch (err) {
-    console.warn(`[api/repair] usage record failed (ignored): ${(err as Error).message}`);
+    log.warn("usage", { err: describeError(err) });
   }
 
   let patched = applyPatch(html, reply);
@@ -167,13 +171,13 @@ export async function POST(req: NextRequest) {
       const retryApplied = applyPatch(html, retry.text);
       if (retryApplied.ok) {
         patched = retryApplied;
-        console.log(`[api/repair] ✓ rescued by strict retry (first: ${firstReason}) @${Date.now() - t0}ms`);
+        log.ok("strict_retry", { rescued: true, first: firstReason });
       }
     } catch (err) {
-      console.warn(`[api/repair] strict retry unavailable: ${(err as Error).message}`);
+      log.fail("strict_retry", err);
     }
     if (!patched.ok) {
-      console.warn(`[api/repair] ✖ patch not applicable (${patched.reason}) @${Date.now() - t0}ms`);
+      log.fail("apply_patch", undefined, { reason: patched.reason });
       return NextResponse.json({ error: patched.reason } satisfies RepairResponse, { status: 422 });
     }
   }
@@ -184,7 +188,7 @@ export async function POST(req: NextRequest) {
   // fix — a loop the model can never escape. ensureAssetRuntime is idempotent, so
   // 2D games and already-correct 3D games pass through byte-identical.
   const floored = ensureAssetRuntime(patched.html);
-  console.log(`[api/repair] ✓ ${patched.mode} @${Date.now() - t0}ms outChars=${floored.length}`);
+  log.ok("deliver", { mode: patched.mode, outChars: floored.length });
   return NextResponse.json({ patchedHtml: floored, mode: patched.mode } satisfies RepairResponse);
 }
 
@@ -193,7 +197,7 @@ async function safeAuth() {
   try {
     return await getAriantraSession();
   } catch (err) {
-    console.warn(`[api/repair] session unavailable, treating as guest: ${(err as Error).message}`);
+    console.warn(`[api/repair] stage=session outcome=warn err=${formatValue(describeError(err) ?? "unknown")}`);
     return null;
   }
 }

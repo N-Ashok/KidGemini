@@ -4,6 +4,16 @@ This doc is the single reference for **what text Ari sends to the LLM** on each
 kind of turn: the full system instruction, the conversation contents (including
 the game's own source code), and how the two are assembled and gated.
 
+> **Before adding or changing any rule about the finished GAME** (controls,
+> overlays, rendering, which models get used), read
+> `src/lib/prompt-surfaces.ts`. There are **five** prompts that can produce or
+> alter a game a child plays — build, edit, strict-edit retry, `api/repair`,
+> and the (gated-off) spec compiler — and a rule added to only one of them
+> looks correct, keeps the suite green, and does nothing on the path that
+> needed it. That has happened twice. `prompt-surfaces.test.ts` now enforces
+> it: add the rule to every surface, or add an `exempt` entry with a written
+> reason. There is no silent option.
+
 Every model call has exactly two parts:
 
 - **`system`** — the instruction block (`systemInstruction`), assembled per turn.

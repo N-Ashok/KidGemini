@@ -237,10 +237,35 @@ describe("loadModelBatchHelper — generated script shape", () => {
     expect(upToPlace).not.toMatch(/scale\.(setScalar|multiplyScalar)/);
   });
 
+  it("names the container after the model, so a game's per-type logic can actually fire", () => {
+    // 2026-08-17, from the owner's Mumbai Flight Sim. `loadModelBatch` returned
+    // `{ mesh: container }` where container is a bare `new Group()` — `.name`
+    // is "". Generated games reasonably branch on it to size a mixed flock:
+    //   if (e.batch.mesh.name === 'bird')       batchScale = 0.5;   // never true
+    //   if (e.batch.mesh.name.includes('tree')) batchScale = 5.0;   // never true
+    // Neither arm could ever run, so every moving batch in that game was forced
+    // to one scale each frame — birds the size of trees. The model wrote
+    // correct code against a field we left empty.
+    const body = script.slice(script.indexOf("const container = new Group()"));
+    expect(body).toMatch(/container\.name = name/);
+    // AFTER construction and BEFORE the object is handed back, or it is not
+    // observable to the game that reads `batch.mesh.name`.
+    expect(body.indexOf("container.name = name")).toBeLessThan(body.indexOf("mesh: container"));
+  });
+
   it("stamps a version so ensureAssetRuntime can replace a stale copy in a stored game", () => {
     expect(script).toMatch(
       new RegExp(`window\\.__arLoadModelBatchVersion = ${LOAD_MODEL_BATCH_VERSION}`),
     );
+  });
+
+  it("the batch version is at least 3 — naming the container is a behaviour change", () => {
+    // The bump IS the migration: ensureAssetRuntime strips the older block and
+    // injects this one on the next preview render, so ~200 stored games pick
+    // the name up without a restamp campaign. Without the bump the fix reaches
+    // only games built after the deploy — which is the exact trap that froze
+    // the WebGL guard on every stored game (2026-08-11).
+    expect(LOAD_MODEL_BATCH_VERSION).toBeGreaterThanOrEqual(3);
   });
 
   it("fails soft (returns null, warns) rather than throwing on a bad name or a load failure", () => {

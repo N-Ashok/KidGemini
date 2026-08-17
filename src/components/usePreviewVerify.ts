@@ -35,7 +35,7 @@ function initialState(html: string): VerifyControllerState {
   };
 }
 
-export function usePreviewVerify(html: string, originalRequest: string) {
+export function usePreviewVerify(html: string, originalRequest: string, traceId?: string) {
   const [state, setState] = useState<VerifyControllerState>(() => initialState(html));
   const controllerRef = useRef<PreviewVerifyController | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -48,6 +48,12 @@ export function usePreviewVerify(html: string, originalRequest: string) {
   // carries the ask that produced THAT html.
   const requestRef = useRef(originalRequest);
   requestRef.current = originalRequest;
+  // Same ref treatment as originalRequest, and for the same reason: putting it
+  // in the effect deps would dispose the controller and re-cover a game that
+  // has not changed. Read at fetch time, so a repair always reports the trace
+  // of the turn that produced the html being repaired.
+  const traceRef = useRef(traceId);
+  traceRef.current = traceId;
 
   // Each game html gets its own generation: `round` restarts with every
   // controller instance, so round alone COLLIDES across games (v1 can end at
@@ -63,7 +69,11 @@ export function usePreviewVerify(html: string, originalRequest: string) {
         const res = await fetch("/api/repair", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(req),
+          // The chat turn's trace rides along so this repair's server log
+          // lines share a `trace=` key with the build that produced the game
+          // (2026-08-17). Untrusted on the server, which re-validates the
+          // shape; omitted entirely when we don't have one.
+          body: JSON.stringify(traceRef.current ? { ...req, traceId: traceRef.current } : req),
           signal: AbortSignal.timeout(REPAIR_FETCH_TIMEOUT_MS),
         });
         if (!res.ok) throw new Error(`repair ${res.status}`);

@@ -28,6 +28,7 @@ import {
   webglContextGuard,
   WEBGL_GUARD_VERSION,
   LOAD_MODEL_HELPER_VERSION,
+  MODEL_RUNTIME_GLOBALS,
   parseAssetTables,
   stripAssetTables,
   countAssetTables,
@@ -65,7 +66,19 @@ const IMPORTS_CANNON_RE = /\bfrom\s*["']cannon-es["']/;
 // helper injected at all and died on `placeModel is not defined`. Found by a
 // round-trip test (strip -> re-floor), not in production, but it was already
 // deployed.
-const CALLS_LOADMODEL_RE = /\b(?:loadModel|loadModelBatch|placeModel|modelHeading|modelFacing|modelMetres|modelSize|modelAxis|modelJoins|fitTile|rotateToJoin)\s*\(/;
+// DERIVED from the MODEL half of the shared list (2026-08-17) — deliberately
+// NOT the full INJECTED_RUNTIME_GLOBALS, which also carries playSound and
+// playMusic. Audio is not 3D: a 2D game that plays a coin sound must never be
+// handed an import map and a module script importing "three". Using the full
+// list here did exactly that and shipped (BUG-FIX-LOG 2026-08-17); F.22-F.24
+// are the floor that keeps 2D out of this branch. Otherwise: derived, not
+// was a third private copy of the injected-globals list, and the copies had
+// already drifted apart once (KNOWN_BUGS #21). Building the regex from
+// INJECTED_RUNTIME_GLOBALS means a helper added there is automatically
+// recognised here, instead of a game that calls it getting no runtime at all
+// and dying on `<name> is not defined` — precisely the 2026-08-15 placeModel
+// failure this line's own comment describes below.
+const CALLS_LOADMODEL_RE = new RegExp(`\\b(?:${MODEL_RUNTIME_GLOBALS.join("|")})\\s*\\(`);
 const CALLS_LOADMODELBATCH_RE = /\bloadModelBatch\s*\(/;
 // BOTH loader shapes (BUG_LOG 2026-08-17). `loadModelBatch` was invisible here
 // for as long as it has existed: `\bloadModel\s*\(` cannot match

@@ -7,6 +7,7 @@
 
 import { ASSET_HOST_ORIGIN } from "./manifest";
 import { CURATED_IMPORT_NAMES } from "./prompt-catalog";
+import { INJECTED_RUNTIME_GLOBALS } from "./runtime-helpers";
 
 /** The loader helper Ari itself injects imports these from "three" too —
  *  vendored via separate entry lines in scripts/vendor-three.mjs. */
@@ -212,7 +213,11 @@ const LOCAL_DECL_RE = (name: string) =>
  *  BUG-FIX-LOG 2026-08-07. `modelSize` joined on 2026-08-08 only once the
  *  model-sizing work actually shipped its `window.modelSize` helper — verify
  *  the helper exists before adding a name here. */
-const RUNTIME_GLOBALS = new Set(["loadModel", "loadModelBatch", "modelSize", "playSound", "playMusic"]);
+// ONE list, defined where the globals are actually injected. This used to be
+// a private 5-name copy that drifted from the 13 the runtime really provides
+// (KNOWN_BUGS #21) — see INJECTED_RUNTIME_GLOBALS for the cost and the rule
+// for adding to it.
+const RUNTIME_GLOBALS = new Set<string>(INJECTED_RUNTIME_GLOBALS);
 
 export function stripRuntimeGlobalImports(html: string): string {
   let out = html;

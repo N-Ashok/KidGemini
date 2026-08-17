@@ -77,6 +77,24 @@ const THREE_EXPORTS = [
   // production on 2026-08-15. Teaching curves while withholding the classes
   // that draw them cannot work.
   'CatmullRomCurve3', 'TubeGeometry',
+  // 2026-08-17: shadow-type constants and exponential fog. THE SAME
+  // self-inflicted gap as the curves above, found by the first two-turn golden
+  // run and countable for the first time because of the new structured
+  // logging (`grep -o 'bad=[A-Za-z0-9,]*' | sort | uniq -c`):
+  //   3 lint faults across 13 prompts — PCFSoftShadowMap x2, FogExp2 x1,
+  //   each costing a full corrective regeneration (~30s of a child's wait).
+  // Both are contradictions WE created. modelsPromptSection rule 4 says
+  // "Enable shadows: renderer.shadowMap.enabled = true", and the next line any
+  // competent three.js author writes is `renderer.shadowMap.type =
+  // PCFSoftShadowMap`. The scenery rule mentions fog, and `Fog` is exported
+  // while `FogExp2` is not — so a model reaching for exponential fog dies on
+  // its import line.
+  // The three sibling shadow constants ride along deliberately: a model
+  // choosing BasicShadowMap for speed must not die for picking a different
+  // valid answer to the question we asked it. All five are integer constants
+  // already inside the bundle, so the byte cost is ~0 against the 650 KB
+  // budget (unlike the texture API, KNOWN_BUGS #25, which is a real decision).
+  'PCFSoftShadowMap', 'PCFShadowMap', 'BasicShadowMap', 'VSMShadowMap', 'FogExp2',
 ];
 
 // ── stage 1: build ───────────────────────────────────────────────────────────

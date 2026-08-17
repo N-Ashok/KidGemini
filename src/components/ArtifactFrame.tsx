@@ -68,6 +68,10 @@ interface ArtifactFrameProps {
   onSignIn?: () => void;
   /** The kid's ask that produced this game — repair prompts carry it (§7). */
   originalRequest?: string;
+  /** Trace id of the chat turn that produced this game (2026-08-17). Passed
+   *  through to /api/repair so a self-heal lands on the same log thread as
+   *  the build. Diagnostic only — never shown to the child. */
+  traceId?: string;
   onClose: () => void;
   /** Desktop full-screen toggle (PRD-PREVIEW-PANE) — owned by the container,
       which restyles the panel wrapper; this component only shows the button. */
@@ -194,6 +198,7 @@ export function ArtifactFrame({
   signInLocked,
   onSignIn,
   originalRequest,
+  traceId,
   onClose,
   expanded,
   onToggleExpand,
@@ -287,7 +292,7 @@ export function ArtifactFrame({
     return () => window.removeEventListener("keydown", onKey);
   }, [expanded, onToggleExpand]);
 
-  const { state, iframeRef, onIframeLoad, docKey, healMidPlay } = usePreviewVerify(html ?? "", originalRequest ?? "");
+  const { state, iframeRef, onIframeLoad, docKey, healMidPlay } = usePreviewVerify(html ?? "", originalRequest ?? "", traceId);
   // Perf Panel (docs/2026-07-30_PRD_PreviewPerfPanel.md) — debug-only, same
   // gate as the console tab. Harmless to mount unconditionally: it's just a
   // message listener until a snapshot arrives, and the injected probe script

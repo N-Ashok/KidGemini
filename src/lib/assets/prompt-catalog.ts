@@ -309,25 +309,28 @@ what you need and use the names you are given.
    only names from that "Toy box —" line). NEVER invent a model name — an
    unlisted name silently loads nothing. If you need an object the toy box
    doesn't have, build it from the primitive shapes instead.
-2. Load them with the built-in \`loadModel(name)\` helper — do NOT import a
-   loader yourself. It returns a Promise of a ready-to-add object, or null
-   if loading failed.
+1b. PREFER THE MODEL — the converse, and the half that matters more: if the
+   toy box HAS it, LOAD it; never build it from BoxGeometry. Buildings
+   especially — a city of boxes with painted-on window strips is how a 3D game
+   looks unfinished, and real buildings are in the box. A model also arrives
+   ALREADY PAINTED, with the glass and trim you would be faking: never replace
+   \`mesh.material\` (that discards its texture); to recolour, clone it and set
+   \`material.color\`.
+2. Load them with the built-in \`loadModel(name)\` — never import a loader
+   yourself. Returns a Promise of a ready-to-add object, or null on failure.
 3. Start the game loop immediately with simple primitive placeholder shapes,
    and swap the real model in when it arrives — never use await before the
    first frame renders:
    \`loadModel("${models[0]!.name}").then((m) => { if (m) { m.scale.set(2, 2, 2); scene.add(m); player = m; } });\`
-   If \`m\` is null, simply keep the placeholder — the game must keep working
-   without the model.
+   If \`m\` is null, keep the placeholder — the game must keep working.
    SIZE THE PLACEHOLDER to a HUMAN reference, never an arbitrary number — a
    standing human is ~1.7 units tall; scale every other placeholder against
-   that (a ball ≈0.22, a car ≈1.5 tall × 4.5 long, a house ≈3-6 tall). A
-   placeholder that looks right next to a human placeholder looks right.
-3b. HEAR THE INTENT, not the words. Children rarely say "3D" — they say
-   "realistic", "make it look real", "like real life", "lifelike", "not flat".
-   All of those mean: use the REAL MODELS above, with depth and lighting — not
-   a more detailed 2D drawing. EXCEPTION: if they already have a working 2D
-   game, improve it instead; never silently rebuild it in 3D over that one
-   word.
+   that (a ball ≈0.22, a car ≈1.5 tall × 4.5 long, a house ≈3-6 tall).
+3b. HEAR THE INTENT: children rarely say "3D" — they say "realistic", "make
+   it look real", "lifelike", "not flat". All mean the REAL MODELS above with
+   depth and lighting, not a more detailed 2D drawing. EXCEPTION: if they
+   already have a working 2D game, improve it — never silently rebuild it in
+   3D over one word.
 4. \`placeModel(name, opts)\` puts a model in the world CORRECTLY — standing on
    the ground, at a believable size, pointing where you want. Prefer it over
    bare \`loadModel\` for anything you position:
@@ -340,52 +343,48 @@ what you need and use the names you are given.
    the model, so its base always rests on the ground.
    NEVER assume or hand-write which way a model faces — they differ (\`car\` -Z,
    \`airplane\` +X, \`dog\` +Z); \`modelFacing(name)\` gives it, null = unaudited.
-   \`rotation.y = Math.PI\` to "turn it round" is
-   a guess that lands a game driving backwards at its own camera. Placing it:
-   \`placeModel\`'s \`heading\`. STEERING it (rotation set every frame, where
-   placeModel cannot help): \`m.rotation.y = modelHeading(name, heading)\`.
-   With the usual \`pos.x += sin(h)*v; pos.z += cos(h)*v\`, heading 0 travels
-   +Z, so a -Z car driven by \`rotation.y = h\` drives in reverse.
+   \`rotation.y = Math.PI\` to "turn it round" is a guess that lands a game
+   driving backwards at its own camera. Placing it: \`placeModel\`'s \`heading\`.
+   STEERING it (rotation set every frame, where placeModel cannot help):
+   \`m.rotation.y = modelHeading(name, h)\`.
    DRIVING SETUP — get these four consistent or the game feels wrong even when
-   each part looks right. Pick the heading convention first
-   (\`pos.x += sin(h)*v; pos.z += cos(h)*v\`, so heading 0 travels +Z), then:
+   each part looks right. Heading convention first: \`pos.x += sin(h)*v;
+   pos.z += cos(h)*v\`, so heading 0 travels +Z — a -Z car driven by a bare
+   \`rotation.y = h\` drives in reverse. Then:
    (1) the model: \`rotation.y = modelHeading(name, h)\`;
    (2) the camera: BEHIND along travel — \`pos - (sin(h), 0, cos(h)) * back\`,
        raised a little, looking at the car. Size \`back\` FROM THE CAR, about
        3-4 car lengths (\`modelSize(name).z * 3.5\`) — never a bare number like
-       12, which is a close chase in one game and a distant speck in another;
+       12, a close chase in one game and a distant speck in another;
    (3) build the WORLD at the car's scale too: a road a car can sit on is a
        few car-widths across, not 30;
    (4) controls: Up accelerates along the heading, Down brakes then reverses,
        Left/Right steer. Never swap Up and Down.
    SCENERY GOES WHERE THE PLAYER GOES. Place props ALONG the route, within
-   about 2-3 road-widths of it, and spread them over its WHOLE length. A
-   village 10 road-widths to the side is invisible; props only near the start
-   leave the rest of the journey empty. If you use fog, set its far distance
-   BEYOND what you placed, or it erases the very things the child asked for —
-   they will tell you they cannot see them, and they will be right.
+   2-3 road-widths, spread over its WHOLE length. A village 10 road-widths to
+   the side is invisible; props only near the start leave the journey empty. If you use fog, set its far distance
+   BEYOND what you placed, or it erases the very things the child asked for.
    SIZES COME IN TWO FLAVOURS, don't mix them up:
    \`modelSize(name)\` = the model's own units as published — what it measures on
    screen at scale 1. NEVER guess a size or spacing. Use it to work out a SCALE,
    and to space things by their real footprint:
    \`const w = modelSize("house").x; place(i * w * 1.5);\`
-   \`modelMetres(name)\` = how big the thing is in REAL LIFE. Use it to decide how
-   big something SHOULD be. They are not the same number and the catalog's own
-   units are not consistent between models — by \`modelSize\` alone a mountain
-   (1.9) is smaller than a car (2.56), so sizing a scene from it puts a house
-   next to a car at the wrong scale. Either pass \`metres: true\`, or scale
-   explicitly: \`obj.scale.setScalar(modelMetres(n).y / modelSize(n).y)\`.
+   \`modelMetres(name)\` = how big it is in REAL LIFE — use it to decide how big
+   something SHOULD be. The catalog's units are NOT consistent between models:
+   by \`modelSize\` alone a mountain (1.9) is smaller than a car (2.56), so
+   sizing a scene from it puts a house next to a car at the wrong scale. Either
+   pass \`metres: true\`, or scale explicitly: \`obj.scale.setScalar(modelMetres(n).y / modelSize(n).y)\`.
    Both answer null when unknown — then eyeball it.
    ROADS AND TRACKS ARE GEOMETRY YOU BUILD, never props you tile — there is no
    road piece in the library, do not look for one. Lay the route out as a plain
    ARRAY of points and walk it yourself: for each segment add a flat box
    centred on it, turned to face the next point, as wide as the road. Use ONLY
    the imports listed above — there is NO curve class in this build (no
-   \`CatmullRomCurve3\`, no \`Curve\`, no \`TubeGeometry\`); importing one is a
+   \`CatmullRomCurve3\`, no \`Curve\`, no \`TubeGeometry\`), importing one is a
    missing export, which stops the whole file parsing and leaves the child a
    game whose Start button does nothing. For a smooth bend, add more points. Neighbouring segments
-   share an edge, so it is seamless by construction and closes into a loop when
-   the last point meets the first. Kerbs, centre lines and banking are the same
+   share an edge, so it is seamless and closes into a loop when the last point
+   meets the first. Kerbs, centre lines and banking are the same
    walk with a narrower strip offset or tilted.
 5. Some models carry NAMED animations in \`m.animations\` — don't blindly play
    \`m.animations[0]\`: it's often an idle pose, or even an attack, so picking

@@ -734,6 +734,82 @@ describe("POST /api/chat — a game must never load a library from an external C
     expect(replyMock.mock.calls[0]![0].message).toContain("./three.module.js");
   });
 
+  // ── B4: the healer must run BEFORE the lint reads the artifact ─────────
+  //
+  // KNOWN_BUGS #21, 2026-08-17. `stripRuntimeGlobalImports` exists precisely
+  // so that `import { loadModel } from "three"` — a category error, since we
+  // inject those as window globals — is fixed deterministically and for free.
+  // But it lived inside `toDeliverable`, which runs AFTER this lint has
+  // already read the RAW artifact. So the healer never prevented a single one
+  // of the ~50s corrective regenerations it was written to retire. Seen live:
+  //   ⛔ unknown three imports: loadModel, placeModel, modelHeading
+  //      — corrective retry @71804ms
+  // A minute of a child's time, twice over, for a fault we could already fix
+  // in a millisecond.
+  it("XS.5 a build importing runtime globals from three is HEALED, not regenerated", async () => {
+    const GLOBALS_GAME =
+      `<!doctype html><html><body><!--USES_THREE--><canvas id="scene"></canvas>\n` +
+      `<script type="module">import { Scene, loadModel, placeModel, modelHeading } from "three";\n` +
+      `/* CLEAN GAME */ loadModel("car");</script></body></html>`;
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: GLOBALS_GAME, wasFenced: false }));
+    replyStreamMock.mockReturnValue(one("Here!\n```html" + GLOBALS_GAME + "```"));
+
+    const res = await POST(makeReq({ message: "make a 3D game", history: [] }));
+    const done = doneOf(await res.text());
+
+    // No model call at all — this is a deterministic fix, not a retry.
+    expect(replyMock).not.toHaveBeenCalled();
+    // And the delivered game no longer imports the globals from "three".
+    expect(done.artifactHtml).not.toMatch(/import\s*\{[^}]*loadModel[^}]*\}\s*from\s*["']three["']/);
+    expect(done.artifactHtml).toContain('loadModel("car")'); // the CALL survives
+  });
+
+  // ── the turn trace (2026-08-17 owner ask: a log system that says WHERE) ──
+  it("TR.1 every turn gets a trace id, handed to the client so a repair can join it", async () => {
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: CLEAN_GAME, wasFenced: false }));
+    replyStreamMock.mockReturnValue(one("Here!\n```html" + CLEAN_GAME + "```"));
+
+    const res = await POST(makeReq({ message: "make a 3D game", history: [] }));
+    const done = doneOf(await res.text());
+
+    // Shape must match what api/repair will accept back (adoptTraceId), or
+    // the correlation silently degrades to a fresh id on every repair.
+    expect(done.traceId).toMatch(/^[2-9a-z]{8}$/);
+  });
+
+  it("TR.2 two turns get different traces, so one grep is one turn", async () => {
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: CLEAN_GAME, wasFenced: false }));
+    replyStreamMock.mockReturnValue(one("Here!\n```html" + CLEAN_GAME + "```"));
+
+    const a = doneOf(await (await POST(makeReq({ message: "one", history: [] }))).text());
+    replyStreamMock.mockReturnValue(one("Here!\n```html" + CLEAN_GAME + "```"));
+    const b = doneOf(await (await POST(makeReq({ message: "two", history: [] }))).text());
+
+    expect(a.traceId).not.toBe(b.traceId);
+  });
+
+  it("TR.3 the SAME trace appears on this turn's server log lines", async () => {
+    // The property that makes the id worth anything: `grep trace=<id>` must
+    // return the turn's story. Before this, nothing tied a line to a request
+    // and turns were matched to their repairs by eye.
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => void lines.push(a.join(" ")));
+    try {
+      extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: CLEAN_GAME, wasFenced: false }));
+      replyStreamMock.mockReturnValue(one("Here!\n```html" + CLEAN_GAME + "```"));
+      const done = doneOf(await (await POST(makeReq({ message: "make a 3D game", history: [] }))).text());
+
+      const mine = lines.filter((l) => l.includes(`trace=${done.traceId}`));
+      expect(mine.length).toBeGreaterThan(1);
+      // And the stage vocabulary is there, so a gap can be read as a stage
+      // that never completed rather than needing the pipeline memorised.
+      expect(mine.join("\n")).toMatch(/stage=start\b/);
+      expect(mine.join("\n")).toMatch(/stage=deliver\b/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("XS.3 a correct pipeline game ships untouched, with NO corrective retry (guard never misfires)", async () => {
     extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: CLEAN_GAME, wasFenced: false }));
     replyStreamMock.mockReturnValue(one("Here!\n```html" + CLEAN_GAME + "```"));

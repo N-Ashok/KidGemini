@@ -13,6 +13,7 @@ import {
   unknownThreeImports,
   stripRuntimeGlobalImports,
 } from "./three-import-lint";
+import { loadModelHelper, loadModelBatchHelper, audioHelper, INJECTED_RUNTIME_GLOBALS } from "./runtime-helpers";
 
 const game = (imports: string) =>
   `<html><body><script type="module">import { ${imports} } from "three";\nconst x = 1;</script></body></html>`;
@@ -385,6 +386,51 @@ describe("stripRuntimeGlobalImports — runtime helpers are globals, never three
   it("strips an aliased global by its ORIGINAL name", () => {
     const html = `<script type="module">import { Scene, loadModel as lm } from "three";</script>`;
     expect(stripRuntimeGlobalImports(html)).toContain('import { Scene } from "three"');
+  });
+
+  // ── B4: ONE list, and it must not drift from the runtime ───────────────
+  //
+  // 2026-08-17, KNOWN_BUGS #21. This module kept its own private
+  // RUNTIME_GLOBALS of 5 names while runtime-helpers.ts actually injects 13.
+  // placeModel, modelHeading and modelFacing were missing — and placeModel is
+  // the one prompt-catalog.ts tells the model to PREFER, so it is the name
+  // most likely to be imported by mistake. Cost seen live:
+  //   ⛔ unknown three imports: loadModel, placeModel, modelHeading
+  //      — corrective retry @71804ms
+  // a ~50s full regeneration for a fault this healer exists to fix silently.
+  // The list now comes from runtime-helpers.ts, which is where the globals are
+  // actually defined, so the two cannot drift again.
+  it("strips placeModel/modelHeading/modelFacing — the three that were missing", () => {
+    const html = `<script type="module">import { Scene, placeModel, modelHeading, modelFacing } from "three";</script>`;
+    expect(stripRuntimeGlobalImports(html)).toContain('import { Scene } from "three"');
+  });
+
+  it("strips EVERY global the runtime actually injects, and nothing else", () => {
+    // The drift guard proper: iterate the shared list rather than a copy of
+    // it. A helper added to runtime-helpers.ts without teaching this healer is
+    // a ~50s corrective retry per occurrence, so the coupling is the point.
+    for (const name of INJECTED_RUNTIME_GLOBALS) {
+      const html = `<script type="module">import { Scene, ${name} } from "three";</script>`;
+      expect(stripRuntimeGlobalImports(html), `${name} is injected but not stripped`)
+        .toContain('import { Scene } from "three"');
+    }
+    // A real three export must still survive — the PointLight lesson
+    // (BUG-FIX-LOG 2026-08-07): stripping a name that is NOT a global turns a
+    // loud dead import into a silent play-time ReferenceError.
+    expect(INJECTED_RUNTIME_GLOBALS).not.toContain("PointLight");
+    expect(INJECTED_RUNTIME_GLOBALS).not.toContain("Scene");
+  });
+
+  it("every name in the shared list is really assigned by an injected helper", () => {
+    // The other direction of the same coupling, and the one that protects
+    // against the PointLight failure mode: a name may only be stripped if the
+    // runtime genuinely defines `window.<name> =`.
+    const runtime = loadModelHelper() + loadModelBatchHelper() + audioHelper();
+    for (const name of INJECTED_RUNTIME_GLOBALS) {
+      expect(runtime, `${name} is stripped but never injected`).toMatch(
+        new RegExp(`window\\.${name}\\s*=`),
+      );
+    }
   });
 
   it("leaves a clean three import byte-identical", () => {

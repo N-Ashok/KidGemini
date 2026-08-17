@@ -289,10 +289,32 @@ const GAME_BUILD_CONTRACT = `respond with a single HTML document wrapped in a
   still covering the game. Whenever you add or move an overlay, satisfy
   yourself that each on-screen control is still the topmost element at its own
   coordinates.
+- ONE INPUT INTENT, ONE OUTCOME. For each action the player can take (climb,
+  dive, turn left, turn right, thrust, brake), the keyboard key AND the
+  on-screen button MUST write the SAME variable with the SAME value — bind
+  them to one shared intent, never to two separate expressions that can drift
+  apart. And the direction must be true on screen: pressing UP (or the up
+  button) moves the player UP on the screen, LEFT moves it toward the left
+  edge, RIGHT toward the right edge. Work the SIGN out rather than assuming
+  it — for a 3D game, decide which way the object actually travels for a
+  positive value before you commit to it. \`rotation.x = +pitch\` with the
+  model facing +Z sends the nose DOWN, not up; a positive rotation.y turns
+  from +Z toward +X, so the same +0.8 that reads as "left" in a variable name
+  can steer right. This is the single hardest bug for a child to describe or
+  for you to see later: both handlers fire, nothing errors, nothing is logged
+  — the game simply does the opposite of what the child pressed.
 - If the request names specific entities (a particular animal, vehicle,
   character, hazard, or object), EVERY one of them must actually appear and
   be interactive in the built game — an entity the request asked for that
   got silently dropped is a bug, not an acceptable simplification.
+- DRAW EVERY FRAME. Your animation loop must reach its draw call
+  (\`renderer.render(scene, camera)\` for 3D, the canvas draw for 2D) on EVERY
+  frame — including while the start screen is still up, while the game is
+  paused, and after game over. Gate the SIMULATION on game state, never the
+  draw: an early \`return\` placed above the render call leaves the canvas
+  blank behind the start screen, so the child's first impression of the game
+  is an empty box. Write it as \`if (playing) { update(dt); }\` followed by the
+  render, not as \`if (!playing) return;\` with the render below it.
 - Start the game loop immediately and synchronously when the script loads —
   never wrap the setup or the loop in an async function or behind an await:
   canvas sizing, world generation and the first requestAnimationFrame must all
@@ -419,6 +441,22 @@ const GAME_EDIT_CONTRACT = `keep these while you patch:
   their click handlers still work, so nothing appears broken and nothing is
   logged — the taps just never arrive. \`opacity: 0\` does NOT make a layer
   harmless; it must be gone from the layout or inert.
+- ONE INPUT INTENT, ONE OUTCOME. If this change touches the controls at all,
+  the keyboard key and the on-screen button for the same action must write the
+  SAME variable with the SAME value — one shared intent, never two separate
+  expressions that can drift apart. Check the existing code before you patch:
+  if they already disagree, that is the bug, fix it. And the direction must be
+  true on screen — UP moves the player UP on the screen, LEFT toward the left
+  edge, RIGHT toward the right edge. Work the SIGN out rather than assuming it:
+  \`rotation.x = +pitch\` with the model facing +Z sends the nose DOWN, and a
+  positive rotation.y turns from +Z toward +X, so a variable named "left" can
+  steer right. Nothing errors and nothing is logged when this is wrong — the
+  game just does the opposite of what the child pressed.
+- DRAW EVERY FRAME. Never move the draw call (\`renderer.render(scene, camera)\`
+  for 3D, the canvas draw for 2D) below an early \`return\` in the animation
+  loop, and if your change adds a new game state (paused, start screen, game
+  over) gate the SIMULATION on it, not the draw. A render that is skipped
+  leaves the canvas blank and the child sees an empty box.
 - Keep it wholesome.`;
 
 export const CHILD_SYSTEM_PROMPT = `${CHILD_PERSONA_CORE}
