@@ -77,6 +77,20 @@ export const CURATED_IMPORT_NAMES = [
   // ribbon extruded along a curve joins by construction, with no per-piece
   // rotation to get wrong.
   "CatmullRomCurve3", "TubeGeometry",
+  // 2026-08-17, published the same day (three.8f7c88.js, 622 KB, +1 KB) —
+  // contradictions WE created, found by the first two-turn golden run and
+  // countable only because of the new structured logging:
+  //   grep -o 'bad=[A-Za-z0-9,]*' logs/app.log | sort | uniq -c
+  //   2 bad=PCFSoftShadowMap
+  //   1 bad=FogExp2
+  // Rule 4 below tells the model to enable shadows, and the next line any
+  // three.js author writes is `renderer.shadowMap.type = PCFSoftShadowMap`.
+  // The scenery rule mentions fog, and `Fog` was exported while `FogExp2` was
+  // not. Each miss cost a full ~30s corrective regeneration for a fault our
+  // own prompt provoked. The three sibling shadow constants ride along so a
+  // model that picks BasicShadowMap for speed does not die for choosing a
+  // different valid answer to the question we asked it.
+  "PCFSoftShadowMap", "PCFShadowMap", "BasicShadowMap", "VSMShadowMap", "FogExp2",
 ];
 const CURATED_IMPORTS = CURATED_IMPORT_NAMES.join(", ");
 

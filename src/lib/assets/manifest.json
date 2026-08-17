@@ -3,11 +3,11 @@
     {
       "name": "three",
       "type": "engine",
-      "url": "https://assets.ariantra.com/three.4baa3a.js",
-      "bytes": 636278,
+      "url": "https://assets.ariantra.com/three.8f7c88.js",
+      "bytes": 636618,
       "license": "MIT",
       "sourceUrl": "https://github.com/mrdoob/three.js",
-      "sha256": "4baa3a9cc0f3dc427a915282967977fd3e5416fe28e442193b551cc8d112e780"
+      "sha256": "8f7c881a07f9a7f4ec9bdb5e845f282a232de2e2e64b1f3bade0373198bf3e4a"
     },
     {
       "name": "car",

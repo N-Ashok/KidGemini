@@ -1,8 +1,9 @@
 {
-  "url": "https://assets.ariantra.com/three.4baa3a.js",
+  "url": "https://assets.ariantra.com/three.8f7c88.js",
   "exports": [
     "AmbientLight",
     "AnimationMixer",
+    "BasicShadowMap",
     "Box3",
     "BoxGeometry",
     "CapsuleGeometry",
@@ -15,6 +16,7 @@
     "DoubleSide",
     "Euler",
     "Fog",
+    "FogExp2",
     "GLTFLoader",
     "Group",
     "HemisphereLight",
@@ -25,6 +27,8 @@
     "MeshBasicMaterial",
     "MeshStandardMaterial",
     "MeshoptDecoder",
+    "PCFShadowMap",
+    "PCFSoftShadowMap",
     "PerspectiveCamera",
     "PlaneGeometry",
     "PointLight",
@@ -38,6 +42,7 @@
     "SphereGeometry",
     "TorusGeometry",
     "TubeGeometry",
+    "VSMShadowMap",
     "Vector2",
     "Vector3",
     "WebGLRenderer"
