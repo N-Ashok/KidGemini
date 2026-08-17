@@ -19,8 +19,11 @@ const game = (imports: string) =>
 
 describe("unknownThreeImports", () => {
   it("flags names the bundle does not export (the DoubleSide incident, pre-growth)", () => {
-    // TubeGeometry / OrbitControls are NOT vendored — classic model drift.
-    expect(unknownThreeImports(game("Scene, TubeGeometry"))).toEqual(["TubeGeometry"]);
+    // LatheGeometry / OrbitControls are NOT vendored — classic model drift.
+    // (TubeGeometry moved into the bundle 2026-08-17, so it is no longer a
+    // valid specimen for this test — the lint must be pinned on a name that
+    // is genuinely absent, or it passes for the wrong reason.)
+    expect(unknownThreeImports(game("Scene, LatheGeometry"))).toEqual(["LatheGeometry"]);
     expect(unknownThreeImports(game("OrbitControls"))).toEqual(["OrbitControls"]);
   });
 
@@ -284,8 +287,8 @@ describe("ensureThreeImports (used-but-not-imported heal)", () => {
   });
 
   it("never adds names outside the curated bundle exports — game classes and unvendored three classes alike", () => {
-    const html = playable("Scene", "const e = new EnemyTank(1); const s = new SpotLight(2); const t = new TubeGeometry(3);");
-    expect(ensureThreeImports(html)).toBe(html); // SpotLight/TubeGeometry aren't vendored — adding them would crash the import line
+    const html = playable("Scene", "const e = new EnemyTank(1); const s = new SpotLight(2); const t = new LatheGeometry(3);");
+    expect(ensureThreeImports(html)).toBe(html); // SpotLight/LatheGeometry aren't vendored — adding them would crash the import line
   });
 
   it("counts aliased imports by their LOCAL binding", () => {

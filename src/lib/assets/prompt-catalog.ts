@@ -66,6 +66,17 @@ export const CURATED_IMPORT_NAMES = [
   // 89-message game was regenerated away. Placement composes via Matrix4
   // (already taught) — Object3D/DynamicDrawUsage stay unvendored.
   "InstancedMesh",
+  // 2026-08-17 — the bundle carrying these was rebuilt and verified on
+  // 2026-08-16 (KNOWN_BUGS #18) but sat unpublished until the owner ran the
+  // upload today, so until now the lint correctly blocked them. Production
+  // that same session: `⛔ unknown three imports: CatmullRomCurve3 —
+  // corrective retry`, then `import-lint retry did not come back clean —
+  // serving the original`, i.e. a game the pipeline KNEW was broken was served
+  // and crashed on its import line. A curve is also the right answer for the
+  // road/track class that four tile-based fixes failed to solve (#15): a
+  // ribbon extruded along a curve joins by construction, with no per-piece
+  // rotation to get wrong.
+  "CatmullRomCurve3", "TubeGeometry",
 ];
 const CURATED_IMPORTS = CURATED_IMPORT_NAMES.join(", ");
 

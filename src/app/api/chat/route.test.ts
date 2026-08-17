@@ -694,17 +694,17 @@ describe("POST /api/chat — a game must never load a library from an external C
   // multi-file three.js layout and died on "Failed to resolve module specifier".
   it("XS.3 a build whose retry STILL has an unknown three import is NOT served (2026-08-16)", async () => {
     // The Village Turbo Racer failure, pinned. The build imported
-    // CatmullRomCurve3 (not exported by this platform's bundle), the lint
+    // LatheGeometry (not exported by this platform's bundle), the lint
     // caught it, the corrective retry produced it AGAIN, and the pipeline
     // served the original anyway. The child's console:
-    //   "does not provide an export named 'CatmullRomCurve3'"
+    //   "does not provide an export named 'LatheGeometry'"
     //   "startGame is not defined"
     // — a missing export is a PARSE error, so nothing in the module ran and
     // the Start button did nothing. A dead game is worse than an honest
     // "that tangled me up, try again", so it must not be delivered.
     const CURVE_GAME =
       `<!doctype html><html><body><canvas id="c"></canvas>\n` +
-      `<script type="module">import { Scene, CatmullRomCurve3 } from "three";\nfunction startGame(){}</script></body></html>`;
+      `<script type="module">import { Scene, LatheGeometry } from "three";\nfunction startGame(){}</script></body></html>`;
     replyStreamMock.mockReturnValue(one("Here!\n```html" + CURVE_GAME + "```"));
     extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: CURVE_GAME, wasFenced: false }));
     // the corrective retry comes back with the SAME bad import
@@ -1338,7 +1338,7 @@ describe("POST /api/chat — patch-based feature edits", () => {
 // retry — so a dead-on-arrival game never reaches the kid.
 describe("POST /api/chat — three-import lint", () => {
   const BAD_IMPORT_GAME =
-    '<!doctype html><html><body><script type="module">import { Scene, TubeGeometry } from "three";</script></body></html>';
+    '<!doctype html><html><body><script type="module">import { Scene, LatheGeometry } from "three";</script></body></html>';
   const CLEAN_GAME =
     '<!doctype html><html><body><script type="module">import { Scene } from "three";</script></body></html>';
 
@@ -1350,7 +1350,7 @@ describe("POST /api/chat — three-import lint", () => {
     replyStreamMock.mockReturnValue(one("Here!\n```html\n" + BAD_IMPORT_GAME + "\n```"));
     extractArtifactMock.mockImplementation((t: string) => ({
       text: "Here!",
-      artifactHtml: t.includes("TubeGeometry") ? BAD_IMPORT_GAME : undefined,
+      artifactHtml: t.includes("LatheGeometry") ? BAD_IMPORT_GAME : undefined,
       wasFenced: true,
     }));
     replyMock.mockResolvedValue({ text: "Fixed!", artifactHtml: CLEAN_GAME, wasFenced: true });
@@ -1360,7 +1360,7 @@ describe("POST /api/chat — three-import lint", () => {
     const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
 
     expect(replyMock).toHaveBeenCalledTimes(1);
-    expect(replyMock.mock.calls[0]![0].message).toContain("TubeGeometry"); // told exactly what crashed
+    expect(replyMock.mock.calls[0]![0].message).toContain("LatheGeometry"); // told exactly what crashed
     expect(replyMock.mock.calls[0]![0]).toMatchObject({ forceFullRegen: true });
     expect(done.artifactHtml).toBe(ensureAssetRuntime(CLEAN_GAME)); // clean retry, import map floored in
   });
@@ -1375,7 +1375,7 @@ describe("POST /api/chat — three-import lint", () => {
     const done = JSON.parse(text.trim().split("\n").find((l) => l.includes('"done"'))!);
 
     // Served, visible, repairable — not dropped. The import map is floored in, so
-    // the specifier resolves; the unknown NAMED export (TubeGeometry) is the
+    // the specifier resolves; the unknown NAMED export (LatheGeometry) is the
     // remaining issue the kid can repair — the floor is 'no worse', never a dead end.
     expect(done.artifactHtml).toBe(ensureAssetRuntime(BAD_IMPORT_GAME));
   });
@@ -1398,7 +1398,7 @@ describe("POST /api/chat — three-import lint", () => {
     ];
     const patchReply =
       "Added a track! 🎮\n<<<<<<< SEARCH\n<div>OLD_FEATURE</div>\n=======\n" +
-      '<script type="module">import { TubeGeometry } from "three";</script>\n>>>>>>> REPLACE';
+      '<script type="module">import { LatheGeometry } from "three";</script>\n>>>>>>> REPLACE';
     replyStreamMock.mockReturnValue(one(patchReply));
 
     const res = await POST(makeReq({ message: "add a tube track", history }));

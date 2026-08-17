@@ -1,11 +1,12 @@
 {
-  "url": "https://assets.ariantra.com/three.098b4c.js",
+  "url": "https://assets.ariantra.com/three.4baa3a.js",
   "exports": [
     "AmbientLight",
     "AnimationMixer",
     "Box3",
     "BoxGeometry",
     "CapsuleGeometry",
+    "CatmullRomCurve3",
     "Clock",
     "Color",
     "ConeGeometry",
@@ -36,6 +37,7 @@
     "SkeletonUtils",
     "SphereGeometry",
     "TorusGeometry",
+    "TubeGeometry",
     "Vector2",
     "Vector3",
     "WebGLRenderer"
