@@ -22,6 +22,7 @@ import {
   isDrawCallBound,
   shouldAutoFixSlowdown,
   type SlowdownBannerState,
+  AUTO_FIX_ENABLED,
 } from "./slowdown-nudge";
 import type { PerfModelEntry } from "@/types/preview-perf.types";
 
@@ -290,8 +291,17 @@ describe("isDrawCallBound — shared gate between buildSlowdownHint and the proa
   });
 });
 
-describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026-08-10, no tap/fps wait)", () => {
-  it("fires the first time a fresh docKey is draw-call-bound", () => {
+// CONTRACT CHANGE 2026-08-16, re-applied on the 2026-08-12 revert (2026-08-17).
+// These three cases used to assert the proactive path FIRES. It is now off by
+// owner decision (AUTO_FIX_ENABLED) — it rewrote a child's game unasked and
+// stripped every mesh from her scene mid-play. They are NOT deleted: each one
+// still asserts the rule it was really protecting, one level down at
+// isDrawCallBound, so turning the flag back on cannot silently ship broken
+// rules. The guards themselves (one-shot per docKey, busy) are unchanged and
+// covered by the untouched cases below.
+describe("shouldAutoFixSlowdown — proactive nudge trigger (DISABLED 2026-08-16; rules still pinned)", () => {
+  it("a fresh draw-call-bound docKey is RECOGNISED, but no longer acted on", () => {
+    expect(isDrawCallBound([], 1250)).toBe(true); // the rule still holds…
     expect(
       shouldAutoFixSlowdown({
         docKey: "gen-1",
@@ -300,7 +310,7 @@ describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026
         drawCalls: 1250,
         busy: false,
       }),
-    ).toBe(true);
+    ).toBe(false); // …and nothing fires unasked
   });
 
   it("does NOT fire again for the SAME docKey (one-shot per document — no tight loop on a soft-failed patch)", () => {
@@ -315,7 +325,8 @@ describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026
     ).toBe(false);
   });
 
-  it("fires again once the fix (or any edit) produces a NEW docKey that's still draw-call-bound", () => {
+  it("a NEW docKey that is still draw-call-bound is recognised, and still not acted on", () => {
+    expect(isDrawCallBound([], 900)).toBe(true);
     expect(
       shouldAutoFixSlowdown({
         docKey: "gen-2",
@@ -324,7 +335,7 @@ describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026
         drawCalls: 900,
         busy: false,
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("does not fire when the scene isn't actually draw-call-bound", () => {
@@ -367,9 +378,15 @@ describe("shouldAutoFixSlowdown — proactive nudge trigger (owner decision 2026
       busy: true,
     };
     expect(shouldAutoFixSlowdown(argsWhileBusy)).toBe(false);
-    // Caller never advances lastAutoFixedDocKey on a false return (see
-    // ArtifactFrame.tsx) — the SAME docKey must still fire once busy clears.
-    expect(shouldAutoFixSlowdown({ ...argsWhileBusy, busy: false })).toBe(true);
+    // The busy guard's own reason still stands and is still worth pinning: the
+    // caller never advances lastAutoFixedDocKey on a false return (see
+    // ArtifactFrame.tsx), so the docKey is not consumed. With AUTO_FIX_ENABLED
+    // off the outcome is false either way, so what is asserted now is that the
+    // GUARD is what rejected it while busy — not the flag masking a broken
+    // guard. Concurrency was a real incident (2026-08-11: the silent turn
+    // fired mid-stream and wedged the preview's WebGL context).
+    expect(isDrawCallBound(argsWhileBusy.models, argsWhileBusy.drawCalls)).toBe(true);
+    expect(shouldAutoFixSlowdown({ ...argsWhileBusy, busy: false })).toBe(false);
   });
 });
 
@@ -384,5 +401,56 @@ describe("buildAutoFixHint — the silent proactive turn's full prompt", () => {
     expect(hint.toLowerCase()).toContain("did not ask");
     expect(hint.toLowerCase()).toContain("one short, friendly sentence");
     expect(hint.toLowerCase()).toContain("no numbers");
+  });
+});
+
+// ── the proactive auto-fix stays OFF (owner decision, 2026-08-16) ───────────
+//
+// Cherry-picked in substance from d3d3825 onto the 2026-08-12 revert
+// (2026-08-17). Only the FIX is taken: the full commit also carries the whole
+// Aug-13→16 prompt-catalog state, scene-census and kid-thought, which is
+// exactly the work this revert exists to remove.
+//
+// What it prevents, in the owner's words at the time: "it broke the whole
+// game. all the meshes were gone. that was bigger worry than sparks. kids
+// don't know about sparks" / "autofix making the game bad is not acceptable".
+// The proactive path sent a SILENT model turn that rewrote a child's game —
+// fired merely on opening a draw-call-bound game, looped, and stripped every
+// mesh from her scene mid-play.
+//
+// The child-TAPPED "Make it faster" banner is untouched and still works. Only
+// the path that acts without anyone asking is disabled.
+describe("the proactive auto-fix is disabled", () => {
+  it("never fires, even when every other condition is met", () => {
+    // A snapshot that IS draw-call-bound by the module's own definition:
+    // high draw calls with no genuinely heavy tracked model. Asserted first,
+    // so this test cannot pass merely because the fixture was wrong.
+    const models = [
+      { name: "tree", triangles: 900, instances: [1, 2], bucket: "green" },
+    ] as unknown as Parameters<typeof shouldAutoFixSlowdown>[0]["models"];
+    expect(isDrawCallBound(models, 5_000)).toBe(true); // the condition really is met
+
+    expect(
+      shouldAutoFixSlowdown({
+        docKey: "doc-1",
+        lastAutoFixedDocKey: null,
+        models,
+        drawCalls: 5_000,
+        busy: false,
+      }),
+    ).toBe(false); // ...and it still refuses to fire
+  });
+
+  it("AUTO_FIX_ENABLED is the single switch, and it is off", () => {
+    // A named constant rather than a deleted code path: the rules underneath
+    // stay tested and the decision stays visible and reversible.
+    expect(AUTO_FIX_ENABLED).toBe(false);
+  });
+
+  it("the child-tapped slowdown hint still works — only the SILENT path is off", () => {
+    const models = [{ name: "tree", triangles: 9_000, instances: 50 }] as unknown as Parameters<
+      typeof buildSlowdownHint
+    >[0];
+    expect(buildSlowdownHint(models, 900).length).toBeGreaterThan(20);
   });
 });

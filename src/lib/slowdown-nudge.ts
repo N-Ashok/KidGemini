@@ -189,6 +189,30 @@ export function buildSlowdownHint(models: PerfModelEntry[], drawCalls?: number |
  * against; a soft-failed patch leaves docKey unchanged, so this can only ever
  * fire once per actual document, never loop).
  */
+/**
+ * THE PROACTIVE AUTO-FIX IS OFF (owner decision 2026-08-16, re-applied on the
+ * 2026-08-12 revert on 2026-08-17).
+ *
+ * The proactive path sent a SILENT model turn that rewrote a child's game. It
+ * fired merely on OPENING a draw-call-bound game, it looped, and it stripped
+ * every mesh out of her scene mid-play. The owner: "it broke the whole game.
+ * all the meshes were gone. that was bigger worry than sparks. kids don't know
+ * about sparks" / "autofix making the game bad is not acceptable".
+ *
+ * A named constant rather than a deleted code path, deliberately: every rule
+ * underneath (isDrawCallBound, the one-shot-per-docKey guard, the busy guard)
+ * stays intact and fully tested, so the decision is visible, reviewable and
+ * reversible by one line rather than by archaeology.
+ *
+ * The child-TAPPED "Make it faster" banner is UNAFFECTED and still works. Only
+ * the path that acts without anyone asking is disabled.
+ *
+ * Cherry-picked IN SUBSTANCE from d3d3825, not as that commit: the full commit
+ * also carries the Aug-13→16 prompt-catalog state, scene-census and
+ * kid-thought, which is exactly the work the revert exists to remove.
+ */
+export const AUTO_FIX_ENABLED = false;
+
 export function shouldAutoFixSlowdown(args: {
   docKey: string;
   lastAutoFixedDocKey: string | null;
@@ -206,6 +230,7 @@ export function shouldAutoFixSlowdown(args: {
    *  silently skipped forever for this docKey. */
   busy: boolean;
 }): boolean {
+  if (!AUTO_FIX_ENABLED) return false; // see AUTO_FIX_ENABLED above — never acts unasked
   return (
     !args.busy && args.docKey !== args.lastAutoFixedDocKey && isDrawCallBound(args.models, args.drawCalls)
   );
