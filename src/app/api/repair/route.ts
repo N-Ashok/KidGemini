@@ -59,7 +59,11 @@ export async function POST(req: NextRequest) {
   const session = await safeAuth();
   const userId = session?.userId ?? readGuestId(req) ?? "guest:unknown";
   const userLabel = session?.name ?? session?.email ?? "Guest";
-  const model = process.env.GEMINI_CHAT_MODEL ?? "gemini-2.5-flash";
+  // Same default as GeminiChatModel/chat route (2026-08-18). These three had
+  // drifted apart — CODE_REVIEW_2026-07-14 §55 — so an unset GEMINI_CHAT_MODEL
+  // meant repairs ran on a different model, and billed at a different rate,
+  // than the build they were repairing.
+  const model = process.env.GEMINI_CHAT_MODEL ?? "gemini-3.6-flash";
 
   const prompt = buildRepairPrompt({
     failureCode: failureCode as RepairRequest["failureCode"],

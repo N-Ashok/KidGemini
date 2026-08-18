@@ -44,14 +44,35 @@ Plain chat turns: system prompt + window only; thinking 0; no catalogs.
 Repair calls (self-healing preview): ~4–8k input, ≤4k output, rare — watch
 via TECH_DEBT #30.
 
-## Model chain & pricing (verified 2026-07-13; `pricing.config.ts` mirrors this)
+## Model chain & pricing (verified 2026-08-18; `pricing.config.ts` mirrors this)
 
-| Model | In/Out per MTok | Role |
+Owner decision 2026-08-18: the ladder moved to the Gemini 3.6/3.7 line.
+
+| Model | In/Out/Cached per MTok | Role |
 |---|---|---|
-| gemini-3-flash-preview | $0.50 / $3.00 | **primary** — Gemini-3-class game code at near-2.5 prices |
-| gemini-2.5-flash | $0.30 / $2.50 | fallback 1 (cheap rescue) |
-| gemini-3.5-flash | $1.50 / $9.00 | fallback 2 (premium, emergencies only) |
-| gemini-2.5-flash-lite | $0.10 / $0.40 | last resort |
+| gemini-3.6-flash | $0.75 / $3.75 / $0.075 | **primary** ⚠️ promo rate |
+| gemini-3.7-flash | $0.75 / $3.75 / $0.075 | fallback 1 — same price, so a rescue costs the kid nothing extra ⚠️ promo rate |
+| gemini-3.5-flash | $1.50 / $9.00 / $0.15 | fallback 2 (the old primary; premium, outage only) |
+| gemini-3.1-pro-preview | $2.00 / $12.00 / $0.20 | fallback 3 (deep rescue; ≤200k-prompt rate — TECH_DEBT #108) |
+| gemini-3.5-flash-lite | $0.30 / $2.50 / $0.03 | last resort |
+
+**What this did to spend.** On the reference build turn (8k prompt of which 4k
+cached, 4k output) the primary went **$0.0426 → $0.0183, a 57% cut**, and
+Sparks are a fixed multiple of measured ₹ cost (platform `spark-cost.ts`), so
+the kid is debited **742 ⚡ → 319 ⚡** for the same game. Nothing about the
+Sparks formula changed — the reduction is entirely the cheaper model, which is
+what makes it automatic and non-reversible-by-accident.
+
+⚠️ **The 3.6/3.7 rate is promotional and DOUBLES on 2027-01-01** to
+$1.50/$7.50/$0.15. That is TECH_DEBT #107, with a hard 2026-12-15 trigger. Left
+un-handled it silently doubles the real cost of every turn while the Sparks
+debit stays put.
+
+⚠️ **The frontier rescues only work because the chain is PINNED.** The primary
+is a workhorse-tier model and `chainFor` refuses to escalate to a pricier tier
+mid-incident (PRD-MODEL-FALLBACK §4), so 3.7-flash and 3.1-pro-preview are
+reached only via `MODEL_FALLBACK_CHAIN` in the box `.env`. Drop that pin and
+prod quietly falls to 2.5-flash / lite instead.
 
 Defaults hardcoded in `gemini.ts` / `model-fallback.ts`; the box `.env`
 (`GEMINI_CHAT_MODEL`, `GEMINI_FALLBACK_MODELS`) **overrides** them — keep

@@ -25,7 +25,31 @@ import type { CapabilityTier, ModelSpec } from "@/types/model-provider.types";
  */
 export const MODEL_CATALOG: ModelSpec[] = [
   // ── Google ────────────────────────────────────────────────────────────────
+  // 2026-08-18 owner decision — the ladder moves to the Gemini 3.6/3.7 line:
+  // primary `gemini-3.6-flash`, rescues 3.7 → 3.5 → 3.1-pro-preview →
+  // 3.5-flash-lite. Rates read off ai.google.dev/gemini-api/docs/pricing the
+  // same day. This also closes TECH_DEBT #104 (3.6-flash was routable but
+  // UNCATALOGUED, so specFor() missed it: the chain silently degraded to the
+  // legacy Gemini-only ladder AND pricing.config's unknown-model fallback
+  // billed it at $1.5/$9 — 2.4x its real cost, straight onto a child's Sparks
+  // balance. Same bug class as BUG-FIX-LOG 2026-07-13.)
+  //
+  // ⚠️ PROMOTIONAL RATE. $0.75/$3.75/$0.075 holds through 2026-12-31; on
+  // 2027-01-01 Google doubles both models to $1.50/$7.50/$0.15. TECH_DEBT #107
+  // carries the reprice with a hard 2026-12-15 trigger, and
+  // pricing.config.test.ts C.6 pins today's numbers so the edit cannot be
+  // silent. Do NOT pre-apply the 2027 rate: over-charging a child today to
+  // save a diff in December is the wrong direction on an append-only ledger.
+  { id: "gemini-3.7-flash", provider: "google", tier: "frontier", inputPerMTok: 0.75, outputPerMTok: 3.75, cachedInputPerMTok: 0.075, safety: "provider-enforced" },
+  { id: "gemini-3.6-flash", provider: "google", tier: "workhorse", inputPerMTok: 0.75, outputPerMTok: 3.75, cachedInputPerMTok: 0.075, safety: "provider-enforced" },
+  // Tiered pricing: these are the ≤200k-prompt rates. Above 200k Google
+  // charges $4.00/$18.00/$0.40 and ModelSpec has no way to say so, so a turn
+  // that long would UNDER-bill by ~50%. Ari's build prompts run 8k–30k, two
+  // orders of magnitude clear of the boundary — logged as TECH_DEBT #108 with
+  // the context-window growth as its trigger, not left implicit here.
+  { id: "gemini-3.1-pro-preview", provider: "google", tier: "frontier", inputPerMTok: 2.0, outputPerMTok: 12.0, cachedInputPerMTok: 0.2, safety: "provider-enforced" },
   { id: "gemini-3.5-flash", provider: "google", tier: "frontier", inputPerMTok: 1.5, outputPerMTok: 9.0, cachedInputPerMTok: 0.15, safety: "provider-enforced" },
+  { id: "gemini-3.5-flash-lite", provider: "google", tier: "lite", inputPerMTok: 0.3, outputPerMTok: 2.5, cachedInputPerMTok: 0.03, safety: "provider-enforced" },
   { id: "gemini-3-flash-preview", provider: "google", tier: "workhorse", inputPerMTok: 0.5, outputPerMTok: 3.0, cachedInputPerMTok: 0.05, safety: "provider-enforced" },
   { id: "gemini-2.5-flash", provider: "google", tier: "workhorse", inputPerMTok: 0.3, outputPerMTok: 2.5, cachedInputPerMTok: 0.03, safety: "provider-enforced" },
   { id: "gemini-2.5-flash-lite", provider: "google", tier: "lite", inputPerMTok: 0.1, outputPerMTok: 0.4, cachedInputPerMTok: 0.01, safety: "provider-enforced" },

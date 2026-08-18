@@ -19,9 +19,38 @@ beforeEach(() => {
 
 describe("estimateCostUsd", () => {
   it("every model in the production chain has an explicit price", () => {
-    for (const model of ["gemini-3.5-flash", "gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite"]) {
+    // 2026-08-18: primary moved to gemini-3.6-flash, chain 3.7 → 3.5 →
+    // 3.1-pro-preview → 3.5-flash-lite (owner decision). The OLD ids stay
+    // priced — a box still running the previous GEMINI_CHAT_MODEL must not
+    // start billing at the unknown-model fallback rate.
+    for (const model of [
+      "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-pro-preview", "gemini-3.5-flash-lite",
+      "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+    ]) {
       expect(MODEL_PRICING[model], `${model} missing from MODEL_PRICING`).toBeDefined();
     }
+  });
+
+  it("C.6 the 2026-08-18 Gemini 3.6/3.7 rates are pinned (promo rate, ai.google.dev/gemini-api/docs/pricing)", () => {
+    // Both sit on the SAME promotional rate through 2026-12-31, after which
+    // Google doubles it to $1.50/$7.50/$0.15. See TECH_DEBT #107 — this
+    // assertion is the tripwire that makes the reprice a loud edit, not a
+    // silent 2x on a child's Sparks balance.
+    for (const id of ["gemini-3.6-flash", "gemini-3.7-flash"]) {
+      expect(MODEL_PRICING[id]!.inputPerMTok, id).toBe(0.75);
+      expect(MODEL_PRICING[id]!.outputPerMTok, id).toBe(3.75);
+      expect(MODEL_PRICING[id]!.cachedInputPerMTok, id).toBe(0.075);
+    }
+  });
+
+  it("C.7 the model switch must LOWER the per-turn cost, never raise it (owner ask 2026-08-18)", () => {
+    // A representative game-BUILD turn. The whole point of moving to 3.6 is
+    // that the kid is charged fewer Sparks; Sparks are a pure multiple of this
+    // number (platform spark-cost.ts), so pinning it here pins the outcome.
+    const TURN = { prompt: 8000, output: 4000, cached: 4000 };
+    const now = estimateCostUsd("gemini-3.6-flash", TURN);
+    expect(now).toBeLessThan(estimateCostUsd("gemini-3.5-flash", TURN));
+    expect(now).toBeCloseTo(0.0183, 6); // vs $0.0426 on 3.5-flash — 57% cheaper
   });
 
   it("a known model prices by its table entry", () => {

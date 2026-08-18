@@ -50,7 +50,7 @@ beforeEach(() => {
   generateContentStream.mockReset();
   process.env.GEMINI_API_KEY = "test-key";
   // Prod shape: a primary OUTSIDE the default chain → all 4 fallbacks apply.
-  process.env.GEMINI_CHAT_MODEL = "gemini-3-flash-preview";
+  process.env.GEMINI_CHAT_MODEL = "gemini-3.6-flash"; // prod primary, 2026-08-18
 });
 
 describe("GeminiChatModel — 4-deep fallback chain", () => {
@@ -74,23 +74,26 @@ describe("GeminiChatModel — 4-deep fallback chain", () => {
     expect(generateContentStream).toHaveBeenCalledTimes(1);
   });
 
-  // CHANGED 2026-07-20 (cross-provider chain). The 07-13 ladder escalated a
-  // workhorse primary UP to the premium gemini-3.5-flash as its deep fallback;
-  // the chain is now derived by model-registry.chainFor, which orders by
-  // quality tier then price and never climbs to a RICHER (pricier) tier
-  // mid-incident. So gemini-3.5-flash no longer appears behind a workhorse
-  // primary. Production is unaffected in practice: GEMINI_CHAT_MODEL is
-  // gemini-3.5-flash (frontier), so every catalogued model is already cheaper
-  // and eligible — this only differs for a workhorse primary like the one
-  // pinned here. Flagged to the owner; revert by pinning MODEL_FALLBACK_CHAIN.
+  // CHANGED 2026-07-20 (cross-provider chain): chainFor orders by quality tier
+  // then price and never climbs to a RICHER (pricier) tier mid-incident.
+  //
+  // UPDATED 2026-08-18 — and this now DOES bite production. The primary moved
+  // to gemini-3.6-flash, a WORKHORSE model, so the automatic chain below can
+  // no longer reach the frontier rescues (3.7-flash, 3.1-pro-preview) the
+  // owner asked for. That escalation exists only because .env.example pins
+  // MODEL_FALLBACK_CHAIN; this test deliberately leaves it UNSET so the
+  // automatic behaviour stays visible. If the pin is ever dropped from the
+  // deployed env, prod silently gets the ladder asserted here instead.
   it("F.3 walks the WHOLE chain before giving up (tier-then-price order 2026-07-20)", async () => {
     generateContentStream.mockRejectedValue(overloadErr());
 
     await expect(collect(new GeminiChatModel())).rejects.toThrow(/chat stream failed/);
     expect(calledModels()).toEqual([
-      "gemini-3-flash-preview",
+      "gemini-3.6-flash",
       "gemini-2.5-flash",
+      "gemini-3-flash-preview",
       "gemini-2.5-flash-lite",
+      "gemini-3.5-flash-lite",
     ]);
   });
 
@@ -329,9 +332,11 @@ describe("empty-completion handling", () => {
     await expect(collect(new GeminiChatModel())).rejects.toThrow(/chat stream failed/);
     // The whole chain for this primary (see F.3) — every slot tried, none silently accepted.
     expect(calledModels()).toEqual([
-      "gemini-3-flash-preview",
+      "gemini-3.6-flash",
       "gemini-2.5-flash",
+      "gemini-3-flash-preview",
       "gemini-2.5-flash-lite",
+      "gemini-3.5-flash-lite",
     ]);
   });
 });

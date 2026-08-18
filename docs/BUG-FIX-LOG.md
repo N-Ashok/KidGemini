@@ -11,6 +11,70 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-18 — moving to Gemini 3.6/3.7, and the over-billing an uncatalogued model id was already causing
+
+- **Reported:** owner — "i have moved to gemini 3.7 flash and 3.6 flash. can you incorporate
+  the cost for token accordingly and appropriate sparks to be reduced and not more."
+- **The requested change.** The ladder is now `gemini-3.6-flash` (primary) →
+  `gemini-3.7-flash` → `gemini-3.5-flash` → `gemini-3.1-pro-preview` →
+  `gemini-3.5-flash-lite`, owner-specified. Prices read off
+  `ai.google.dev/gemini-api/docs/pricing` on the day: 3.6 and 3.7 are both
+  $0.75 / $3.75 / $0.075 per MTok; 3.1-pro-preview is $2.00 / $12.00 / $0.20
+  (≤200k prompts); 3.5-flash-lite is $0.30 / $2.50 / $0.03. Tiering (3.7
+  frontier, 3.6 workhorse) was an explicit owner decision — tier is a judgement
+  about game-build quality, never a pricing-page reading.
+- **The bug found on the way — an ACTIVE over-charge.** `gemini-3.6-flash` was
+  routable but absent from `MODEL_CATALOG` (known, as TECH_DEBT #104, since
+  2026-08-12). `estimateCostUsd` therefore fell to `FALLBACK_PRICE`
+  — **$1.50 / $9.00, 2.4× the model's real rate** — and `sparks-bridge.ts`
+  ships that number to the platform as `costUsd`, which the Sparks ledger
+  trusts over its own table. So any turn already served by 3.6-flash debited a
+  child roughly 2.4× what it should have. The fallback was designed to
+  over-estimate on purpose ("a silent $0 hides real spend", 2026-07-13) — which
+  is right for an operator dashboard and wrong the moment the same number
+  became a billing input. Nobody re-checked that when Sparks started reading it.
+  The ledger is append-only, so any over-debit already written is not
+  self-correcting; whether to compensate affected players is an owner call and
+  is NOT actioned here.
+- **Fixed:** catalog rows for all four new ids in `src/lib/model-registry.ts`;
+  the same rates mirrored into the platform's `DEFAULT_SPARKS_SETTINGS.modelPrices`
+  (Ari sends `costUsd`, but `turnCostInr` fails CLOSED on an unknown model, so a
+  row arriving without it would throw instead of charge); `GEMINI_CHAT_MODEL`
+  default aligned to `gemini-3.6-flash` across `gemini.ts`, the chat route and
+  the repair route (those three had drifted apart — CODE_REVIEW_2026-07-14 §55);
+  `DEFAULT_CHAIN` and `.env.example` updated; `estimateSparks`' default model
+  moved off the now-stale `gemini-3-flash` so the kid is quoted the model they
+  are actually billed on.
+- **Verified result.** On the reference build turn (8k prompt / 4k cached / 4k
+  output) the primary costs **$0.0426 → $0.0183 (−57%)** and the debit is
+  **742 ⚡ → 319 ⚡**. Nothing in the Sparks formula moved: `costMultiplier`
+  is still 200 and `sparksForTurn` is untouched, so the reduction is purely the
+  cheaper model. Full suites green — Game 2,418 tests, Platform 1,262 — plus
+  `tsc --noEmit` clean on both.
+- **Regression tests.** `pricing.config.test.ts` C.6 (promo rates pinned) and
+  C.7 (the new primary must cost LESS than the one it replaced);
+  `model-registry.test.ts` R.2b (every ladder id catalogued with its exact
+  tier + price), R.2c, R.26/R.27 (the pinned chain resolves in order; the
+  automatic chain refuses to escalate without the pin); platform
+  `spark-cost.test.ts` (no fail-closed throw on any ladder model; the debit
+  falls 742 → 319; the estimate quotes the billed model). C.7 and the 742→319
+  assertion are the ones that encode the owner's actual ask — "sparks reduced
+  and not more" — so a future price edit that reverses it fails loudly.
+- **Two live traps recorded rather than fixed.** TECH_DEBT #107: the 3.6/3.7
+  rate is **promotional and doubles on 2027-01-01** to $1.50/$7.50/$0.15 — every
+  turn's real cost doubles while the debit stays put; hard trigger 2026-12-15.
+  TECH_DEBT #108: `gemini-3.1-pro-preview` has tiered >200k pricing that
+  `ModelSpec` cannot express (inert — build prompts run 8k–30k).
+- **Not verified end-to-end (CLAUDE.md §12 — stated as hypothesis, not fact).**
+  This is arithmetic and configuration; no turn was run against the real
+  `gemini-3.6-flash` endpoint from this change. Before trusting it in prod,
+  confirm the deployed box's `GEMINI_CHAT_MODEL` and `MODEL_FALLBACK_CHAIN`
+  match `.env.example`, and watch one real turn's logged model + `costUsd`.
+  `npm run eval:portability` is still owed before `gemini-3.1-pro-preview` is
+  trusted with a build turn.
+
+---
+
 ## 2026-08-17 — the publish sheet's keyboard flapped open and shut once a second on mobile, and "use a different web address" was untypable
 
 - **Reported:** owner, mobile — "not able to publish the game because of constant opening and

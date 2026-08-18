@@ -3,18 +3,19 @@ import { describe, expect, it } from "vitest";
 import { fallbackChain, isModelGone, isOverloaded, isTransient, MAX_FALLBACKS, shouldTryNextModel } from "./model-fallback";
 
 describe("fallbackChain", () => {
-  it("default chain is the owner-specified ladder (2026-07-13, cost-aware): 2.5-flash → 3.5-flash → 2.5-flash-lite", () => {
-    expect(fallbackChain("gemini-3-flash-preview", {})).toEqual([
-      "gemini-2.5-flash",
+  it("default chain is the owner-specified ladder (2026-08-18): 3.7 → 3.5 → 3.1-pro → 3.5-lite", () => {
+    expect(fallbackChain("gemini-3.6-flash", {})).toEqual([
+      "gemini-3.7-flash",
       "gemini-3.5-flash",
-      "gemini-2.5-flash-lite",
+      "gemini-3.1-pro-preview",
+      "gemini-3.5-flash-lite",
     ]);
   });
 
   it("never includes the primary — that would re-enter the same overloaded pool", () => {
-    const chain = fallbackChain("gemini-2.5-flash", {});
-    expect(chain).not.toContain("gemini-2.5-flash");
-    expect(chain).toEqual(["gemini-3.5-flash", "gemini-2.5-flash-lite"]);
+    const chain = fallbackChain("gemini-3.5-flash", {});
+    expect(chain).not.toContain("gemini-3.5-flash");
+    expect(chain).toEqual(["gemini-3.7-flash", "gemini-3.1-pro-preview", "gemini-3.5-flash-lite"]);
   });
 
   it("env GEMINI_FALLBACK_MODELS overrides, trimmed, deduped, capped at 4", () => {

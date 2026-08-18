@@ -261,7 +261,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const chatModelName = process.env.GEMINI_CHAT_MODEL ?? "gemini-3-flash-preview";
+  const chatModelName = process.env.GEMINI_CHAT_MODEL ?? "gemini-3.6-flash";
 
   const t0 = Date.now();
   const ms = () => Date.now() - t0;

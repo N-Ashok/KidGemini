@@ -4,17 +4,26 @@
 // Latency guard: the primary keeps its normal retries, but each fallback gets
 // ONE attempt — a full incident walks 5 models in ~5 tries, not 15.
 
-/** Ordered fallback pool (owner-specified 2026-07-13, cost-aware reorder:
- *  3-flash-preview primary → 2.5-flash → 3.5-flash → 2.5-flash-lite).
- *  Rationale: 3-flash-preview is Gemini-3-class game code at $0.5/$3 per M
- *  vs 3.5-flash's $1.5/$9 (the ₹530/day peaks); the cheap sibling rescues
- *  first, the premium model is the deep fallback, lite is last resort.
- *  A retired id costs one fast 404 and the chain moves on (isModelGone),
- *  so this list may outlive Google's lineup. */
+/** Ordered fallback pool (owner-specified 2026-08-18, superseding the
+ *  2026-07-13 ladder): primary `gemini-3.6-flash` → 3.7-flash → 3.5-flash →
+ *  3.1-pro-preview → 3.5-flash-lite.
+ *
+ *  Rationale: 3.6 and 3.7 are the same promotional $0.75/$3.75 per M, so the
+ *  first rescue costs the kid nothing extra; 3.5-flash ($1.5/$9) and
+ *  3.1-pro-preview ($2/$12) are DEEP rescues only — reached solely during a
+ *  Google-side outage, where a pricier turn beats no game at all — and lite is
+ *  last resort. Note this ladder deliberately climbs in price, which the
+ *  AUTOMATIC cross-provider chain (model-registry.ts) refuses to do; that is
+ *  exactly why the escalation has to be pinned by hand, here and in
+ *  MODEL_FALLBACK_CHAIN.
+ *
+ *  A retired id costs one fast 404 and the chain moves on (isModelGone), so
+ *  this list may outlive Google's lineup. */
 const DEFAULT_CHAIN = [
-  "gemini-2.5-flash",
+  "gemini-3.7-flash",
   "gemini-3.5-flash",
-  "gemini-2.5-flash-lite",
+  "gemini-3.1-pro-preview",
+  "gemini-3.5-flash-lite",
 ];
 
 export const MAX_FALLBACKS = 4;

@@ -15,8 +15,8 @@ another; fail closed).
 
 | Call site | What matters | Primary (prod) | Fallback | Why this pairing |
 |---|---|---|---|---|
-| Game BUILD turns (`replyStream`, builder mode) | code quality | gemini-3.5-flash | gemini-2.5-flash | previous-gen full model: games stay complete/playable; keep thinking budget |
-| Plain chat turns (`replyStream`, budget 0) | latency, tone | gemini-3.5-flash | flash-lite tier | a chat answer from a lite model is indistinguishable to a kid; fastest recovery |
+| Game BUILD turns (`replyStream`, builder mode) | code quality | gemini-3.6-flash | gemini-3.7-flash | same-generation sibling at the SAME price: games stay complete/playable and the rescue costs the kid nothing extra |
+| Plain chat turns (`replyStream`, budget 0) | latency, tone | gemini-3.6-flash | flash-lite tier | a chat answer from a lite model is indistinguishable to a kid; fastest recovery |
 | Self-heal `repair()` | latency (20s wall-clock cap §8.4) | same as chat | flash-lite tier | a repair is a ~8-line patch; a fast lite model beats missing the bail window |
 
 Env knobs: `GEMINI_FALLBACK_MODELS` (comma-separated chain, capped at 4;
@@ -26,6 +26,25 @@ superseding v1's two): 3.5-flash (primary) → 3-flash-preview → 2.5-flash →
 2.5-flash-lite (primary filtered out; env-capped at 4 fallbacks).
 `gemini-3-flash-preview` is the preview id 3.5-flash replaced — same
 generation, different pool, still serving.
+
+**Superseded by the owner-specified chain (2026-08-18):** `gemini-3.6-flash`
+(primary) → `gemini-3.7-flash` → `gemini-3.5-flash` → `gemini-3.1-pro-preview`
+→ `gemini-3.5-flash-lite`. The move exists to cut cost: 3.6 is
+$0.75/$3.75 per MTok against 3.5-flash's $1.50/$9.00, so a build turn costs 57%
+less and the kid is debited 57% fewer Sparks (COST_TOKEN_BUDGET.md).
+
+Two things about this chain are load-bearing and easy to lose:
+
+1. **It must be PINNED via `MODEL_FALLBACK_CHAIN`.** The primary is
+   workhorse-tier and §4's rule forbids the automatic chain from climbing to a
+   richer, pricier tier — so without the pin, 3.7-flash and 3.1-pro-preview are
+   never tried and prod falls to 2.5-flash / lite instead. `.env.example`
+   carries the pin; `model-registry.test.ts` R.26/R.27 pin both behaviours.
+2. **The deep rescues cost MORE than the primary** (3.5-flash 2×,
+   3.1-pro-preview ~2.7×). That is a deliberate, owner-approved exception to
+   §4, justified because these fire only during a Google-side outage where a
+   pricier turn beats no game at all. It is not a licence to relax §4 for the
+   automatic chain.
 Latency guard: the primary keeps its retries, each fallback gets ONE attempt —
 an incident walks 5 models in ~5 tries, not 15. Retired model ids (404) are
 skipped down the chain with a CHECK-CONFIG log, so a Google deprecation can
@@ -225,9 +244,21 @@ stay behind the opt-in flag.
 **⚠ Behaviour change to confirm:** the 2026-07-13 ladder escalated a *workhorse*
 primary UP to the premium `gemini-3.5-flash` as a deep fallback. `chainFor`
 never climbs to a richer tier, so that escalation is gone (`gemini.fallback.test.ts`
-F.3 updated). Production is unaffected — the prod primary IS `gemini-3.5-flash`,
-so everything catalogued is already cheaper — but if the quality escalation was
-wanted for a cheaper primary, pin it with `MODEL_FALLBACK_CHAIN`.
+F.3 updated). Production was unaffected at the time — the prod primary WAS
+`gemini-3.5-flash`, so everything catalogued was already cheaper.
+
+**As of 2026-08-18 this DOES bite production.** The primary is now
+`gemini-3.6-flash`, a workhorse model, so the automatic chain genuinely refuses
+the frontier rescues the owner asked for. They are restored the documented way
+— `MODEL_FALLBACK_CHAIN` in `.env.example` — and nowhere else. If that env var
+is ever dropped from the deployed box, prod silently loses its two best
+rescues and no error says so; F.3 asserts exactly what it falls back to.
+
+**Also note the cross-provider order shifted.** `gemini-3.7-flash`
+($0.75/$3.75) is now the cheapest frontier-tier model in the catalog, so behind
+a frontier primary it leads the automatic chain ahead of `gpt-5.6-luna`
+($1/$6) — see the `gpt-5.6-luna leads` note above, which no longer holds
+(`model-registry.test.ts` R.14 updated).
 
 **Anthropic (Claude) + Moonshot (Kimi) adapters — BUILT 2026-07-20** (owner
 decision "extend to Claude and Kimi"). Claude streams via `fetch`+SSE

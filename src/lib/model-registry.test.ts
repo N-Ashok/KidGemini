@@ -4,6 +4,7 @@
 // never enters a chain unless someone opted in explicitly.
 import { describe, expect, it } from "vitest";
 import { MAX_EXPLICIT_CHAIN, MODEL_CATALOG, chainFor, referenceCostUsd, specFor } from "./model-registry";
+import type { CapabilityTier } from "@/types/model-provider.types";
 
 const KEYS = { GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" };
 
@@ -20,6 +21,35 @@ describe("catalog integrity", () => {
   it("R.2 model ids are unique — a duplicate would make chain order ambiguous", () => {
     const ids = MODEL_CATALOG.map((m) => m.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("R.2b the 2026-08-18 ladder is fully catalogued (closes TECH_DEBT #104)", () => {
+    // Owner decision 2026-08-18: primary gemini-3.6-flash, then 3.7-flash,
+    // 3.5-flash, 3.1-pro-preview, 3.5-flash-lite. An id that is NOT here makes
+    // specFor() miss, which silently drops GeminiChatModel to the legacy
+    // Gemini-only ladder AND bills it at the unknown-model fallback rate.
+    // Prices verified against ai.google.dev/gemini-api/docs/pricing 2026-08-18.
+    const expected: Record<string, [CapabilityTier, number, number, number]> = {
+      "gemini-3.7-flash": ["frontier", 0.75, 3.75, 0.075],
+      "gemini-3.6-flash": ["workhorse", 0.75, 3.75, 0.075],
+      "gemini-3.1-pro-preview": ["frontier", 2.0, 12.0, 0.2],
+      "gemini-3.5-flash-lite": ["lite", 0.3, 2.5, 0.03],
+    };
+    for (const [id, [tier, inp, out, cached]] of Object.entries(expected)) {
+      const spec = specFor(id);
+      expect(spec, `${id} missing from MODEL_CATALOG`).toBeDefined();
+      expect(spec!.tier, id).toBe(tier);
+      expect(spec!.inputPerMTok, id).toBe(inp);
+      expect(spec!.outputPerMTok, id).toBe(out);
+      expect(spec!.cachedInputPerMTok, id).toBe(cached);
+      expect(spec!.safety, id).toBe("provider-enforced");
+    }
+  });
+
+  it("R.2c the new primary is cheaper per reference turn than the one it replaces", () => {
+    // The owner's ask in one assertion: "sparks to be reduced and not more".
+    expect(referenceCostUsd(specFor("gemini-3.6-flash")!))
+      .toBeLessThan(referenceCostUsd(specFor("gemini-3.5-flash")!));
   });
 });
 
@@ -38,7 +68,9 @@ describe("chainFor — price-ordered within a tier", () => {
     const tiers = chain.map((id) => specFor(id)!.tier);
     const ranks = tiers.map((t) => ["frontier", "workhorse", "lite"].indexOf(t));
     expect(ranks).toEqual([...ranks].sort((a, b) => a - b)); // never climbs back up
-    expect(chain[0]).toBe("gpt-5.6-luna"); // the only other frontier model
+    // 2026-08-18: gemini-3.7-flash ($0.75/$3.75) is now the cheapest frontier
+    // model in the catalog, so it heads the chain ahead of gpt-5.6-luna.
+    expect(chain[0]).toBe("gemini-3.7-flash");
   });
 
   it("R.4 crosses providers once permitted — gpt-5.6-luna ($1/$6) beats gemini-3.5-flash ($1.5/$9) at the same tier", () => {
@@ -284,5 +316,36 @@ describe("Google credential — either backend's key counts", () => {
       env: { OPENAI_API_KEY: "o" },
     });
     expect(chain.some((id) => id.startsWith("gemini-"))).toBe(false);
+  });
+});
+
+// The production ladder the owner pinned on 2026-08-18. The primary is a
+// WORKHORSE model, so the automatic rule would refuse to escalate to the
+// frontier 3.7 / 3.1-pro rescues — this chain only works because an explicit
+// MODEL_FALLBACK_CHAIN is allowed to reach a richer tier (R.16). If that ever
+// regresses, prod quietly loses its two best rescues on a Gemini outage.
+describe("the pinned 2026-08-18 production chain", () => {
+  it("R.26 resolves in the exact owner-specified order behind a 3.6-flash primary", () => {
+    const chain = chainFor({
+      primary: "gemini-3.6-flash",
+      tier: "workhorse",
+      env: {
+        GEMINI_API_KEY: "g",
+        MODEL_FALLBACK_CHAIN:
+          "gemini-3.7-flash,gemini-3.5-flash,gemini-3.1-pro-preview,gemini-3.5-flash-lite",
+      },
+    });
+    expect(chain).toEqual([
+      "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3.5-flash-lite",
+    ]);
+  });
+
+  it("R.27 without the pin, the AUTO chain never escalates to a pricier tier", () => {
+    // Documented policy (PRD-MODEL-FALLBACK §4): falling UP in price during an
+    // incident is how a 503 becomes a bill shock. Pinning is the deliberate
+    // exception, and it has to be deliberate.
+    const auto = chainFor({ primary: "gemini-3.6-flash", tier: "workhorse", env: { GEMINI_API_KEY: "g" } });
+    expect(auto).not.toContain("gemini-3.7-flash");
+    expect(auto).not.toContain("gemini-3.1-pro-preview");
   });
 });
