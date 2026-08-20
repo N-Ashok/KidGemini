@@ -19,6 +19,30 @@
 
 ---
 
+
+## OPEN — stored games destroyed by the `===` strip are not healed by the fix (2026-08-20)
+
+The injector bug logged in `BUG-FIX-LOG.md` (2026-08-20) deleted the entire `<script
+type="module">` of any game that feature-detected a runtime helper
+(`if (typeof window.loadModel === 'function')`). The damaged document is what was STORED, so
+the pipeline fix repairs future builds only. Every already-affected game is still a blue
+screen, and still unfixable by Ari, because the edit turn is fed the stored artifact.
+
+**Not yet measured.** How many stored games are affected is unknown — it needs a count over
+the chat DB, which is off-limits to the assistant by policy. Do this before deciding anything:
+
+    -- shape only; the owner runs this
+    SELECT COUNT(*) FROM messages
+     WHERE artifact_html IS NOT NULL
+       AND artifact_html NOT LIKE '%type="module"%';   -- or: no game import survives
+
+**Recovery looks feasible, unverified.** `ChatMessage.text` holds the full model reply for a
+build turn — the raw, PRE-injection game inside its ```html fence — alongside the damaged
+`artifactHtml`. A backfill could re-extract with `extractArtifact()` and re-inject through the
+now-fixed pipeline. Confirm on ONE game before any batch run, and keep the old value.
+
+Do not delete or overwrite any stored artifact until the recovery path is proven on a copy.
+
 ## Closing #5 (`inSource=false`) — next-session plan (drafted 2026-07-20, to do 2026-07-21)
 
 The common case is fixed (`reconcileAssetMarkers`). What remains is a SEARCH that

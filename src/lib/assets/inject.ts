@@ -30,10 +30,17 @@ const ANY_IMPORTMAP_RE = /<script[^>]*type=["']importmap["'][^>]*>[\s\S]*?<\/scr
 // ensure-runtime's stripStaleLoadModelHelper).
 const SCRIPT_BLOCK_RE = /<script[^>]*>[\s\S]*?<\/script>/g;
 /** Drops echoed copies of the blocks THIS module emits (loader, batch loader,
- *  audio helper, credits chip) — each is re-emitted fresh below when needed. */
+ *  audio helper, credits chip) — each is re-emitted fresh below when needed.
+ *
+ *  The `(?!=)` is load-bearing (BUG-FIX-LOG 2026-08-20). Without it, `\s*=`
+ *  matches the FIRST `=` of `===`, so a game guarding its optional asset use
+ *  with `if (typeof window.loadModel === 'function')` had its ENTIRE
+ *  `<script type="module">` deleted here — UI shell served, canvas never
+ *  touched, body background showing through as a "blue screen". Match only a
+ *  genuine ASSIGNMENT: this strips our helper, never the child's game. */
 function stripInjectedHelperBlocks(html: string): string {
   return html.replace(SCRIPT_BLOCK_RE, (block) =>
-    /window\.(loadModel|loadModelBatch|playSound)\s*=/.test(block) || block.includes('getElementById("ar-credits")')
+    /window\.(loadModel|loadModelBatch|playSound)\s*=(?!=)/.test(block) || block.includes('getElementById("ar-credits")')
       ? ""
       : block,
   );

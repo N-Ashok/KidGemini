@@ -11,6 +11,67 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-20 — the injector deleted the child's whole game (`===` read as an assignment)
+
+- **Reported:** owner, from a real session — "It is just a blue screen and i don't see the
+  elephant or anything interactive. can you debug and fix it for me", then, after Ari twice
+  replied with `EDIT_FAILED_SOFT`, "It is fine if the whole code changes", and finally
+  "the issue is the game is not working but ari is not making it work".
+- **Symptom.** *3D Delhi Elephant Safari* served as a flat sky-blue page: the HUD, the D-pad
+  and the trumpet button all rendered, nothing else. Two follow-up "fix it" turns both came
+  back with the soft-fail line, so the child had no way forward at all.
+- **Root cause — ONE bug, both symptoms.** `stripInjectedHelperBlocks` (inject.ts) drops any
+  `<script>` block matching `/window\.(loadModel|loadModelBatch|playSound)\s*=/`. `\s*=`
+  matches the **first `=` of `===`**. The game guarded its optional asset use with the
+  entirely natural
+
+      if (typeof window.loadModel === 'function') { ... }
+
+  so the predicate fired on the game's OWN module and `SCRIPT_BLOCK_RE.replace` deleted the
+  whole `<script type="module">…</script>` — every line of the game. What shipped was the
+  static UI shell plus our injected helpers; the `<canvas>` was never touched, so it stayed
+  at its default 300x150 and the `body` background (`#87ceeb`) showed through. That blue was
+  never the sky. It was an empty canvas.
+- **Why Ari then couldn't fix it.** The STORED artifact (`ChatMessage.artifactHtml`) is the
+  post-injection document, and `currentGameHtml()` feeds exactly that to the edit turn. Ari
+  was shown a page with no game code in it. It could not repair what it could not see, so
+  both repair attempts soft-failed — correctly, by the 2026-08-10 "fail softly" rule. The
+  guard was right; it was protecting a game that had already been destroyed upstream.
+- **Why every test stayed green.** All the injection tests assert on strings the injector
+  *adds* (importmap present, AR_ASSETS present) — all still true of a document with the game
+  removed. And `verify-game-html.mjs` reported **clean**: a page containing no game throws no
+  errors. This is the BUG-FIX-LOG 2026-08-07 PointLight class exactly — "loads" and "works"
+  are different claims, and only the first was ever checked.
+- **The fix.** Require a genuine assignment — `=` not followed by `=`:
+  - `src/lib/assets/inject.ts` — `…\s*=(?!=)/.test(block)`
+  - `src/lib/assets/ensure-runtime.ts` — `stripStaleLoadModelHelper` had the same flaw in
+    `includes("window.loadModel =")`, since `"window.loadModel ==="` contains that substring.
+    Now the same `(?!=)` regex.
+  Narrowing only ever strips *less*, so a genuine echoed helper is still dropped — pinned by
+  a control test that asserts the stale helper goes and the game stays.
+- **Verified, in a real browser, not by assertion.** Reproduced the exact reported symptom
+  from the child's own HTML: canvas 300x150, one distinct colour, no game import in the
+  served bytes. After the fix, same file through the same pipeline: canvas 900x640, 208
+  distinct colours, the elephant, grass, roads, treats and traffic all on screen
+  (screenshot). 2423 unit tests pass, `tsc` clean.
+- **Regression tests.** `src/lib/assets/inject.test.ts` — "stripInjectedHelperBlocks — never
+  eats the game (2026-08-20)": `===`, `==`, `loadModelBatch`/`playSound` detects, a plain
+  call, and the still-strips-a-real-helper control. All five fail before the fix.
+- **Blast radius — NOT yet measured, and stored games are NOT healed by this.** Any game
+  whose script feature-detected a runtime helper was destroyed at injection time, and the
+  damaged document is what got stored. Fixing the pipeline repairs future builds only.
+  Recovery looks feasible — the message row keeps `text` (the full reply, raw fenced HTML,
+  pre-injection) next to the damaged `artifactHtml`, so a backfill could re-extract and
+  re-inject — but that requires querying the chat DB, which is the owner's call, not mine.
+  **Open follow-up in `KNOWN_BUGS.md`.**
+- **Separately, a real bug in the generated game itself** (now fixable, since Ari can see the
+  code again): the building loop calls
+  `mat4.compose(pos, { x: 0, y: 0, z: 0, w: 1 }, scale)`. three's `Matrix4.compose` reads
+  `quaternion._x/_y/_z/_w`, so a plain object yields `undefined` -> every skyscraper matrix
+  is NaN and the whole city is culled. That is why Delhi has no buildings even now.
+
+---
+
 ## 2026-08-18 — moving to Gemini 3.6/3.7, and the over-billing an uncatalogued model id was already causing
 
 - **Reported:** owner — "i have moved to gemini 3.7 flash and 3.6 flash. can you incorporate

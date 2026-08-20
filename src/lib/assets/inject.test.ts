@@ -130,3 +130,66 @@ describe("injectAssets — structurally zero I/O (PRD §11 structural assertion)
     expect(imports.length).toBeGreaterThan(0);
   });
 });
+
+// ── BUG-FIX-LOG 2026-08-20: the strip predicate ate the child's whole game ───
+// Reported as "3D Delhi Elephant Safari is just a blue screen", then "Ari is
+// not making it work". ONE root cause, reproduced in a real browser:
+// stripInjectedHelperBlocks drops any <script> matching
+// `window.(loadModel|loadModelBatch|playSound)\s*=` — and `\s*=` matches the
+// FIRST `=` of `===`. A game guarding its optional asset use with the natural
+// `if (typeof window.loadModel === 'function')` therefore had its ENTIRE
+// module deleted at injection time: UI shell served, canvas never touched,
+// sky-blue body showing through. verify-game-html.mjs called it clean, because
+// a document with no game in it throws no errors.
+//
+// The second symptom falls out of the first: the STORED artifact is the
+// post-injection one, so an edit turn showed Ari a document with no game code.
+// It could not repair what it could not see — hence two EDIT_FAILED_SOFT
+// replies in a row on an explicit "debug and fix it".
+describe("stripInjectedHelperBlocks — never eats the game (2026-08-20)", () => {
+  const game = (body: string) =>
+    `<!DOCTYPE html><html><head></head><body><!--USES_THREE-->
+<!--USES_MODELS: elephant-->
+<canvas id="scene"></canvas>
+<script type="module">
+import { Scene, PerspectiveCamera } from "three";
+const scene = new Scene();
+${body}
+function animate() { requestAnimationFrame(animate); }
+animate();
+</script></body></html>`;
+
+  const survives = (html: string) => {
+    const out = injectAssets(html).html;
+    return out.includes("function animate()") && out.includes("Scene, PerspectiveCamera");
+  };
+
+  it("keeps a game that feature-detects loadModel with === (the reported bug)", () => {
+    expect(survives(game(`if (typeof window.loadModel === 'function') { window.loadModel("elephant"); }`))).toBe(true);
+  });
+
+  it("keeps a game that feature-detects with ==", () => {
+    expect(survives(game(`if (window.loadModel == null) { console.log("no models"); }`))).toBe(true);
+  });
+
+  it("keeps a game that feature-detects loadModelBatch and playSound", () => {
+    expect(survives(game(`if (typeof window.loadModelBatch === 'function') {}
+if (typeof window.playSound === 'function') window.playSound("pop");`))).toBe(true);
+  });
+
+  it("keeps a game that merely CALLS the helpers", () => {
+    expect(survives(game(`window.loadModel("elephant").then(m => scene.add(m));`))).toBe(true);
+  });
+
+  it("STILL strips a genuine echoed helper assignment — the reason this exists", () => {
+    const echoed = `<!DOCTYPE html><html><body><!--USES_THREE-->
+<script>window.__arLoadModelVersion = 1; window.loadModel = async function (n) { return null; };</script>
+<script type="module">
+import { Scene, PerspectiveCamera } from "three";
+function animate() { requestAnimationFrame(animate); }
+</script></body></html>`;
+    const out = injectAssets(echoed).html;
+    expect(out).not.toContain("return null; };"); // the stale helper is gone
+    expect(out).toContain("function animate()"); // the game is not
+  });
+});

@@ -65,8 +65,11 @@ function hasCurrentHelper(html: string): boolean {
 // place would let it execute AFTER the fresh one (document order) and
 // silently overwrite window.loadModel back to the old, uncached behavior.
 const SCRIPT_BLOCK_RE = /<script[^>]*>[\s\S]*?<\/script>/g;
+// `(?!=)` for the same reason as inject.ts's stripInjectedHelperBlocks — this
+// was `includes("window.loadModel =")`, and `"window.loadModel ==="` CONTAINS
+// that substring, so it carried the identical game-eating bug (2026-08-20).
 function stripStaleLoadModelHelper(html: string): string {
-  return html.replace(SCRIPT_BLOCK_RE, (block) => (block.includes("window.loadModel =") ? "" : block));
+  return html.replace(SCRIPT_BLOCK_RE, (block) => (/window\.loadModel\s*=(?!=)/.test(block) ? "" : block));
 }
 
 // Same shape as HELPER_VERSION_RE/hasCurrentHelper/stripStaleLoadModelHelper
