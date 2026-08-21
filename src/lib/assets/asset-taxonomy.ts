@@ -374,9 +374,6 @@ export const TAXONOMY: Record<string, TaxonomyEntry> = {
   // The five the owner named first are first-party CC0 (no CC0 source exists
   // for any of them); the rest are vendored Quaternius/Kenney CC0.
   crocodile: { genres: ["animals", "water"], tags: ["croc", "alligator", "gator", "reptile", "swamp", "jungle"] },
-  elephant: { genres: ["animals", "nature"], tags: ["tusks", "trunk", "jumbo", "safari", "jungle", "zoo"] },
-  lion: { genres: ["animals", "nature"], tags: ["mane", "cub", "safari", "jungle", "zoo", "king"] },
-  tiger: { genres: ["animals", "nature"], tags: ["stripes", "cub", "jungle", "zoo", "bigcat"] },
   monkey: { genres: ["animals", "nature"], tags: ["ape", "chimp", "gorilla", "jungle", "zoo", "banana"] },
   deer: { genres: ["animals", "nature"], tags: ["doe", "fawn", "forest", "antlers"] },
   stag: { genres: ["animals", "nature"], tags: ["buck", "antlers", "reindeer", "forest"] },
@@ -384,7 +381,6 @@ export const TAXONOMY: Record<string, TaxonomyEntry> = {
   fox: { genres: ["animals", "nature"], tags: ["cub", "forest", "wild"] },
   horse: { genres: ["animals", "nature"], tags: ["pony", "stallion", "mare", "riding", "gallop", "farm"] },
   donkey: { genres: ["animals", "nature"], tags: ["mule", "farm", "cart"] },
-  zebra: { genres: ["animals", "nature"], tags: ["stripes", "safari", "zoo"] },
   panda: { genres: ["animals", "nature"], tags: ["bear", "bamboo", "zoo"] },
   snake: { genres: ["animals", "nature"], tags: ["serpent", "cobra", "python", "slither", "jungle"] },
   frog: { genres: ["animals", "water"], tags: ["toad", "hop", "pond", "lily"] },

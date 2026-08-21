@@ -4150,20 +4150,6 @@
       "sha256": "da41765a49d99f1925c2ee691b61834bbb1c1d4290c5713f7732071d6f4f400a"
     },
     {
-      "name": "zebra",
-      "type": "model",
-      "url": "https://assets.ariantra.com/zebra.ae8974.glb",
-      "bytes": 23976,
-      "license": "CC0",
-      "sourceUrl": "https://poly.pizza/m/iclPBR6SBZ",
-      "sha256": "ae8974954f436c69bd32a9e3cde8208e6f2734bb2cf4e8f18900206f081a517b",
-      "size": [
-        2.57,
-        7.072,
-        9.235
-      ]
-    },
-    {
       "name": "snake",
       "type": "model",
       "url": "https://assets.ariantra.com/snake.43d99f.glb",
@@ -4384,51 +4370,6 @@
         1,
         1,
         0.419
-      ]
-    },
-    {
-      "name": "elephant",
-      "type": "model",
-      "url": "https://assets.ariantra.com/elephant.959578.glb",
-      "bytes": 21048,
-      "license": "CC-BY-3.0",
-      "author": "jeremy",
-      "sourceUrl": "https://poly.pizza/m/9J-cG39KYFC",
-      "sha256": "959578c72ec1821a4395788bb2f782e99ded26fa1540c8705fdd497c21410d64",
-      "size": [
-        6,
-        4.357,
-        4.112
-      ]
-    },
-    {
-      "name": "lion",
-      "type": "model",
-      "url": "https://assets.ariantra.com/lion.c4fa43.glb",
-      "bytes": 16636,
-      "license": "CC-BY-3.0",
-      "author": "Poly by Google",
-      "sourceUrl": "https://poly.pizza/m/daMBBUnd9c9",
-      "sha256": "c4fa436199c399388a6c92c356ac146a66d25356ee4bc3cb518473be600c0820",
-      "size": [
-        0.737,
-        1.629,
-        2.4
-      ]
-    },
-    {
-      "name": "tiger",
-      "type": "model",
-      "url": "https://assets.ariantra.com/tiger.2cb869.glb",
-      "bytes": 19076,
-      "license": "CC-BY-3.0",
-      "author": "jeremy",
-      "sourceUrl": "https://poly.pizza/m/54KLm0HdFWy",
-      "sha256": "2cb86944f8aac0b59fe01cd71f48226020e07f4a5b5ea5f0bfdccb5609a27327",
-      "size": [
-        0.655,
-        1.898,
-        2.9
       ]
     },
     {

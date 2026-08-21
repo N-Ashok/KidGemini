@@ -1,5 +1,13 @@
 # PRD — Animals, Hills & Snow/Ski Assets (2026-08-09)
 
+> **SUPERSEDED IN PART — 2026-08-20 safari cull.** `elephant`, `lion`, `tiger` and `zebra`
+> shipped by this PRD were removed from the library: they carry no animation rig, so they
+> could never walk when a child asked, and a usage sweep found zero games referencing any of
+> them. `crocodile` and `monkey` (also static, also CC-BY-3.0) were kept on the owner's call;
+> `bird` was kept because two published games use it. See `docs/BUG-FIX-LOG.md` 2026-08-20 and
+> `scripts/model-animation-census.mjs`. Any replacement must be ANIMATED.
+
+
 **Owner ask:** "I need more CC0 3D meshes and wired. on animals like crocodile,
 elephats, deer, monkey, lion, tiger and also hills and snow mountains, sking
 environment, etc"

@@ -16,6 +16,7 @@
 import type { ChatMessage } from "@/types/chat.types";
 import type { AssetManifest } from "./manifest";
 import manifestJson from "./manifest.json";
+import { offerable } from "./retired";
 import { type GenreId, modelsInGenre, modelsWithRig } from "./asset-taxonomy";
 
 export interface GenreDef {
@@ -183,22 +184,33 @@ export function selectModelNames(input: {
   manifest?: AssetManifest;
 }): string[] {
   const manifest = input.manifest ?? (manifestJson as AssetManifest);
-  const available = manifest.assets.filter((a) => a.type === "model").map((a) => a.name);
-  if (available.length <= PROMPT_MODEL_CAP) return available;
+  const inManifest = manifest.assets.filter((a) => a.type === "model").map((a) => a.name);
+  // RETIRED models are resolvable but never OFFERED (retired.ts). They are
+  // stripped here, at the single place that decides what Ari may pick from —
+  // and added back below, ONLY for a game that already uses one.
+  const inManifestSet = new Set(inManifest);
+  const available = offerable(inManifest);
 
-  const availableSet = new Set(available);
   const texts = [input.message, ...input.history.filter((m) => m.role === "child").map((m) => m.text)].join("\n");
   const artifacts = input.history.map((m) => m.artifactHtml ?? "").join("\n");
 
   const picked = new Set<string>();
   // 1. Models the game being iterated on already uses — dropping one would
-  //    make the model unable to keep its own game working.
+  //    make the model unable to keep its own game working. Judged against the
+  //    WHOLE manifest, not the offerable subset: a child whose game already
+  //    has a retired model must keep it, or the edit turn quietly strips it.
   for (const match of artifacts.matchAll(ARTIFACT_MODELS)) {
     for (const raw of (match[1] ?? "").split(",")) {
       const name = raw.trim().toLowerCase();
-      if (availableSet.has(name)) picked.add(name);
+      if (inManifestSet.has(name)) picked.add(name);
     }
   }
+  // Under the cap there is nothing to select DOWN to — but rule 1 still has to
+  // hold, so the in-game retired names ride along rather than being dropped by
+  // an early return.
+  if (available.length <= PROMPT_MODEL_CAP) return [...new Set([...picked, ...available])];
+
+  const availableSet = new Set(available);
   // 2. Models the kid named outright.
   for (const name of available) {
     if (new RegExp(`\\b${name}\\b`, "i").test(texts)) picked.add(name);

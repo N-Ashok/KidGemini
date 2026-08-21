@@ -11,6 +11,103 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-21 — retiring the bird: resolvable, but never offered again
+
+- **Reported:** owner — "we need to replace with a better bird and not this one since it is
+  the worst one", then, after seeing the candidates, "lets ari create a new bird and not use
+  this."
+- **Why the bird was the worst.** No rig and no clips at all (`skins: 0`, `animations: []`),
+  so it could never move however the game code asked — and rendered from the published bytes
+  it reads as a legless fish: wings fused flat to the body, no feet, a stray green blob on the
+  head.
+- **The replacement hunt, and why it failed.** ~110 poly.pizza candidates were probed by
+  DOWNLOADING each GLB and reading `animations[]` — not by trusting page copy, which is how a
+  second static bird would have shipped. Almost every "bird" result is a static CC-BY Google
+  Poly model, the same family as the safari animals cut the day before. Exactly one CC0 rigged
+  bird existed (Quaternius, Walk/Idle/Jump, 27 KB staged) and one CC0 flying model, which
+  turned out to be a monster rig, not a bird. The owner rejected the rigged one; the successor
+  is a bird Ari builds in code. **Nothing was uploaded** — the asset host is append-only, and
+  the staged candidates were discarded and `vendor-models.mjs` reverted byte-for-byte.
+- **What shipped instead: RETIREMENT** (`src/lib/assets/retired.ts`), the middle setting
+  between "in the library" and "deleted", and the one rule 11 actually asks for. A retired
+  name stays in `manifest.json` and keeps resolving, but is removed from everything that
+  OFFERS a model.
+- **The subtlety that mattered.** `selectModelNames` rule 1 — "models the game being iterated
+  on already uses" — tested membership against the offerable set. Simply removing `bird` there
+  would have stripped the bird out of the two published games
+  (`sky-patrol-bridge-city`, `amala-3d-fruit-treat-catcher`) on their next edit, which is the
+  exact harm retirement exists to avoid. Rule 1 now judges against the WHOLE manifest; only
+  rules 2–4 and the genre spread are restricted to offerable names.
+- **Three offer points, all closed:** `model-select.ts` (what Ari may pick), `prompt-catalog.ts`
+  (the genre spread, which would otherwise have resurrected the name through the top-up), and
+  `gallery.ts` (the kid-facing "Game Stuff" page, whose cards teach a trigger phrase we no
+  longer want anyone reaching for).
+- **Verified by behaviour, not just assertions.** Fresh "bird flying over a city" ask → bird
+  NOT offered, 62 names offered, dog/cat/chicken/bee still there. Existing game that uses bird
+  → bird KEPT on edit. `injectAssets` → `dropped: []`, `AR_ASSETS` still carries bird. Gallery
+  → 317 models shown, bird absent.
+- **Regression tests.** `retired.test.ts` R.1–R.9 (never offered / still resolvable / the list
+  itself is honest — every entry must record WHY, so it cannot rot into a bare denylist).
+  `prompt-catalog.test.ts`: the "every model is reachable" invariant was NARROWED to offerable
+  models rather than weakened, and paired with a new test asserting retired names are
+  unreachable even when the child names them outright — together they pin exactly which names
+  are offered and which are not.
+- **Verified:** 2436 tests pass, `tsc` clean.
+- **Open:** `bird` is retired with no library successor — a capability the library has lost
+  until Ari's procedural bird exists. That is the first real customer for the
+  promote-from-real-games pipeline (owner's chosen direction, 2026-08-20).
+
+---
+
+## 2026-08-20 — the safari animals never moved, and four of them were dead weight
+
+- **Reported:** owner — "the animals and the other items are not ok. crocodile, dog was ok.
+  others didnot move. they are kiddish. less than 5 years old items. those needs to be
+  removed."
+- **Nothing in the repo could answer "does this model move."** The manifest records bytes,
+  licence and size — not whether a model carries an animation rig. So "make the elephant
+  walk" failing was indistinguishable from a prompt bug. New instrument:
+  `scripts/model-animation-census.mjs` range-fetches the first 256 KB of each published GLB
+  and reads `animations[]` out of the JSON chunk. No browser, no full download.
+- **Measured.** Of 32 creatures in the library, **27 animate and 5 did not**: `crocodile`,
+  `elephant`, `lion`, `monkey`, `tiger` — plus `zebra` and `bird`, giving 7 static creatures
+  in all. Every one is a small poly.pizza static (13–24 KB). Every human character animates.
+  The owner's memory was right except on one point: `crocodile` does not move either — it
+  had simply looked acceptable standing still. `dog` does move (Idle/Run/Walk, 54 KB).
+- **Licence finding, not looked for.** Five of the seven — `crocodile`, `elephant`, `lion`,
+  `monkey`, `tiger` — are **CC-BY-3.0**, not CC0. They are 5 of only 15 attribution-encumbered
+  models we ship. Attribution is already discharged by the injected `ar-credits` chip
+  (`runtime-helpers.ts`), so the two that stayed are fine as they are.
+- **Usage measured BEFORE removal (rule 11).** New read-only script in the platform repo,
+  `Ariantra-Platform/scripts/model-usage.ts`, reads every game's served bundle out of S3 and
+  looks for the name in the injected `AR_ASSETS` table. Across **138 readable bundles of 144
+  rows**: `elephant` 0, `lion` 0, `tiger` 0, `zebra` 0 — and `bird` 2, `crocodile` 2,
+  `monkey` 1.
+- **What was removed:** `elephant`, `lion`, `tiger`, `zebra` — the four with zero references.
+  Dropped from `manifest.json`, `asset-taxonomy.ts` and `gallery.ts` together (a lockstep
+  test already forced the first two to move as a pair). 322 models → 318.
+- **What was deliberately KEPT, and why.** `crocodile` and `monkey` on the owner's call.
+  `bird` because two published games reference it — removing the name would silently strip
+  the bird from a child's game on its next edit turn, since `injectAssets` drops an unknown
+  name fail-soft with no error. Those three are still static; that is now a known gap rather
+  than an accident.
+- **Nothing was deleted from the asset host.** It is append-only, so the bytes and their
+  content-hashed URLs still resolve — already-served games are untouched. Only the OFFER of
+  the name is gone.
+- **Regression tests.** `asset-taxonomy.test.ts` — "the safari cull stays culled": the four
+  names are absent from both the manifest and the taxonomy, and the `animals` genre still
+  holds its animated survivors. Written before the removal, red on both counts first. Two
+  fixtures that used `elephant` as a sample name (`prompt-catalog.test.ts` retrieval,
+  `inject.test.ts`) were repointed to `dog` with a comment saying why.
+- **Verified:** 2426 tests pass, `tsc` clean, and the census re-run reports 318 models.
+- **Coverage caveat, stated plainly.** The usage count covers games that reached the
+  Ariantra platform. A game still living only in an Ari chat sits in the Game repo's SQLite
+  DB beside children's transcripts, which is off-limits — so "0 games" means "no platform
+  game", not "nothing anywhere". The four removed names were the safest possible candidates
+  for that reason; a name with ANY platform usage was kept.
+
+---
+
 ## 2026-08-20 — the injector deleted the child's whole game (`===` read as an assignment)
 
 - **Reported:** owner, from a real session — "It is just a blue screen and i don't see the

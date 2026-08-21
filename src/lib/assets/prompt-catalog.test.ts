@@ -13,6 +13,7 @@ vi.mock("server-only", () => ({}));
 import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection, retrievedModelNames, modelNamesBlock } from "./prompt-catalog";
 import { THREE_MARKER } from "./inject";
 import { GENRE_IDS, modelsInGenre } from "./asset-taxonomy";
+import { RETIRED } from "./retired";
 import type { ChatMessage } from "@/types/chat.types";
 import { CHILD_SYSTEM_PROMPT, buildTurnSystemInstruction } from "../gemini";
 import { ASSET_HOST_ORIGIN, type AssetManifest } from "./manifest";
@@ -234,12 +235,28 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     expect(counted).toBe(realModels.length);
   });
 
-  it("retrieval can reach EVERY model in the library — no name is unreachable", () => {
+  it("retrieval can reach EVERY OFFERABLE model — no name is unreachable", () => {
     // A child who says the model's own name must always be taught that name.
-    const unreachable = realModels.filter(
-      (n) => !retrievedModelNames({ message: `make a game with a ${n}`, history: [], manifest: real }).includes(n),
-    );
+    // RETIRED models are the deliberate exception and are asserted separately
+    // below — they still RESOLVE for games that have them, but are never
+    // offered to anyone new (retired.ts).
+    const unreachable = realModels
+      .filter((n) => !RETIRED.has(n))
+      .filter(
+        (n) => !retrievedModelNames({ message: `make a game with a ${n}`, history: [], manifest: real }).includes(n),
+      );
     expect(unreachable).toEqual([]);
+  });
+
+  it("a RETIRED model is unreachable even when the child names it", () => {
+    // The other half of the same invariant: retirement must actually bite, or
+    // it is just a comment. Paired with the test above, these two say exactly
+    // which names are offered and which are not.
+    for (const n of RETIRED) {
+      const names = retrievedModelNames({ message: `make a game with a ${n}`, history: [], manifest: real });
+      expect(names, `${n} is retired and must not be offered`).not.toContain(n);
+    }
+    expect(RETIRED.size, "if nothing is retired this test proves nothing").toBeGreaterThan(0);
   });
 
   // Regression, 2026-08-08 (BUG-FIX-LOG fragmented race tracks): the section
@@ -643,10 +660,14 @@ describe("the category-map hybrid — retrieval", () => {
   it("keeps the models the CURRENT GAME already uses, or the model could not maintain its own game", () => {
     const history: ChatMessage[] = [
       { id: "m1", createdAt: 1, role: "child", text: "a racing game" },
-      { id: "m2", createdAt: 2, role: "assistant", text: "here", artifactHtml: "<!--USES_MODELS: elephant,igloo--><html></html>" },
+      { id: "m2", createdAt: 2, role: "assistant", text: "here", artifactHtml: "<!--USES_MODELS: dog,igloo--><html></html>" },
     ];
     const names = retrievedModelNames({ message: "make it faster", history, manifest: real });
-    expect(names).toContain("elephant");
+    // Both are OFF-TOPIC for "make it faster" in a racing game — that is the
+    // point: whatever the game already loads must survive retrieval, or an
+    // edit turn would strip models the game's own code still calls. (Was
+    // `elephant` until the 2026-08-20 safari cull; any live model does.)
+    expect(names).toContain("dog");
     expect(names).toContain("igloo");
   });
 

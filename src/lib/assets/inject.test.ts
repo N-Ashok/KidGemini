@@ -149,7 +149,7 @@ describe("injectAssets — structurally zero I/O (PRD §11 structural assertion)
 describe("stripInjectedHelperBlocks — never eats the game (2026-08-20)", () => {
   const game = (body: string) =>
     `<!DOCTYPE html><html><head></head><body><!--USES_THREE-->
-<!--USES_MODELS: elephant-->
+<!--USES_MODELS: dog-->
 <canvas id="scene"></canvas>
 <script type="module">
 import { Scene, PerspectiveCamera } from "three";
@@ -165,7 +165,7 @@ animate();
   };
 
   it("keeps a game that feature-detects loadModel with === (the reported bug)", () => {
-    expect(survives(game(`if (typeof window.loadModel === 'function') { window.loadModel("elephant"); }`))).toBe(true);
+    expect(survives(game(`if (typeof window.loadModel === 'function') { window.loadModel("dog"); }`))).toBe(true);
   });
 
   it("keeps a game that feature-detects with ==", () => {

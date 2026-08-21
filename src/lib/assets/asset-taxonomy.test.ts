@@ -367,3 +367,41 @@ describe("lookup helpers are total (never throw on an unknown name)", () => {
     expect(modelsInGenre("food", new Set(["pizza"]))).toEqual(["pizza"]);
   });
 });
+
+// ── The 2026-08-20 safari cull ──────────────────────────────────────────────
+// Owner: "the animals ... didnot move. they are kiddish. less than 5 years old
+// items." Measured with scripts/anim-census (GLB animations[]): of 32 creatures
+// in the library, 27 animate. The 7 that did not were all the small poly.pizza
+// statics. Four of them — elephant, lion, tiger, zebra — were referenced by
+// ZERO games across 138 published bundles (Ariantra-Platform
+// scripts/model-usage.ts, 2026-08-20), so they were removed outright.
+//
+// crocodile and monkey were KEPT on the owner's call (and are in use: 2 and 1
+// games). bird was kept too — it is static, but 2 published games reference it,
+// and dropping the name would silently strip the bird from a child's game on
+// its next edit turn (injectAssets drops unknown names fail-soft).
+//
+// This test exists so a future asset batch cannot quietly re-add a frozen
+// safari animal under the same name. If one of these comes back, it must come
+// back ANIMATED — a name that reappears without a rig regresses the exact
+// complaint that removed it.
+describe("the safari cull stays culled (2026-08-20)", () => {
+  const CULLED = ["elephant", "lion", "tiger", "zebra"];
+
+  it("none of the four are in the manifest", () => {
+    for (const name of CULLED) expect(modelNames).not.toContain(name);
+  });
+
+  it("none of the four are in the taxonomy either — the two move together", () => {
+    for (const name of CULLED) expect(Object.keys(TAXONOMY)).not.toContain(name);
+  });
+
+  it("the animals genre still has real animals, so the cull did not empty it", () => {
+    const animals = Object.entries(TAXONOMY)
+      .filter(([, v]) => v.genres.includes("animals"))
+      .map(([k]) => k);
+    expect(animals.length).toBeGreaterThan(15);
+    // Spot-check survivors that are known-animated (Idle/Walk/Run clips).
+    for (const keep of ["dog", "cat", "horse", "wolf", "fox"]) expect(animals).toContain(keep);
+  });
+});

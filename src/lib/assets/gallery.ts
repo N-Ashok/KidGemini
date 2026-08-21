@@ -6,6 +6,7 @@
 
 import type { AssetManifest } from "./manifest";
 import manifestJson from "./manifest.json";
+import { RETIRED } from "./retired";
 
 export interface GalleryCard {
   name: string;
@@ -284,9 +285,6 @@ const EMOJI: Record<string, string> = {
 
   // Animals, hills & snow/ski batch (2026-08-09).
   crocodile: "🐊",
-  elephant: "🐘",
-  lion: "🦁",
-  tiger: "🐅",
   monkey: "🐒",
   deer: "🦌",
   stag: "🦌",
@@ -294,7 +292,6 @@ const EMOJI: Record<string, string> = {
   fox: "🦊",
   horse: "🐴",
   donkey: "🫏",
-  zebra: "🦓",
   panda: "🐼",
   snake: "🐍",
   frog: "🐸",
@@ -385,6 +382,10 @@ export function galleryCards(manifest: AssetManifest = manifestJson as AssetMani
   const models: GalleryCard[] = [];
   const sounds: GalleryCard[] = [];
   for (const a of manifest.assets) {
+    // A retired model still resolves for games that have it, but it is not
+    // shown here — each card teaches the trigger phrase that unlocks the
+    // asset, and we no longer want anyone reaching for this one (retired.ts).
+    if (a.type === "model" && RETIRED.has(a.name)) continue;
     if (a.type === "model") {
       models.push({
         name: a.name,

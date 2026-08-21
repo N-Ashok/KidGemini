@@ -10,6 +10,7 @@ import type { AssetManifest } from "./manifest";
 import manifestJson from "./manifest.json";
 import { modelsInGenre } from "./asset-taxonomy";
 import { GENRES, peopleModels, selectModelNames, soldierModels } from "./model-select";
+import { offerable } from "./retired";
 
 /**
  * The sports playbook (owner ask 2026-07-26): without it the model writes the
@@ -169,8 +170,11 @@ export function retrievedModelNames(input: {
   manifest?: AssetManifest;
 }): string[] {
   const manifest = input.manifest ?? (manifestJson as AssetManifest);
+  // offerable(): the genre spread tops up from every category, so without this
+  // a retired model would come straight back in through the spread even though
+  // selectModelNames refused it (retired.ts).
   const available = new Set(
-    manifest.assets.filter((a) => a.type === "model").map((a) => a.name),
+    offerable(manifest.assets.filter((a) => a.type === "model").map((a) => a.name)),
   );
   const picked = new Set(selectModelNames({ ...input, manifest }));
 
