@@ -14,7 +14,7 @@ import { ensureAssetRuntime } from "./ensure-runtime";
 import { PERF_PROBE_MARKER, buildPerfProbeScript } from "./perf-probe";
 import manifestJson from "./manifest.json";
 import type { AssetManifest } from "./manifest";
-import { countSizeTables, parseSizeTables, webglContextGuard, WEBGL_GUARD_VERSION } from "./runtime-helpers";
+import { countSizeTables, parseSizeTables, webglContextGuard, WEBGL_GUARD_VERSION, LOAD_MODEL_HELPER_VERSION } from "./runtime-helpers";
 
 const manifest = manifestJson as AssetManifest;
 const ENGINE = manifest.assets.find((a) => a.type === "engine")!.url;
@@ -293,7 +293,7 @@ window.loadModel = async function (name) { return null; };
         `<script type="module">import { Scene } from "three"; loadModel("car");</script>`,
     );
     const out = ensureAssetRuntime(stored);
-    expect(out).toContain("window.__arLoadModelVersion = 7");
+    expect(out).toContain(`window.__arLoadModelVersion = ${LOAD_MODEL_HELPER_VERSION}`);
     expect(out).toContain("window.modelSize");
     // The helper alone would be useless — it must find real metres to read.
     const carSize = manifest.assets.find((a) => a.name === "car")!.size;

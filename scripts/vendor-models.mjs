@@ -39,7 +39,7 @@
 import { S3Client, PutObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { NodeIO, getBounds } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
-import { dedup, prune, resample, simplify, meshopt, weld } from '@gltf-transform/functions';
+import { dedup, prune, resample, simplify, meshopt, weld, clearNodeTransform, transformPrimitive } from '@gltf-transform/functions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import { assertLongAxisZ, yRotation } from './lib/orientation.mjs';
 import { assessLibrary } from './lib/fitness.mjs';
@@ -179,6 +179,33 @@ const MODELS = [
     // "Helicopter" by kazuma.
     source: { kind: 'url', url: 'https://static.poly.pizza/e3dfeb10-5525-4a39-83d8-13a709aaca4b.glb' },
     sourceUrl: 'https://poly.pizza/m/EQJ2MECUbx',
+    // splitParts (2026-08-23, owner: "the helicopter needs to have skeleton to
+    // rotate the rotor"). It does NOT need a skeleton — it needs NAMES. The
+    // source is one node called "Cube", which is why modelParts() answered null
+    // and the 2026-08-06 rotor incident happened (traverse(/rotor|blade/) found
+    // nothing and the spin loop ran over an empty array). But that one mesh
+    // already holds FOUR primitives, one per material, and they are exactly the
+    // parts we want — verified by rendering each in isolation before writing
+    // this line. So the fix touches NO geometry: each primitive is promoted to
+    // its own named node, keeping the parent's transform so nothing moves.
+    // Order is primitive order in the source file; assertParts below fails the
+    // build if the file ever changes under us.
+    // Named from RENDERS of each primitive in isolation and from the side, not
+    // from their order or their size. The second primitive was first called
+    // "tail_rotor" on a 3/4 view and that was wrong: it is the engine/exhaust
+    // housing behind the cabin, and spinning it drove it through the fuselage
+    // (owner, 2026-08-23: "the tail rotor is also inside the copter"). This
+    // model has NO separable tail rotor — the tail fin is part of the body.
+    splitParts: ['body', 'engine', 'canopy', 'rotor'],
+    assertParts: { rotor: { widest: true }, engine: { maxFootprintRatio: 0.15 } },
+    // spinParts: give these a WORLD-ALIGNED pivot at their own centre, so a
+    // game can spin them without knowing anything about how the file was
+    // authored. Without this the rotor's own axes are the SOURCE's (Z-up, via
+    // the -90 deg X node rotation), so `rotor.rotation.y` tilts the blades
+    // diagonally through the cabin and only `.rotation.z` sweeps them properly
+    // — verified by rendering all three axes. Making a child's game discover
+    // that per model is the same hidden-fact trap as facing was.
+    spinParts: ['rotor'],
   },
   {
     name: 'ghost',
@@ -1055,6 +1082,45 @@ async function download(url, dest) {
 }
 
 /** Stage 1+2 for one model: returns { bytes, sha256, fileName, url }. */
+/** Centre + radius of the smallest circle enclosing a set of 2D points (Welzl,
+ *  iterative). Used to find a rotor's HUB: for blades of equal length the
+ *  smallest enclosing circle is centred exactly on the hub, where a bounding
+ *  box is not (a 3-blade rotor's box centre misses by ~24% of the radius).
+ *  Deterministic — the shuffle uses a fixed multiplier, so a rebuild of the
+ *  same source always produces the same bytes. */
+function smallestEnclosingCircle(points) {
+  const pts = points.slice();
+  for (let i = pts.length - 1; i > 0; i--) {
+    const j = (i * 2654435761) % (i + 1);
+    [pts[i], pts[j]] = [pts[j], pts[i]];
+  }
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const has = (c, p) => c && dist(c.c, p) <= c.r + 1e-9;
+  const from2 = (a, b) => ({ c: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], r: dist(a, b) / 2 });
+  const from3 = (a, b, c) => {
+    const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+    if (Math.abs(d) < 1e-12) return null;
+    const aa = a[0] * a[0] + a[1] * a[1], bb = b[0] * b[0] + b[1] * b[1], cc = c[0] * c[0] + c[1] * c[1];
+    const ux = (aa * (b[1] - c[1]) + bb * (c[1] - a[1]) + cc * (a[1] - b[1])) / d;
+    const uy = (aa * (c[0] - b[0]) + bb * (a[0] - c[0]) + cc * (b[0] - a[0])) / d;
+    return { c: [ux, uy], r: dist([ux, uy], a) };
+  };
+  let circle = null;
+  for (let i = 0; i < pts.length; i++) {
+    if (has(circle, pts[i])) continue;
+    circle = { c: pts[i], r: 0 };
+    for (let j = 0; j < i; j++) {
+      if (has(circle, pts[j])) continue;
+      circle = from2(pts[i], pts[j]);
+      for (let k = 0; k < j; k++) {
+        if (has(circle, pts[k])) continue;
+        circle = from3(pts[i], pts[j], pts[k]) || circle;
+      }
+    }
+  }
+  return circle ?? { c: [0, 0], r: 0 };
+}
+
 async function prepare(model) {
   // Per-model dir: Kenney GLBs reference an EXTERNAL Textures/colormap.png
   // (sibling folder in the kit) — it must sit next to the GLB so
@@ -1150,6 +1216,159 @@ async function prepare(model) {
   // 337–454 KB. We vendor those weapons as their own models, so the rack is
   // pure waste here. Matching is on the mesh name; the now-empty bone nodes are
   // harmless (and prune() clears them).
+  // splitParts: promote each primitive of a single-mesh model to its own NAMED
+  // node, so getObjectByName("rotor") finds something and modelParts() can
+  // report it. Non-destructive by construction — the primitives are reused as
+  // they are, and every new node inherits the original's transform, so the
+  // model renders byte-identically.
+  if (model.splitParts) {
+    const scene = doc.getRoot().listScenes()[0];
+    const src = doc.getRoot().listNodes().find((n) => n.getMesh());
+    if (!src) throw new Error(`${model.name}: splitParts but no mesh node`);
+    const prims = src.getMesh().listPrimitives();
+    if (prims.length !== model.splitParts.length) {
+      // Fail LOUD. The names are indexed by primitive order, so a source file
+      // that gained or lost a primitive would silently rename the rotor to
+      // something else — the exact confidently-wrong data this repo refuses.
+      throw new Error(
+        `${model.name}: splitParts expects ${model.splitParts.length} primitives, source has ${prims.length}`,
+      );
+    }
+    const parent = src.getParentNode ? src.getParentNode() : null;
+    const made = [];
+    prims.forEach((prim, i) => {
+      const name = model.splitParts[i];
+      const mesh = doc.createMesh(name).addPrimitive(prim);
+      const node = doc.createNode(name).setMesh(mesh)
+        .setTranslation(src.getTranslation())
+        .setRotation(src.getRotation())
+        .setScale(src.getScale());
+      if (parent) parent.addChild(node); else scene.addChild(node);
+      made.push(name);
+    });
+    if (parent) parent.removeChild(src); else scene.removeChild(src);
+    src.dispose();
+    console.log(`  split into ${made.length} named parts: ${made.join(', ')}`);
+
+    // assertParts: the names are only as good as the primitive ORDER they were
+    // read in, so measure the result and refuse the build if it disagrees.
+    //
+    // The discriminator is HORIZONTAL FOOTPRINT (world X x Z, via getBounds so
+    // the node transform is applied — this source is Z-up with a -90 deg X
+    // rotation, and reasoning in local axes gets it wrong, which is exactly how
+    // the first cut of this check mis-fired). A main rotor is the widest thing
+    // on a helicopter by a wide margin; a tail rotor is tiny. That holds
+    // whatever order the file lists its primitives in.
+    if (model.assertParts) {
+      const foot = {};
+      for (const node of doc.getRoot().listNodes()) {
+        if (!node.getMesh()) continue;
+        const b = getBounds(node);
+        foot[node.getName()] = (b.max[0] - b.min[0]) * (b.max[2] - b.min[2]);
+      }
+      const biggest = Math.max(...Object.values(foot));
+      const widest = Object.keys(foot).find((k) => foot[k] === biggest);
+      for (const [name, rule] of Object.entries(model.assertParts)) {
+        const ratio = biggest > 0 ? foot[name] / biggest : 0;
+        if (rule.widest && widest !== name) {
+          throw new Error(
+            `${model.name}: expected "${name}" to be the widest part, but "${widest}" is — the source primitives may have been re-ordered`,
+          );
+        }
+        if (rule.maxFootprintRatio !== undefined && ratio > rule.maxFootprintRatio) {
+          throw new Error(
+            `${model.name}: part "${name}" covers ${(ratio * 100).toFixed(0)}% of the widest part, expected <= ${rule.maxFootprintRatio * 100}% — the source primitives may have been re-ordered`,
+          );
+        }
+        console.log(`  ✓ ${name}: ${(ratio * 100).toFixed(0)}% of the widest part's footprint`);
+      }
+    }
+  }
+
+  // spinParts: bake each named part's transform into its geometry, re-centre it
+  // on its true axis of rotation, and put the node back at that point. The node
+  // is then WORLD-ALIGNED with its pivot on the hub, so rotating it about the
+  // axis it is thinnest in spins it in its own plane.
+  //
+  // THE PIVOT IS THE HUB, NOT THE BOUNDING-BOX CENTRE. That distinction is the
+  // whole of this block. A bounding box is only centred on the hub for an even,
+  // symmetric rotor; this one has THREE blades — one back, two forward at
+  // ±120° — and its box centre sits 0.479 m from the hub, 24% of the rotor
+  // radius. Spun about that, the hub itself traces a circle and the rotor
+  // visibly wobbles round the mast (owner, 2026-08-23: "it is making a circle
+  // on the top"). The hub is recovered as the centre of the SMALLEST ENCLOSING
+  // CIRCLE of the blade vertices in the disc plane — for blades of equal length
+  // that is the hub exactly, whatever the blade count or spacing.
+  const spinAxes = {};
+  if (model.spinParts) {
+    for (const name of model.spinParts) {
+      const node = doc.getRoot().listNodes().find((n) => n.getName() === name);
+      if (!node) throw new Error(`${model.name}: spinParts names "${name}", which splitParts did not create`);
+      // 1. transform → geometry, so everything below is in world coordinates
+      clearNodeTransform(node);
+      const prims = node.getMesh().listPrimitives();
+      const verts = [];
+      const el = [0, 0, 0];
+      for (const prim of prims) {
+        const pos = prim.getAttribute('POSITION');
+        for (let v = 0; v < pos.getCount(); v++) { pos.getElement(v, el); verts.push([el[0], el[1], el[2]]); }
+      }
+      const min = [0, 1, 2].map((i) => Math.min(...verts.map((v) => v[i])));
+      const max = [0, 1, 2].map((i) => Math.max(...verts.map((v) => v[i])));
+      const size = [0, 1, 2].map((i) => max[i] - min[i]);
+      const thin = size.indexOf(Math.min(...size));   // the disc's normal = the spin axis
+      const [u, w] = [0, 1, 2].filter((i) => i !== thin);
+      const hub = smallestEnclosingCircle(verts.map((v) => [v[u], v[w]]));
+      const pivot = [0, 0, 0];
+      pivot[u] = hub.c[0];
+      pivot[w] = hub.c[1];
+      pivot[thin] = (min[thin] + max[thin]) / 2;      // mid-thickness of the disc
+      // 2. A WRAPPER holds the pivot, not the mesh node.
+      //
+      // This is not decoration. The mesh node's transform is NOT ours to keep:
+      // the meshopt/quantization stage further down rewrites it to the mesh's
+      // BOUNDING-BOX CENTRE as part of mapping quantized integers back to real
+      // coordinates. Re-centring the mesh node itself therefore looked correct
+      // in this function, printed the right hub, and shipped a file whose pivot
+      // was the box centre anyway — the rotor kept circling and the log kept
+      // saying it did not (2026-08-23). A parent node is untouched by
+      // quantization, so the pivot survives compression.
+      //
+      //   rotor        <- wrapper AT THE HUB; this is what a game rotates
+      //     rotor_mesh <- the geometry, offset back by -hub; quantize may do
+      //                   whatever it likes to this node's transform
+      const holder = node.getParentNode ? node.getParentNode() : null;
+      const wrapper = doc.createNode(name).setTranslation(pivot);
+      node.setName(`${name}_mesh`).setTranslation([-pivot[0], -pivot[1], -pivot[2]]);
+      if (holder) { holder.removeChild(node); holder.addChild(wrapper); }
+      else { const sc = doc.getRoot().listScenes()[0]; sc.removeChild(node); sc.addChild(wrapper); }
+      wrapper.addChild(node);
+
+      const axis = ['x', 'y', 'z'][thin];
+      spinAxes[name] = axis;
+      const boxCentre = [0, 1, 2].map((i) => (min[i] + max[i]) / 2);
+      const off = Math.hypot(...[0, 1, 2].map((i) => pivot[i] - boxCentre[i]));
+
+      // THE GUARD that would have caught the bad pivot on its own. A rotor has
+      // geometry ON its axis — the mast, the hub casing — so the CLOSEST vertex
+      // to a correct pivot is almost touching it. Pivot on the box centre
+      // instead and the nearest vertex sits ~0.48 m away, because the axis then
+      // passes through empty air beside the mast: that is the "circle on the
+      // top" made measurable. Anything past 15% of the radius is not a hub.
+      let nearest = Infinity;
+      for (const v of verts) nearest = Math.min(nearest, Math.hypot(v[u] - hub.c[0], v[w] - hub.c[1]));
+      const nearRatio = hub.r > 0 ? nearest / hub.r : 1;
+      if (nearRatio > 0.15) {
+        throw new Error(
+          `${model.name}: "${name}" pivot is not on the hub — the nearest geometry is ${nearest.toFixed(2)}m ` +
+          `from it (${(nearRatio * 100).toFixed(0)}% of the ${hub.r.toFixed(2)}m radius). A rotor spun about that ` +
+          `point wobbles round its mast instead of turning on it.`,
+        );
+      }
+      console.log(`  ✓ ${name}: hub [${pivot.map((n) => n.toFixed(2)).join(', ')}], spins about ${axis}, radius ${hub.r.toFixed(2)} — nearest geometry ${nearest.toFixed(3)}m from the axis (box centre would have been ${off.toFixed(2)}m off)`);
+    }
+  }
+
   if (model.dropMeshes) {
     const dropped = [];
     for (const mesh of doc.getRoot().listMeshes()) {
@@ -1429,6 +1648,25 @@ for (const p of prepared) {
       entryJson.joins = prior.joins;
       entryJson.joinOffsets = prior.joinOffsets;
       entryJson.lane = prior.lane;
+    }
+    // realSize is CURATED REAL-WORLD KNOWLEDGE — "a helicopter is 13 m long" —
+    // not a measurement of our bytes, so it survives any rebuild. It carried no
+    // carry-over rule until 2026-08-23, when re-vendoring the helicopter
+    // silently dropped both this and `facing` from its entry: the fields were
+    // restored that same morning after the 2026-08-17 revert lost them, and the
+    // rebuild quietly threw one away again. Losing audited data to a routine
+    // re-vendor is exactly the failure this file exists to prevent.
+    if (prior.realSize && !entryJson.realSize) entryJson.realSize = prior.realSize;
+    // facing IS measured (from a top-down render), so it only survives when the
+    // SHAPE did not move. Identical bounds to the millimetre means no rotation
+    // happened — a re-split or a re-compress. Anything else and the old value
+    // could be confidently wrong, which is worse than absent: drop it and say so.
+    if (prior.facing && !entryJson.facing) {
+      const unmoved = prior.size && entryJson.size
+        && prior.size.length === entryJson.size.length
+        && prior.size.every((v, i) => Math.abs(v - entryJson.size[i]) < 0.002);
+      if (unmoved) entryJson.facing = prior.facing;
+      else console.log(`  ⚠ ${entryJson.name}: bounds changed — dropping facing "${prior.facing}"; re-audit with scripts/render-assets.mjs`);
     }
     manifest.assets[existing] = entryJson;
   } else manifest.assets.push(entryJson);

@@ -9,7 +9,7 @@
 // under-unlock breaks the kid's game mid-iteration).
 
 import { describe, it, expect } from "vitest";
-import { catalogGates } from "./catalog-gate";
+import { catalogGates, threeUnlockReason } from "./catalog-gate";
 import type { ChatMessage } from "@/types/chat.types";
 
 const msg = (role: "child" | "assistant", text: string, artifactHtml?: string): ChatMessage =>
@@ -28,11 +28,11 @@ describe("catalogGates — the build-turn gate comes first (§9: chit-chat pays 
 
 describe("catalogGates — paid tier: inbuilt, both catalogs on every build turn", () => {
   it("unlocks both with no keywords at all", () => {
-    expect(catalogGates({ message: "make me a racing game", history: [], paid: true })).toEqual({ three: true, audio: true, save: false });
+    expect(catalogGates({ message: "make me a racing game", history: [], paid: true })).toEqual({ three: true, threeReason: "subject", audio: true, save: false });
   });
 
   it("save is NOT part of the paid bundle — it still needs a build/world keyword or artifact", () => {
-    expect(catalogGates({ message: "a game where I build a fort", history: [], paid: true })).toEqual({ three: true, audio: true, save: true });
+    expect(catalogGates({ message: "a game where I build a fort", history: [], paid: true })).toEqual({ three: true, threeReason: "subject", audio: true, save: true });
   });
 });
 
@@ -42,7 +42,7 @@ describe("catalogGates — free tier: keyword-invoked, 3D and audio gate indepen
   });
 
   it("\"3d\" unlocks the 3D catalog only", () => {
-    expect(catalogGates({ message: "3d cars", history: [], paid: false })).toEqual({ three: true, audio: false, save: false });
+    expect(catalogGates({ message: "3d cars", history: [], paid: false })).toEqual({ three: true, threeReason: "asked", audio: false, save: false });
   });
 
   // BUG_LOG 2026-08-09 ("Calvin"). A child ended his ask with "Make it 3-D" —
@@ -69,12 +69,19 @@ describe("catalogGates — free tier: keyword-invoked, 3D and audio gate indepen
   it("still does not fire on look-alikes that are not a 3D ask", () => {
     for (const ask of [
       "make a game about a 3-day trip",
-      "a game with 3 dogs",
       "a grade3d game",
       "3ds max is my favourite",
+      // "a game with 3 dogs" used to live here as a `\b3d\b` look-alike. It
+      // now unlocks — via the SUBJECT gate, not the digit — because "dogs" is
+      // a real thing the library models (2026-08-23). The look-alike property
+      // this test guards is still pinned: it must not be reported as `asked`.
     ]) {
       expect(catalogGates({ message: ask, history: [], paid: false }).three, ask).toBe(false);
     }
+  });
+
+  it("\"3 dogs\" unlocks on the SUBJECT, never on the digit — the reason proves which gate fired", () => {
+    expect(threeUnlockReason({ message: "a game with 3 dogs", history: [], paid: false })).toBe("subject");
   });
 
   it("\"sound\"/\"music\"/\"sound effects\" unlock the audio catalog only", () => {
@@ -84,7 +91,7 @@ describe("catalogGates — free tier: keyword-invoked, 3D and audio gate indepen
   });
 
   it("both keywords unlock both catalogs", () => {
-    expect(catalogGates({ message: "a 3d dino game with music", history: [], paid: false })).toEqual({ three: true, audio: true, save: false });
+    expect(catalogGates({ message: "a 3d dino game with music", history: [], paid: false })).toEqual({ three: true, threeReason: "asked", audio: true, save: false });
   });
 
   it("does not fire inside words (\"grade3d\", \"unsound\", \"musical\" stay locked)", () => {
@@ -99,7 +106,7 @@ describe("catalogGates — iteration turns keep the catalog (history scan, §9 e
   ];
 
   it("\"make it faster\" after a 3d ask keeps the 3D catalog", () => {
-    expect(catalogGates({ message: "make it faster", history: built3d, paid: false })).toEqual({ three: true, audio: false, save: false });
+    expect(catalogGates({ message: "make it faster", history: built3d, paid: false })).toEqual({ three: true, threeReason: "asked", audio: false, save: false });
   });
 
   it("a prior artifact carrying USES_AUDIO keeps the audio catalog even if the keyword text is gone", () => {
@@ -109,7 +116,7 @@ describe("catalogGates — iteration turns keep the catalog (history scan, §9 e
 
   it("a prior artifact carrying USES_THREE / USES_MODELS keeps the 3D catalog", () => {
     const history = [msg("assistant", "Here's your game! 🎮", "<html><!--USES_THREE--><!--USES_MODELS: car--></html>")];
-    expect(catalogGates({ message: "make the car red", history, paid: false })).toEqual({ three: true, audio: false, save: false });
+    expect(catalogGates({ message: "make the car red", history, paid: false })).toEqual({ three: true, threeReason: "asked", audio: false, save: false });
   });
 
   // REGRESSION (BUG-FIX-LOG 2026-07-20, "DoubleSide" — days-long UAT
@@ -124,12 +131,12 @@ describe("catalogGates — iteration turns keep the catalog (history scan, §9 e
       '<html><head><script type="importmap">{"imports":{"three":"https://assets.ariantra.com/three.07fb80.js"}}</script></head>' +
       '<body><!--USES_MULTIPLAYER--><script type="module">import { Scene } from "three";</script></body></html>';
     expect(catalogGates({ message: "add an oval track", history: [msg("assistant", "Here! 🌟", noMarker)], paid: false }))
-      .toEqual({ three: true, audio: false, save: false });
+      .toEqual({ three: true, threeReason: "asked", audio: false, save: false });
   });
 
   it("a marker-less game calling loadModel() keeps the 3D catalog", () => {
     const history = [msg("assistant", "Here! 🌟", '<html><script>loadModel("car").then(m => {});</script></html>')];
-    expect(catalogGates({ message: "make the car red", history, paid: false })).toEqual({ three: true, audio: false, save: false });
+    expect(catalogGates({ message: "make the car red", history, paid: false })).toEqual({ three: true, threeReason: "asked", audio: false, save: false });
   });
 
   it("a marker-less game calling playSound()/playMusic() keeps the audio catalog", () => {
@@ -179,5 +186,99 @@ describe("catalogGates — save gate (docs/2026-08-01_PRD_SaveContinueBuilding.m
 
   it("save gates independently of three/audio — a 2D building game unlocks save with neither engine nor sound", () => {
     expect(catalogGates({ message: "a game where I build a tower", history: [], paid: false })).toEqual({ three: false, audio: false, save: true });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Subject-noun unlock (owner decision 2026-08-23, BUG-FIX-LOG same date).
+//
+// The bug this closes: THREE_TRIGGER was the literal string "3D" and nothing
+// else, so "make a game where I can ride horses" was built with the 3D catalog
+// OFF — the rigged `horse` model (121 KB, gallop clip) was invisible to the
+// turn, and the only way left to make a horse was to draw one with
+// ctx.fillRect. A child asking to ride a horse never types "3D".
+//
+// The gate file's own §9 principle already said "err toward unlocking"; the
+// audio gate follows it (5 words), the save gate follows it (12 words), and
+// the 3D gate did not. These tests are that principle, applied.
+// ─────────────────────────────────────────────────────────────────────────
+describe("catalogGates — a SUBJECT the model library covers unlocks 3D (§9 err-toward-unlocking)", () => {
+  it("the demo session's exact ask unlocks the 3D catalog — the horse model must be reachable", () => {
+    // 2026-08-22, demo, iOS Safari. This turn shipped a canvas horse drawn
+    // from a filled rectangle, stroked legs and a dot eye.
+    expect(catalogGates({ message: "Please make a game where I can ride horses and jump over fences", history: [], paid: false }).three).toBe(true);
+    expect(catalogGates({ message: "Make a game where I can ride horses", history: [], paid: false }).three).toBe(true);
+  });
+
+  it("names a real subject across every genre that owns physical models", () => {
+    for (const ask of [
+      "a game with a dog and a cat", // animals
+      "make a car racing game", // racing
+      "a game with a rocket flying to a planet", // space
+      "a skiing game in the snow", // snow
+      "a castle adventure game with knights", // castle
+      "a game in a big city with buildings", // city
+      "a game in a forest with trees", // nature
+      "a game with a boat sailing on the ocean", // water
+      "a football game with goals", // sports
+      "a game with tanks and soldiers", // military
+    ]) {
+      expect(catalogGates({ message: ask, history: [], paid: false }).three, ask).toBe(true);
+    }
+  });
+
+  it("a MECHANIC is not a subject — it says nothing about what is in the game", () => {
+    // Deliberately excluded genres. "platformer"/"maze"/"collect coins" name
+    // how the game PLAYS, not what it contains, so they cannot tell us a
+    // model would help. Keeping them out also keeps the plain 2D platformer —
+    // a core, good product — exactly as it is today.
+    for (const ask of ["make me a platformer game", "a maze game", "a game where I collect coins"]) {
+      expect(catalogGates({ message: ask, history: [], paid: false }).three, ask).toBe(false);
+    }
+  });
+
+  it("the genres that are better flat stay flat — a quiz or a board game must not be dragged into Three.js", () => {
+    // `people` is excluded for being over-broad on its own words (man/women/
+    // kids/walking/sitting all fire on ordinary chat about a quiz); `food` and
+    // `indian_games` (carrom, ludo, dice, marbles) are board/flat games.
+    for (const ask of [
+      "a quiz game for kids",
+      "a spelling game for boys and girls",
+      "a word game about food",
+      "a ludo game with dice",
+      "a carrom game",
+    ]) {
+      expect(catalogGates({ message: ask, history: [], paid: false }).three, ask).toBe(false);
+    }
+  });
+
+  it("still nested under the build-turn gate — a subject noun in chit-chat pays nothing", () => {
+    expect(catalogGates({ message: "i have a dog at home", history: [], paid: false })).toEqual({ three: false, audio: false, save: false });
+    expect(catalogGates({ message: "do you like horses?", history: [], paid: false })).toEqual({ three: false, audio: false, save: false });
+  });
+
+  it("word-bounded, same convention as every other trigger here", () => {
+    expect(catalogGates({ message: "a game about a carpet in a scarcity", history: [], paid: false }).three).toBe(false);
+  });
+});
+
+describe("threeUnlockReason — which lead-in the 3D prompt gets", () => {
+  it("an explicit 3D ask is 'asked' — the strong, unchanged wording", () => {
+    expect(threeUnlockReason({ message: "make it 3d", history: [], paid: false })).toBe("asked");
+    expect(threeUnlockReason({ message: "Make it 3-D", history: [], paid: false })).toBe("asked");
+  });
+
+  it("a game that is ALREADY 3D is 'asked' too — the child is iterating on a real 3D scene", () => {
+    const history = [msg("assistant", "Here! 🎮", "<html><!--USES_THREE--><canvas id='scene'></canvas></html>")];
+    expect(threeUnlockReason({ message: "make it faster", history, paid: false })).toBe("asked");
+  });
+
+  it("a subject-only unlock is 'subject' — 3D is OFFERED, never forced", () => {
+    expect(threeUnlockReason({ message: "Make a game where I can ride horses", history: [], paid: false })).toBe("subject");
+  });
+
+  it("no unlock at all reports null", () => {
+    expect(threeUnlockReason({ message: "make me a platformer game", history: [], paid: false })).toBeNull();
+    expect(threeUnlockReason({ message: "how are you today?", history: [], paid: false })).toBeNull();
   });
 });

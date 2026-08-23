@@ -13,6 +13,14 @@
 //   node scripts/model-animation-census.mjs              # summary + statics
 //   node scripts/model-animation-census.mjs --json out.json
 //   node scripts/model-animation-census.mjs --all        # every model, with clips
+//   node scripts/model-animation-census.mjs --write      # refresh the committed
+//                                                        # src/lib/assets/model-abilities.json
+//
+// --write is the one that matters day to day: the abilities file is what the
+// admin Models tab reads, and it is COMMITTED rather than fetched at runtime —
+// 318 range-fetches is not something a page load should do. Re-run it whenever
+// the model library changes; a lockstep test fails if it drifts from the
+// manifest.
 //
 // A STATIC MODEL IS NOT AUTOMATICALLY A BUG — a tree, a crate or a road tile
 // should not move. Read the static list with judgement: it is creatures and
@@ -84,4 +92,23 @@ for (const e of errs) console.log(`  ! ${e.name}: ${e.err}`);
 if (jsonIdx >= 0) {
   writeFileSync(argv[jsonIdx + 1], JSON.stringify(out, null, 1));
   console.log(`\nwrote ${argv[jsonIdx + 1]}`);
+}
+
+if (argv.includes("--write")) {
+  if (errs.length) {
+    // Refusing here is the point: a model whose head could not be read would be
+    // written as "no clips", and the admin tab would report a rigged model as
+    // static. A wrong ability is worse than a missing file.
+    console.error(`\n\u2716 ${errs.length} model(s) unreadable \u2014 refusing to write a partial abilities file.`);
+    process.exit(1);
+  }
+  const abilities = {};
+  for (const o of out.sort((a, b) => a.name.localeCompare(b.name))) {
+    // Clip names are stored RAW ("CharacterArmature|Walk"), because that is the
+    // string a game must pass to AnimationMixer. The tab shows the short form.
+    abilities[o.name] = { clips: o.clips, skins: o.skins };
+  }
+  const target = join(repo, "src/lib/assets/model-abilities.json");
+  writeFileSync(target, JSON.stringify(abilities, null, 2) + "\n");
+  console.log(`\nwrote src/lib/assets/model-abilities.json (${Object.keys(abilities).length} models)`);
 }

@@ -50,7 +50,11 @@ describe("injectAssets — USES_MODELS", () => {
 
   it("strips the models marker and includes the loadModel helper once", () => {
     expect(out.html).not.toContain("USES_MODELS");
-    expect(out.html.match(/window\.loadModel/g)?.length).toBe(1);
+    // Pins ONE DECLARATION, which was always the property under test. It used
+    // to count bare `window.loadModel` occurrences, but placeModel() (restored
+    // 2026-08-23) legitimately CALLS window.loadModel inside the same helper —
+    // a reference is not a second helper.
+    expect(out.html.match(/window\.loadModel\s*=(?!=)/g)?.length).toBe(1);
   });
 
   it("wires the meshopt decoder into GLTFLoader (models are gltfpack -cc)", () => {

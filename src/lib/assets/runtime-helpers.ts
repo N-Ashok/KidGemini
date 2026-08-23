@@ -178,6 +178,80 @@ export function countEdgeTables(html: string): number {
   return [...html.matchAll(arEdgesBlockRe())].length;
 }
 
+// The injected FACING table (`<script>window.AR_FACING={...};</script>`) and
+// the REAL-METRES table (`window.AR_REAL={...}`). Restored 2026-08-23 with the
+// helpers that read them. Same anchored-on-`</script>` construction and the
+// same fail-soft parse as AR_EDGES above — read that comment before touching
+// either regex; the greedy variant deleted the loadModel helper in production.
+const arFacingBlockRe = () => /<script[^>]*>\s*window\.AR_FACING\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/g;
+
+/** Every parseable AR_FACING table in the document, in document order. */
+export function parseFacingTables(html: string): Array<Record<string, unknown>> {
+  return parseTables(html, arFacingBlockRe());
+}
+
+/** Removes every AR_FACING table block. Callers re-emit exactly one. */
+export function stripFacingTables(html: string): string {
+  return html.replace(arFacingBlockRe(), "");
+}
+
+/** How many AR_FACING table blocks the document carries. */
+export function countFacingTables(html: string): number {
+  return [...html.matchAll(arFacingBlockRe())].length;
+}
+
+const arRealBlockRe = () => /<script[^>]*>\s*window\.AR_REAL\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/g;
+
+/** Every parseable AR_REAL table in the document, in document order. */
+export function parseRealTables(html: string): Array<Record<string, unknown>> {
+  return parseTables(html, arRealBlockRe());
+}
+
+/** Removes every AR_REAL table block. Callers re-emit exactly one. */
+export function stripRealTables(html: string): string {
+  return html.replace(arRealBlockRe(), "");
+}
+
+/** How many AR_REAL table blocks the document carries. */
+export function countRealTables(html: string): number {
+  return [...html.matchAll(arRealBlockRe())].length;
+}
+
+const arPartsBlockRe = () => /<script[^>]*>\s*window\.AR_PARTS\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/g;
+
+/** Every parseable AR_PARTS table in the document, in document order. */
+export function parsePartsTables(html: string): Array<Record<string, unknown>> {
+  return parseTables(html, arPartsBlockRe());
+}
+
+/** Removes every AR_PARTS table block. Callers re-emit exactly one. */
+export function stripPartsTables(html: string): string {
+  return html.replace(arPartsBlockRe(), "");
+}
+
+/** How many AR_PARTS table blocks the document carries. */
+export function countPartsTables(html: string): number {
+  return [...html.matchAll(arPartsBlockRe())].length;
+}
+
+/** The shared body of the table parsers above — one fail-soft JSON read per
+ *  match, non-objects dropped. Factored out when the facing/real tables were
+ *  restored rather than pasted a third and fourth time. */
+function parseTables(html: string, re: RegExp): Array<Record<string, unknown>> {
+  const tables: Array<Record<string, unknown>> = [];
+  for (const m of html.matchAll(re)) {
+    try {
+      const parsed: unknown = JSON.parse(m[1]!);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        tables.push(parsed as Record<string, unknown>);
+      }
+    } catch {
+      /* not our block shape — fail soft, same floor as parseSizeTables */
+    }
+  }
+  return tables;
+}
+
 /** Neutralizes a literal `</script>` inside a string about to be inlined
  *  into an HTML `<script>` block — `<\/script>` is identical to `</script>`
  *  inside a JS string (or JSON, which has no special meaning for a lone
@@ -235,7 +309,13 @@ export function countTriangles(obj: { traverse: (cb: (child: any) => void) => vo
  *  the directions it must connect. Three rounds of PROMPT teaching failed to
  *  make a generated track rotate its corners correctly (TECH_DEBT #97 — the
  *  fix is not more prose), so the calculation moved into the runtime. */
-export const LOAD_MODEL_HELPER_VERSION = 7;
+// 9 (2026-08-23): modelParts — the named nodes a model already has, so a car
+// turns its OWN wheels. Bumped again the same day; the retrofit is the point.
+// 8 (2026-08-23): modelFacing / modelMetres / modelHeading / placeModel
+// restored after the 2026-08-17 revert dropped them. The bump is what makes
+// ensure-runtime re-inject the helper into ALREADY-PUBLISHED games, which is
+// the whole point — the data is useless to a game holding a v7 helper.
+export const LOAD_MODEL_HELPER_VERSION = 9;
 
 /** The runtime helper 3D games call: resolves a catalog name via AR_ASSETS,
  *  loads the GLB with GLTFLoader + meshopt (models are meshopt-compressed),
@@ -279,7 +359,7 @@ export const LOAD_MODEL_HELPER_VERSION = 7;
  *  on a genuine load failure is unchanged — nothing is recorded on that path). */
 export function loadModelHelper(): string {
   return `<script type="module">
-  import { GLTFLoader, MeshoptDecoder } from "three";
+  import { GLTFLoader, MeshoptDecoder, Box3 } from "three";
   window.__arLoadModelVersion = ${LOAD_MODEL_HELPER_VERSION};
 // modelSize (2026-08-08, the fragmented-track fix): the measured metres a model
 // renders at scale 1, available BEFORE loading so a game can plan a layout. The
@@ -316,6 +396,205 @@ window.AR_EDGES = window.AR_EDGES || {};
 window.modelJoins = function (name) {
   var e = window.AR_EDGES[name];
   return (e && e.joins && e.joins.length) ? e : null;
+};
+// ── RESTORED 2026-08-23 ────────────────────────────────────────────────
+// modelFacing / modelMetres / modelHeading / placeModel were built on
+// 2026-08-15 to answer "the llm is not getting the axis, size, direction
+// correct", and were lost as unlisted collateral of the 2026-08-17 revert
+// to the 2026-08-12 tree. Restored verbatim — the audited data they read
+// is still true of the exact GLBs we serve (no surviving model's sha256
+// changed in between). BUG-FIX-LOG 2026-08-23.
+// modelFacing (2026-08-15, the wrong-facing fix): which way a model's FRONT
+// points at rest — "+z", "-z", "+x" or "-x". The prompt used to assert that
+// vehicles and characters all face +Z; a render audit of the catalog shows
+// car faces -Z and airplane faces +X, so games that trusted the claim placed
+// them backwards or sideways. A bounding box cannot express this (it is
+// identical for a car facing either way), which is why no data existed before.
+// Unaudited answers null — then eyeball it, exactly as before.
+window.AR_FACING = window.AR_FACING || {};
+window.modelFacing = function (name) {
+  var f = window.AR_FACING[name];
+  return (f === "+x" || f === "-x" || f === "+z" || f === "-z") ? f : null;
+};
+// modelMetres (2026-08-15): the model's size in TRUE real-world metres.
+// modelSize() reports the published GLB's own extent, and the catalog mixes
+// kit units with metres — by those numbers a mountain (1.9) is smaller than a
+// car (2.56). Use modelMetres() to decide how big something SHOULD be, and
+// modelSize() to work out the scale that gets you there:
+//   var want = modelMetres("house"), have = modelSize("house");
+//   house.scale.setScalar(want.y / have.y);
+// Unknown answers null.
+window.AR_REAL = window.AR_REAL || {};
+window.modelMetres = function (name) {
+  var s = window.AR_REAL[name];
+  return (s && s.length === 3) ? { x: s[0], y: s[1], z: s[2] } : null;
+};
+// modelParts (2026-08-23): the NAMED PARTS a model actually carries, so a game
+// can turn the wheels the model already has instead of bolting fake ones on.
+//
+// This replaces a claim the prompt made for a year — "Rigid models have NO
+// named parts ... the only spinnable parts are ones you add" — which a census
+// of the whole library disproved: 306 of 318 models carry named nodes and 25
+// vehicles ship one NODE PER WHEEL (wheel-front-left, wheel-back-right, ...).
+//
+// No skeleton is involved and none is needed. Skinning is for a mesh that
+// DEFORMS, like a galloping horse. A wheel is rigid and merely rotates, which
+// is an ordinary parent/child transform:
+//   var w = car.getObjectByName("wheel-front-left");
+//   w.rotation.x -= speed * dt;   // every frame
+// Answers null for a model with no named parts (the helicopter is the real
+// one) — then, and only then, add your own primitive and spin that.
+window.AR_PARTS = window.AR_PARTS || {};
+window.modelParts = function (name) {
+  var p = window.AR_PARTS[name];
+  return (p && p.length) ? p.slice() : null;
+};
+// modelHeading (2026-08-15): the rotation.y that makes a model POINT along a
+// heading, given the way it was authored.
+//
+// placeModel fixes orientation once, at placement. It cannot help anything
+// that STEERS: a car updates rotation.y every frame from its own heading
+// variable, so it never goes near placeModel. That is the whole of a driving
+// game, and it is how a child's race game ended up with both cars driving in
+// reverse — the game moved them with the usual
+//   pos.x += Math.sin(heading) * speed;  pos.z += Math.cos(heading) * speed;
+// (so heading 0 means travelling +Z) while the car model faces -Z.
+//
+// Use it wherever you set rotation from a heading:
+//   car.rotation.y = modelHeading("car", state.heading);
+// An unaudited model returns the heading unchanged — no worse than today.
+window.modelHeading = function (name, heading) {
+  var facing = window.modelFacing(name);
+  // Radians to add so the model's own front ends up along +Z, which is where
+  // heading 0 points under the sin/cos convention above.
+  var offset = { "+z": 0, "+x": -Math.PI / 2, "-z": Math.PI, "-x": Math.PI / 2 }[facing];
+  return (heading || 0) + (offset || 0);
+};
+// placeModel (2026-08-15): load a model and put it in the world correctly —
+// standing on the ground, at a believable size, pointing where you want.
+//
+// Every one of those three had to be guessed per game before, and each guess
+// was independent: loadModel() does no normalisation of any kind (it clones
+// the template and returns it), nothing anywhere floors Y, the catalog's sizes
+// are not all in the same units, and no facing data existed. That is three
+// coin-flips per model per game.
+//
+// Deliberately a NEW function rather than a change to loadModel(): games
+// already stored hand-compensate for these quirks (one flips a crocodile with
+// rotation.y = Math.PI), and silently correcting loadModel would flip those
+// games BACK to wrong. Old calls behave exactly as before.
+//
+//   var car = await placeModel("car", { at: {x: 0, z: 10}, heading: "-z" });
+//   var h  = await placeModel("house", { at: {x: 8, z: 0}, metres: true });
+//
+//   at       {x, z}   where to stand it (y is computed so its base sits on 0)
+//   heading  "+z"|"-z"|"+x"|"-x"|radians   which way it should point.
+//                    OMITTED = the default: back to the viewer (see below).
+//                    Pass 0 for a model you are about to PARENT to another one
+//                    (a rider onto a horse): 0 means "no turn of your own", so
+//                    it inherits the parent's direction. The default would
+//                    otherwise aim the rider at the camera while the horse
+//                    runs away from it, and he rides backwards.
+//   metres   true     scale it to its real-world size (needs modelMetres)
+//   scale    number   an explicit scale instead, applied after metres
+//   y        number   ground height at that spot, if your terrain isn't flat
+//
+// Fails soft in every direction: an unknown name returns null, and any datum
+// that is missing is simply not applied.
+window.placeModel = async function (name, opts) {
+  opts = opts || {};
+  var obj = await window.loadModel(name);
+  if (!obj) return null;
+  try {
+    // 1. SIZE — real metres if we know them, then any explicit scale.
+    if (opts.metres) {
+      var want = window.modelMetres(name), have = window.modelSize(name);
+      // SKINNED MESHES HAVE NO PUBLISHED SIZE (2026-08-23). modelSize() reads
+      // AR_SIZES, and the manifest deliberately omits the size field for a
+      // skinned model — a bind-pose bbox is not the rendered size. Every one
+      // of the 51 rigged models: the horse, the rider, every animal and every
+      // character. So this branch quietly did NOTHING for exactly the models a
+      // child asks to ride, and the horse loaded at 1.41 m against a real 2.4 m
+      // (caught by check-placement.mts, never by the unit suite). Measure the
+      // object we just loaded instead: approximate for a bind pose, and far
+      // closer than not scaling at all.
+      var measured = false;
+      if (want && !have) {
+        obj.updateMatrixWorld(true);
+        var b0 = new Box3().setFromObject(obj);
+        if (isFinite(b0.min.y) && isFinite(b0.max.y)) {
+          have = { x: b0.max.x - b0.min.x, y: b0.max.y - b0.min.y, z: b0.max.z - b0.min.z };
+          measured = true;
+        }
+      }
+      if (measured && want && have) {
+        // LONGEST-TO-LONGEST for a measured bind pose, not the max of the three
+        // per-axis ratios the published path uses. A bind pose is not in the
+        // proportions the real animal has — a horse stands with its legs
+        // together, so its measured WIDTH is relatively narrower than life and
+        // the width ratio wins a max(), scaling the whole animal up. Measured:
+        // that put the 2.4 m horse at 3.23 m. Matching the long axis is stable
+        // whatever the pose does to the other two.
+        var wantMax = Math.max(want.x, Math.max(want.y, want.z));
+        var haveMax = Math.max(have.x, Math.max(have.y, have.z));
+        if (haveMax > 0) obj.scale.setScalar(wantMax / haveMax);
+      } else if (want && have && have.y > 0 && have.x > 0 && have.z > 0) {
+        // Longest axis wins: a stylised model is not uniformly out, and
+        // matching the biggest dimension is what keeps it believable beside
+        // its neighbours.
+        var byX = want.x / have.x, byY = want.y / have.y, byZ = want.z / have.z;
+        obj.scale.setScalar(Math.max(byX, Math.max(byY, byZ)));
+      }
+    }
+    if (typeof opts.scale === "number" && opts.scale > 0) obj.scale.multiplyScalar(opts.scale);
+
+    // 2. HEADING — turn the model's own front onto the direction asked for.
+    // Order = the sequence a vector visits under a POSITIVE rotation.y, which
+    // three.js takes +Z to +X (verified empirically, not from memory). The
+    // first version of this used the tile helper's ["-z","+x","+z","-x"] and
+    // was 180 degrees wrong for every +x/-x model — airplane, bird, elephant,
+    // tank. The 0/180 cases are symmetric, so the placement proof passed 13/13
+    // while the quarter turns were inverted; that is why check-placement.mts
+    // now tests a +x model explicitly.
+    var order = ["+z", "+x", "-z", "-x"];
+    // THE DEFAULT (2026-08-23, owner: "the back of the object should rest on
+    // [the upright] plane" — i.e. the user sees its BACK).
+    //
+    // Placing a model used to leave rotation alone when no heading was asked
+    // for, so which way it ended up pointing was decided by whoever exported
+    // it: horse is authored +z (nose at the camera), car is -z (nose away).
+    // Two models, opposite results, from identical code. That coin flip is
+    // what cost the owner prompts per model.
+    //
+    // A scene's camera sits on +z looking back toward -z, so a model whose
+    // front points -z shows the viewer its back. That is now what you get
+    // unless you say otherwise. A game that DOES pass a heading is untouched,
+    // and a model with no audited facing is still left alone rather than
+    // turned by a guess.
+    var heading = (opts.heading === undefined || opts.heading === null) ? "-z" : opts.heading;
+    if (typeof heading === "number") {
+      obj.rotation.y = heading;
+    } else {
+      var from = window.modelFacing(name);
+      var a = order.indexOf(from), b = order.indexOf(heading);
+      // Unaudited model: leave rotation alone rather than turn it by a guess.
+      if (a >= 0 && b >= 0) obj.rotation.y = ((b - a + 4) % 4) * (Math.PI / 2);
+    }
+
+    // 3. GROUND — measure the model AS TRANSFORMED and drop it so its lowest
+    // point rests on the ground. Measured, not read from a table: it has to
+    // account for the scale and rotation just applied.
+    obj.updateMatrixWorld(true);
+    var box = new Box3().setFromObject(obj);
+    var groundY = typeof opts.y === "number" ? opts.y : 0;
+    if (isFinite(box.min.y)) obj.position.y = groundY - box.min.y;
+    var at = opts.at || {};
+    if (typeof at.x === "number") obj.position.x = at.x;
+    if (typeof at.z === "number") obj.position.z = at.z;
+  } catch (e) {
+    console.warn("[ariantra] placeModel could not place:", name, e);
+  }
+  return obj;
 };
 // rotateToJoin: the one calculation every track needs and no game got right by
 // hand. Returns the rotation.y IN RADIANS that carries a piece's "from" edge

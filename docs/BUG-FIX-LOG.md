@@ -11,6 +11,402 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-23 — the helicopter got a rotor, and the log lied about it twice
+
+- **Reported:** owner — "i feel the helicopter needs to have skeleton to rotate the rotor",
+  then, on the first two rebuilds, "the top rotor movement is not centered and it rotation axis
+  is wrong. it is making a circle on the top" and "the tail rotor is also inside the copter",
+  then "it is still doing the same wobly rotation in the top". Approved and **uploaded** after
+  the third build: "the copter is ok, we can replace".
+- **It never needed a skeleton.** The source is one node named `Cube`, but that mesh already
+  holds FOUR primitives, one per material. Rendered in isolation they are exactly the parts
+  wanted: body, engine housing, canopy, main rotor. No geometry was cut — each primitive is
+  promoted to its own named node. New pipeline options in `vendor-models.mjs`: `splitParts`
+  (promote), `assertParts` (refuse if the source is re-ordered), `spinParts` (give a part a
+  real pivot).
+- **Fault 1 — a part named from the wrong view.** The second primitive was called `tail_rotor`
+  off a 3/4 render. From the side it is plainly the **engine/exhaust housing** behind the cabin,
+  and spinning it drove it through the fuselage. Renamed `engine`, removed from `spinParts`.
+  Honest finding underneath: **this model has no separable tail rotor at all** — the tail fin is
+  part of the body primitive.
+- **Fault 2 — the pivot was the bounding-box centre, not the hub.** A box is only centred on the
+  hub for a symmetric, even-bladed rotor. This one has THREE blades (measured: tips at 30°, 150°
+  and −90°, all at radius 2.01 m), and its box centre sits **0.479 m from the hub — 24% of the
+  radius**. Spun about that, the hub itself traces a circle. The hub is now recovered as the
+  centre of the **smallest enclosing circle** of the blade vertices in the disc plane, which for
+  equal-length blades is the hub exactly whatever the blade count.
+- **Fault 3, and the one that matters most — the fix never reached the file.** Both earlier
+  builds printed the correct hub and shipped the wrong one. **`meshopt` quantization rewrites a
+  MESH node's transform to its bounding-box centre** as part of mapping quantized integers back
+  to real coordinates, so every re-centring of the mesh node was silently undone after this code
+  ran. The console said `hub [0.01, 1.28, -0.09]`; the shipped bytes said `-0.565`. **Two rounds
+  of the owner's time were spent because the log was trusted over the artifact** — §12, made
+  concrete. Fixed by putting the pivot on a PARENT wrapper, which quantization does not touch:
+  `rotor` (wrapper, at the hub — what a game rotates) → `rotor_mesh` (geometry; the compressor
+  may own this node's transform).
+- **Measured on the shipped bytes, not the log.** New instrument renders the rotor alone,
+  top-down, at eight angles through a full turn and measures the centroid of its own pixels:
+  **hub pivot 2.93 px of wander; box-centre pivot 34.16 px** (a clean circle — the reported
+  wobble, quantified). A `nearest geometry` guard now fails the build if a pivot is more than 15%
+  of the radius from real geometry: a rotor has its mast ON its axis, so a correct hub has
+  geometry 0.022 m away and the wrong one had 0.48 m.
+- **Uploaded** — `helicopter.6b792d.glb`, verified 200 + sha256 match + immutable. The host is
+  append-only, so `helicopter.38b1ea.glb` still resolves and **no published game changed**.
+- **A second silent data loss, caught after the upload.** Rewriting the manifest entry **dropped
+  the helicopter's `facing` and `realSize`** — restored that same morning after the 2026-08-17
+  revert lost them, and thrown away again by a routine re-vendor. Only that one model was
+  affected (72→71 facing, 135→134 realSize), both restored. **The cause is fixed, not just the
+  symptom:** `realSize` is curated real-world knowledge, not a measurement of our bytes, so it
+  now carries across any rebuild; `facing` IS measured, so it carries only when the bounds are
+  identical to the millimetre (no rotation happened) and is otherwise dropped with a loud
+  re-audit warning rather than kept as a confident guess.
+- **Regression tests.** `model-parts.test.ts` P.3 now asserts the helicopter HAS a rotor — it
+  asserted the opposite twelve hours earlier, and the flip is the record — plus P.4: no
+  `*_mesh` node may ever be offered as a part, because that is the one node the compressor owns
+  and spinning it reproduces the wobble. `check-placement.mts` 35/35, including "the helicopter
+  now offers a named rotor" and "…and never its internal mesh node".
+- **Verified:** 2496 tests pass, `tsc` clean, parts census re-run (307 models with parts).
+- **Open:** 12 motorbikes, 4 of the 6 planes, `boat` and `spaceship` still have no spinnable
+  part. The same `splitParts`/`spinParts` path now exists for them, but each needs its
+  primitives rendered and named by eye first — the cost of naming a part from the wrong view is
+  recorded above.
+
+---
+
+## 2026-08-23 — the car already had its wheels; the prompt said it didn't
+
+- **Reported:** owner — "i feel the helicopter needs to have skeleton to rotate the rotor and
+  similarly the car tyres. can you add them?"
+- **Measured before building anything, and the answer inverted the request.** New instrument
+  `scripts/model-parts-census.mjs` reads `nodes[].name` out of each published GLB's JSON chunk
+  (same 256 KB range-fetch as the animation census — no browser, no full download). Across all
+  318 models: **306 carry named parts**, and **25 vehicles ship one node PER WHEEL** —
+  `wheel-front-left`, `wheel-front-right`, `wheel-back-left`, `wheel-back-right`. `small_plane`
+  has `Propeller_Cone`; the three tanks carry 46 track segments each.
+- **So the two examples land on opposite sides.** The **car tyres needed nothing added** — they
+  have been there all along. The **helicopter genuinely has no rotor**: it is one mesh named
+  `Cube`, exactly as the 2026-08-06 incident found.
+- **What was actually broken was the prompt.** Rule 7 asserted, for a year:
+  *"Rigid models have NO named parts: a name search finds nothing and your spin is a silent
+  no-op — the only spinnable parts are ones you add."* That is false for 96% of the library. It
+  talked every car game out of turning the wheels it already had and into bolting fake primitive
+  wheels on beside real ones.
+- **Where the false claim came from, because this matters.** It was generalised from a REAL
+  incident (2026-08-06, the helicopter rotor: `traverse(/rotor|blade|prop/)` matched nothing, the
+  spin loop ran over an empty array, and Ari claimed success for turns in a row). The lesson was
+  right for that model; the wording turned one model's truth into the whole library's. Same
+  shape as "VEHICLES/CHARACTERS face +Z", fixed earlier today — **a claim about the models,
+  written into the prompt, with no datum behind it.**
+- **And no skeleton is needed for any of it.** Skinning is for a mesh that DEFORMS — a galloping
+  horse. A wheel is rigid and merely rotates, which is an ordinary parent/child node transform:
+  `car.getObjectByName("wheel-front-left").rotation.x -= speed * dt`. Rigging the cars would have
+  been real 3D surgery on an append-only asset host to obtain something they already had.
+- **What shipped:** `src/lib/assets/model-parts.json` (306 models, committed, generated offline);
+  `modelParts(name)` behind `window.AR_PARTS`, injected by `inject.ts` and retrofitted onto
+  stored games by `ensure-runtime.ts` (3h); `LOAD_MODEL_HELPER_VERSION` 8 → 9 so published games
+  pick it up; rule 7 rewritten to teach the datum; `parts`/`spinnable` on the admin catalogue and
+  a **Moving parts** line in the 3D Models tab.
+- **The suite caught a design violation I introduced.** My first rule 7 listed the vehicles by
+  name (`car`, `truck`, `taxi`, `firetruck`…). The static section must never hard-code library
+  names — it is byte-stable for the Gemini prefix cache, and a named model can be culled — and
+  `prompt-catalog.test.ts` failed on exactly that (`not.toContain("firetruck")`). Rewritten to
+  teach the RULE and let `modelParts(name)` answer.
+- **Paid for, again, rather than charged.** The new teaching pushed the section to 2840 tokens
+  against the 2700 ceiling. Four blocks were compressed to fit — the two-sizes paragraph, the
+  driving setup, the rider line, and rule 7 itself — and it now measures **2699**. The ceiling
+  did NOT move. Every pinned phrase (`NEVER guess a size or spacing`, `modelFacing(name)`,
+  `modelHeading(name, heading)`, `rotation.y = Math.PI`) still holds. **The category-map hybrid
+  is now overdue** — this is the third time in one day the section has needed shaving.
+- **Verified in a real browser** — `scripts/check-placement.mts`, **34/34** (was 30). The four
+  new checks are the whole claim, on the real loaded object rather than in the table:
+  `modelParts lists the car's four wheels`, `getObjectByName FINDS a real wheel on the loaded
+  car`, `rotating that wheel actually moves it`, and
+  `the helicopter still reports NO parts (fallback still required)`. That last one is a guard,
+  not a wish: if it ever starts returning parts, the primitive-rotor wording should be revisited.
+- **Verified:** Game 2495 tests + `tsc` clean; Platform 1443 tests + `tsc` clean.
+- **OPEN — needs an owner decision.** The helicopter (and 12 motorbikes, and 4 of the 6 planes)
+  genuinely have no spinnable part. Giving the helicopter a real rotor means re-authoring the GLB
+  and uploading it, and **the asset host is append-only — every upload is permanent**. It is also
+  geometry surgery (splitting one "Cube" mesh into rotor + body), not something a script can do
+  reliably. Not attempted. The primitive-rotor fallback stays correct for these models, and is
+  now scoped to exactly them instead of being claimed of everything.
+
+---
+
+## 2026-08-23 — the default view: back to the player, standing on the ground
+
+- **Owner's rule, in their words:** "some objects are vertical objects in which the bottom
+  should rest on [the ground] plane. the back of the other object should rest on [the upright]
+  plane", then the clarification that settled it — "the default view is the way it moves or
+  interact with other items so view should be from the back. I was purely talking from the
+  default view of the models on the game."
+- **The axis question, closed.** The owner first proposed a Z-up frame (ground = X-Y, height =
+  Z), then: "the way three js defines the axis can be the same." So **nothing migrates.** Worth
+  recording why that was the right call: three.js and glTF are Y-up, and all 318 models already
+  store height in Y — `horse` is `0.8 x 1.7 x 2.4` with the 1.7 as its height, and 44 models are
+  taller than they are wide with the height in Y every time. Z-up would have meant tipping every
+  model at load, rewriting every `rotation.y`/`position.y` rule, and re-checking every published
+  game — for a contract that is identical either way. The owner's two rules are about PLACEMENT,
+  not about axis names.
+- **Rule 1 was already built.** "Bottom rests on the ground" is what `placeModel` has done since
+  the restore earlier today: it measures the model AS TRANSFORMED and drops it so its lowest
+  point sits on the ground. Verified in a real browser, base y = 0.
+- **Rule 2 is the new part.** `placeModel` with no `heading` used to leave rotation alone, so
+  which way a model ended up pointing was decided by whoever exported it. `horse` is authored +z
+  (nose at the camera) and `car` is -z (nose away): **two models, opposite results, from
+  identical code.** That coin flip is what cost the owner prompts per model. The default is now
+  "back to the player" — front along -z, away from a camera on +z — for every model whatever its
+  authored facing.
+- **A real bug in the first cut, caught by the harness, not by reasoning.** With a blanket
+  default, a RIDER parented onto a horse got turned to face the camera INDEPENDENTLY of the
+  horse, so he sat backwards: `a +z rider on a +z mount needs no rotation of its own — rider
+  rotation.y = 3.1416`. The default is for a model standing on its own; anything you PARENT to
+  another model must inherit its parent's direction. `heading: 0` ("no turn of your own") is that
+  case, and it is now documented at the option, taught in the prompt, and pinned by the check.
+- **Verified in a real browser** — `scripts/check-placement.mts`, **30/30** (was 24). The three
+  new pairs are the rule itself, across models exported in opposite directions:
+  `horse (authored +z) shows its BACK by default — front points z=-1`,
+  `car (authored -z) shows its BACK by default — front points z=-1`,
+  `dog (authored +z) shows its BACK by default — front points z=-1`, each with
+  `rests on the ground by default — base y = 0`. And the rider is back to `rotation.y = 0`.
+- **Paid for, not charged.** Teaching the default added ~70 tokens and broke the 2700 ceiling at
+  2772. Rather than raise a ceiling twice in one day, rule 4 was COMPRESSED to pay for it: the
+  default makes the old "never assume which way a model faces / here is how to turn it round"
+  prose largely redundant, so it was folded into the default's own sentence. **Measured 2691 —
+  under the ceiling, with the new teaching in.** The `modelFacing` / `modelHeading` /
+  `rotation.y = Math.PI` pins all still hold.
+- **The copy-paste snippet in `model-catalogue.ts`** stopped passing `heading: "+z"`, which under
+  the new default would aim the model AT the player. It now shows the default form and says what
+  it gives you.
+- **Verified:** 2488 tests pass, `tsc` clean. Nothing committed, nothing deployed.
+- **Not verified (§12):** that Gemini actually omits `heading` and lets the default do the work,
+  rather than writing its own rotation anyway. That is a generation question and needs
+  `scripts/golden-prompts.mjs`, which still has not been run.
+
+---
+
+## 2026-08-23 — the admin surfaces existed and could not be found
+
+- **Reported:** owner — "i need admin tab in studio page", then "i don't have any to go
+  directly", then "kidgemini also has admin tab and sos tab which also need to be surfaced…
+  design it professionally", and the steer that decided the shape: **"since it is me i am ok in
+  chunky work but i need ways to do functionally easy."**
+- **What was actually wrong.** Nothing was broken; things were unreachable. `/studio/admin` had
+  no link from anywhere — it was a URL you had to remember. Ari's two operator pages
+  (`/admin` usage, `/admin/help` the 🆘 queue) were worse than unlinked: each makes the operator
+  paste `ADMIN_SECRET` into a form on **every visit**. Three consoles, two credentials, no doors.
+- **What shipped, Platform side.**
+  · `isAdmin()` (`lib/auth/admin-policy.ts`) — the non-throwing form a UI needs. `requireAdmin`
+    now delegates to it, so the two cannot drift; it fails closed on a repo error too, because
+    the Studio calls it on every load and a dead DB must hide the link, not blank the page.
+  · `admin` rides on the `/profile` response the Studio already fetches — no second round trip.
+    **Visibility only:** every admin API still runs its own `requireAdmin`, so a forged `true`
+    authorizes nothing.
+  · An **admin strip** on the Studio page: quiet utility bar, not a banner (the admin is also a
+    creator, and their own games are what that page is for), deep-linking each console tab.
+  · The console tab bar became ONE data-driven, horizontally-scrolling component. It was five
+    near-identical 18-line `<button>` blocks; at six tabs that is a copy-paste surface where one
+    tab quietly loses its `aria-selected`. `?tab=` deep links in and `replaceState`s out, so a
+    section can be bookmarked and Back still behaves.
+  · The page blurb, which described two tabs in full, is now generic — what each section is FOR
+    lives on the tab as a tooltip, next to the thing it describes.
+- **What shipped, Ari side.** `lib/help-admin.ts` — the queue ACTIONS (list / reply / source)
+  extracted out of `/api/admin/help`, and a new `/api/admin/help-bridge` on the same
+  server-to-server contract as `usage-bridge`/`models-bridge`.
+  **An extraction, deliberately, not a second copy:** that code screens free text, refuses free
+  text to guests, and mirrors every reply to a parent (PRD-COMMUNITY-HELP §3.8 constraint 3). A
+  forked copy is a place for exactly one of those to go missing — reaching the queue a second
+  way must never mean a second, weaker set of rules. The 17 existing route tests passed
+  unchanged through the extraction, which is the evidence it preserved behaviour.
+- **The load-bearing test** is `HB.5`: putting the browser route's `ADMIN_SECRET` in the bridge's
+  BODY opens nothing. The bridge's gate is the header, and any body `secret` is dropped before
+  the action runs — two gates that can be mistaken for one another is how one ends up
+  unenforced.
+- **The SOS tab keeps the three decisions that make the queue a queue** (PRD §3.7), because a
+  prettier queue that dropped them would be a worse one: oldest-first with waiting time coloured
+  against the 16h target; canned replies primary and free text a visibly marked second step;
+  "Load game source" its own audited button, never fetched with the ticket. Switching ticket
+  clears a loaded source and any half-typed reply — that text following the operator to a
+  DIFFERENT child is the one mistake this screen must not allow.
+- **Ari's own pages are untouched and still work** on `ADMIN_SECRET`. They are the fallback for
+  when Platform is down; nothing was removed (rule 11).
+- **Verified by looking, not only by assertions.** New instrument
+  `Ariantra-Platform/scripts/shot-admin-console.mts` stubs the session and the admin APIs with
+  realistic shapes and drives the REAL components in a browser — the console renders only for a
+  signed-in admin, so without it none of this is visible to any check. Result: six tabs on ONE
+  row (`scrollWidth === clientWidth`, no wrap), no page errors, the SOS queue rendering an
+  overdue ticket, its canned replies, the guest marker, and the Studio strip. Screenshots taken
+  of both. It found the stale page blurb.
+- **Verified:** Game 2488 tests + `tsc` clean; Platform 1443 tests + `tsc` clean; both pages
+  serve 200 with an empty dev-server error log.
+- **Cross-repo, flagged as the workspace CLAUDE.md asks:** this change spans Game and Platform.
+  The two halves are independently shippable — Ari's bridge is additive and inert until
+  Platform calls it, so deploy Ari FIRST, then Platform. Nothing is committed or deployed.
+- **Not verified:** no end-to-end run against a real signed-in admin session and a real Ari
+  instance. The proxy path (Studio token → `requireAdmin` → `x-admin-secret` → Ari) is proven
+  only by its unit tests and by the identical, already-live `usage-proxy`/`models-proxy` shape.
+
+---
+
+## 2026-08-23 — "5 prompts to teach it direction": the facing data existed, and the 2026-08-17 revert took it
+
+- **Reported:** owner — "now i made a horse but giving it direction and teaching how to go is a
+  atleast 5 prompts", then "i also want a UI where i can see the model, skeleton and the
+  animation available".
+- **This was not a missing feature.** `modelFacing` / `modelMetres` / `modelHeading` /
+  `placeModel`, the audited facing + real-size data, the driving-setup prompt block and
+  `scripts/check-placement.mts` were all built on 2026-08-15 (`3b710b5`, `52d4d31`, `e466935`)
+  to answer the owner's own earlier words — *"i still feel the llm is not getting the axis, size,
+  direction correct."* `ab386a5` (2026-08-17) reset the tree to the 2026-08-12 state, and they
+  went with it. **`ab386a5`'s own "what this gives up" list — 19 commits, 183 files, otherwise
+  careful — never mentions them.** Unlisted collateral, not a considered removal. Confirmed
+  absent before restoring: `grep -rn "modelFacing|placeModel|AR_FACING" src scripts` → nothing;
+  0 of 318 models declared `facing`.
+- **Measured before restoring (rule 11).** Of the audited rows, **72 of 75 facing** and **135 of
+  139 realSize** still have a model (the missing ones are the 2026-08-20 safari cull:
+  elephant/lion/tiger, plus zebra). **Zero surviving models changed sha256 since the audit** — so
+  every restored value is still true of the exact GLB we serve today. Merged **by name**, never
+  by file copy: the audited manifest holds 322 models and a copy would have silently resurrected
+  the four culled animals. Verified after: 318 models, culled four still absent, and the file is
+  byte-identical to HEAD apart from the two new keys.
+- **`LOAD_MODEL_HELPER_VERSION` 7 → 8.** The bump is the load-bearing part: it is what makes
+  `ensureAssetRuntime` retrofit the helper onto ALREADY-PUBLISHED games on their next preview
+  render. Without it the data ships and no existing game can read it.
+- **One real bug found in the restored code, by the harness and not by the suite.**
+  `placeModel(name, { metres: true })` was a **silent no-op for all 51 rigged models**. It reads
+  `modelSize()`, which reads `AR_SIZES`, and the manifest deliberately omits `size` for a skinned
+  mesh (a bind-pose bbox is not the rendered size) — i.e. it did nothing for exactly the models a
+  child asks to ride. The horse loaded at 1.41 m against a real 2.4 m. Fixed by measuring the
+  object just loaded when no published size exists. The first fix over-scaled it to 3.23 m
+  (max-of-three-ratios is wrong for a bind pose — a horse stands with its legs together, so the
+  WIDTH ratio wins), so the measured path now matches longest axis to longest axis. Final: 2.40 m.
+- **Prompt.** The section stopped asserting a facing and started teaching the datum. The
+  unconditional "VEHICLES/CHARACTERS face +Z" is **deleted** — it is false for 7 of the 72
+  audited models (`car` -Z, `airplane` +X, `elephant` -X), and `car` is the first name a racing
+  game reaches for. Restored: `placeModel`, `modelFacing`/`modelHeading`, `modelMetres` vs
+  `modelSize`, and the driving/riding setup as one consistent block (heading convention → model
+  rotation → camera distance sized FROM the model → world scale → controls), plus a new rider-on-
+  mount line (both +z, so parent the rider and leave its rotation at 0). The road-tile teaching in
+  the current tree was left untouched — the roads-as-geometry change was a SEPARATE revert and is
+  not being re-litigated here.
+- **Token ceiling 2525 → 2700.** Flagged, not taken silently: the ceiling's own note says the next
+  raise should not happen. This is the **restore of a raise already taken on 2026-08-15**, not a
+  fourth new one, and it still deletes wrong teaching to help pay for itself. Measured 2584.
+- **Verified in a real browser, against the real published GLBs** — `scripts/check-placement.mts`,
+  restored and extended with the owner's actual case: **24/24**. The horse is 2.40 m long, stands
+  on the ground, turns exactly 90° when asked to head east, and a `+z` rider on a `+z` mount needs
+  no rotation of its own. That last check is the whole "5 prompts" claim, answered in one call.
+- **The UI (owner's second ask).** The admin **3D Models** tab (Platform `/studio/admin`, fed by
+  Ari's `models-bridge`) gained a **skeleton overlay** and a **facing arrow**, alongside the clip
+  picker it already had, and now states facing / real size / on-screen size — *including when they
+  are missing*, which is itself the answer to "why does my horse run backwards". The skeleton is
+  hand-built from `isBone` because the curated three bundle a child's game imports does not export
+  `SkeletonHelper`, and this viewer deliberately runs on that exact bundle.
+- **A visual bug the assertions could not see.** Joint markers were PARENTED to their bone — the
+  elegant version, since they then follow the clip for free — and inherited the bone's scale. One
+  sphere filled the entire viewport and hid the horse completely. **All 10 checks passed on that
+  frame.** The screenshot is what caught it. Markers now live in scene space and are moved each
+  frame; a check pins `max marker scale <= 1` so it cannot come back.
+- **New instrument:** `Ariantra-Platform/scripts/check-model-viewer.mts` drives the REAL
+  `previewDoc()` string in a real browser — **12/12**: 50 bones found, 50 joint markers, all on
+  their bone, 45 segments with real length, the arrow drawn and pointing `+z`, and the `Gallop`
+  clip demonstrably moving the bones between two samples. `previewDoc` was split out of the React
+  component precisely so the harness tests the string the page actually renders.
+- **Verified:** 2478 tests pass and `tsc` clean in Game; `tsc` clean and the proxy suite passing in
+  Platform. Nothing committed, nothing deployed.
+- **Still not verified (§12).** All of the above proves the data and the helpers are correct and
+  reach the game. Whether Gemini 3.6-flash then USES `placeModel` instead of writing
+  `rotation.y = Math.PI` is a generation question, and only `scripts/golden-prompts.mjs` can
+  answer it. That run still has not been made.
+
+---
+
+## 2026-08-23 — the block-diagram horse: a 318-model library, invisible to the turn that needed it
+
+- **Reported:** owner — "the ari generated figures don't look realistic", then, narrowing it,
+  "look at the shape of the horse. it looks like block diagram."
+- **The session.** 2026-08-22, `demo`, iOS Safari, `gemini-3.6-flash`. "Make a game where I can
+  ride horses" → a flat 2D canvas horse: a filled rectangle body, two stroked legs, a dot eye.
+  The repair turns' own SEARCH blocks are the evidence (`// Body ctx.fillStyle = "#2196f3"`,
+  `// Legs ctx.strokeStyle = "#7a3810"`, `// Eye`). The child had to type "Can you make the game
+  into a **3-D** game" at 14:36:02 before anything changed.
+- **The library was never the problem.** `horse` exists: 121 KB, rigged, 3 clips including a
+  gallop, tagged `pony / stallion / riding / gallop`. It was never offered to that turn.
+
+**THREE faults, stacked. Each one alone was enough to produce the block horse, and fixing only
+the first — which is where this stopped before the behaviour was actually probed — would have
+shipped a "fix" that still offered no horse.**
+
+1. **The gate was on the child's vocabulary, not their request.** `catalog-gate.ts`'s
+   `THREE_TRIGGER` was `THREE_ASK_RE` — the literal string "3D" and nothing else. A child asking
+   to ride a horse never types "3D", so the whole 3D catalog (engine rules + all 318 models) was
+   withheld. With no models and a 2D canvas, `ctx.fillRect` is the only horse available. Note
+   this file's own §9 principle already said *"err toward unlocking"*: the audio gate follows it
+   (5 words), the save gate follows it (12), the 3D gate fired on one string. Same class as the
+   2026-08-09 "Calvin" bug recorded in the same file, one level up — that one was the regex
+   missing a spelling, this one is the regex asking the wrong question.
+   **Fixed:** `THREE_SUBJECT_GENRES` — a SUBJECT unlocks 3D too, composed from `GENRES` rather
+   than a new word list (a hand-written second list is exactly the drift that put two copies of
+   the 3D regex in this repo). IN: animals, racing, space, snow, castle, city, nature, water,
+   sports, military. OUT on purpose: `platformer` (its words name a MECHANIC — jump/collect/maze
+   — which says nothing about what is in the game, and keeping it out preserves the plain 2D
+   platformer), `people` (man/women/kids/walking fire on a quiz), `food` and `indian_games`
+   (carrom, ludo, dice — genuinely better flat).
+2. **The prompt could not then be honest.** `THREE_PROMPT_SECTION` opens *"this child asked for
+   3D — so build a REAL 3D scene"*. True for an explicit ask; a lie for a subject unlock, and
+   handing that sentence to "a word game about dogs" builds a spelling quiz in Three.js.
+   **Fixed:** the section is now one BODY (marker, curated imports, single canvas, lighting rig,
+   draw budget — how to build in 3D, identical either way) plus two LEAD-INS.
+   `threePromptSection("asked")` is byte-for-byte the text that shipped before the split — the 72
+   existing prompt-pin tests are the proof — and `"subject"` OFFERS 3D, names the block-diagram
+   horse as the reason a model beats hand-drawing, and names the games that must STAY flat.
+   `CatalogGates.threeReason` carries which; absent = "asked", so every existing literal and the
+   default in `buildTurnSystemInstruction` produce the exact prompt they did before.
+3. **The horse still did not reach the prompt** — caught only by probing the built system
+   instruction after fault 1 was fixed and the suite was green. Two independent faults in
+   `model-select.ts`, both measured before being touched:
+   - **Rule 2 was plural-blind.** It tested `/\bhorse\b/` against "ride horses". The trailing
+     `\b` sits between "e" and "s", so it does not match. Kids overwhelmingly name things in the
+     plural — "I want horses", "add some dogs", "fast cars" — so the highest-signal rule in the
+     selector (*the child said the word*) was dead for the commonest phrasing, for every name in
+     the library. Now `\b<name>(?:e?s)?\b`; the `\b` convention, and with it "carpet" ≠ "car",
+     is untouched.
+   - **The cap was spent in array order.** Rule 3 appended each matching genre whole, in `GENRES`
+     order, then sliced to `PROMPT_MODEL_CAP = 30`. Measured on the real ask: "ride horses and
+     jump over fences" matched platformer (28 models, array index 2) AND animals (17, index 4);
+     platformer took 28 of the 30 slots and animals got `dino` and `dog`. `horse` sits at animals
+     index 12. **A mechanic word starved the child's actual subject purely by array position.**
+     Now round-robin across matched genres — every matched genre is represented before any one
+     genre gets its tail. Changes WHICH names ride, never HOW MANY.
+- **Verified by behaviour, not by assertions.** A probe over the real path — `catalogGates` →
+  `buildTurnSystemInstruction` → `retrievedModelNames` — on the demo's exact words:
+  `"Make a game where I can ride horses"` → 3D unlocked, `subject` lead-in, **horse offered**, 62
+  names. `"…ride horses and jump over fences"` → same, 70 names. Controls unmoved:
+  `"make me a platformer game"` → still LOCKED, still 2D; `"a spelling quiz game for kids"` →
+  still LOCKED. The identical probe BEFORE fault 3 was fixed reported `horse=false` on a fully
+  green suite — which is the whole reason §12 exists.
+- **Regression tests.** `catalog-gate.test.ts` (subject unlock across all ten in-genres; mechanics
+  excluded; flat genres excluded; still nested under the build-turn gate; `threeUnlockReason`),
+  `prompt-catalog.test.ts` (default is byte-identical to the pre-split constant; the subject
+  variant never claims the child asked; it names the flat games; both variants carry an identical
+  BODY), `model-select.test.ts` (the demo's exact ask offers the horse; plurals; "carpet" is not
+  "car"; a mechanic cannot starve the subject; the cap still holds).
+- **Deliberate expectation changes, both recorded in the tests themselves.** `"a game with 3
+  dogs"` moved out of the `\b3d\b` look-alike list — it now unlocks, via the SUBJECT gate, and a
+  new test pins that it is reported as `subject` and never `asked`, so the look-alike property
+  still holds. Five `toEqual` gate shapes gained `threeReason`.
+- **Verified:** 2478 tests pass, `tsc` clean.
+- **NOT yet verified, and this is the honest limit of it (§12).** Everything above proves the
+  horse now REACHES the model. Whether Gemini 3.6-flash then builds a good 3D horse with it is a
+  generation question, and only `scripts/golden-prompts.mjs` (real model call + real browser
+  verify) can answer it. That run has not been made. Nothing here is deployed.
+- **Open, and separate:** the same demo session shows BOTH games throwing at load
+  (`repair:load_error` ×6, `repair:async_loop`, four kid-sent error reports in 18 minutes, every
+  turn on `gemini-3.6-flash`, four days after the 2026-08-18 ladder move). That is a different
+  bug from this one and is not addressed here.
+
+---
+
 ## 2026-08-21 — retiring the bird: resolvable, but never offered again
 
 - **Reported:** owner — "we need to replace with a better bird and not this one since it is
@@ -55,7 +451,10 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 - **Verified:** 2436 tests pass, `tsc` clean.
 - **Open:** `bird` is retired with no library successor — a capability the library has lost
   until Ari's procedural bird exists. That is the first real customer for the
-  promote-from-real-games pipeline (owner's chosen direction, 2026-08-20).
+  promote-from-real-games pipeline (owner's chosen direction, 2026-08-20), specced in
+  `docs/2026-08-21_PRD_PromoteAriCreations.md`. NOTE that PRD's own §11 caveat: a promoted
+  recipe has no skeleton and can never be skeletally animated, so for a CREATURE a rigged CC0
+  mesh remains the better answer. The bird may be the wrong first candidate.
 
 ---
 

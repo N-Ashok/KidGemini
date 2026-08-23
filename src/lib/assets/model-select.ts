@@ -212,13 +212,33 @@ export function selectModelNames(input: {
 
   const availableSet = new Set(available);
   // 2. Models the kid named outright.
+  //    PLURAL-TOLERANT since 2026-08-23 (BUG-FIX-LOG, the block-diagram
+  //    horse): this was /\bhorse\b/, whose trailing \b sits between "e" and
+  //    "s" and therefore does NOT match "ride horses". Kids overwhelmingly
+  //    name things in the plural ("I want horses", "add some dogs", "fast
+  //    cars"), so the highest-signal rule in this function — the child said
+  //    the word — was silently dead for the most common phrasing. `(?:e?s)?`
+  //    covers dogs/horses/boxes; the \b convention (and with it the
+  //    "carpet" is not "car" guarantee) is untouched.
   for (const name of available) {
-    if (new RegExp(`\\b${name}\\b`, "i").test(texts)) picked.add(name);
+    if (new RegExp(`\\b${name}(?:e?s)?\\b`, "i").test(texts)) picked.add(name);
   }
-  // 3. Genre keyword matches.
-  for (const genre of GENRES) {
-    if (genre.trigger.test(texts)) {
-      for (const name of modelsInGenre(genre.id, availableSet)) picked.add(name);
+  // 3. Genre keyword matches, ROUND-ROBIN across every genre that matched.
+  //    Was: each matching genre appended whole, in GENRES array order, then
+  //    the whole set sliced to PROMPT_MODEL_CAP — so the cap was spent in
+  //    array-position order, not by relevance. Measured on the real ask that
+  //    started this (2026-08-23): "ride horses and jump over fences" matched
+  //    platformer (28 models, index 2) and animals (17, index 4); platformer
+  //    took 28 of the 30 slots and animals got dino and dog. `horse` is at
+  //    animals index 12, so the one model the child actually asked for could
+  //    not reach the prompt — starved by the word "jump".
+  //    Interleaving means every matched genre is represented before any single
+  //    genre gets its tail. It changes WHICH names ride, never HOW MANY.
+  const matchedGenres = GENRES.filter((g) => g.trigger.test(texts)).map((g) => modelsInGenre(g.id, availableSet));
+  for (let i = 0; matchedGenres.some((names) => i < names.length); i++) {
+    for (const names of matchedGenres) {
+      const name = names[i];
+      if (name !== undefined) picked.add(name);
     }
   }
   // 4. The core basics, last (first to fall off at the cap).

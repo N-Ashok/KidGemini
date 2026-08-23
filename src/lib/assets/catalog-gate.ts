@@ -6,9 +6,25 @@
 
 import type { ChatMessage } from "@/types/chat.types";
 import { isGameBuildTurn, THREE_ASK_RE } from "../builder-mode";
+import { GENRES } from "./model-select";
+import type { GenreId } from "./asset-taxonomy";
+
+/** WHY the 3D catalog is unlocked — it decides which lead-in the prompt gets,
+ *  and that distinction is load-bearing (2026-08-23). THREE_PROMPT_SECTION
+ *  opens "this child asked for 3D — so build a REAL 3D scene", which is true
+ *  only when they did. Handing that same sentence to a subject-only unlock
+ *  would build a spelling quiz in Three.js. `subject` gets a lead-in that
+ *  OFFERS 3D and names the models; `asked` keeps today's wording byte-for-byte.
+ *  Both are static text, so each keeps its own Gemini prefix-cache entry. */
+export type ThreeUnlockReason = "asked" | "subject";
 
 export interface CatalogGates {
   three: boolean; // engine + model catalog (they travel together: models need the engine)
+  /** Set only when `three` is true. Absent means "asked" (the pre-2026-08-23
+   *  shape), so every hand-written CatalogGates literal in the tests and the
+   *  default in buildTurnSystemInstruction still produce the exact prompt they
+   *  did before this field existed. */
+  threeReason?: ThreeUnlockReason;
   audio: boolean; // sfx + music catalog (works in 2D games — no engine implied)
   // Save & continue building clause (docs/2026-08-01_PRD_SaveContinueBuilding.md
   // §3a). Optional — not every CatalogGates literal in this codebase's tests
@@ -34,6 +50,43 @@ export interface CatalogGates {
 // THREE_ASK_RE — because this was a second copy of the same rule and the two
 // could drift apart (they had).
 const THREE_TRIGGER = THREE_ASK_RE;
+
+// ── The subject unlock (owner decision 2026-08-23) ────────────────────────
+//
+// THREE_TRIGGER above is the literal string "3D" and nothing else. That is a
+// gate on the child's VOCABULARY, not on what they asked for — and a child
+// asking to ride a horse never says "3D". BUG-FIX-LOG 2026-08-23: "make a game
+// where I can ride horses" was built with this catalog OFF, so the rigged
+// `horse` (121 KB, gallop clip, tagged pony/riding) was invisible to the turn
+// and the only horse left to make was ctx.fillRect — a body rectangle, stroked
+// legs, a dot eye. The owner's words: "it looks like a block diagram."
+//
+// So a SUBJECT unlocks it too. Composed from GENRES rather than a fresh word
+// list, because the genres ARE the question being asked — "does the library
+// hold physical things for this game?" — and a hand-written second list is the
+// exact drift that put two copies of the 3D regex in this repo (see above).
+//
+// Which genres, and why not all of them:
+//   · IN  — genres that own physical models: a creature, a vehicle, a place.
+//   · OUT `platformer` — its words (platform/jump/collect/coins/maze/runner)
+//     name how a game PLAYS, not what is in it, so they cannot tell us a model
+//     would help. It also keeps the plain 2D platformer, a good product,
+//     exactly as it is.
+//   · OUT `people` — over-broad on its own words (man/women/kids/walking/
+//     sitting) and would fire on a quiz.
+//   · OUT `food`, `indian_games` — carrom, ludo, dice, marbles and a cooking
+//     quiz are genuinely better flat.
+// A genre added to the taxonomy later is OUT until it is named here on
+// purpose. That is deliberate: an unlock is a prompt-shape change.
+const THREE_SUBJECT_GENRES: ReadonlySet<GenreId> = new Set<GenreId>([
+  "animals", "racing", "space", "snow", "castle", "city", "nature", "water", "sports", "military",
+]);
+const THREE_SUBJECT_TRIGGERS: readonly RegExp[] = GENRES.filter((g) => THREE_SUBJECT_GENRES.has(g.id)).map((g) => g.trigger);
+
+/** Does this text name something the 3D library actually holds a model of? */
+export function subjectSuggestsThree(text: string): boolean {
+  return THREE_SUBJECT_TRIGGERS.some((re) => re.test(text));
+}
 const AUDIO_TRIGGER = /\b(sounds?|music|songs?|sfx)\b/i;
 // Build/world/inventory mechanics (docs/2026-08-01_PRD_SaveContinueBuilding.md):
 // a kid naming placement/persistence mechanics, not just "make me a game".
@@ -69,11 +122,37 @@ export function catalogGates(input: { message: string; history: ChatMessage[]; p
   const artifacts = input.history.map((m) => m.artifactHtml).filter((h): h is string => Boolean(h));
   const save = texts.some((t) => SAVE_TRIGGER.test(t)) || artifacts.some((h) => SAVE_ARTIFACT.test(h));
 
-  if (input.paid) return { three: true, audio: true, save };
+  if (input.paid) {
+    // Paid unlocks the catalog on every build turn, so most paid turns are NOT
+    // an ask — the softer `subject` lead-in is the honest one unless the child
+    // actually said 3D. (paid is hardwired false at the call site today;
+    // TECH_DEBT #11.)
+    const paidReason = threeReasonFrom(texts, artifacts) ?? "subject";
+    return { three: true, threeReason: paidReason, audio: true, save };
+  }
+
+  const reason = threeReasonFrom(texts, artifacts);
 
   return {
-    three: texts.some((t) => THREE_TRIGGER.test(t)) || artifacts.some((h) => THREE_ARTIFACT.test(h)),
+    three: reason !== null,
+    ...(reason ? { threeReason: reason } : {}),
     audio: texts.some((t) => AUDIO_TRIGGER.test(t)) || artifacts.some((h) => AUDIO_ARTIFACT.test(h)),
     save,
   };
+}
+
+/** Shared by catalogGates and threeUnlockReason so the two can never disagree
+ *  about WHY the catalog is on. An existing 3D artifact counts as `asked`: the
+ *  child is iterating on a scene that is already Three.js, and softening the
+ *  wording there would invite a rebuild in flat canvas. */
+function threeReasonFrom(texts: string[], artifacts: string[]): ThreeUnlockReason | null {
+  if (texts.some((t) => THREE_TRIGGER.test(t)) || artifacts.some((h) => THREE_ARTIFACT.test(h))) return "asked";
+  if (texts.some((t) => subjectSuggestsThree(t))) return "subject";
+  return null;
+}
+
+/** Why (or whether) this turn unlocks the 3D catalog. `null` = not unlocked.
+ *  Same inputs and same nesting under the build-turn gate as catalogGates. */
+export function threeUnlockReason(input: { message: string; history: ChatMessage[]; paid: boolean }): ThreeUnlockReason | null {
+  return catalogGates(input).threeReason ?? null;
 }

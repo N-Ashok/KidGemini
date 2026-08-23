@@ -110,7 +110,7 @@ describe("injectAssets — structurally zero I/O (PRD §11 structural assertion)
     }
   });
 
-  it("imports nothing that could do I/O — only server-only, the manifest rules, the manifest JSON, the pure markers module and the pure runtime-helpers", () => {
+  it("imports nothing that could do I/O — only server-only, the manifest rules, the manifest + parts JSON, the pure markers module and the pure runtime-helpers", () => {
     const imports = [...source.matchAll(/from "([^"]+)"|import "([^"]+)"/g)]
       .map((m) => m[1] ?? m[2])
       // The helper STRINGS import from "three" inside the game page — those
@@ -120,10 +120,16 @@ describe("injectAssets — structurally zero I/O (PRD §11 structural assertion)
     // ./markers and ./runtime-helpers are pure (string/regex + template-literal
     // helper builders shared with the client-side floor) — no I/O, so both are
     // legitimate additions to this allowlist.
+    // ./model-parts.json (2026-08-23) is a committed static JSON, exactly the
+    // same class as ./manifest.json: bundled at build time, read as a value,
+    // no I/O. It is generated OFFLINE by scripts/model-parts-census.mjs — the
+    // 306 range-fetches that produce it must never happen at generation time,
+    // which is precisely what this allowlist is here to keep true.
     expect(moduleImports.sort()).toEqual([
       "./manifest",
       "./manifest.json",
       "./markers",
+      "./model-parts.json",
       "./runtime-helpers",
       "server-only",
     ]);

@@ -299,8 +299,11 @@ describe("loadModelHelper — modelSize(name)", () => {
   it("bumped the helper version so stored games get modelSize + modelAxis + modelJoins + fitTile retrofitted", () => {
     // Without the bump, ensureAssetRuntime leaves an existing older helper
     // alone and the new capability never reaches any game that already exists.
-    expect(LOAD_MODEL_HELPER_VERSION).toBe(7);
-    expect(script).toContain("window.__arLoadModelVersion = 7");
+    // 9 since 2026-08-23: modelParts joined modelFacing/modelMetres/
+    // restored. The bump is load-bearing — it is what retrofits the helper
+    // onto already-published games, which is where the wrong-facing models are.
+    expect(LOAD_MODEL_HELPER_VERSION).toBe(9);
+    expect(script).toContain(`window.__arLoadModelVersion = ${LOAD_MODEL_HELPER_VERSION}`);
   });
 
   it("answers null rather than a made-up number for an unmeasured model", () => {

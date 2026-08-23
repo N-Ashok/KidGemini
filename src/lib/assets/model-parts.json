@@ -1,0 +1,2123 @@
+{
+  "alien": [
+    "CharacterArmature",
+    "Body",
+    "Head",
+    "Head2",
+    "Head3",
+    "Alien_Blob.001",
+    "Alien_Blob"
+  ],
+  "ambulance": [
+    "body",
+    "wheel-front-right",
+    "wheel-front-left",
+    "wheel-back-right",
+    "wheel-back-left",
+    "door-right",
+    "door-left"
+  ],
+  "antenna_tower": [
+    "building-skyscraper-c"
+  ],
+  "apartment": [
+    "building-type-c"
+  ],
+  "apple": [
+    "apple"
+  ],
+  "armored_pickup": [
+    "Pickup_Armored",
+    "BackWheels",
+    "FrontWheel_R",
+    "FrontWheel_L"
+  ],
+  "armored_truck": [
+    "FrontWheel_R",
+    "BackWheels",
+    "FrontWheel_L",
+    "Truck_Armored"
+  ],
+  "assault_rifle": [
+    "AssaultRifle2_1"
+  ],
+  "awning": [
+    "detail-awning"
+  ],
+  "badminton_net": [
+    "badminton_net"
+  ],
+  "badminton_racket": [
+    "badminton_racket"
+  ],
+  "ballista": [
+    "siege-ballista",
+    "arrow",
+    "wheel",
+    "wheel"
+  ],
+  "bamboo": [
+    "Bamboo"
+  ],
+  "bamboo_short": [
+    "Bamboo_Mid"
+  ],
+  "banana": [
+    "banana"
+  ],
+  "barrel": [
+    "barrel"
+  ],
+  "barricade": [
+    "barricade-doorway-c"
+  ],
+  "bat": [
+    "BatArmature",
+    "BodyRoot",
+    "Body",
+    "Neck",
+    "Head",
+    "Face",
+    "Eyes",
+    "Nose",
+    "Shoulder.L",
+    "Wing1.L",
+    "Wing2.L",
+    "Wing3.L",
+    "Wing4.L",
+    "Shoulder.R",
+    "Wing1.R",
+    "Wing2.R",
+    "Wing3.R",
+    "Wing4.R",
+    "UpperLeg.L",
+    "LowerLeg.L",
+    "Feet.L",
+    "UpperLeg.R",
+    "LowerLeg.R",
+    "Feet.R",
+    "Bat"
+  ],
+  "battering_ram": [
+    "siege-ram",
+    "ram",
+    "wheel",
+    "wheel",
+    "wheel",
+    "wheel",
+    "wheel",
+    "wheel"
+  ],
+  "battle_top": [
+    "battle_top"
+  ],
+  "bazooka": [
+    "Bazooka.001"
+  ],
+  "bee": [
+    "CharacterArmature",
+    "Torso",
+    "Neck",
+    "Head",
+    "Wing1.L",
+    "Wing2.L",
+    "Wing3.L",
+    "Wing4.L",
+    "Wing1.R",
+    "Wing2.R",
+    "Wing3.R",
+    "Wing4.R",
+    "Body1",
+    "Armabee"
+  ],
+  "bird": [
+    "Ernest"
+  ],
+  "blade_top": [
+    "blade_top"
+  ],
+  "boat": [
+    "Sail",
+    "Boat"
+  ],
+  "bomb": [
+    "bomb"
+  ],
+  "bridge": [
+    "bridge-straight"
+  ],
+  "bridge_pillar": [
+    "bridge-pillar"
+  ],
+  "bullets": [
+    "Pickup_Bullets"
+  ],
+  "bungalow": [
+    "building-type-h"
+  ],
+  "bunker": [
+    "Base_Large"
+  ],
+  "burger": [
+    "burger",
+    "bun-bottom",
+    "bun-top",
+    "cheese",
+    "patty",
+    "salad",
+    "tomato"
+  ],
+  "businessman": [
+    "character-q",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "cactus": [
+    "cactus_tall"
+  ],
+  "cake": [
+    "slice",
+    "slice",
+    "slice",
+    "slice",
+    "slice",
+    "slice"
+  ],
+  "campfire": [
+    "campfire_logs"
+  ],
+  "cannon": [
+    "Cannon",
+    "Cannon_Wheels"
+  ],
+  "canoe": [
+    "canoe"
+  ],
+  "car": [
+    "body",
+    "wheel-front-left",
+    "wheel-front-right",
+    "wheel-back-left",
+    "wheel-back-right"
+  ],
+  "carrom_board": [
+    "carrom_board"
+  ],
+  "carrom_coin_black": [
+    "carrom_coin_black"
+  ],
+  "carrom_coin_white": [
+    "carrom_coin_white"
+  ],
+  "carrom_queen": [
+    "carrom_queen"
+  ],
+  "carrom_striker": [
+    "carrom_striker"
+  ],
+  "carrot": [
+    "carrot"
+  ],
+  "castle_door": [
+    "door"
+  ],
+  "castle_gate": [
+    "gate"
+  ],
+  "cat": [
+    "AnimalArmature",
+    "All",
+    "FrontLeg.L",
+    "FrontLeg.L_end",
+    "BackLeg.L",
+    "BackLeg.L_end",
+    "Body",
+    "Head",
+    "Head_end",
+    "Tail",
+    "Tail_end",
+    "FrontLeg.R",
+    "FrontLeg.R_end",
+    "BackLeg.R",
+    "BackLeg.R_end",
+    "Cat"
+  ],
+  "catapult": [
+    "siege-catapult",
+    "catapult",
+    "wheel",
+    "wheel",
+    "wheel",
+    "wheel"
+  ],
+  "chain_fence": [
+    "MetalFence"
+  ],
+  "chairlift": [
+    "chairlift"
+  ],
+  "checkered_flag": [
+    "flagCheckers(Clone)",
+    "Group"
+  ],
+  "cherries": [
+    "cherries"
+  ],
+  "chest": [
+    "chest",
+    "lid"
+  ],
+  "chicken": [
+    "CharacterArmature",
+    "Body",
+    "Head",
+    "Head2",
+    "Head3",
+    "Chicken_Blob"
+  ],
+  "chopper_bike": [
+    "chopper_bike"
+  ],
+  "cliff": [
+    "cliff_large_rock"
+  ],
+  "coin": [
+    "coin-gold"
+  ],
+  "corn": [
+    "corn"
+  ],
+  "cottage": [
+    "building-type-j"
+  ],
+  "crate": [
+    "crate"
+  ],
+  "cricket_ball": [
+    "cricket_ball"
+  ],
+  "cricket_bat": [
+    "cricket_bat"
+  ],
+  "cricket_pitch": [
+    "cricket_pitch"
+  ],
+  "cricketer": [
+    "character-b",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "crocodile": [
+    "Geo_Crocodile"
+  ],
+  "cruiser_bike": [
+    "cruiser_bike"
+  ],
+  "cupcake": [
+    "cupcake",
+    "cherry",
+    "cake"
+  ],
+  "dark_house": [
+    "building-type-l"
+  ],
+  "deer": [
+    "AnimalArmature",
+    "Body",
+    "Back",
+    "Torso",
+    "Torso2",
+    "Torso3",
+    "Neck1",
+    "Neck2",
+    "Neck3",
+    "Head",
+    "Ear1.L",
+    "Ear2.L",
+    "Ear3.L",
+    "Ear4.L",
+    "Ear1.R",
+    "Ear2.R",
+    "Ear3.R",
+    "Ear4.R",
+    "FrontShoulder.L",
+    "FrontUpperLeg.L",
+    "FrontLowerLeg.L",
+    "FrontShoulder.R",
+    "FrontUpperLeg.R",
+    "FrontLowerLeg.R",
+    "BackShoulder.L",
+    "BackLeg.L",
+    "BackUpperLeg.L",
+    "BackLowerLeg.L",
+    "BackShoulder.R",
+    "BackLeg.R",
+    "BackUpperLeg.R",
+    "BackLowerLeg.R",
+    "Tail1",
+    "Tail2",
+    "Tail3",
+    "PoleTargetBack.L",
+    "PoleTarget.L",
+    "PoleTargetBack.R",
+    "PoleTarget.R",
+    "IKBackLeg.L",
+    "FFB.L",
+    "IKFrontLeg.L",
+    "FF.L",
+    "IKBackLeg.R",
+    "FFB.R",
+    "IKFrontLeg.R",
+    "FF.R",
+    "Deer"
+  ],
+  "delivery_bike": [
+    "delivery_bike"
+  ],
+  "delivery_van": [
+    "door",
+    "wheel-front-right",
+    "wheel-front-left",
+    "wheel-back-right",
+    "wheel-back-left",
+    "body"
+  ],
+  "digger": [
+    "wheel-back-left",
+    "body",
+    "shovel",
+    "wheel-back-right",
+    "wheel-front-left",
+    "wheel-front-right"
+  ],
+  "dino": [
+    "Armature",
+    "Body",
+    "FrontLeg.R",
+    "FrontUpLeg.R",
+    "FrontLowLeg.R",
+    "FrontFoot.R",
+    "BackLeg.R",
+    "BackUpLeg.R",
+    "BackLowLeg.R",
+    "FrontLeg.L",
+    "FrontUpLeg.L",
+    "FrontLowLeg.L",
+    "FrontFoot.L",
+    "BackLeg.L",
+    "BackUpLeg.L",
+    "BackLowLeg.L",
+    "Back",
+    "Tail1",
+    "Tail2",
+    "Tail3",
+    "Tail4",
+    "Tail5",
+    "Hips",
+    "Torso",
+    "Shoulders",
+    "Neck",
+    "Head",
+    "BackFoot.R",
+    "BackFoot.L",
+    "Velociraptor"
+  ],
+  "dirt_bike": [
+    "dirt_bike"
+  ],
+  "dog": [
+    "AnimalArmature",
+    "All",
+    "FrontLeg.L",
+    "FrontLeg.L_end",
+    "BackLeg.L",
+    "BackLeg.L_end",
+    "Body",
+    "Head",
+    "Head_end",
+    "Tail",
+    "Tail_end",
+    "FrontLeg.R",
+    "FrontLeg.R_end",
+    "BackLeg.R",
+    "BackLeg.R_end",
+    "Dog"
+  ],
+  "dolphin": [
+    "Armature",
+    "Spine1",
+    "Spine2",
+    "Spine3",
+    "Spine4",
+    "Tail",
+    "TopFlipper.L",
+    "MidFlipper.L",
+    "BottomFlipper.L",
+    "TopFlipper.R",
+    "MidFlipper.R",
+    "BottomFlipper.R",
+    "Head",
+    "Dolphin"
+  ],
+  "donkey": [
+    "AnimalArmature",
+    "Body",
+    "Back",
+    "Torso",
+    "Torso2",
+    "Torso3",
+    "Neck1",
+    "Neck2",
+    "Neck3",
+    "Head",
+    "Ear1.L",
+    "Ear2.L",
+    "Ear3.L",
+    "Ear4.L",
+    "Ear1.R",
+    "Ear2.R",
+    "Ear3.R",
+    "Ear4.R",
+    "FrontShoulder.L",
+    "FrontUpperLeg.L",
+    "FrontLowerLeg.L",
+    "FrontShoulder.R",
+    "FrontUpperLeg.R",
+    "FrontLowerLeg.R",
+    "BackShoulder.L",
+    "BackLeg.L",
+    "BackUpperLeg.L",
+    "BackLowerLeg.L",
+    "BackShoulder.R",
+    "BackLeg.R",
+    "BackUpperLeg.R",
+    "BackLowerLeg.R",
+    "Tail1",
+    "Tail2",
+    "Tail3",
+    "Tail4",
+    "Tail5",
+    "Tail6",
+    "Tail7",
+    "PoleTargetBack.L",
+    "PoleTarget.L",
+    "PoleTargetBack.R",
+    "PoleTarget.R",
+    "IKBackLeg.L",
+    "FFB.L",
+    "IKFrontLeg.L",
+    "FF.L",
+    "IKBackLeg.R",
+    "FFB.R",
+    "IKFrontLeg.R",
+    "FF.R",
+    "Donkey"
+  ],
+  "donut": [
+    "donut-sprinkles"
+  ],
+  "dragon": [
+    "DragonArmature",
+    "BodyRoot",
+    "Body",
+    "Neck",
+    "Head",
+    "Face",
+    "Eyes",
+    "Nose",
+    "Shoulder.L",
+    "Wing1.L",
+    "Wing2.L",
+    "Wing3.L",
+    "Wing4.L",
+    "Shoulder.R",
+    "Wing1.R",
+    "Wing2.R",
+    "Wing3.R",
+    "Wing4.R",
+    "UpperLeg.L",
+    "LowerLeg.L",
+    "Feet.L",
+    "UpperLeg.R",
+    "LowerLeg.R",
+    "Feet.R",
+    "Tail1",
+    "Tail2",
+    "Tail3",
+    "Tail4",
+    "Dragon"
+  ],
+  "dragon_evolved": [
+    "CharacterArmature",
+    "Torso",
+    "Neck",
+    "Head",
+    "Wing1.L",
+    "Wing2.L",
+    "Wing3.L",
+    "Wing4.L",
+    "Wing1.R",
+    "Wing2.R",
+    "Wing3.R",
+    "Wing4.R",
+    "Body1",
+    "Dragon_Fly"
+  ],
+  "drawbridge": [
+    "bridge-draw"
+  ],
+  "driveway": [
+    "driveway-long"
+  ],
+  "egg": [
+    "egg"
+  ],
+  "explorer": [
+    "character-m",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "family_house": [
+    "building-type-f"
+  ],
+  "fence": [
+    "fence"
+  ],
+  "fighter_jet": [
+    "Jet_Cube.024"
+  ],
+  "finish_line": [
+    "roadStart(Clone)"
+  ],
+  "firetruck": [
+    "body",
+    "grill",
+    "wheel-front-right",
+    "wheel-front-left",
+    "wheel-back-right",
+    "wheel-back-left"
+  ],
+  "fish": [
+    "Fish_Armature",
+    "Main1",
+    "Main2",
+    "Main3",
+    "Main4",
+    "Main5",
+    "Main6",
+    "Clownfish"
+  ],
+  "flag": [
+    "flag"
+  ],
+  "flare_gun": [
+    "FlareGun"
+  ],
+  "flats": [
+    "building-i"
+  ],
+  "footballer": [
+    "character-b",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "footballer_blue": [
+    "character-b",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "fox": [
+    "AnimalArmature",
+    "Body",
+    "Back",
+    "Torso",
+    "Torso2",
+    "Torso3",
+    "Neck1",
+    "Neck2",
+    "Neck3",
+    "Head",
+    "Ear1.L",
+    "Ear2.L",
+    "Ear3.L",
+    "Ear4.L",
+    "Ear1.R",
+    "Ear2.R",
+    "Ear3.R",
+    "Ear4.R",
+    "FrontShoulder.L",
+    "FrontUpperLeg.L",
+    "FrontLowerLeg.L",
+    "FrontShoulder.R",
+    "FrontUpperLeg.R",
+    "FrontLowerLeg.R",
+    "BackShoulder.L",
+    "BackLeg.L",
+    "BackUpperLeg.L",
+    "BackLowerLeg.L",
+    "BackShoulder.R",
+    "BackLeg.R",
+    "BackUpperLeg.R",
+    "BackLowerLeg.R",
+    "Tail1",
+    "Tail2",
+    "Tail3",
+    "Tail4",
+    "Tail5",
+    "Tail6",
+    "Tail7",
+    "Tail8",
+    "PoleTargetBack.L",
+    "PoleTarget.L",
+    "PoleTargetBack.R",
+    "PoleTarget.R",
+    "IKBackLeg.L",
+    "FFB.L",
+    "IKFrontLeg.L",
+    "FF.L",
+    "IKBackLeg.R",
+    "FFB.R",
+    "IKFrontLeg.R",
+    "FF.R",
+    "Fox"
+  ],
+  "frog": [
+    "CharacterArmature",
+    "Foot.L",
+    "Body",
+    "Hips",
+    "Abdomen",
+    "Torso",
+    "Neck",
+    "Head",
+    "Shoulder.L",
+    "UpperArm.L",
+    "LowerArm.L",
+    "Pinky1.L",
+    "Pinky2.L",
+    "Pinky3.L",
+    "Middle1.L",
+    "Middle2.L",
+    "Middle3.L",
+    "Index1.L",
+    "Index2.L",
+    "Index3.L",
+    "Thumb1.L",
+    "Thumb2.L",
+    "Shoulder.R",
+    "UpperArm.R",
+    "LowerArm.R",
+    "Pinky1.R",
+    "Pinky2.R",
+    "Pinky3.R",
+    "Middle1.R",
+    "Middle2.R",
+    "Middle3.R",
+    "Index1.R",
+    "Index2.R",
+    "Index3.R",
+    "Thumb1.R",
+    "Thumb2.R",
+    "UpperLeg.L",
+    "LowerLeg.L",
+    "UpperLeg.R",
+    "LowerLeg.R",
+    "PoleTarget.L",
+    "Foot.R",
+    "PoleTarget.R",
+    "Frog"
+  ],
+  "future_car": [
+    "body",
+    "wheel-back-left",
+    "wheel-back-right",
+    "wheel-front-left",
+    "wheel-front-right"
+  ],
+  "gamer": [
+    "character-c",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "garage_house": [
+    "building-type-u"
+  ],
+  "garbage_truck": [
+    "arm",
+    "wheel-front-left",
+    "wheel-front-right",
+    "wheel-back-right",
+    "wheel-back-left",
+    "body",
+    "trash"
+  ],
+  "garden_apartment": [
+    "building-j"
+  ],
+  "garden_path": [
+    "path-long"
+  ],
+  "gem": [
+    "jewel"
+  ],
+  "ghost": [
+    "CharacterArmature",
+    "Torso",
+    "Neck",
+    "Head",
+    "Shoulder.L",
+    "UpperArm.L",
+    "LowerArm.L",
+    "Middle1.L",
+    "Middle2.L",
+    "Middle3.L",
+    "Pinky1.L",
+    "Pinky2.L",
+    "Pinky3.L",
+    "Index1.L",
+    "Index2.L",
+    "Index3.L",
+    "Thumb1.L",
+    "Thumb2.L",
+    "Thumb3.L",
+    "Shoulder.R",
+    "UpperArm.R",
+    "LowerArm.R",
+    "Middle1.R",
+    "Middle2.R",
+    "Middle3.R",
+    "Pinky1.R",
+    "Pinky2.R",
+    "Pinky3.R",
+    "Index1.R",
+    "Index2.R",
+    "Index3.R",
+    "Thumb1.R",
+    "Thumb2.R",
+    "Thumb3.R",
+    "Body1",
+    "Body2",
+    "Body3",
+    "Body4",
+    "Ghost"
+  ],
+  "girl": [
+    "character-e",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "glass_tower": [
+    "building-skyscraper-a"
+  ],
+  "gokart": [
+    "kart-oobi",
+    "wheel-back-right",
+    "wheel-front-left",
+    "wheel-front-right",
+    "wheel-back-left",
+    "character"
+  ],
+  "grandpa": [
+    "character-a",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "grandstand": [
+    "grandStand(Clone)"
+  ],
+  "grenade": [
+    "Grenade"
+  ],
+  "grenade_launcher": [
+    "GrenadeLauncher"
+  ],
+  "hatchback": [
+    "wheel-front-right",
+    "wheel-front-left",
+    "wheel-back-right",
+    "wheel-back-left",
+    "body"
+  ],
+  "hazmat": [
+    "CharacterArmature",
+    "Foot.L",
+    "Body",
+    "Hips",
+    "Abdomen",
+    "Torso",
+    "Neck",
+    "Head",
+    "Shoulder.L",
+    "UpperArm.L",
+    "LowerArm.L",
+    "Pinky1.L",
+    "Pinky2.L",
+    "Pinky3.L",
+    "Middle1.L",
+    "Middle2.L",
+    "Middle3.L",
+    "Index1.L",
+    "Index2.L",
+    "Index3.L",
+    "Thumb1.L",
+    "Thumb2.L",
+    "Shoulder.R",
+    "UpperArm.R",
+    "LowerArm.R",
+    "Pinky1.R",
+    "Pinky2.R",
+    "Pinky3.R",
+    "Middle1.R",
+    "Middle2.R",
+    "Middle3.R",
+    "Index1.R",
+    "Index2.R",
+    "Index3.R",
+    "Thumb1.R",
+    "Thumb2.R",
+    "UpperLeg.L",
+    "LowerLeg.L",
+    "UpperLeg.R",
+    "LowerLeg.R",
+    "PoleTarget.L",
+    "Foot.R",
+    "PoleTarget.R",
+    "Character_Hazmat_Head",
+    "Character_Hazmat"
+  ],
+  "heart": [
+    "heart"
+  ],
+  "helicopter": [
+    "body",
+    "engine",
+    "canopy",
+    "rotor"
+  ],
+  "hero": [
+    "character-oobi",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "body-mesh"
+  ],
+  "highway_sign": [
+    "sign-highway"
+  ],
+  "hill_block": [
+    "cliff_block_rock"
+  ],
+  "hill_corner": [
+    "cliff_cornerLarge_rock"
+  ],
+  "hill_slope": [
+    "cliff_blockSlope_rock"
+  ],
+  "horse": [
+    "AnimalArmature",
+    "Body",
+    "Back",
+    "Torso",
+    "Torso2",
+    "Torso3",
+    "Neck1",
+    "Neck2",
+    "Neck3",
+    "Head",
+    "Ear1.L",
+    "Ear2.L",
+    "Ear3.L",
+    "Ear4.L",
+    "Ear1.R",
+    "Ear2.R",
+    "Ear3.R",
+    "Ear4.R",
+    "FrontShoulder.L",
+    "FrontUpperLeg.L",
+    "FrontLowerLeg.L",
+    "FrontShoulder.R",
+    "FrontUpperLeg.R",
+    "FrontLowerLeg.R",
+    "BackShoulder.L",
+    "BackLeg.L",
+    "BackUpperLeg.L",
+    "BackLowerLeg.L",
+    "BackShoulder.R",
+    "BackLeg.R",
+    "BackUpperLeg.R",
+    "BackLowerLeg.R",
+    "Tail1",
+    "Tail2",
+    "Tail3",
+    "Tail4",
+    "Tail5",
+    "Tail6",
+    "Tail7",
+    "PoleTargetBack.L",
+    "PoleTarget.L",
+    "PoleTargetBack.R",
+    "PoleTarget.R",
+    "IKBackLeg.L",
+    "FFB.L",
+    "IKFrontLeg.L",
+    "FF.L",
+    "IKBackLeg.R",
+    "FFB.R",
+    "IKFrontLeg.R",
+    "FF.R",
+    "Horse"
+  ],
+  "hotdog": [
+    "hot-dog",
+    "sauce",
+    "sausage"
+  ],
+  "house": [
+    "building-type-a"
+  ],
+  "ice_block": [
+    "Block_Ice"
+  ],
+  "ice_cream": [
+    "ice-cream",
+    "Group"
+  ],
+  "igloo": [
+    "igloo"
+  ],
+  "jungle_grass": [
+    "Grass_3"
+  ],
+  "jungle_tree": [
+    "Tree_3"
+  ],
+  "kabaddi_mat": [
+    "kabaddi_mat"
+  ],
+  "kabaddi_player": [
+    "character-b",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "key": [
+    "key"
+  ],
+  "kho_kho_lane_field": [
+    "kho_kho_lane_field"
+  ],
+  "kho_kho_player": [
+    "character-b",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "kho_kho_pole": [
+    "kho_kho_pole"
+  ],
+  "kimono_woman": [
+    "character-n",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "ladder": [
+    "ladder"
+  ],
+  "landmine": [
+    "Landmine"
+  ],
+  "laser_gun": [
+    "Lightning Gun"
+  ],
+  "lever": [
+    "lever",
+    "handle"
+  ],
+  "lily_pad": [
+    "lily_large"
+  ],
+  "lock": [
+    "lock"
+  ],
+  "log": [
+    "log"
+  ],
+  "long_office": [
+    "building-k"
+  ],
+  "low_fence": [
+    "fence-low"
+  ],
+  "ludo_board": [
+    "ludo_board"
+  ],
+  "ludo_dice": [
+    "ludo_dice"
+  ],
+  "ludo_pawn_blue": [
+    "ludo_pawn_blue"
+  ],
+  "ludo_pawn_green": [
+    "ludo_pawn_green"
+  ],
+  "ludo_pawn_red": [
+    "ludo_pawn_red"
+  ],
+  "ludo_pawn_yellow": [
+    "ludo_pawn_yellow"
+  ],
+  "luxury_suv": [
+    "wheel-back-right",
+    "wheel-front-right",
+    "wheel-front-left",
+    "body",
+    "wheel-back-left"
+  ],
+  "mall": [
+    "building-n"
+  ],
+  "man": [
+    "character-b",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "marble": [
+    "marble"
+  ],
+  "marble_blue": [
+    "marble_blue"
+  ],
+  "marble_green": [
+    "marble_green"
+  ],
+  "mascot": [
+    "character-d",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "mech": [
+    "character-g",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "military_motorbike": [
+    "Motor"
+  ],
+  "mini_bike": [
+    "mini_bike"
+  ],
+  "modern_house": [
+    "building-type-p"
+  ],
+  "modern_villa": [
+    "building-type-q"
+  ],
+  "monkey": [
+    "Geo_Chimpanzee"
+  ],
+  "moped": [
+    "moped"
+  ],
+  "mountain": [
+    "MountainLarge_Single"
+  ],
+  "mountain_range": [
+    "Mountain_Group_1"
+  ],
+  "mountain_small": [
+    "Mountain_Single"
+  ],
+  "muffin": [
+    "muffin"
+  ],
+  "mushroom": [
+    "mushrooms"
+  ],
+  "narrow_tower": [
+    "building-m"
+  ],
+  "ninja": [
+    "character-r",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "office_block": [
+    "building-f"
+  ],
+  "office_building": [
+    "building-e"
+  ],
+  "office_small": [
+    "building-a"
+  ],
+  "office_wide": [
+    "building-e"
+  ],
+  "orc": [
+    "character-o",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "palm_tree": [
+    "tree_palm"
+  ],
+  "palm_tree_tall": [
+    "Environment_PalmTree_2"
+  ],
+  "panda": [
+    "CharacterArmature",
+    "Foot.L",
+    "Foot.L_end",
+    "Body",
+    "Hips",
+    "Abdomen",
+    "Torso",
+    "Neck",
+    "Head",
+    "Head_end",
+    "Shoulder.L",
+    "UpperArm.L",
+    "LowerArm.L",
+    "Pinky1.L",
+    "Pinky2.L",
+    "Pinky3.L",
+    "Pinky3.L_end",
+    "Middle1.L",
+    "Middle2.L",
+    "Middle3.L",
+    "Middle3.L_end",
+    "Index1.L",
+    "Index2.L",
+    "Index3.L",
+    "Index3.L_end",
+    "Thumb1.L",
+    "Thumb2.L",
+    "Thumb2.L_end",
+    "Shoulder.R",
+    "UpperArm.R",
+    "LowerArm.R",
+    "Pinky1.R",
+    "Pinky2.R",
+    "Pinky3.R",
+    "Pinky3.R_end",
+    "Middle1.R",
+    "Middle2.R",
+    "Middle3.R",
+    "Middle3.R_end",
+    "Index1.R",
+    "Index2.R",
+    "Index3.R",
+    "Index3.R_end",
+    "Thumb1.R",
+    "Thumb2.R",
+    "Thumb2.R_end",
+    "UpperLeg.L",
+    "LowerLeg.L",
+    "LowerLeg.L_end",
+    "UpperLeg.R",
+    "LowerLeg.R",
+    "LowerLeg.R_end",
+    "PoleTarget.L",
+    "PoleTarget.L_end",
+    "Foot.R",
+    "Foot.R_end",
+    "PoleTarget.R",
+    "PoleTarget.R_end",
+    "Headband",
+    "Panda"
+  ],
+  "parasol": [
+    "detail-parasol-a"
+  ],
+  "pickup_truck": [
+    "body",
+    "wheel-front-right",
+    "wheel-front-left",
+    "wheel-back-right",
+    "wheel-back-left"
+  ],
+  "pine": [
+    "tree-pine"
+  ],
+  "pirate": [
+    "character-p",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "pistol": [
+    "Pistol"
+  ],
+  "pit_garage": [
+    "pitsGarage(Clone)"
+  ],
+  "pizza": [
+    "slice6",
+    "slice1",
+    "slice2",
+    "slice3",
+    "slice4",
+    "slice5",
+    "slice7",
+    "slice8"
+  ],
+  "planter": [
+    "planter"
+  ],
+  "plumber": [
+    "character-k",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "police": [
+    "wheel-back-left",
+    "wheel-front-left",
+    "wheel-back-right",
+    "body",
+    "grill",
+    "wheel-front-right"
+  ],
+  "police_bike": [
+    "police_bike"
+  ],
+  "police_officer": [
+    "character-j",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "porch_house": [
+    "building-type-n"
+  ],
+  "private_jet": [
+    "group1104515071",
+    "group582566495",
+    "group1646739104",
+    "group512567540",
+    "group923116386",
+    "group248001973"
+  ],
+  "purple_mech": [
+    "character-h",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "race_bike": [
+    "race_bike"
+  ],
+  "race_kart": [
+    "kart-oodi",
+    "wheel-back-right",
+    "character",
+    "wheel-back-left",
+    "wheel-front-left",
+    "wheel-front-right"
+  ],
+  "race_track_corner": [
+    "roadCornerSmall(Clone)"
+  ],
+  "race_track_corner_wide": [
+    "roadCornerLarge(Clone)"
+  ],
+  "race_track_curve": [
+    "roadCurved(Clone)"
+  ],
+  "race_track_straight": [
+    "roadStraight(Clone)"
+  ],
+  "radar": [
+    "Roof_Radar"
+  ],
+  "revolver": [
+    "Revolver_3"
+  ],
+  "rifle": [
+    "Weapon_Rifle"
+  ],
+  "river_bend": [
+    "ground_riverBend"
+  ],
+  "river_corner": [
+    "ground_riverCorner"
+  ],
+  "river_cross": [
+    "ground_riverCross"
+  ],
+  "river_end": [
+    "ground_riverEnd"
+  ],
+  "river_rocks": [
+    "ground_riverRocks"
+  ],
+  "river_split": [
+    "ground_riverSplit"
+  ],
+  "river_straight": [
+    "ground_riverStraight"
+  ],
+  "road_bridge": [
+    "road-bridge"
+  ],
+  "road_crossing": [
+    "road-crossing"
+  ],
+  "road_curve": [
+    "road-curve"
+  ],
+  "road_intersection": [
+    "road-intersection"
+  ],
+  "road_ramp": [
+    "road-slant"
+  ],
+  "road_roundabout": [
+    "road-roundabout"
+  ],
+  "road_straight": [
+    "road-straight"
+  ],
+  "robot": [
+    "CharacterArmature",
+    "Body",
+    "Head",
+    "Leg1.L",
+    "Leg2.L",
+    "Leg3.L",
+    "Leg1.R",
+    "Leg2.R",
+    "Leg3.R",
+    "Eye",
+    "Gun",
+    "Foot.L",
+    "PT.L",
+    "Foot.R",
+    "PT.R",
+    "Enemy_Robot_2Legs"
+  ],
+  "rock": [
+    "rock_largeA"
+  ],
+  "rocket": [
+    "Cone"
+  ],
+  "rocket_launcher": [
+    "RocketLauncher"
+  ],
+  "sandbags": [
+    "SackTrench"
+  ],
+  "sandbags_small": [
+    "SackTrench_Small"
+  ],
+  "sandwich": [
+    "sandwich",
+    "lettuce",
+    "meat",
+    "bun",
+    "bun"
+  ],
+  "savanna_tree": [
+    "Tree2"
+  ],
+  "saw": [
+    "saw"
+  ],
+  "scientist": [
+    "character-i",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "scooter": [
+    "scooter"
+  ],
+  "sedan": [
+    "wheel-front-right",
+    "body",
+    "wheel-back-left",
+    "wheel-back-right",
+    "wheel-front-left"
+  ],
+  "shark": [
+    "Armature",
+    "Spine1",
+    "Spine2",
+    "Spine3",
+    "Tail",
+    "Bone",
+    "Bone.001",
+    "Face",
+    "Shark"
+  ],
+  "shield": [
+    "Shield_Heater_2"
+  ],
+  "shop": [
+    "low-detail-building-a"
+  ],
+  "short_driveway": [
+    "driveway-short"
+  ],
+  "shotgun": [
+    "Shotgun_2"
+  ],
+  "shuttlecock": [
+    "shuttlecock"
+  ],
+  "siege_tower": [
+    "siege-tower",
+    "wheel",
+    "wheel",
+    "wheel",
+    "wheel"
+  ],
+  "sight_screen": [
+    "sight_screen"
+  ],
+  "signpost": [
+    "sign"
+  ],
+  "ski_lift_tower": [
+    "ski_lift_tower"
+  ],
+  "ski_poles": [
+    "ski_poles"
+  ],
+  "skis": [
+    "skis"
+  ],
+  "skyscraper": [
+    "building-skyscraper-a"
+  ],
+  "slalom_gate": [
+    "slalom_gate"
+  ],
+  "sled": [
+    "sled"
+  ],
+  "small_plane": [
+    "Fuselage_Cube.003",
+    "Propeller_Cone"
+  ],
+  "small_tree": [
+    "tree-small"
+  ],
+  "snake": [
+    "SnakeArmature",
+    "Body",
+    "Chest",
+    "Neck",
+    "Head",
+    "Tail",
+    "Tail1",
+    "Tail2",
+    "Tail3",
+    "PoleTarget",
+    "Mouth",
+    "LowerMouth",
+    "Tongue1",
+    "Tongue2",
+    "Tongue3",
+    "Snake"
+  ],
+  "sniper_rifle": [
+    "SniperRifle_5"
+  ],
+  "snow_birch": [
+    "BirchTree_Snow_5"
+  ],
+  "snow_bush": [
+    "Bush_Snow_2"
+  ],
+  "snow_dead_tree": [
+    "CommonTree_Dead_Snow_3"
+  ],
+  "snow_mountain": [
+    "snow_mountain"
+  ],
+  "snow_pine": [
+    "PineTree_Snow_4"
+  ],
+  "snow_rock": [
+    "Rock_Snow_2"
+  ],
+  "snowman": [
+    "snowman"
+  ],
+  "soccer_ball": [
+    "soccer_ball"
+  ],
+  "soccer_goal": [
+    "soccer_goal"
+  ],
+  "soldier": [
+    "CharacterArmature",
+    "Foot.L",
+    "Body",
+    "Hips",
+    "Abdomen",
+    "Torso",
+    "Neck",
+    "Head",
+    "Head",
+    "Shoulder.L",
+    "UpperArm.L",
+    "ShoulderPad.L",
+    "LowerArm.L",
+    "Pinky1.L",
+    "Pinky2.L",
+    "Pinky3.L",
+    "Middle1.L",
+    "Middle2.L",
+    "Middle3.L",
+    "Index1.L",
+    "Index2.L",
+    "Index3.L",
+    "Thumb1.L",
+    "Thumb2.L",
+    "Shoulder.R",
+    "UpperArm.R",
+    "ShoulderPad.R",
+    "LowerArm.R",
+    "Pinky1.R",
+    "Pinky2.R",
+    "Pinky3.R",
+    "Middle1.R",
+    "Middle2.R",
+    "Middle3.R",
+    "Index1.R",
+    "Index2.R",
+    "Index3.R",
+    "Thumb1.R",
+    "Thumb2.R",
+    "UpperLeg.L",
+    "LowerLeg.L",
+    "UpperLeg.R",
+    "LowerLeg.R",
+    "PoleTarget.L",
+    "Foot.R",
+    "PoleTarget.R",
+    "Body"
+  ],
+  "space_pistol": [
+    "Pistol_1"
+  ],
+  "space_rifle": [
+    "AR_4",
+    "Magazine"
+  ],
+  "spaceship": [
+    "Spaceship_RaeTheRedPanda"
+  ],
+  "sport_bike": [
+    "sport_bike"
+  ],
+  "sports_car": [
+    "wheel-back-right",
+    "body",
+    "spoiler",
+    "wheel-back-left",
+    "wheel-front-left",
+    "wheel-front-right"
+  ],
+  "spring": [
+    "spring",
+    "platform",
+    "spring"
+  ],
+  "stag": [
+    "AnimalArmature",
+    "Body",
+    "Back",
+    "Torso",
+    "Torso2",
+    "Torso3",
+    "Neck1",
+    "Neck2",
+    "Neck3",
+    "Head",
+    "Stag_Horns",
+    "FrontShoulder.L",
+    "FrontUpperLeg.L",
+    "FrontLowerLeg.L",
+    "FrontShoulder.R",
+    "FrontUpperLeg.R",
+    "FrontLowerLeg.R",
+    "BackShoulder.L",
+    "BackLeg.L",
+    "BackUpperLeg.L",
+    "BackLowerLeg.L",
+    "BackShoulder.R",
+    "BackLeg.R",
+    "BackUpperLeg.R",
+    "BackLowerLeg.R",
+    "Tail1",
+    "Tail2",
+    "Tail3",
+    "PoleTargetBack.L",
+    "PoleTarget.L",
+    "PoleTargetBack.R",
+    "PoleTarget.R",
+    "IKBackLeg.L",
+    "FFB.L",
+    "IKFrontLeg.L",
+    "FF.L",
+    "IKBackLeg.R",
+    "FFB.R",
+    "IKFrontLeg.R",
+    "FF.R",
+    "Stag"
+  ],
+  "star": [
+    "star"
+  ],
+  "statue": [
+    "statue_head"
+  ],
+  "stilt_house": [
+    "building-type-r"
+  ],
+  "stone_path": [
+    "path-stones-long"
+  ],
+  "strawberry": [
+    "strawberry"
+  ],
+  "submachine_gun": [
+    "SubmachineGun_2"
+  ],
+  "sushi": [
+    "maki-salmon"
+  ],
+  "suv": [
+    "body",
+    "wheel-back",
+    "wheel-back-left",
+    "wheel-back-right",
+    "wheel-front-left",
+    "wheel-front-right"
+  ],
+  "sword": [
+    "Sword"
+  ],
+  "taco": [
+    "taco"
+  ],
+  "tank": [
+    "Tank_Gun",
+    "Tank_Turret",
+    "TankArmature",
+    "TankTrack22.L",
+    "TankTrack11.L",
+    "TankTrack10.L",
+    "TankTrack12.L",
+    "TankTrack9.L",
+    "TankTrack8.L",
+    "TankTrack14.L",
+    "TankTrack13.L",
+    "TankTrack15.L",
+    "TankTrack16.L",
+    "TankTrack6.L",
+    "TankTrack7.L",
+    "TankTrack18.L",
+    "TankTrack17.L",
+    "TankTrack5.L",
+    "TankTrack4.L",
+    "TankTrack2.L",
+    "TankTrack3.L",
+    "TankTrack19.L",
+    "TankTrack20.L",
+    "TankTrack1.L",
+    "TankTrack21.L",
+    "TankTrack22.R",
+    "TankTrack11.R",
+    "TankTrack10.R",
+    "TankTrack12.R",
+    "TankTrack9.R",
+    "TankTrack8.R",
+    "TankTrack14.R",
+    "TankTrack13.R",
+    "TankTrack15.R",
+    "TankTrack16.R",
+    "TankTrack6.R",
+    "TankTrack7.R",
+    "TankTrack18.R",
+    "TankTrack17.R",
+    "TankTrack5.R",
+    "TankTrack4.R",
+    "TankTrack2.R",
+    "TankTrack3.R",
+    "TankTrack19.R",
+    "TankTrack20.R",
+    "TankTrack1.R",
+    "TankTrack21.R",
+    "Tank_body",
+    "TrackMesh.R",
+    "TrackMesh.L"
+  ],
+  "tank_desert": [
+    "Tank_Turret",
+    "TankArmature",
+    "TankTrack22.L",
+    "TankTrack11.L",
+    "TankTrack10.L",
+    "TankTrack12.L",
+    "TankTrack9.L",
+    "TankTrack8.L",
+    "TankTrack14.L",
+    "TankTrack13.L",
+    "TankTrack15.L",
+    "TankTrack16.L",
+    "TankTrack6.L",
+    "TankTrack7.L",
+    "TankTrack18.L",
+    "TankTrack17.L",
+    "TankTrack5.L",
+    "TankTrack4.L",
+    "TankTrack2.L",
+    "TankTrack3.L",
+    "TankTrack19.L",
+    "TankTrack20.L",
+    "TankTrack1.L",
+    "TankTrack21.L",
+    "TankTrack22.R",
+    "TankTrack11.R",
+    "TankTrack10.R",
+    "TankTrack12.R",
+    "TankTrack9.R",
+    "TankTrack8.R",
+    "TankTrack14.R",
+    "TankTrack13.R",
+    "TankTrack15.R",
+    "TankTrack16.R",
+    "TankTrack6.R",
+    "TankTrack7.R",
+    "TankTrack18.R",
+    "TankTrack17.R",
+    "TankTrack5.R",
+    "TankTrack4.R",
+    "TankTrack2.R",
+    "TankTrack3.R",
+    "TankTrack19.R",
+    "TankTrack20.R",
+    "TankTrack1.R",
+    "TankTrack21.R",
+    "Tank_body",
+    "TrackMesh.R",
+    "TrackMesh.L",
+    "Tank_Gun"
+  ],
+  "tank_rusty": [
+    "Tank_Gun",
+    "Tank_Turret",
+    "TankArmature",
+    "TankTrack22.L",
+    "TankTrack11.L",
+    "TankTrack10.L",
+    "TankTrack12.L",
+    "TankTrack9.L",
+    "TankTrack8.L",
+    "TankTrack14.L",
+    "TankTrack13.L",
+    "TankTrack15.L",
+    "TankTrack16.L",
+    "TankTrack6.L",
+    "TankTrack7.L",
+    "TankTrack18.L",
+    "TankTrack17.L",
+    "TankTrack5.L",
+    "TankTrack4.L",
+    "TankTrack2.L",
+    "TankTrack3.L",
+    "TankTrack19.L",
+    "TankTrack20.L",
+    "TankTrack1.L",
+    "TankTrack21.L",
+    "TankTrack22.R",
+    "TankTrack11.R",
+    "TankTrack10.R",
+    "TankTrack12.R",
+    "TankTrack9.R",
+    "TankTrack8.R",
+    "TankTrack14.R",
+    "TankTrack13.R",
+    "TankTrack15.R",
+    "TankTrack16.R",
+    "TankTrack6.R",
+    "TankTrack7.R",
+    "TankTrack18.R",
+    "TankTrack17.R",
+    "TankTrack5.R",
+    "TankTrack4.R",
+    "TankTrack2.R",
+    "TankTrack3.R",
+    "TankTrack19.R",
+    "TankTrack20.R",
+    "TankTrack1.R",
+    "TankTrack21.R",
+    "Tank_body.001",
+    "TrackMesh.R",
+    "TrackMesh.L"
+  ],
+  "tank_toy": [
+    "Tank"
+  ],
+  "taxi": [
+    "body",
+    "wheel-front-right",
+    "wheel-front-left",
+    "wheel-back-left",
+    "wheel-back-right"
+  ],
+  "tent": [
+    "tent_smallClosed"
+  ],
+  "toadstool": [
+    "mushroom_red"
+  ],
+  "tower": [
+    "Tower",
+    "Tower_Door"
+  ],
+  "town_house": [
+    "building-type-k"
+  ],
+  "tractor": [
+    "wheel-front-right",
+    "wheel-front-left",
+    "wheel-back-right",
+    "wheel-back-left",
+    "body"
+  ],
+  "traffic_cone": [
+    "cone"
+  ],
+  "trebuchet": [
+    "siege-trebuchet",
+    "arm",
+    "catapult",
+    "weight",
+    "catapult",
+    "weight",
+    "wheel",
+    "wheel",
+    "wheel",
+    "wheel"
+  ],
+  "tree": [
+    "tree"
+  ],
+  "tree_stump": [
+    "stump_round"
+  ],
+  "trophy": [
+    "Trophy"
+  ],
+  "truck": [
+    "wheel-front-left",
+    "wheel-front-right",
+    "wheel-back-right",
+    "wheel-back-left",
+    "body"
+  ],
+  "truss_bridge": [
+    "Bridge"
+  ],
+  "turret": [
+    "Turret_GunDouble_Base",
+    "Turret_GunDouble_Top"
+  ],
+  "turret_cannon": [
+    "Turret_Cannon_Base",
+    "Turret_Cannon_Top"
+  ],
+  "van": [
+    "wheel-front-right",
+    "wheel-front-left",
+    "wheel-back-right",
+    "wheel-back-left",
+    "body"
+  ],
+  "vines": [
+    "Vines"
+  ],
+  "waterfall": [
+    "cliff_waterfall_rock"
+  ],
+  "waterfall_top": [
+    "cliff_waterfallTop_rock"
+  ],
+  "watermelon": [
+    "slice",
+    "slice",
+    "slice",
+    "slice",
+    "slice",
+    "slice",
+    "slice",
+    "slice"
+  ],
+  "white_tower": [
+    "building-skyscraper-e"
+  ],
+  "wicket": [
+    "wicket"
+  ],
+  "wolf": [
+    "AnimalArmature",
+    "Body",
+    "Back",
+    "Torso",
+    "Torso2",
+    "Torso3",
+    "Neck1",
+    "Neck2",
+    "Neck3",
+    "Head",
+    "Ear1.L",
+    "Ear2.L",
+    "Ear3.L",
+    "Ear4.L",
+    "Ear1.R",
+    "Ear2.R",
+    "Ear3.R",
+    "Ear4.R",
+    "FrontShoulder.L",
+    "FrontUpperLeg.L",
+    "FrontLowerLeg.L",
+    "FrontShoulder.R",
+    "FrontUpperLeg.R",
+    "FrontLowerLeg.R",
+    "BackShoulder.L",
+    "BackLeg.L",
+    "BackUpperLeg.L",
+    "BackLowerLeg.L",
+    "BackShoulder.R",
+    "BackLeg.R",
+    "BackUpperLeg.R",
+    "BackLowerLeg.R",
+    "Tail1",
+    "Tail2",
+    "Tail3",
+    "Tail4",
+    "Tail5",
+    "Tail6",
+    "Tail7",
+    "Tail8",
+    "PoleTargetBack.L",
+    "PoleTarget.L",
+    "PoleTargetBack.R",
+    "PoleTarget.R",
+    "IKBackLeg.L",
+    "FFB.L",
+    "IKFrontLeg.L",
+    "FF.L",
+    "IKBackLeg.R",
+    "FFB.R",
+    "IKFrontLeg.R",
+    "FF.R",
+    "Wolf"
+  ],
+  "woman": [
+    "character-f",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ],
+  "wooden_bridge": [
+    "Bridge_Small"
+  ],
+  "zombie": [
+    "character-l",
+    "leg-left",
+    "leg-right",
+    "torso",
+    "arm-left",
+    "arm-right",
+    "head"
+  ]
+}

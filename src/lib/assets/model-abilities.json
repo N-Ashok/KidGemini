@@ -1,0 +1,1724 @@
+{
+  "airplane": {
+    "clips": [],
+    "skins": 0
+  },
+  "alien": {
+    "clips": [
+      "CharacterArmature|Dance",
+      "CharacterArmature|Idle",
+      "CharacterArmature|Jump",
+      "CharacterArmature|Walk"
+    ],
+    "skins": 2
+  },
+  "ambulance": {
+    "clips": [],
+    "skins": 0
+  },
+  "antenna_tower": {
+    "clips": [],
+    "skins": 0
+  },
+  "apartment": {
+    "clips": [],
+    "skins": 0
+  },
+  "apple": {
+    "clips": [],
+    "skins": 0
+  },
+  "armored_pickup": {
+    "clips": [],
+    "skins": 0
+  },
+  "armored_truck": {
+    "clips": [],
+    "skins": 0
+  },
+  "assault_rifle": {
+    "clips": [],
+    "skins": 0
+  },
+  "awning": {
+    "clips": [],
+    "skins": 0
+  },
+  "badminton_net": {
+    "clips": [],
+    "skins": 0
+  },
+  "badminton_racket": {
+    "clips": [],
+    "skins": 0
+  },
+  "ballista": {
+    "clips": [],
+    "skins": 0
+  },
+  "bamboo": {
+    "clips": [],
+    "skins": 0
+  },
+  "bamboo_short": {
+    "clips": [],
+    "skins": 0
+  },
+  "banana": {
+    "clips": [],
+    "skins": 0
+  },
+  "barrel": {
+    "clips": [],
+    "skins": 0
+  },
+  "barricade": {
+    "clips": [],
+    "skins": 0
+  },
+  "bat": {
+    "clips": [
+      "BatArmature|Bat_Attack",
+      "BatArmature|Bat_Flying"
+    ],
+    "skins": 1
+  },
+  "battering_ram": {
+    "clips": [],
+    "skins": 0
+  },
+  "battle_top": {
+    "clips": [],
+    "skins": 0
+  },
+  "bazooka": {
+    "clips": [],
+    "skins": 0
+  },
+  "bee": {
+    "clips": [
+      "CharacterArmature|Fast_Flying",
+      "CharacterArmature|Flying_Idle"
+    ],
+    "skins": 1
+  },
+  "big_leaf_plant": {
+    "clips": [],
+    "skins": 0
+  },
+  "biplane": {
+    "clips": [],
+    "skins": 0
+  },
+  "bird": {
+    "clips": [],
+    "skins": 0
+  },
+  "blade_top": {
+    "clips": [],
+    "skins": 0
+  },
+  "boat": {
+    "clips": [],
+    "skins": 0
+  },
+  "bomb": {
+    "clips": [],
+    "skins": 0
+  },
+  "bridge": {
+    "clips": [],
+    "skins": 0
+  },
+  "bridge_pillar": {
+    "clips": [],
+    "skins": 0
+  },
+  "bullets": {
+    "clips": [],
+    "skins": 0
+  },
+  "bungalow": {
+    "clips": [],
+    "skins": 0
+  },
+  "bunker": {
+    "clips": [],
+    "skins": 0
+  },
+  "burger": {
+    "clips": [],
+    "skins": 0
+  },
+  "businessman": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "cactus": {
+    "clips": [],
+    "skins": 0
+  },
+  "cake": {
+    "clips": [],
+    "skins": 0
+  },
+  "campfire": {
+    "clips": [],
+    "skins": 0
+  },
+  "cannon": {
+    "clips": [],
+    "skins": 0
+  },
+  "canoe": {
+    "clips": [],
+    "skins": 0
+  },
+  "car": {
+    "clips": [],
+    "skins": 0
+  },
+  "carrom_board": {
+    "clips": [],
+    "skins": 0
+  },
+  "carrom_coin_black": {
+    "clips": [],
+    "skins": 0
+  },
+  "carrom_coin_white": {
+    "clips": [],
+    "skins": 0
+  },
+  "carrom_queen": {
+    "clips": [],
+    "skins": 0
+  },
+  "carrom_striker": {
+    "clips": [],
+    "skins": 0
+  },
+  "carrot": {
+    "clips": [],
+    "skins": 0
+  },
+  "castle_door": {
+    "clips": [],
+    "skins": 0
+  },
+  "castle_gate": {
+    "clips": [],
+    "skins": 0
+  },
+  "cat": {
+    "clips": [
+      "AnimalArmature|AnimalArmature|AnimalArmature|Idle",
+      "AnimalArmature|AnimalArmature|AnimalArmature|Run",
+      "AnimalArmature|AnimalArmature|AnimalArmature|Walk"
+    ],
+    "skins": 1
+  },
+  "catapult": {
+    "clips": [],
+    "skins": 0
+  },
+  "chain_fence": {
+    "clips": [],
+    "skins": 0
+  },
+  "chairlift": {
+    "clips": [],
+    "skins": 0
+  },
+  "checkered_flag": {
+    "clips": [],
+    "skins": 0
+  },
+  "cherries": {
+    "clips": [],
+    "skins": 0
+  },
+  "chest": {
+    "clips": [
+      "open",
+      "close",
+      "open-close"
+    ],
+    "skins": 0
+  },
+  "chicken": {
+    "clips": [
+      "CharacterArmature|Idle",
+      "CharacterArmature|Jump",
+      "CharacterArmature|Walk"
+    ],
+    "skins": 1
+  },
+  "chopper_bike": {
+    "clips": [],
+    "skins": 0
+  },
+  "cliff": {
+    "clips": [],
+    "skins": 0
+  },
+  "coin": {
+    "clips": [],
+    "skins": 0
+  },
+  "corn": {
+    "clips": [],
+    "skins": 0
+  },
+  "cottage": {
+    "clips": [],
+    "skins": 0
+  },
+  "crate": {
+    "clips": [],
+    "skins": 0
+  },
+  "cricket_ball": {
+    "clips": [],
+    "skins": 0
+  },
+  "cricket_bat": {
+    "clips": [],
+    "skins": 0
+  },
+  "cricket_pitch": {
+    "clips": [],
+    "skins": 0
+  },
+  "cricketer": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "attack-kick-right",
+      "attack-kick-left",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "crocodile": {
+    "clips": [],
+    "skins": 0
+  },
+  "cruiser_bike": {
+    "clips": [],
+    "skins": 0
+  },
+  "cupcake": {
+    "clips": [],
+    "skins": 0
+  },
+  "dark_house": {
+    "clips": [],
+    "skins": 0
+  },
+  "deer": {
+    "clips": [
+      "Gallop",
+      "Walk",
+      "Idle"
+    ],
+    "skins": 1
+  },
+  "delivery_bike": {
+    "clips": [],
+    "skins": 0
+  },
+  "delivery_van": {
+    "clips": [],
+    "skins": 0
+  },
+  "digger": {
+    "clips": [],
+    "skins": 0
+  },
+  "dino": {
+    "clips": [
+      "Armature|Velociraptor_Attack",
+      "Armature|Velociraptor_Idle",
+      "Armature|Velociraptor_Run"
+    ],
+    "skins": 1
+  },
+  "dirt_bike": {
+    "clips": [],
+    "skins": 0
+  },
+  "dog": {
+    "clips": [
+      "AnimalArmature|AnimalArmature|AnimalArmature|Idle",
+      "AnimalArmature|AnimalArmature|AnimalArmature|Run",
+      "AnimalArmature|AnimalArmature|AnimalArmature|Walk"
+    ],
+    "skins": 1
+  },
+  "dolphin": {
+    "clips": [
+      "Armature|Swim"
+    ],
+    "skins": 1
+  },
+  "donkey": {
+    "clips": [
+      "Gallop",
+      "Walk",
+      "Idle"
+    ],
+    "skins": 1
+  },
+  "donut": {
+    "clips": [],
+    "skins": 0
+  },
+  "dragon": {
+    "clips": [
+      "DragonArmature|Dragon_Attack",
+      "DragonArmature|Dragon_Attack2",
+      "DragonArmature|Dragon_Death",
+      "DragonArmature|Dragon_Flying",
+      "DragonArmature|Dragon_Hit"
+    ],
+    "skins": 1
+  },
+  "dragon_evolved": {
+    "clips": [
+      "CharacterArmature|Death",
+      "CharacterArmature|Fast_Flying",
+      "CharacterArmature|Flying_Idle",
+      "CharacterArmature|Headbutt",
+      "CharacterArmature|HitReact",
+      "CharacterArmature|No",
+      "CharacterArmature|Punch",
+      "CharacterArmature|Yes"
+    ],
+    "skins": 1
+  },
+  "drawbridge": {
+    "clips": [],
+    "skins": 0
+  },
+  "driveway": {
+    "clips": [],
+    "skins": 0
+  },
+  "egg": {
+    "clips": [],
+    "skins": 0
+  },
+  "elevated_road": {
+    "clips": [],
+    "skins": 0
+  },
+  "explorer": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "family_house": {
+    "clips": [],
+    "skins": 0
+  },
+  "fence": {
+    "clips": [],
+    "skins": 0
+  },
+  "fighter_jet": {
+    "clips": [],
+    "skins": 0
+  },
+  "finish_line": {
+    "clips": [],
+    "skins": 0
+  },
+  "firetruck": {
+    "clips": [],
+    "skins": 0
+  },
+  "fish": {
+    "clips": [
+      "Fish_Armature|Out_Of_Water",
+      "Fish_Armature|Swimming_Fast",
+      "Fish_Armature|Swimming_Normal"
+    ],
+    "skins": 1
+  },
+  "flag": {
+    "clips": [],
+    "skins": 0
+  },
+  "flare_gun": {
+    "clips": [],
+    "skins": 0
+  },
+  "flats": {
+    "clips": [],
+    "skins": 0
+  },
+  "footballer": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "attack-kick-right",
+      "attack-kick-left",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "footballer_blue": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "attack-kick-right",
+      "attack-kick-left",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "fox": {
+    "clips": [
+      "Walk",
+      "Idle"
+    ],
+    "skins": 1
+  },
+  "frog": {
+    "clips": [
+      "CharacterArmature|Idle",
+      "CharacterArmature|Jump",
+      "CharacterArmature|Jump_Idle"
+    ],
+    "skins": 1
+  },
+  "future_car": {
+    "clips": [],
+    "skins": 0
+  },
+  "gamer": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "garage_house": {
+    "clips": [],
+    "skins": 0
+  },
+  "garbage_truck": {
+    "clips": [],
+    "skins": 0
+  },
+  "garden_apartment": {
+    "clips": [],
+    "skins": 0
+  },
+  "garden_path": {
+    "clips": [],
+    "skins": 0
+  },
+  "gem": {
+    "clips": [],
+    "skins": 0
+  },
+  "ghost": {
+    "clips": [
+      "CharacterArmature|Fast_Flying",
+      "CharacterArmature|Flying_Idle"
+    ],
+    "skins": 1
+  },
+  "girl": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "glass_tower": {
+    "clips": [],
+    "skins": 0
+  },
+  "gokart": {
+    "clips": [],
+    "skins": 0
+  },
+  "grandpa": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "grandstand": {
+    "clips": [],
+    "skins": 0
+  },
+  "grenade": {
+    "clips": [],
+    "skins": 0
+  },
+  "grenade_launcher": {
+    "clips": [],
+    "skins": 0
+  },
+  "hatchback": {
+    "clips": [],
+    "skins": 0
+  },
+  "hazmat": {
+    "clips": [
+      "CharacterArmature|Death",
+      "CharacterArmature|Idle",
+      "CharacterArmature|Idle_Shoot",
+      "CharacterArmature|Jump",
+      "CharacterArmature|Jump_Idle",
+      "CharacterArmature|Run",
+      "CharacterArmature|Run_Gun",
+      "CharacterArmature|Walk",
+      "CharacterArmature|Wave"
+    ],
+    "skins": 2
+  },
+  "heart": {
+    "clips": [],
+    "skins": 0
+  },
+  "helicopter": {
+    "clips": [],
+    "skins": 0
+  },
+  "hero": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "jump",
+      "fall",
+      "crouch",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "holding-right",
+      "holding-left",
+      "holding-both",
+      "holding-right-shoot",
+      "holding-left-shoot",
+      "holding-both-shoot",
+      "attack-melee-right",
+      "attack-melee-left",
+      "attack-kick-right",
+      "attack-kick-left",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 1
+  },
+  "highway_sign": {
+    "clips": [],
+    "skins": 0
+  },
+  "hill_block": {
+    "clips": [],
+    "skins": 0
+  },
+  "hill_corner": {
+    "clips": [],
+    "skins": 0
+  },
+  "hill_slope": {
+    "clips": [],
+    "skins": 0
+  },
+  "horse": {
+    "clips": [
+      "Gallop",
+      "Walk",
+      "Idle"
+    ],
+    "skins": 1
+  },
+  "hotdog": {
+    "clips": [],
+    "skins": 0
+  },
+  "house": {
+    "clips": [],
+    "skins": 0
+  },
+  "ice_block": {
+    "clips": [],
+    "skins": 0
+  },
+  "ice_cream": {
+    "clips": [],
+    "skins": 0
+  },
+  "igloo": {
+    "clips": [],
+    "skins": 0
+  },
+  "jungle_grass": {
+    "clips": [],
+    "skins": 0
+  },
+  "jungle_tree": {
+    "clips": [],
+    "skins": 0
+  },
+  "kabaddi_mat": {
+    "clips": [],
+    "skins": 0
+  },
+  "kabaddi_player": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "key": {
+    "clips": [],
+    "skins": 0
+  },
+  "kho_kho_lane_field": {
+    "clips": [],
+    "skins": 0
+  },
+  "kho_kho_player": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "kho_kho_pole": {
+    "clips": [],
+    "skins": 0
+  },
+  "kimono_woman": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "ladder": {
+    "clips": [],
+    "skins": 0
+  },
+  "landmine": {
+    "clips": [],
+    "skins": 0
+  },
+  "laser_gun": {
+    "clips": [],
+    "skins": 0
+  },
+  "lever": {
+    "clips": [
+      "toggle-on",
+      "toggle-off",
+      "toggle"
+    ],
+    "skins": 0
+  },
+  "lily_pad": {
+    "clips": [],
+    "skins": 0
+  },
+  "lock": {
+    "clips": [],
+    "skins": 0
+  },
+  "log": {
+    "clips": [],
+    "skins": 0
+  },
+  "long_office": {
+    "clips": [],
+    "skins": 0
+  },
+  "low_fence": {
+    "clips": [],
+    "skins": 0
+  },
+  "ludo_board": {
+    "clips": [],
+    "skins": 0
+  },
+  "ludo_dice": {
+    "clips": [],
+    "skins": 0
+  },
+  "ludo_pawn_blue": {
+    "clips": [],
+    "skins": 0
+  },
+  "ludo_pawn_green": {
+    "clips": [],
+    "skins": 0
+  },
+  "ludo_pawn_red": {
+    "clips": [],
+    "skins": 0
+  },
+  "ludo_pawn_yellow": {
+    "clips": [],
+    "skins": 0
+  },
+  "luxury_suv": {
+    "clips": [],
+    "skins": 0
+  },
+  "mall": {
+    "clips": [],
+    "skins": 0
+  },
+  "man": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "marble": {
+    "clips": [],
+    "skins": 0
+  },
+  "marble_blue": {
+    "clips": [],
+    "skins": 0
+  },
+  "marble_green": {
+    "clips": [],
+    "skins": 0
+  },
+  "mascot": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "mech": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "military_motorbike": {
+    "clips": [],
+    "skins": 0
+  },
+  "mini_bike": {
+    "clips": [],
+    "skins": 0
+  },
+  "modern_house": {
+    "clips": [],
+    "skins": 0
+  },
+  "modern_villa": {
+    "clips": [],
+    "skins": 0
+  },
+  "monkey": {
+    "clips": [],
+    "skins": 0
+  },
+  "moped": {
+    "clips": [],
+    "skins": 0
+  },
+  "motorcycle": {
+    "clips": [],
+    "skins": 0
+  },
+  "mountain": {
+    "clips": [],
+    "skins": 0
+  },
+  "mountain_range": {
+    "clips": [],
+    "skins": 0
+  },
+  "mountain_small": {
+    "clips": [],
+    "skins": 0
+  },
+  "muffin": {
+    "clips": [],
+    "skins": 0
+  },
+  "mushroom": {
+    "clips": [],
+    "skins": 0
+  },
+  "narrow_tower": {
+    "clips": [],
+    "skins": 0
+  },
+  "ninja": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "office_block": {
+    "clips": [],
+    "skins": 0
+  },
+  "office_building": {
+    "clips": [],
+    "skins": 0
+  },
+  "office_small": {
+    "clips": [],
+    "skins": 0
+  },
+  "office_wide": {
+    "clips": [],
+    "skins": 0
+  },
+  "orc": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "palm_tree": {
+    "clips": [],
+    "skins": 0
+  },
+  "palm_tree_tall": {
+    "clips": [],
+    "skins": 0
+  },
+  "panda": {
+    "clips": [
+      "CharacterArmature|CharacterArmature|CharacterArmature|Idle",
+      "CharacterArmature|CharacterArmature|CharacterArmature|Jump_Idle",
+      "CharacterArmature|CharacterArmature|CharacterArmature|Run",
+      "CharacterArmature|CharacterArmature|CharacterArmature|Sitting_Idle",
+      "CharacterArmature|CharacterArmature|CharacterArmature|Walk"
+    ],
+    "skins": 2
+  },
+  "parasol": {
+    "clips": [],
+    "skins": 0
+  },
+  "pickup_truck": {
+    "clips": [],
+    "skins": 0
+  },
+  "pine": {
+    "clips": [],
+    "skins": 0
+  },
+  "pirate": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "pistol": {
+    "clips": [],
+    "skins": 0
+  },
+  "pit_garage": {
+    "clips": [],
+    "skins": 0
+  },
+  "pizza": {
+    "clips": [],
+    "skins": 0
+  },
+  "planter": {
+    "clips": [],
+    "skins": 0
+  },
+  "plumber": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "police": {
+    "clips": [],
+    "skins": 0
+  },
+  "police_bike": {
+    "clips": [],
+    "skins": 0
+  },
+  "police_officer": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "porch_house": {
+    "clips": [],
+    "skins": 0
+  },
+  "private_jet": {
+    "clips": [],
+    "skins": 0
+  },
+  "purple_mech": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "race_bike": {
+    "clips": [],
+    "skins": 0
+  },
+  "race_kart": {
+    "clips": [],
+    "skins": 0
+  },
+  "race_track_corner": {
+    "clips": [],
+    "skins": 0
+  },
+  "race_track_corner_wide": {
+    "clips": [],
+    "skins": 0
+  },
+  "race_track_curve": {
+    "clips": [],
+    "skins": 0
+  },
+  "race_track_straight": {
+    "clips": [],
+    "skins": 0
+  },
+  "radar": {
+    "clips": [],
+    "skins": 0
+  },
+  "revolver": {
+    "clips": [],
+    "skins": 0
+  },
+  "rifle": {
+    "clips": [],
+    "skins": 0
+  },
+  "river_bend": {
+    "clips": [],
+    "skins": 0
+  },
+  "river_corner": {
+    "clips": [],
+    "skins": 0
+  },
+  "river_cross": {
+    "clips": [],
+    "skins": 0
+  },
+  "river_end": {
+    "clips": [],
+    "skins": 0
+  },
+  "river_rocks": {
+    "clips": [],
+    "skins": 0
+  },
+  "river_split": {
+    "clips": [],
+    "skins": 0
+  },
+  "river_straight": {
+    "clips": [],
+    "skins": 0
+  },
+  "road_bridge": {
+    "clips": [],
+    "skins": 0
+  },
+  "road_crossing": {
+    "clips": [],
+    "skins": 0
+  },
+  "road_curve": {
+    "clips": [],
+    "skins": 0
+  },
+  "road_intersection": {
+    "clips": [],
+    "skins": 0
+  },
+  "road_ramp": {
+    "clips": [],
+    "skins": 0
+  },
+  "road_roundabout": {
+    "clips": [],
+    "skins": 0
+  },
+  "road_straight": {
+    "clips": [],
+    "skins": 0
+  },
+  "robot": {
+    "clips": [
+      "CharacterArmature|Idle",
+      "CharacterArmature|Jump",
+      "CharacterArmature|Run",
+      "CharacterArmature|Walk"
+    ],
+    "skins": 1
+  },
+  "rock": {
+    "clips": [],
+    "skins": 0
+  },
+  "rocket": {
+    "clips": [],
+    "skins": 0
+  },
+  "rocket_launcher": {
+    "clips": [],
+    "skins": 0
+  },
+  "sandbags": {
+    "clips": [],
+    "skins": 0
+  },
+  "sandbags_small": {
+    "clips": [],
+    "skins": 0
+  },
+  "sandwich": {
+    "clips": [],
+    "skins": 0
+  },
+  "savanna_tree": {
+    "clips": [],
+    "skins": 0
+  },
+  "saw": {
+    "clips": [],
+    "skins": 0
+  },
+  "scientist": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "scooter": {
+    "clips": [],
+    "skins": 0
+  },
+  "seaplane": {
+    "clips": [],
+    "skins": 0
+  },
+  "sedan": {
+    "clips": [],
+    "skins": 0
+  },
+  "shark": {
+    "clips": [
+      "Armature|Swim"
+    ],
+    "skins": 1
+  },
+  "shield": {
+    "clips": [],
+    "skins": 0
+  },
+  "shop": {
+    "clips": [],
+    "skins": 0
+  },
+  "short_driveway": {
+    "clips": [],
+    "skins": 0
+  },
+  "shotgun": {
+    "clips": [],
+    "skins": 0
+  },
+  "shuttlecock": {
+    "clips": [],
+    "skins": 0
+  },
+  "siege_tower": {
+    "clips": [],
+    "skins": 0
+  },
+  "sight_screen": {
+    "clips": [],
+    "skins": 0
+  },
+  "signpost": {
+    "clips": [],
+    "skins": 0
+  },
+  "ski_lift_tower": {
+    "clips": [],
+    "skins": 0
+  },
+  "ski_poles": {
+    "clips": [],
+    "skins": 0
+  },
+  "skis": {
+    "clips": [],
+    "skins": 0
+  },
+  "skyscraper": {
+    "clips": [],
+    "skins": 0
+  },
+  "slalom_gate": {
+    "clips": [],
+    "skins": 0
+  },
+  "sled": {
+    "clips": [],
+    "skins": 0
+  },
+  "small_plane": {
+    "clips": [],
+    "skins": 0
+  },
+  "small_tree": {
+    "clips": [],
+    "skins": 0
+  },
+  "snake": {
+    "clips": [
+      "SnakeArmature|Snake_Attack",
+      "SnakeArmature|Snake_Idle"
+    ],
+    "skins": 1
+  },
+  "sniper_rifle": {
+    "clips": [],
+    "skins": 0
+  },
+  "snow_birch": {
+    "clips": [],
+    "skins": 0
+  },
+  "snow_bush": {
+    "clips": [],
+    "skins": 0
+  },
+  "snow_dead_tree": {
+    "clips": [],
+    "skins": 0
+  },
+  "snow_mountain": {
+    "clips": [],
+    "skins": 0
+  },
+  "snow_pine": {
+    "clips": [],
+    "skins": 0
+  },
+  "snow_rock": {
+    "clips": [],
+    "skins": 0
+  },
+  "snowboard": {
+    "clips": [],
+    "skins": 0
+  },
+  "snowman": {
+    "clips": [],
+    "skins": 0
+  },
+  "soccer_ball": {
+    "clips": [],
+    "skins": 0
+  },
+  "soccer_goal": {
+    "clips": [],
+    "skins": 0
+  },
+  "soldier": {
+    "clips": [
+      "CharacterArmature|Death",
+      "CharacterArmature|Idle",
+      "CharacterArmature|Idle_Shoot",
+      "CharacterArmature|Jump",
+      "CharacterArmature|Jump_Idle",
+      "CharacterArmature|Run",
+      "CharacterArmature|Run_Gun",
+      "CharacterArmature|Wave"
+    ],
+    "skins": 1
+  },
+  "space_pistol": {
+    "clips": [],
+    "skins": 0
+  },
+  "space_rifle": {
+    "clips": [],
+    "skins": 0
+  },
+  "spaceship": {
+    "clips": [],
+    "skins": 0
+  },
+  "sport_bike": {
+    "clips": [],
+    "skins": 0
+  },
+  "sports_car": {
+    "clips": [],
+    "skins": 0
+  },
+  "spring": {
+    "clips": [],
+    "skins": 0
+  },
+  "stag": {
+    "clips": [
+      "Walk",
+      "Idle"
+    ],
+    "skins": 1
+  },
+  "star": {
+    "clips": [],
+    "skins": 0
+  },
+  "statue": {
+    "clips": [],
+    "skins": 0
+  },
+  "stilt_house": {
+    "clips": [],
+    "skins": 0
+  },
+  "stone_path": {
+    "clips": [],
+    "skins": 0
+  },
+  "strawberry": {
+    "clips": [],
+    "skins": 0
+  },
+  "street_motorcycle": {
+    "clips": [],
+    "skins": 0
+  },
+  "submachine_gun": {
+    "clips": [],
+    "skins": 0
+  },
+  "sushi": {
+    "clips": [],
+    "skins": 0
+  },
+  "suspension_bridge": {
+    "clips": [],
+    "skins": 0
+  },
+  "suv": {
+    "clips": [],
+    "skins": 0
+  },
+  "sword": {
+    "clips": [],
+    "skins": 0
+  },
+  "taco": {
+    "clips": [],
+    "skins": 0
+  },
+  "tank": {
+    "clips": [],
+    "skins": 0
+  },
+  "tank_desert": {
+    "clips": [],
+    "skins": 0
+  },
+  "tank_rusty": {
+    "clips": [],
+    "skins": 0
+  },
+  "tank_toy": {
+    "clips": [],
+    "skins": 0
+  },
+  "taxi": {
+    "clips": [],
+    "skins": 0
+  },
+  "tent": {
+    "clips": [],
+    "skins": 0
+  },
+  "toadstool": {
+    "clips": [],
+    "skins": 0
+  },
+  "tower": {
+    "clips": [],
+    "skins": 0
+  },
+  "town_house": {
+    "clips": [],
+    "skins": 0
+  },
+  "tractor": {
+    "clips": [],
+    "skins": 0
+  },
+  "traffic_cone": {
+    "clips": [],
+    "skins": 0
+  },
+  "trebuchet": {
+    "clips": [],
+    "skins": 0
+  },
+  "tree": {
+    "clips": [],
+    "skins": 0
+  },
+  "tree_stump": {
+    "clips": [],
+    "skins": 0
+  },
+  "trophy": {
+    "clips": [],
+    "skins": 0
+  },
+  "truck": {
+    "clips": [],
+    "skins": 0
+  },
+  "truss_bridge": {
+    "clips": [],
+    "skins": 0
+  },
+  "turret": {
+    "clips": [],
+    "skins": 0
+  },
+  "turret_cannon": {
+    "clips": [],
+    "skins": 0
+  },
+  "ufo": {
+    "clips": [],
+    "skins": 0
+  },
+  "van": {
+    "clips": [],
+    "skins": 0
+  },
+  "vines": {
+    "clips": [],
+    "skins": 0
+  },
+  "watchtower": {
+    "clips": [],
+    "skins": 0
+  },
+  "waterfall": {
+    "clips": [],
+    "skins": 0
+  },
+  "waterfall_top": {
+    "clips": [],
+    "skins": 0
+  },
+  "watermelon": {
+    "clips": [],
+    "skins": 0
+  },
+  "white_tower": {
+    "clips": [],
+    "skins": 0
+  },
+  "wicket": {
+    "clips": [],
+    "skins": 0
+  },
+  "wolf": {
+    "clips": [
+      "Walk",
+      "Idle"
+    ],
+    "skins": 1
+  },
+  "woman": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  },
+  "wooden_bridge": {
+    "clips": [],
+    "skins": 0
+  },
+  "zombie": {
+    "clips": [
+      "static",
+      "idle",
+      "walk",
+      "sprint",
+      "sit",
+      "drive",
+      "die",
+      "pick-up",
+      "emote-yes",
+      "emote-no",
+      "interact-right",
+      "interact-left"
+    ],
+    "skins": 0
+  }
+}

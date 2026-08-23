@@ -340,3 +340,63 @@ describe("GENRES — data sanity", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// The block-diagram horse, part 2 (2026-08-23, BUG-FIX-LOG same date).
+//
+// Unlocking the 3D catalog (catalog-gate.ts) was necessary and NOT sufficient:
+// with the gate open, "make a game where I can ride horses" still offered no
+// horse. Two independent faults in this file, both measured before the fix:
+//
+//   1. Rule 2 matched /\bhorse\b/ against "ride horses". The trailing \b sits
+//      between "e" and "s", so it does not match. Kids speak in plurals — the
+//      highest-signal rule in the selector was dead for "horses", "dogs",
+//      "cars", "trees" alike.
+//   2. Rule 3 added every matching genre in GENRES ARRAY ORDER and then sliced
+//      to PROMPT_MODEL_CAP. "jump over fences" matched platformer (28 models,
+//      array index 2); "horses" matched animals (17 models, index 4). 28 + 17
+//      into a 30 slot cap meant platformer took 28 and animals got 2 — dino
+//      and dog. `horse` sits at animals index 12. A MECHANIC word starved the
+//      child's actual SUBJECT purely by array position.
+// ─────────────────────────────────────────────────────────────────────────
+describe("selectModelNames — the child's own words win (block-diagram horse, 2026-08-23)", () => {
+  const ask = (message: string) => selectModelNames({ message, history: [] });
+
+  it("the demo session's exact ask offers the horse", () => {
+    expect(ask("Please make a game where I can ride horses and jump over fences")).toContain("horse");
+  });
+
+  it("a model named in the PLURAL is 'named outright' — kids do not speak in singulars", () => {
+    expect(ask("a game with horses"), "horses").toContain("horse");
+    expect(ask("a game with lots of dogs"), "dogs").toContain("dog");
+    expect(ask("a game with fast cars"), "cars").toContain("car");
+    expect(ask("a game with trees"), "trees").toContain("tree");
+  });
+
+  it("still matches the singular, and still does not fire inside a longer word", () => {
+    expect(ask("a game with a horse")).toContain("horse");
+    // "carpet"/"carting" must not read as "car" — the \b convention this file
+    // has used since it was written.
+    expect(ask("a game about a carpet in a forest")).not.toContain("car");
+  });
+
+  it("a MECHANIC word cannot starve the SUBJECT off the end of the cap", () => {
+    // Both genres matched; both must be represented. Before the fix the
+    // earlier genre in the GENRES array ate the whole budget.
+    const names = ask("a jumping game where I collect coins with dogs and cats");
+    expect(names, "platformer represented").toContain("coin");
+    expect(names, "animals represented").toContain("dog");
+    expect(names, "animals represented").toContain("cat");
+  });
+
+  it("every genre the child's words matched gets a share of the cap", () => {
+    const names = ask("a game with a car racing past a castle in the snow with a dog");
+    for (const expected of ["car", "dog"]) expect(names, expected).toContain(expected);
+    expect(names.length).toBeLessThanOrEqual(PROMPT_MODEL_CAP);
+  });
+
+  it("the cap still holds — this widens WHICH names get in, never HOW MANY", () => {
+    expect(ask("a game with animals and cars and castles and space and snow and water").length)
+      .toBeLessThanOrEqual(PROMPT_MODEL_CAP);
+  });
+});

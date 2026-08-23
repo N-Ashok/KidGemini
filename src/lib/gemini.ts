@@ -7,7 +7,7 @@ import type { ChatMessage, ChatModel, ImageAttachment, StreamChunk, TokenUsage }
 import type { ChainSummary } from "@/types/model-ledger.types";
 import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
 import { REPORT_HEADER } from "./error-report";
-import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection, modelNamesBlock, retrievedModelNames } from "./assets/prompt-catalog";
+import { threePromptSection, modelsPromptSection, audioPromptSection, modelNamesBlock, retrievedModelNames } from "./assets/prompt-catalog";
 import { PHYSICS_PROMPT_SECTION, physicsEnginePromptSection } from "./assets/physics-playbook";
 import { SAVE_STATE_PROMPT_SECTION } from "./assets/save-state-playbook";
 import { PUBLISHED_SAVE_PROMPT_SECTION } from "./assets/published-save-playbook";
@@ -380,7 +380,10 @@ export function buildTurnSystemInstruction(
 ): string {
   const base = personaBasePrompt(persona);
   const sections = [
-    ...(gates.three ? [THREE_PROMPT_SECTION, modelsPromptSection(), PHYSICS_PROMPT_SECTION, physicsEnginePromptSection()] : []),
+    // threePromptSection(gates.threeReason) — an explicit "3D" ask keeps the
+    // emphatic lead-in; a subject-only unlock (2026-08-23) gets the one that
+    // OFFERS 3D, so a quiz asked for in the same breath as a dog stays flat.
+    ...(gates.three ? [threePromptSection(gates.threeReason), modelsPromptSection(), PHYSICS_PROMPT_SECTION, physicsEnginePromptSection()] : []),
     ...(gates.audio ? [audioPromptSection()] : []),
     ...(gates.save ? [SAVE_STATE_PROMPT_SECTION, PUBLISHED_SAVE_PROMPT_SECTION] : []),
     ...(multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),

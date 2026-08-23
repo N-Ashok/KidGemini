@@ -11,6 +11,7 @@ import manifestJson from "./manifest.json";
 import { modelsInGenre } from "./asset-taxonomy";
 import { GENRES, peopleModels, selectModelNames, soldierModels } from "./model-select";
 import { offerable } from "./retired";
+import type { ThreeUnlockReason } from "./catalog-gate";
 
 /**
  * The sports playbook (owner ask 2026-07-26): without it the model writes the
@@ -70,7 +71,20 @@ export const CURATED_IMPORT_NAMES = [
 ];
 const CURATED_IMPORTS = CURATED_IMPORT_NAMES.join(", ");
 
-export const THREE_PROMPT_SECTION = `**3D graphics**: this child asked for 3D — so build a REAL 3D scene with
+// The 3D section has TWO lead-ins and ONE body (2026-08-23). The body — the
+// marker, the curated imports, the single canvas, the lighting rig, the draw
+// budget — is identical either way: it is how to build in 3D, not whether to.
+//
+// The lead-in is the part that must differ. `asked` is byte-for-byte the
+// wording that shipped before this split (the prompt-pin tests hold it), and
+// it is emphatic because the child literally typed "3D": a flat canvas dressed
+// up to look 3D is the #1 way that request goes unmet. `subject` is for a turn
+// unlocked by what the game is ABOUT (catalog-gate.ts's THREE_SUBJECT_GENRES)
+// — the child never asked, so it OFFERS 3D and names the real reason it is
+// usually the better answer, while naming the flat games that must stay flat.
+// Handing the `asked` wording to a subject unlock would build a spelling quiz
+// in Three.js.
+const THREE_LEAD_ASKED = `**3D graphics**: this child asked for 3D — so build a REAL 3D scene with
 Three.js and a PerspectiveCamera. Do NOT fake it with a flat 2D canvas, CSS
 3D transforms, or sprites scaled to look far away: a 2D canvas dressed up to
 "look 3D" is the single most common way a 3D request goes unmet — the child
@@ -78,7 +92,24 @@ keeps saying "this isn't really 3D" and they are right. Anything they call a
 "3D game", "3D cars", a "3D world", or "real 3D" MUST be Three.js. (Only a
 game that is genuinely better flat — a quiz, a word game, a 2D board game —
 should stay 2D, in which case skip the marker below.) To build in 3D:
-1. Put the single line \`<!--USES_THREE-->\` as the very first thing inside
+`;
+
+const THREE_LEAD_SUBJECT = `**3D graphics**: this game is about a real thing — a creature, a vehicle, a
+place — and the ready-made 3D models listed below are almost always a better
+answer than drawing that thing by hand. A horse built from the rigged \`horse\`
+model looks like a horse and gallops; a horse drawn on a flat 2D canvas out of
+a filled rectangle, two stroked legs and a dot for an eye looks like a block
+diagram, and the child sees that immediately. So unless this game is one of
+the kinds that is genuinely BETTER FLAT — a quiz, a word or spelling game, a
+2D board or card game, a drawing or colouring game, a simple tapping game —
+build a REAL 3D scene with Three.js and a PerspectiveCamera and use the models
+below for the things in it. If it IS better flat, stay 2D and skip the marker
+below; that is a real choice, not a fallback. Either way never FAKE 3D with a
+flat canvas, CSS 3D transforms, or sprites scaled to look far away. To build
+in 3D:
+`;
+
+const THREE_BODY = `1. Put the single line \`<!--USES_THREE-->\` as the very first thing inside
    \`<body>\` — this is how the platform knows to make the 3D library
    available (leave it out ONLY for a genuinely 2D game; don't add it otherwise).
 2. Write your game code in \`<script type="module">\`, and start it with
@@ -116,6 +147,17 @@ should stay 2D, in which case skip the marker below.) To build in 3D:
    needs rotation), then \`im.instanceMatrix.needsUpdate = true\`. One
    InstancedMesh = one draw call for ALL its copies. Aim for under 150 draw
    calls in the scene.`;
+
+/** The 3D section for this turn. Defaults to the `asked` lead-in, so every
+ *  existing caller and every prompt-pin test sees the exact text it did before
+ *  the split. */
+export function threePromptSection(reason: ThreeUnlockReason = "asked"): string {
+  return (reason === "subject" ? THREE_LEAD_SUBJECT : THREE_LEAD_ASKED) + THREE_BODY;
+}
+
+/** The pre-2026-08-23 constant, unchanged byte-for-byte. Kept as the name the
+ *  prompt-contract tests and the default gates path already import. */
+export const THREE_PROMPT_SECTION = threePromptSection("asked");
 
 /**
  * THE CATEGORY MAP (2026-08-09, the hybrid this file's §5b note has promised
@@ -279,13 +321,56 @@ what you need and use the names you are given.
    \`loadModel("${models[0]!.name}").then((m) => { if (m) { m.scale.set(2, 2, 2); scene.add(m); player = m; } });\`
    If \`m\` is null, simply keep the placeholder — the game must keep working
    without the model.
-4. \`modelSize(name)\` gives REAL metres \`{x, y, z}\` before you load (null =
-   unknown, eyeball it). NEVER guess a size or spacing — a road piece is ~1 m,
-   not 10. Scale by want ÷ actual; tile edge-to-edge by stepping the footprint:
-   \`const w = modelSize("road_straight").x; place(i * w);\`
-   VEHICLES/CHARACTERS face +Z — steer with \`rotation.y\`. ROAD TILES DON'T:
-   \`modelAxis(name)\` gives the run axis ("x"/"z"/"none"/null); kits differ and
-   a square tile's size can't reveal it.
+4. \`placeModel(name, opts)\` puts a model in the world CORRECTLY — standing on
+   the ground, at a believable size, pointing where you want. Prefer it over
+   bare \`loadModel\` for anything you position:
+   \`const car = await placeModel("car", { at: {x: 0, z: 10} });
+    scene.add(car);   // placeModel positions it; YOU still add it to the scene
+    const house = await placeModel("house", { at: {x: 8, z: 0}, metres: true });
+    scene.add(house);\`
+   \`at\` {x,z} · \`metres: true\` for real-world size · \`scale\` a multiplier ·
+   \`y\` ground height · \`heading\` "+z"/"-z"/"+x"/"-x"/radians.
+   LEAVE \`heading\` OUT and you get THE DEFAULT VIEW: standing on the ground,
+   BACK TO THE PLAYER, facing away into the scene — what you want for anything
+   the player follows, drives, rides or walks behind. Identical for every model
+   however it was exported, so never guess a facing and never write a rotation
+   to "turn it round" (\`rotation.y = Math.PI\` is the classic guess that lands a
+   game driving backwards at its own camera). \`modelFacing(name)\` tells you how
+   one was exported; null = unaudited.
+   ONE exception: a model you PARENT to another (a rider onto a horse, a driver
+   into a car) takes \`heading: 0\` — "no turn of your own" — so it inherits the
+   direction of what it sits on. Without it the rider faces the camera while the
+   horse runs the other way.
+   STEERING, where placeModel cannot help because rotation is set every frame:
+   \`m.rotation.y = modelHeading(name, heading)\`. With the usual
+   \`pos.x += sin(h)*v; pos.z += cos(h)*v\`, heading 0 travels +Z.
+   DRIVING/RIDING SETUP — get these four consistent or the game feels wrong
+   even when each part looks right. Pick the heading convention first
+   (\`pos.x += sin(h)*v; pos.z += cos(h)*v\`, so heading 0 travels +Z), then:
+   (1) the mount or vehicle: \`rotation.y = modelHeading(name, h)\`;
+   (2) the camera: BEHIND along travel — \`pos - (sin(h), 0, cos(h)) * back\`,
+       raised a little, looking at it. Size \`back\` FROM THE MODEL, about 3-4
+       lengths (\`modelSize(name).z * 3.5\`) — never a bare number like 12,
+       which is a close chase in one game and a distant speck in another;
+   (3) build the WORLD at that scale: a road is a few car-widths across, not 30;
+   (4) controls: Up accelerates, Down brakes then reverses, Left/Right steer —
+       never swapped.
+   A RIDER on a mount: place the mount normally, the rider with \`heading: 0\`,
+   then \`mount.add(rider)\` — seat offset from \`modelMetres\`, never by eye.
+   TWO SIZES, don't mix them up. \`modelSize(name)\` = the model's own units as
+   published, what it measures on screen at scale 1 — use it for SPACING by
+   real footprint: \`const w = modelSize("house").x; place(i * w * 1.5);\`
+   \`modelMetres(name)\` = how big the thing is in REAL LIFE — use it to decide
+   how big it SHOULD be. NEVER guess a size or spacing. The catalog's units are
+   not
+   consistent between models (by \`modelSize\` alone a mountain is smaller than
+   a car), so size a scene with \`metres: true\` or
+   \`obj.scale.setScalar(modelMetres(n).y / modelSize(n).y)\`. Both null when
+   unknown — then eyeball it.
+   ROAD TILES do not have a facing — they have a RUN AXIS:
+   \`modelAxis(name)\` gives it ("x"/"z"/"none"/null); kits differ and
+   a square tile's size can't reveal it. Tile them edge-to-edge by stepping the
+   footprint: \`const w = modelSize("road_straight").x; place(i * w);\`
    TRACKS: ONE kit (\`road_*\` OR \`race_track_*\`), every piece scaled by the
    SAME number. NEVER guess a rotation — name the directions the road LEAVES
    each cell and \`fitTile\` does it (a 2 m piece covers TWO 1 m cells):
@@ -308,14 +393,19 @@ what you need and use the names you are given.
    \`THREE.Euler\`. Use \`.boundsAt(i)\`, not \`Box3().setFromObject\`, for
    collision. Animated models use \`loadModel\`.
 7. If a model needs to move (walk, fly, spin) but has no matching clip in
-   \`m.animations\` — NEVER invent a clip name. If it HAS bones
-   (\`m.getObjectByName\` finds \`*Leg*\`/\`*Wing*\` parts), drive them
-   yourself: oscillate rotation with a sine wave keyed to time/speed, ease to
-   rest when still. If it's a single RIGID mesh (vehicles, the helicopter),
-   add your OWN thin primitive (a wheel/rotor) parented onto it and spin
-   that instead. Rigid models have NO named parts: a name search
-   (\`getObjectByName\`/\`traverse\`) finds nothing and your spin is a silent
-   no-op — the only spinnable parts are ones you add.${people.length ? `
+   \`m.animations\` — never invent a clip name, and never ASSUME what it is made
+   of. \`modelParts(name)\` lists the named parts it really carries (null =
+   none). ASK IT FIRST: nearly every vehicle ships one node PER WHEEL, so turn
+   the real ones — never bolt fake wheels on beside them:
+   \`const w = car.getObjectByName("wheel-front-left");
+    w.rotation.x -= speed * dt;   // spin; steer the front pair with .rotation.y\`
+   No skeleton is involved: a wheel is rigid and merely rotates — a node
+   transform. Skinning is only for a mesh that DEFORMS.
+   Bones present (\`*Leg*\`/\`*Wing*\`)? Drive them: sine-wave the rotation from
+   time/speed, ease to rest when still.
+   ONLY when \`modelParts(name)\` is null does a lookup find nothing and a spin
+   loop silently do nothing — THEN add your OWN thin primitive (rotor/wheel)
+   parented onto the model and spin that.${people.length ? `
    The people models (${people.join(", ")}) all share the same clips: idle,
    walk, sprint (= run), sit, drive, pick-up, interact-right/left, die, and
    emote-yes / emote-no. For a cheering stadium crowd, sit or stand them on

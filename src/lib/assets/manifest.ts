@@ -134,6 +134,59 @@ export interface AssetEntry {
    *  report a fault that is really a design difference. Cannot be derived from
    *  the name: `finish_line` is racing-kit but shares no prefix with it. */
   kit?: string;
+  /** Which way this model's FRONT points at rest — `"+z"`, `"-z"`, `"+x"` or
+   *  `"-x"`. Reaches a generated game as `window.AR_FACING` /
+   *  `modelFacing(name)`, and is what `placeModel()` uses to aim a model.
+   *
+   *  WHY THIS EXISTS (2026-08-15, owner: "the llm is not getting the axis,
+   *  size, direction correct"). The prompt asserted, unconditionally, that
+   *  "VEHICLES/CHARACTERS face +Z". A render audit of the catalog shows that
+   *  is simply untrue: `car` faces -Z (180° out) and `airplane` faces +X (90°
+   *  out), while `crocodile` and `dog` do face +Z. `size` cannot express this
+   *  — a bounding box is identical for a car facing +Z and the same car facing
+   *  -Z — so before this field there was NO datum anywhere, in the prompt or
+   *  the runtime, that could tell a game which way a model points. Every
+   *  generated game re-guessed it, which is why wrong-facing models recur
+   *  across unrelated games (TECH_DEBT #91).
+   *
+   *  MEASURED BY RENDER, not by geometry heuristic — the same discipline as
+   *  `pathAxis`. A "which end is the front" question has no reliable
+   *  geometric answer (the long axis is direction-blind, and mass/asymmetry
+   *  disagree on real models), so each value is read off a top-down render
+   *  from scripts/render-assets.mjs. Absent = unknown: `modelFacing()` answers
+   *  null and `placeModel()` leaves rotation alone, exactly as today.
+ *
+ *  RESTORED 2026-08-23. This field, its data and its helpers were lost as
+ *  unlisted collateral of the 2026-08-17 revert to the 2026-08-12 tree
+ *  (ab386a5, whose own "what this gives up" list never mentions them).
+ *  Every value below is the ORIGINAL audited one: no surviving model's
+ *  sha256 changed in between, so each is still true of the exact GLB we
+ *  serve. See BUG-FIX-LOG 2026-08-23. */
+  facing?: "+x" | "-x" | "+z" | "-z";
+  /** The model's size in TRUE real-world metres, `[x, y, z]` — what this
+   *  object measures in life, not in the catalog's units.
+   *
+   *  SEPARATE from `size`, deliberately, and NOT a correction to it. `size` is
+   *  the honestly-measured extent of the published GLB, and live games already
+   *  do `want ÷ modelSize(name)` with those numbers; redefining it would
+   *  silently change the arithmetic of every stored game. So the real figure
+   *  ships alongside, reached by the new `modelMetres(name)`.
+   *
+   *  WHY (2026-08-15): the catalog mixes two scale systems. 238 of 296 sized
+   *  models are raw kit units (max dimension <= 3) while 58 are real metres,
+   *  because only a handful of vendor entries carry `normalizeLongest`. The
+   *  result is a table where `mountain` is 1.9 units tall and `car` is 2.56
+   *  long — a mountain smaller than a car, a house narrower than one — while
+   *  the prompt calls all of it "REAL metres". A model asked to build a
+   *  village has no way to place a house next to a car at a believable size,
+   *  so it invents a scale factor per game and they disagree.
+   *
+   *  CURATED per model (a real-world dimension is knowledge, not a
+   *  measurement of the mesh), and reviewable: absent = unknown, and
+   *  `modelMetres()` answers null.
+   *
+   *  RESTORED 2026-08-23 with `facing` — same revert, same provenance. */
+  realSize?: [number, number, number];
 }
 
 export interface AssetManifest {

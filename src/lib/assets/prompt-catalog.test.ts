@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 vi.mock("server-only", () => ({}));
 
-import { THREE_PROMPT_SECTION, modelsPromptSection, audioPromptSection, retrievedModelNames, modelNamesBlock } from "./prompt-catalog";
+import { THREE_PROMPT_SECTION, threePromptSection, modelsPromptSection, audioPromptSection, retrievedModelNames, modelNamesBlock } from "./prompt-catalog";
 import { THREE_MARKER } from "./inject";
 import { GENRE_IDS, modelsInGenre } from "./asset-taxonomy";
 import { RETIRED } from "./retired";
@@ -172,11 +172,31 @@ describe("modelsPromptSection — the catalog version-locks with the manifest (P
     expect(section).toContain("animations[0]"); // still the LAST-resort fallback, not the first choice
   });
 
-  it("warns that name lookups on rigid models silently find NOTHING (2026-08-06: helicopter rotor — the GLB is one mesh named 'Cube', so traverse(/rotor|blade|prop/) matched nothing, the spin loop ran over an empty array, and Ari claimed success for turns in a row)", () => {
-    expect(section).toMatch(/no\s+named\s+parts/i);
-    expect(section).toMatch(/finds?\s+nothing|matches?\s+nothing/i);
-    expect(section).toMatch(/silent/i); // the failure mode: a no-op, not an error
-    expect(section).toMatch(/you\s+add/i); // the only spinnable parts are ones YOU add
+  // NARROWED 2026-08-23, and the history matters. The 2026-08-06 incident was
+  // real: the HELICOPTER is one mesh named "Cube", so traverse(/rotor|blade/)
+  // matched nothing, the spin loop ran over an empty array, and Ari claimed
+  // success for turns in a row. The lesson was right; the wording generalised
+  // it into "Rigid models have NO named parts ... the only spinnable parts are
+  // ones you add", and a census of the published bytes disproved THAT: 306 of
+  // 318 models carry named nodes, and 25 vehicles ship one node PER WHEEL.
+  // So the prompt talked every car game out of turning the wheels it already
+  // had. The fix is not to drop the warning but to make it answerable —
+  // modelParts(name) says which case you are in — so both halves are pinned
+  // here: the helicopter still gets its primitive, the car turns its own.
+  it("teaches modelParts() instead of assuming — turn the real wheels; a partless model still gets a primitive", () => {
+    expect(section).toContain("modelParts(name)");
+    // The real, per-wheel node names a game must use.
+    expect(section).toContain("wheel-front-left");
+    expect(section).toMatch(/never\s+bolt\s+fake|real\s+ones/i);
+    // The 2026-08-06 lesson, kept but SCOPED to the models it is true of.
+    expect(section).toMatch(/null/);
+    // The 2026-08-06 failure mode, in words: a lookup that finds nothing and a
+    // loop that does nothing without erroring. Scoped to modelParts() === null.
+    expect(section).toMatch(/finds?\s+nothing/i);
+    expect(section).toMatch(/silently/i);
+    expect(section).toMatch(/your\s+OWN\s+thin\s+primitive/i);
+    // And the reason no skeleton is needed, which is what the owner asked.
+    expect(section).toMatch(/no\s+skeleton\s+is\s+involved/i);
   });
 
   it("is empty when the manifest has no models (nothing to teach, zero tokens)", () => {
@@ -368,7 +388,27 @@ describe("the catalog teaches the WHOLE library (so the LLM can design against i
     // (teach the RULES, look the CATALOG up on demand), not more prose. Layer
     // 2 golden prompts (PRD §4) is what would catch a regression here without
     // spending another token.
-    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_525);
+    //
+    // 2525 → 2700 (2026-08-23). READ THE PARAGRAPH ABOVE FIRST: it says the
+    // next raise should not happen. This one is a RESTORE, not a fourth raise
+    // — the identical raise was taken on 2026-08-15 (facing/realSize/
+    // placeModel) and lost as unlisted collateral of the 2026-08-17 revert to
+    // the 2026-08-12 tree. The ceiling is being put back where it already was,
+    // for the teaching it was already raised to hold.
+    //
+    // What it buys, and it is the owner's reported fault: "giving it direction
+    // and teaching how to go is at least 5 prompts". placeModel (ground, size,
+    // heading in one call), modelFacing/modelHeading (a car faces -Z, an
+    // airplane +X — a bounding box cannot express direction, so before this
+    // every game re-guessed), modelMetres (the catalog mixes kit units with
+    // metres: by modelSize alone a mountain is smaller than a car), and the
+    // driving/riding setup taught as ONE consistent thing.
+    //
+    // It also DELETES wrong teaching, the discipline every earlier raise held
+    // to: "VEHICLES/CHARACTERS face +Z" was asserted unconditionally and is
+    // false for 7 of the 72 audited models. Measured 2584 — under the restored
+    // ceiling with room, and the category-map hybrid remains the real answer.
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(2_700);
   });
 });
 
@@ -611,13 +651,22 @@ describe("the facing convention is taught (2026-08-06)", () => {
   // exactly the falsehood that broke every road build: the city kit's
   // road_straight runs along X. The facing rule is now scoped to
   // vehicles/characters, and tiles get modelAxis() instead.
-  it("scopes +Z facing to vehicles/characters and teaches modelAxis for tiles", () => {
+  // SUPERSEDED AGAIN 2026-08-23. The 2026-08-08 pin narrowed the falsehood
+  // from "every model" to "vehicles/characters" — but it was still a claim
+  // about facing made with no facing data behind it, and the render audit
+  // disproved it too: `car` faces -Z, `airplane` +X, `elephant` -X. 7 of the
+  // 72 audited models are not +Z. The section now teaches the DATUM
+  // (modelFacing/modelHeading/placeModel) instead of any blanket claim.
+  it("teaches facing as a per-model DATUM, and never as a blanket claim", () => {
     const section = modelsPromptSection(realManifest as AssetManifest);
-    expect(section).toContain("VEHICLES/CHARACTERS face +Z");
-    expect(section).toContain("rotation.y");
-    expect(section).toContain("modelAxis(name)");
-    // The universal claim must never come back — it was never true.
+    expect(section).toContain("modelFacing(name)");
+    expect(section).toContain("modelHeading(name, heading)");
+    expect(section).toContain("modelAxis(name)"); // tiles have a run axis, not a facing
+    // Neither falsehood may come back — neither was ever true.
     expect(section).not.toMatch(/Every model faces \+Z/);
+    expect(section).not.toMatch(/VEHICLES\/CHARACTERS face \+Z/);
+    // And the anti-pattern that actually reached a child's game must be named.
+    expect(section).toMatch(/rotation\.y = Math\.PI/);
   });
 });
 
@@ -690,5 +739,44 @@ describe("the category-map hybrid — the block that rides at the end of the con
 
   it("is empty for an empty selection (zero tokens, never a dangling label)", () => {
     expect(modelNamesBlock([])).toBe("");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// The two 3D lead-ins (2026-08-23, BUG-FIX-LOG same date). The gate now
+// unlocks 3D on a SUBJECT as well as on the word "3D" — so the section can no
+// longer open by asserting the child asked for it.
+// ─────────────────────────────────────────────────────────────────────────
+describe("threePromptSection — one body, two lead-ins", () => {
+  it("the default is byte-for-byte the section that shipped before the split", () => {
+    expect(threePromptSection()).toBe(THREE_PROMPT_SECTION);
+    expect(threePromptSection("asked")).toBe(THREE_PROMPT_SECTION);
+  });
+
+  it("the subject variant never claims the child asked for 3D", () => {
+    expect(threePromptSection("subject")).not.toContain("this child asked for 3D");
+  });
+
+  it("the subject variant names the flat games that must STAY flat", () => {
+    // Without this, a subject unlock on "a word game about dogs" builds a
+    // spelling quiz in Three.js. This is the sentence that prevents it.
+    const s = threePromptSection("subject");
+    for (const flat of ["quiz", "word", "board", "drawing"]) expect(s, flat).toContain(flat);
+  });
+
+  it("the subject variant says WHY a model beats hand-drawing — the block-diagram horse", () => {
+    expect(threePromptSection("subject")).toContain("block\ndiagram");
+  });
+
+  it("both variants carry the identical build BODY — the lead-in decides whether, never how", () => {
+    const body = "1. Put the single line";
+    for (const v of ["asked", "subject"] as const) {
+      const s = threePromptSection(v);
+      expect(s.slice(s.indexOf(body)), v).toBe(THREE_PROMPT_SECTION.slice(THREE_PROMPT_SECTION.indexOf(body)));
+      // The non-negotiables of the body, spot-checked so a future lead-in edit
+      // cannot quietly eat them.
+      expect(s, v).toContain("<!--USES_THREE-->");
+      expect(s, v).toContain("preserveDrawingBuffer: true");
+    }
   });
 });
