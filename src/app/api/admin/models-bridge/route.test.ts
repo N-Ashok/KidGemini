@@ -23,7 +23,12 @@ describe("models-bridge auth", () => {
     const body = await res.json();
     expect(body.models.length).toBeGreaterThan(300);
     expect(body.summary.total).toBe(body.models.length);
-    expect(body.summary.animated + body.summary.static).toBe(body.summary.total);
+    // THREE buckets since 2026-08-23, not two: a model with no animation clips
+    // may still have a part a game turns (25 vehicles' wheels, the helicopter's
+    // rotor). Folding those into "static" is what made the rebuilt helicopter
+    // read as inert on the admin tab.
+    expect(body.summary.animated + body.summary.spinnable + body.summary.static).toBe(body.summary.total);
+    expect(body.summary.spinnable).toBeGreaterThan(20);
   });
 
   it("MB.2 refuses a wrong secret", async () => {

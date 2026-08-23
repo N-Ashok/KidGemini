@@ -42,7 +42,11 @@ export async function POST(req: NextRequest) {
     summary: {
       total: models.length,
       animated: models.filter((m) => m.clips.length > 0).length,
-      static: models.filter((m) => m.clips.length === 0).length,
+      // A model with no clips is NOT necessarily static: 25 vehicles turn their
+      // own wheels and the helicopter its rotor, all without a rig. Counting
+      // those as "static" is what made the rebuilt helicopter read as inert.
+      static: models.filter((m) => m.clips.length === 0 && m.spinnable.length === 0).length,
+      spinnable: models.filter((m) => m.clips.length === 0 && m.spinnable.length > 0).length,
       retired: models.filter((m) => m.retired).length,
     },
   });
