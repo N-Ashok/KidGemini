@@ -88,8 +88,37 @@ CHILD_SYSTEM_PROMPT
   [+ PUBLISHED_SAVE_PROMPT_SECTION] if gates.save  (same gate — additive, see §2.5a)
   [+ MULTIPLAYER_PROMPT_SECTION]    if multiplayerGate fires
   [+ GAME_EDIT_PROMPT_SECTION]      if isEdit
-  [+ REPEATED_REQUEST_SECTION]      if repeated
 ```
+
+**Edit turns get a different, edit-sized instruction since 2026-08-25**
+(`gemini.ts buildTurnSystemInstruction`, `isEdit` branch; owner decision, plan
+"noble-orbiting-stallman"). Measured 7.7k → ~1.2k tokens on the commonest 3D edit:
+
+```text
+CHILD_SAFETY_CORE                    the child-safety/tone lines (never dropped — rule 3)
+EDIT_CRAFT_RULES                     cartoonish rule · keep controls/layout/id="score" · landmark comments
+[+ THREE_EDIT_CHEATSHEET]            if gates.three — marker rule, loadModel/placeModel, clip rule (~350 tok)
+[+ modelsPromptSection({sports})]    only if the ASK names a model/creature/vehicle/sport (editGates.models)
+[+ PHYSICS sections]                 only if the ASK names physics words (gravity/bounce/fall/throw…)
+[+ audioPromptSection()]             only if the ASK names sound/music
+[+ SAVE_STATE + PUBLISHED_SAVE]      only if the ASK names save/progress/continue/checkpoint
+[+ MULTIPLAYER_PROMPT_SECTION]       if the game is multiplayer OR the ASK says so
+GAME_EDIT_PROMPT_SECTION
+[+ NEXT_ASK_EDIT_PROMPT_SECTION]     if kid hints on
+```
+
+`editGates(message)` (`assets/catalog-gate.ts`) reads the ASK only — the history
+gates are monotonic build gates, and "build me a race track" unlocking ~870
+tokens of save playbook on every later edit was the waste (62 of 72 save-gated
+prod turns were edits). Build turns keep the full shape below, byte-identical,
+except the **sports playbook** (~1,000 tok) which now rides only when
+`gates.sports` is on (sports words in the ask/history, or the game loads a
+sports model) instead of whenever the manifest holds sports models.
+
+`REPEATED_REQUEST_SECTION` left the instruction on 2026-08-25 — it is a
+per-turn directive and now rides the final user turn (§3), so the instruction
+is byte-identical from one edit turn to the next
+(`docs/2026-08-25_PRD_EditTurnCost_CachingAndThinking.md` §4.A).
 
 The gates are decided in `configFor()` (`gemini.ts:565`):
 
@@ -375,7 +404,7 @@ Rules:
 - No prose after the patch blocks, no markdown fences, no full HTML document.
 ````
 
-### 2.8 `REPEATED_REQUEST_SECTION` — if `repeated` (`game-edit.ts:296`)
+### 2.8 `REPEATED_REQUEST_SECTION` — if `repeated` (`game-edit.ts`) — **rides the tail since 2026-08-25**, not the instruction
 
 ````text
 IMPORTANT: The child has just sent the SAME message again, word for word. That means your previous reply did NOT work — whatever you said you changed never showed up in their game, even though you claimed it did. Do not repeat the same approach and do not claim success the same way again. Re-read the request, rebuild that specific part in a DIFFERENT way, and double-check the change is actually visible and playable in the game you return.
@@ -421,21 +450,46 @@ Rules:
 
 ## 3. The contents (how the child's request + game source travel)
 
-`buildChatContents()` (`gemini.ts:407`) maps the **trimmed** history to
-`{role, parts}` (`child`→`user`, assistant→`model`) and appends the child's new
-message as the final `user` turn (image inlined first if present).
+`buildChatContents()` (`gemini.ts`) maps the **trimmed** history to
+`{role, parts}` (`child`→`user`, assistant→`model`) and appends the final
+`user` turn. **Since 2026-08-25** (`2026-08-25_PRD_EditTurnCost_CachingAndThinking.md`
+§4.A — the byte-stable prefix) the final turn is, in this pinned order
+(`gemini.contents.test.ts` T.2):
 
-`trimHistory()` (`history-trim.ts`) runs first (`route.ts:88`) and does three things:
+```text
+[ gameSourceBlock(model view)    ]  every build turn with a game — "Current game source — …" + ```html fence;
+                                    the MODEL VIEW (`assets/model-view.ts`): the delivered document minus the
+                                    runtime delivery injected (helper module, GL guard, perf probe, governor,
+                                    AR_* tables, import map) — ~35k chars the model never needed to re-read
+[ REPEATED_REQUEST_SECTION       ]  if repeated
+[ CHILD_BUILDER_CONTEXT / fix ctx]  child persona build turns
+[ image                          ]  if attached
+[ the child's message            ]
+[ model-name block               ]  if gates.three (§3a)
+```
 
-1. **Only the current game's code survives in full.** `withInlineGame` re-inlines
-   it as a ```` ```html ```` fenced block into that assistant message's text
-   (patch-turn messages keep the game only in the `artifactHtml` *field*, with
-   prose-only text — this reattaches it so the model sees the exact lines its
-   `SEARCH` blocks must match).
-2. **Every older game version collapses** to the one-line placeholder
-   `[an earlier version of the game — code omitted, the newest version appears later in this conversation]`.
-3. **Windowing** to the last `HISTORY_WINDOW = 12` messages, but the current game
-   is force-carried into the window even if it fell outside.
+Everything BEFORE the final turn — system instruction + history — is now
+append-only between turns, which is what lets Gemini's implicit prefix cache
+hit (it was 2–4% in prod before; the game blob used to sit mid-history and
+mutate every edit).
+
+`trimHistory()` (`history-trim.ts`) runs first (`route.ts`) and does three things:
+
+1. **No game code in history, ever.** Every game message — the current one
+   included — becomes its prose + the fixed placeholder
+   `[game code omitted — the current version of the game is attached to the child's latest message]`.
+   The source stays on the message's `artifactHtml` field (lifted there from
+   the text for legacy messages) and `currentGameHtml(history, pin)` reads it
+   for the tail block — the SAME call `applyPatch` patches against.
+2. **Hysteresis window.** Nothing is cut until history exceeds
+   `HISTORY_WINDOW + HISTORY_HYSTERESIS` (12 + 6); then it drops to the last 12.
+   Between cuts turn N+1's history is turn N's plus two messages.
+3. **The current game's message is carried** into the window if it fell
+   outside (edit detection and catalog gates read the game off the trimmed
+   history).
+
+Rollback: `PROMPT_PREFIX_V2=off` restores the pre-2026-08-25 shape (game
+inlined in history, slide-by-one window, repeated section in the instruction).
 
 "Current" = the newest game, unless a version pin (`activeGameMessageId`) names an
 earlier one — see [§7](#7-scenario-f--version-pin-continue-from-here).

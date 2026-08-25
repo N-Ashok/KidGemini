@@ -6,7 +6,12 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { CHILD_SYSTEM_PROMPT } from "./gemini";
+import { CHILD_SYSTEM_PROMPT, CHILD_SAFETY_CORE, CHILD_BUILD_RULES, EDIT_CRAFT_RULES, buildTurnSystemInstruction } from "./gemini";
+import { REPEATED_REQUEST_SECTION } from "./game-edit";
+import { THREE_EDIT_CHEATSHEET, audioPromptSection } from "./assets/prompt-catalog";
+import { SAVE_STATE_PROMPT_SECTION } from "./assets/save-state-playbook";
+import { MULTIPLAYER_PROMPT_SECTION } from "./multiplayer-prompt";
+import { NEXT_ASK_EDIT_PROMPT_SECTION } from "./next-ask-sentinel";
 
 describe("CHILD_SYSTEM_PROMPT (safety instruction, monitor replacement)", () => {
   it("states the audience is a child aged 7 to 14", () => {
@@ -80,5 +85,112 @@ describe("CHILD_SYSTEM_PROMPT (safety instruction, monitor replacement)", () => 
   it("instructs the model to sprinkle short landmark comments across distinct code sections", () => {
     expect(CHILD_SYSTEM_PROMPT).toMatch(/landmark comment/i);
     expect(CHILD_SYSTEM_PROMPT).toMatch(/short,\s*distinct/i);
+  });
+});
+
+// 2026-08-25 PRD_EditTurnCost §4.A (PRD-PROMPT-CACHING Fix C): the system
+// instruction is the first bytes of every request. Anything per-turn in it
+// invalidates the whole cache from byte 0. The repeated-request directive was
+// the last per-turn section still living here — it now rides the tail.
+describe("buildTurnSystemInstruction — no per-turn bytes (cache prefix stability)", () => {
+  const gates = { three: true, threeReason: "asked" as const, audio: true, save: true };
+
+  it("S.1 is byte-identical across two consecutive edit turns with the same gates", () => {
+    const a = buildTurnSystemInstruction(gates, true, true, false, "default", true);
+    const b = buildTurnSystemInstruction(gates, true, true, false, "default", true);
+    expect(a).toBe(b);
+  });
+
+  it("S.2 a repeated request no longer changes the instruction (the directive rides the tail instead)", () => {
+    const plain = buildTurnSystemInstruction(gates, true, true, false, "default", true);
+    const repeated = buildTurnSystemInstruction(gates, true, true, true, "default", true);
+    expect(repeated).toBe(plain);
+    expect(plain).not.toContain(REPEATED_REQUEST_SECTION);
+  });
+});
+
+// 2026-08-25 (noble-orbiting-stallman step 3): an EDIT turn gets an edit-sized
+// instruction — the child-safety core + edit craft rules + a 3D cheat sheet —
+// instead of the full build playbooks (~7.7k → ~2.5k tokens). Build turns are
+// byte-identical to before. Owner decision 2026-08-25 on exactly what stays.
+describe("edit-turn instruction (slim) vs build-turn instruction (unchanged)", () => {
+  const gates = { three: true, threeReason: "asked" as const, audio: false, save: true };
+
+  it("ED.1 the build instruction still starts with the full CHILD_SYSTEM_PROMPT, byte-identical", () => {
+    const build = buildTurnSystemInstruction(gates, false, false, false, "default", true);
+    expect(build.startsWith(CHILD_SYSTEM_PROMPT)).toBe(true);
+    expect(CHILD_SYSTEM_PROMPT).toBe(`${CHILD_SAFETY_CORE}\n${CHILD_BUILD_RULES}`); // the split changes no bytes
+  });
+
+  it("ED.2 the edit instruction keeps the safety core and drops the build-only rules", () => {
+    const edit = buildTurnSystemInstruction(gates, false, true, false, "default", true);
+    expect(edit).toContain(CHILD_SAFETY_CORE);
+    expect(edit).toContain(EDIT_CRAFT_RULES);
+    for (const buildOnly of ["chess.js", "make something cool", "single HTML document wrapped", "pointerdown/touchstart", "100dvh", "JavaScript ARRAY"]) {
+      expect(edit, buildOnly).not.toContain(buildOnly);
+    }
+  });
+
+  it("ED.3 safety lines are present on BOTH shapes (rule 3 — never removed)", () => {
+    for (const isEdit of [false, true]) {
+      const s = buildTurnSystemInstruction(gates, false, isEdit, false, "default", true);
+      expect(s).toMatch(/child aged between 7 and 14/);
+      expect(s).toMatch(/scary, gory, sexual, hateful, or unsafe/);
+      expect(s).toMatch(/never refuse a game request/);
+      expect(s).toMatch(/cartoonish and bloodless/);
+    }
+  });
+
+  it("ED.4 edit keeps: landmark comments, keep-controls line, the edit contract, next-ask", () => {
+    const edit = buildTurnSystemInstruction(gates, false, true, false, "default", true);
+    expect(edit).toMatch(/landmark/i);
+    expect(edit).toMatch(/id="score"/);
+    expect(edit).toContain("<<<<<<< SEARCH");
+    expect(edit).toContain(NEXT_ASK_EDIT_PROMPT_SECTION);
+  });
+
+  it("ED.5 edit replaces the 3D/physics/catalog playbooks with the cheat sheet, and drops the save playbooks", () => {
+    const edit = buildTurnSystemInstruction(gates, false, true, false, "default", true);
+    expect(edit).toContain(THREE_EDIT_CHEATSHEET);
+    expect(edit).not.toMatch(/SOLID THINGS/); // physics playbook
+    expect(edit).not.toMatch(/Here is what the toy box HOLDS/); // full catalog
+    expect(edit).not.toContain(SAVE_STATE_PROMPT_SECTION); // gates.save is a BUILD gate
+    expect(edit.length).toBeLessThan(12000); // ~3k tokens
+  });
+
+  it("ED.6 an edit whose ask introduces a subsystem gets that section back (editGates)", () => {
+    const withAudio = buildTurnSystemInstruction(gates, false, true, false, "default", true, { audio: true });
+    expect(withAudio).toContain(audioPromptSection());
+    const withSave = buildTurnSystemInstruction(gates, false, true, false, "default", true, { save: true });
+    expect(withSave).toContain(SAVE_STATE_PROMPT_SECTION);
+    const withModels = buildTurnSystemInstruction(gates, false, true, false, "default", true, { models: true });
+    expect(withModels).toMatch(/Here is what the toy box HOLDS/);
+    const withPhysics = buildTurnSystemInstruction(gates, false, true, false, "default", true, { physics: true });
+    expect(withPhysics).toMatch(/SOLID THINGS/);
+    const withMp = buildTurnSystemInstruction(gates, false, true, false, "default", true, { multiplayer: true });
+    expect(withMp).toContain(MULTIPLAYER_PROMPT_SECTION);
+  });
+
+  it("ED.7 a 2D edit is just core + craft + edit contract (+ next-ask)", () => {
+    const edit = buildTurnSystemInstruction({ three: false, audio: false, save: false }, false, true, false, "default", true);
+    expect(edit).not.toContain(THREE_EDIT_CHEATSHEET);
+    expect(edit.length).toBeLessThan(6000);
+  });
+
+  it("ED.9 EDIT_INSTRUCTION_V2=off restores the full build prompt on edits (rollback switch)", () => {
+    vi.stubEnv("EDIT_INSTRUCTION_V2", "off");
+    try {
+      const edit = buildTurnSystemInstruction(gates, false, true, false, "default", true);
+      expect(edit.startsWith(CHILD_SYSTEM_PROMPT)).toBe(true);
+      expect(edit).toContain(SAVE_STATE_PROMPT_SECTION);
+      expect(edit).not.toContain(THREE_EDIT_CHEATSHEET);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("ED.8 the bible-teacher persona is untouched on edits (its own base prompt, as before)", () => {
+    const edit = buildTurnSystemInstruction({ three: false, audio: false, save: false }, false, true, false, "bible-teacher", true);
+    expect(edit).toMatch(/Sunday-school/);
   });
 });

@@ -22,6 +22,11 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   timer at all.
 
 ## Chat (home `/`)
+
+- **Byte-stable prompt + edit-turn thinking budget (2026-08-25)** — invisible
+  to the child; the same edits cost less (`docs/2026-08-25_PRD_EditTurnCost_CachingAndThinking.md`
+  §10 has the measured before/after). Rollback: `PROMPT_PREFIX_V2=off`,
+  `GEMINI_EDIT_THINKING_BUDGET`.
 - Gemini-powered kids chat: text + voice (TTS playback, regenerate last answer)
 - **Server-side chat history** (2026-07-13, TECH_DEBT #26 shipped): every
   conversation (messages + generated game HTML) persists in SQLite keyed by

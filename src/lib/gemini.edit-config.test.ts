@@ -26,7 +26,7 @@ vi.mock("./retry", () => ({
   withTimeout: (fn: () => unknown) => fn(),
 }));
 
-import { CHILD_SYSTEM_PROMPT, buildTurnSystemInstruction, GeminiChatModel } from "./gemini";
+import { CHILD_SYSTEM_PROMPT, CHILD_SAFETY_CORE, EDIT_CRAFT_RULES, buildTurnSystemInstruction, GeminiChatModel } from "./gemini";
 import { GAME_EDIT_PROMPT_SECTION } from "./game-edit";
 
 describe("buildTurnSystemInstruction — isEdit param", () => {
@@ -39,14 +39,18 @@ describe("buildTurnSystemInstruction — isEdit param", () => {
     expect(full).toContain(GAME_EDIT_PROMPT_SECTION);
   });
 
-  it("isEdit=true still carries the full child-safety base prompt (safety rules never dropped)", () => {
+  // 2026-08-25 (owner decision, plan noble-orbiting-stallman): an edit turn
+  // carries the child-safety CORE (never dropped — rule 3) plus edit craft
+  // rules, not the full build prompt. gemini.prompt.test.ts ED.* pins the shape.
+  it("isEdit=true still carries the child-safety core (safety rules never dropped)", () => {
     const full = buildTurnSystemInstruction({ three: false, audio: false }, false, true);
-    expect(full.startsWith(CHILD_SYSTEM_PROMPT)).toBe(true);
+    expect(full.startsWith(CHILD_SAFETY_CORE)).toBe(true);
+    expect(full).toMatch(/scary, gory, sexual, hateful, or unsafe/);
   });
 
-  it("isEdit=true with everything else off is exactly base + edit section", () => {
+  it("isEdit=true with everything else off is exactly safety core + edit craft + edit section", () => {
     const full = buildTurnSystemInstruction({ three: false, audio: false }, false, true);
-    expect(full).toBe(`${CHILD_SYSTEM_PROMPT}\n\n${GAME_EDIT_PROMPT_SECTION}`);
+    expect(full).toBe(`${CHILD_SAFETY_CORE}\n${EDIT_CRAFT_RULES}\n\n${GAME_EDIT_PROMPT_SECTION}`);
   });
 });
 

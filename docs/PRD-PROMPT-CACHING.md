@@ -1,6 +1,11 @@
 # PRD-PROMPT-CACHING — making Gemini implicit caching actually hit
 
-**Status: PLANNED — nothing implemented yet.** This document is the full plan:
+**Status: SHIPPED 2026-08-25** via `2026-08-25_PRD_EditTurnCost_CachingAndThinking.md`
+(Fix A as hysteresis window, Fix B as the tail game block, Fix C for the
+repeated-request section only — the edit section already stays constant across
+edit turns; Rule 3 of `trimHistory` was KEPT, not deleted — see that PRD §4.A).
+Measured before/after numbers live there (§10). The text below is the original
+plan, unchanged, and still the reference for *why*. This document was the full plan:
 what the request looks like today byte-by-byte, why the cache hit rate is ~4%,
 exactly what changes in each fix, the savings arithmetic, and the UAT that
 proves game quality did not drift. Companion docs: `COST_TOKEN_BUDGET.md`

@@ -15,9 +15,22 @@ import type { ChatMessage } from "@/types/chat.types";
 
 /** Last N messages sent to the model (≈ 6 back-and-forth turns). */
 export const HISTORY_WINDOW = 12;
+/** 2026-08-25 PRD_EditTurnCost §4.A (PRD-PROMPT-CACHING Fix A): the window
+ *  cuts in BLOCKS. History is left alone until it exceeds WINDOW + HYSTERESIS,
+ *  then cut back to WINDOW — so between cuts turn N+1's history is turn N's
+ *  plus two appended messages, and Gemini's implicit cache (longest
+ *  byte-identical prefix) can actually hit. A slide-by-one window shifted
+ *  every byte every turn: measured 2–4% cached in prod. */
+export const HISTORY_HYSTERESIS = 6;
+
+/** "off" restores the pre-2026-08-25 shape (newest game inlined in history).
+ *  Rollback switch only — see .env.example. */
+export function promptPrefixV2Enabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.PROMPT_PREFIX_V2 ?? "on").trim().toLowerCase() !== "off";
+}
 
 export const GAME_OMITTED_PLACEHOLDER =
-  "[an earlier version of the game — code omitted, the newest version appears later in this conversation]";
+  "[game code omitted — the current version of the game is attached to the child's latest message]";
 
 /** True if an assistant message carries game code. BUG-FIX-LOG 2026-07-18
  *  ("search_not_found on every edit turn"): patch/fallback turns store
@@ -33,8 +46,16 @@ function hasGame(m: ChatMessage): boolean {
 /** Replace the game code inside an assistant message with the placeholder,
  *  keeping the surrounding prose (extractArtifact already computes it). */
 function stripGame(m: ChatMessage): ChatMessage {
-  const { text } = extractArtifact(m.text);
-  return { ...m, text: `${text}\n${GAME_OMITTED_PLACEHOLDER}`.trim() };
+  const { text, artifactHtml } = extractArtifact(m.text);
+  // The source leaves the TEXT (never in history) but must stay ON the message:
+  // currentGameHtml() reads `artifactHtml` to build the tail block and to
+  // patch against. A legacy message that carried the game only in its text is
+  // lifted here so the tail can still carry it.
+  return {
+    ...m,
+    text: `${text}\n${GAME_OMITTED_PLACEHOLDER}`.trim(),
+    ...(m.artifactHtml || !artifactHtml ? {} : { artifactHtml }),
+  };
 }
 
 /** The CURRENT game's message must show its full source to the model — a
@@ -64,19 +85,33 @@ export function findLastGameIndex(history: ChatMessage[], pinnedId?: string): nu
 export function trimHistory(history: ChatMessage[], pinnedId?: string): ChatMessage[] {
   const lastGameIdx = findLastGameIndex(history, pinnedId);
 
-  // 1) Strip every game except the current one (newest, or the pinned one) —
-  //    and make sure the current one actually SHOWS its source (see
-  //    withInlineGame: a patch-turn message carries it only in the field).
-  const stripped = history.map((m, i) =>
-    i === lastGameIdx ? withInlineGame(m) : hasGame(m) ? stripGame(m) : m,
-  );
+  if (!promptPrefixV2Enabled()) {
+    // Legacy shape (pre-2026-08-25): newest/pinned game inlined in history,
+    // sliding window. Kept verbatim as the rollback path.
+    const legacy = history.map((m, i) =>
+      i === lastGameIdx ? withInlineGame(m) : hasGame(m) ? stripGame(m) : m,
+    );
+    if (legacy.length <= HISTORY_WINDOW) return legacy;
+    const w = legacy.slice(-HISTORY_WINDOW);
+    if (lastGameIdx !== -1 && lastGameIdx < legacy.length - HISTORY_WINDOW) return [legacy[lastGameIdx]!, ...w.slice(1)];
+    return w;
+  }
 
-  // 2) Window to the most recent messages.
-  if (stripped.length <= HISTORY_WINDOW) return stripped;
+  // 1. EVERY game message becomes prose + a fixed placeholder — including the
+  //    current one. The current source rides the final user turn instead
+  //    (gemini.ts buildContents → gameSourceBlock), read from `artifactHtml`
+  //    via currentGameHtml(). Bytes in history never change once written.
+  const stripped = history.map((m) => (hasGame(m) ? stripGame(m) : m));
+
+  // 2. Hysteresis window: cut in blocks, not by one message per turn.
+  if (stripped.length <= HISTORY_WINDOW + HISTORY_HYSTERESIS) return stripped;
   const windowed = stripped.slice(-HISTORY_WINDOW);
 
-  // 3) The current game must stay visible to the model even after windowing —
-  //    swap it in for the oldest windowed message so the cap still holds.
+  // 3. The current game's message is carried when it falls off the window:
+  //    isGameEditTurn / catalogGates / currentGameHtml all read the game off
+  //    the trimmed history. (PRD-PROMPT-CACHING proposed deleting this rule;
+  //    kept — without it a long chat silently turns an edit into a fresh
+  //    build. It only changes bytes at a cut, which already invalidates.)
   if (lastGameIdx !== -1 && lastGameIdx < stripped.length - HISTORY_WINDOW) {
     return [stripped[lastGameIdx]!, ...windowed.slice(1)];
   }

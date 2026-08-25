@@ -7,17 +7,19 @@ import type { ChatMessage, ChatModel, ImageAttachment, StreamChunk, TokenUsage }
 import type { ChainSummary } from "@/types/model-ledger.types";
 import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
 import { REPORT_HEADER } from "./error-report";
-import { threePromptSection, modelsPromptSection, audioPromptSection, modelNamesBlock, retrievedModelNames } from "./assets/prompt-catalog";
+import { threePromptSection, modelsPromptSection, audioPromptSection, modelNamesBlock, retrievedModelNames, THREE_EDIT_CHEATSHEET } from "./assets/prompt-catalog";
 import { PHYSICS_PROMPT_SECTION, physicsEnginePromptSection } from "./assets/physics-playbook";
 import { SAVE_STATE_PROMPT_SECTION } from "./assets/save-state-playbook";
 import { PUBLISHED_SAVE_PROMPT_SECTION } from "./assets/published-save-playbook";
-import { catalogGates, type CatalogGates } from "./assets/catalog-gate";
+import { catalogGates, editGates, type CatalogGates, type EditGates } from "./assets/catalog-gate";
 import { multiplayerGate } from "./multiplayer-gate";
 import { MULTIPLAYER_PROMPT_SECTION } from "./multiplayer-prompt";
 import {
-  isGameEditTurn, isThreeConversionTurn, isRepeatedRequest, GAME_EDIT_PROMPT_SECTION,
+  isGameEditTurn, isThreeConversionTurn, isRepeatedRequest, currentGameHtml, gameSourceBlock, GAME_EDIT_PROMPT_SECTION,
   GAME_EDIT_STRICT_RETRY_SECTION, REPEATED_REQUEST_SECTION, FRESH_GAME_LINE,
 } from "./game-edit";
+import { promptPrefixV2Enabled } from "./history-trim";
+import { modelViewOf } from "./assets/model-view";
 import { PERSONAS, type PersonaId } from "./persona/persona";
 import { NEXT_ASK_EDIT_PROMPT_SECTION, NEXT_ASK_PROMPT_SECTION, resolveNextAsk } from "./next-ask-sentinel";
 import { fallbackChain, isModelGone, shouldTryNextModel } from "./model-fallback";
@@ -295,7 +297,15 @@ const GAME_BUILD_CONTRACT = `respond with a single HTML document wrapped in a
 // the child-audience framing + the shared GAME_BUILD_CONTRACT — the resulting
 // text is byte-identical to the previous single literal (the prompt pins in
 // gemini.prompt.test.ts still hold).
-export const CHILD_SYSTEM_PROMPT = `You are a friendly, encouraging assistant for a child aged between 7 and 14.
+// 2026-08-25 (plan noble-orbiting-stallman, owner decision): the base prompt is
+// two parts. CHILD_SAFETY_CORE is the per-generation child-safety/tone
+// instruction — it is on EVERY turn shape and is never removed (repo rule 3;
+// it replaced the Flash-Lite monitor on 2026-07-09). CHILD_BUILD_RULES is the
+// craft of building a NEW game — CDN classics, action framing, the vague-ask
+// rule, the whole GAME_BUILD_CONTRACT — and rides build turns only; an edit
+// turn gets EDIT_CRAFT_RULES instead. CHILD_SYSTEM_PROMPT (build shape) is the
+// byte-identical concatenation, pinned by gemini.prompt.test.ts ED.1.
+export const CHILD_SAFETY_CORE = `You are a friendly, encouraging assistant for a child aged between 7 and 14.
 Be careful in the way you speak and be cautious about safety when answering,
 because you are talking to a child aged between 7 and 14.
 Speak simply and warmly. Keep answers short and clear. Be playful and curious.
@@ -303,8 +313,9 @@ Never produce anything scary, gory, sexual, hateful, or unsafe.
 Games the child asks for are ALWAYS welcome — chess, puzzles, arcade games,
 anything playful — never refuse a game request; just keep its content wholesome.
 NEVER say a game is too complicated, and never deflect to a simpler, different
-game — build the game the child asked for, complete and playable, in one go.
-For rule-heavy classics (chess, checkers, sudoku), you may load a well-known
+game — build the game the child asked for, complete and playable, in one go.`;
+
+export const CHILD_BUILD_RULES = `For rule-heavy classics (chess, checkers, sudoku), you may load a well-known
 open-source library from a public CDN with <script src> (e.g. chess.js for
 correct chess rules) so the game plays like a professional site; all other
 games stay fully self-contained and offline (inline CSS + JS, no external
@@ -318,6 +329,22 @@ pick one fun, concrete interpretation yourself and start building it
 immediately — do not list options or ask which one, and do not spend long
 weighing interpretations; the child can always ask for changes after playing.
 If the child asks for a game, ${GAME_BUILD_CONTRACT}`;
+
+export const CHILD_SYSTEM_PROMPT = `${CHILD_SAFETY_CORE}\n${CHILD_BUILD_RULES}`;
+
+/** What an EDIT turn keeps of the build craft (owner decision 2026-08-25):
+ *  the wholesome-action framing (an edit can add enemies), the landmark rule
+ *  (what makes the next patch anchor), and one line protecting what the
+ *  build contract already put in place. Everything about deciding and laying
+ *  out a NEW game is dropped — the game exists, and GAME_EDIT_PROMPT_SECTION
+ *  already says "change only what this request needs". */
+export const EDIT_CRAFT_RULES = `Classic video-game action IS fine and welcome. Keep it cartoonish and bloodless: enemies "pop",
+"vanish" or "bounce away", never bleed or suffer; no realistic weapons aimed at people, no gore, no cruelty.
+Keep the existing controls (keyboard AND on-screen buttons), the responsive layout, and the
+id="score" element working exactly as they do now — never remove or restyle them.
+Sprinkle short landmark comments across distinct code sections, like \`// --- PLAYER MOVEMENT ---\`
+or \`<!-- SCORING -->\`: a later request to change this game will edit it by finding a small exact
+chunk of code, and a short unique landmark is far easier to match than a long block.`;
 
 // Bible-teacher persona (PRD-BIBLE-TEACHER §6). Audience is a VERIFIED-ADULT
 // Sunday-school / kids' Bible teacher building games FOR their class of children
@@ -366,33 +393,57 @@ function personaBasePrompt(persona: PersonaId): string {
  *  field. The default is fully unlocked — that's the paid/tests shape;
  *  configFor passes the real per-turn gates. Exported for the prompt-contract
  *  tests. */
+/** Rollback shape (PROMPT_PREFIX_V2=off): the repeated-request directive back
+ *  in the instruction, exactly as before 2026-08-25. */
+function legacyTurnSystemInstruction(
+  gates: CatalogGates, multiplayer: boolean, isEdit: boolean, repeated: boolean, persona: PersonaId, nextAsk: boolean,
+): string {
+  const base = buildTurnSystemInstruction(gates, multiplayer, isEdit, false, persona, nextAsk);
+  return repeated ? `${base}\n\n${REPEATED_REQUEST_SECTION}` : base;
+}
+
+/** "off" sends edit turns the full build prompt + playbooks again (the
+ *  pre-2026-08-25 shape). Rollback switch only — see .env.example. */
+export function editInstructionV2Enabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.EDIT_INSTRUCTION_V2 ?? "on").trim().toLowerCase() !== "off";
+}
+
 export function buildTurnSystemInstruction(
-  gates: CatalogGates = { three: true, audio: true, save: true },
+  gates: CatalogGates = { three: true, threeReason: "asked", audio: true, save: true },
   multiplayer = true,
   isEdit = false,
   repeated = false,
   persona: PersonaId = "default",
-  // Kid hints / next-ask chips (2026-07-28 PRD): fresh-build turns only —
-  // never combined with isEdit (see next-ask-sentinel.ts's header comment for
-  // why the edit/patch contract can't safely carry this too). Default false
-  // keeps every existing call site (and the prompt-pin tests) unchanged.
   nextAsk = false,
+  /** Edit turns only: which full sections the ASK re-introduces (catalog-gate.ts editGates). */
+  editNeeds: EditGates = {},
 ): string {
+  void repeated; // rides the tail since 2026-08-25 (buildContents → tailSections); kept for one signature
+  if (isEdit && persona === "default" && editInstructionV2Enabled()) {
+    // 2026-08-25 edit-sized instruction (plan noble-orbiting-stallman step 3):
+    // safety core + edit craft + a 3D cheat sheet, and a full playbook ONLY when
+    // the ask names that subsystem. ~7.7k → ~2.5k tokens on the commonest turn.
+    // `gates` here are the monotonic build gates: `three` still decides whether
+    // this is a 3D game at all; `save`/`sports`/`audio` are overridden by the ask.
+    const sections = [
+      ...(gates.three ? [THREE_EDIT_CHEATSHEET] : []),
+      ...(gates.three && editNeeds.models ? [modelsPromptSection(undefined, { sports: Boolean(editNeeds.sports) })] : []),
+      ...(gates.three && editNeeds.physics ? [PHYSICS_PROMPT_SECTION, physicsEnginePromptSection()] : []),
+      ...(editNeeds.audio ? [audioPromptSection()] : []),
+      ...(editNeeds.save ? [SAVE_STATE_PROMPT_SECTION, PUBLISHED_SAVE_PROMPT_SECTION] : []),
+      ...(multiplayer || editNeeds.multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),
+      GAME_EDIT_PROMPT_SECTION,
+      ...(nextAsk ? [NEXT_ASK_EDIT_PROMPT_SECTION] : []),
+    ];
+    return `${CHILD_SAFETY_CORE}\n${EDIT_CRAFT_RULES}\n\n${sections.join("\n\n")}`;
+  }
   const base = personaBasePrompt(persona);
   const sections = [
-    // threePromptSection(gates.threeReason) — an explicit "3D" ask keeps the
-    // emphatic lead-in; a subject-only unlock (2026-08-23) gets the one that
-    // OFFERS 3D, so a quiz asked for in the same breath as a dog stays flat.
-    ...(gates.three ? [threePromptSection(gates.threeReason), modelsPromptSection(), PHYSICS_PROMPT_SECTION, physicsEnginePromptSection()] : []),
+    ...(gates.three ? [threePromptSection(gates.threeReason), modelsPromptSection(undefined, { sports: Boolean(gates.sports) }), PHYSICS_PROMPT_SECTION, physicsEnginePromptSection()] : []),
     ...(gates.audio ? [audioPromptSection()] : []),
     ...(gates.save ? [SAVE_STATE_PROMPT_SECTION, PUBLISHED_SAVE_PROMPT_SECTION] : []),
     ...(multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),
     ...(isEdit ? [GAME_EDIT_PROMPT_SECTION] : []),
-    ...(repeated ? [REPEATED_REQUEST_SECTION] : []),
-    // Edit turns get their OWN variant (a single trailing line after the
-    // patch blocks, carving one explicit exception out of the section above);
-    // fresh builds get the plain one. Must stay LAST so the edit variant can
-    // reference GAME_EDIT_PROMPT_SECTION's closing rule.
     ...(nextAsk ? [isEdit ? NEXT_ASK_EDIT_PROMPT_SECTION : NEXT_ASK_PROMPT_SECTION] : []),
   ].filter(Boolean);
   return sections.length ? `${base}\n\n${sections.join("\n\n")}` : base;
@@ -514,11 +565,24 @@ export const CHILD_FIX_CONTEXT =
  *  safetyContext (CHILD_BUILDER_CONTEXT, see above) rides as its OWN leading
  *  part of the final user turn — never merged into the child's message text —
  *  so the child's own words are never altered, only prefaced. */
-export function buildChatContents(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; safetyContext?: string; modelNames?: string }) {
+export function buildChatContents(input: {
+  history: ChatMessage[]; message: string; image?: ImageAttachment; safetyContext?: string; modelNames?: string;
+  /** The current game's source, to ride the tail (2026-08-25 PRD_EditTurnCost §4.A). */
+  gameSource?: string;
+  /** Per-turn directives (e.g. REPEATED_REQUEST_SECTION) that used to live in
+   *  the system instruction — they ride the tail so the prefix stays stable. */
+  tailSections?: string[];
+}) {
   const lastParts: ({ text: string } | { inlineData: ImageAttachment })[] = input.image
     ? [{ inlineData: { mimeType: input.image.mimeType, data: input.image.data } }, { text: input.message }]
     : [{ text: input.message }];
   if (input.safetyContext) lastParts.unshift({ text: input.safetyContext });
+  // Tail order (pinned by gemini.contents.test.ts T.2): game source →
+  // per-turn directives → safety context → [image] → child's message → model
+  // names. The game goes FIRST so the directives and the ask are read after
+  // the source they refer to, the same shape strictEditRetry uses.
+  for (const section of [...(input.tailSections ?? [])].reverse()) lastParts.unshift({ text: section });
+  if (input.gameSource) lastParts.unshift({ text: gameSourceBlock(input.gameSource) });
   // The retrieved model-name list (the category-map hybrid, 2026-08-09) rides
   // LAST — after the history and after the child's message. Everything before
   // it is byte-identical to the previous turn's prefix, so the system prompt
@@ -610,8 +674,19 @@ export class GeminiChatModel implements ChatModel {
    *  (BUG-FIX-LOG 2026-07-27, see the constant's comment) — the bible-teacher
    *  persona is a verified adult with its own relaxed thresholds and doesn't
    *  need it; ordinary (non-build) chat never needs it. */
-  private buildContents(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; persona?: PersonaId }) {
+  private buildContents(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; persona?: PersonaId; activeGameMessageId?: string }) {
     const isChild = (PERSONAS[input.persona ?? "default"] ?? PERSONAS.default).id === "default";
+    const build = isGameBuildTurn(input.message, input.history);
+    // The current (or pinned) game rides the tail on every build turn — edit,
+    // forced rebuild, 2D→3D conversion alike — from the SAME source applyPatch
+    // patches against. Under PROMPT_PREFIX_V2=off trimHistory inlined it in the
+    // history instead, so the tail must stay empty or the model sees it twice.
+    // …minus the runtime delivery injected (model-view.ts): the model reads the
+    // child's code, not ~10k tokens of our boilerplate. applyPatch still runs
+    // against the delivered document — every line of the view exists in it.
+    const stored = build && promptPrefixV2Enabled() ? currentGameHtml(input.history, input.activeGameMessageId) : undefined;
+    const gameSource = stored ? modelViewOf(stored) : undefined;
+    const tailSections = build && promptPrefixV2Enabled() && isRepeatedRequest(input.message, input.history) ? [REPEATED_REQUEST_SECTION] : [];
     // An error-report paste gets the more specific fix framing; every other
     // build turn keeps the battle framing verified live 2026-07-27.
     const safetyContext =
@@ -633,6 +708,8 @@ export class GeminiChatModel implements ChatModel {
       ...input,
       ...(safetyContext ? { safetyContext } : {}),
       ...(modelNames ? { modelNames } : {}),
+      ...(gameSource ? { gameSource } : {}),
+      ...(tailSections.length ? { tailSections } : {}),
     });
   }
 
@@ -750,9 +827,12 @@ export class GeminiChatModel implements ChatModel {
     console.log(`[gemini] builder mode — thinking on, extended output, persona=${persona.id}, catalogs: 3d=${gates.three} audio=${gates.audio} save=${gates.save} multiplayer=${wantsMultiplayer} edit=${isEdit} repeated=${repeated} nextAsk=${nextAsk}`);
     return {
       ...GEN_CONFIG,
-      systemInstruction: buildTurnSystemInstruction(gates, wantsMultiplayer, isEdit, repeated, persona.id, nextAsk),
+      systemInstruction: promptPrefixV2Enabled()
+        ? buildTurnSystemInstruction(gates, wantsMultiplayer, isEdit, repeated, persona.id, nextAsk, isEdit ? editGates(input.message) : {})
+        : legacyTurnSystemInstruction(gates, wantsMultiplayer, isEdit, repeated, persona.id, nextAsk),
       safetySettings: persona.safetySettings,
-      ...builderGenOverrides(process.env),
+      // Edit turns get the smaller edit budget (2026-08-25 PRD_EditTurnCost §4.B).
+      ...builderGenOverrides(process.env, { isEdit }),
     };
   }
 
@@ -763,7 +843,7 @@ export class GeminiChatModel implements ChatModel {
    *  same model-fallback chain replyStream() uses (oneShotWithFallback) —
    *  this is the SAFETY NET for a mismatched patch, so it must not itself be
    *  a dead end on a single bad/unavailable model. */
-  async reply(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean; persona?: PersonaId; preferAlternateModel?: boolean; onLedger?: (summary: ChainSummary) => void; onLoserCost?: (model: string, usage: TokenUsage | undefined, outputText: string) => void }) {
+  async reply(input: { history: ChatMessage[]; message: string; image?: ImageAttachment; forceFullRegen?: boolean; activeGameMessageId?: string; persona?: PersonaId; preferAlternateModel?: boolean; onLedger?: (summary: ChainSummary) => void; onLoserCost?: (model: string, usage: TokenUsage | undefined, outputText: string) => void }) {
     const ai = getClient();
     try {
       const res = await this.oneShotWithFallback(

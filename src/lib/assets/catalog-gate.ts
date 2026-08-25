@@ -7,7 +7,7 @@
 import type { ChatMessage } from "@/types/chat.types";
 import { isGameBuildTurn, THREE_ASK_RE } from "../builder-mode";
 import { GENRES } from "./model-select";
-import type { GenreId } from "./asset-taxonomy";
+import { modelsInGenre, TAXONOMY, type GenreId } from "./asset-taxonomy";
 
 /** WHY the 3D catalog is unlocked — it decides which lead-in the prompt gets,
  *  and that distinction is load-bearing (2026-08-23). THREE_PROMPT_SECTION
@@ -32,6 +32,10 @@ export interface CatalogGates {
   // same as omitting three/audio would if they were optional. New call sites
   // should set it explicitly; catalogGates() itself always returns it.
   save?: boolean;
+  /** The sports playbook (rules + team AI, ~1,000 tokens) — set only when
+   *  `three` is on AND the game is a sports game (2026-08-25: it used to ride
+   *  every 3D turn because the MANIFEST holds sports models). Absent = off. */
+  sports?: boolean;
 }
 
 // Free-tier triggers (§9): err toward unlocking — a false unlock costs a few
@@ -91,6 +95,40 @@ const AUDIO_TRIGGER = /\b(sounds?|music|songs?|sfx)\b/i;
 // Build/world/inventory mechanics (docs/2026-08-01_PRD_SaveContinueBuilding.md):
 // a kid naming placement/persistence mechanics, not just "make me a game".
 const SAVE_TRIGGER = /\b(build|building|stack|stacking|place|placing|placed|inventory|world|city|base)\b/i;
+// Sports = the sports genre's own trigger (model-select.ts — football/cricket/
+// beyblade words), or a game that already loads a sports model.
+const SPORTS_TRIGGER = GENRES.find((g) => g.id === "sports")!.trigger;
+const SPORTS_MODEL_NAMES = modelsInGenre("sports", new Set(Object.keys(TAXONOMY)));
+const SPORTS_ARTIFACT = new RegExp(`(?:loadModel|placeModel)\\(\\s*["'](?:${SPORTS_MODEL_NAMES.join("|")})["']`);
+
+/** What an EDIT turn's ask re-introduces (2026-08-25, plan noble-orbiting-stallman
+ *  step 2/3). On an edit the instruction is slim — safety core, edit craft, a 3D
+ *  cheat sheet — and a full playbook comes back ONLY when the ask itself names
+ *  that subsystem. Evaluated on the ask alone (not the history): the history
+ *  gates are monotonic build gates, and "build me a race track" unlocking
+ *  ~870 tokens of save playbook on every later edit is exactly the waste. */
+export interface EditGates {
+  audio?: boolean;
+  models?: boolean;
+  physics?: boolean;
+  sports?: boolean;
+  save?: boolean;
+  multiplayer?: boolean;
+}
+const EDIT_SAVE_TRIGGER = /\b(save|saving|saved|progress|continue|resume|checkpoints?|remember|load my)\b/i;
+const EDIT_PHYSICS_TRIGGER = /\b(physics|gravity|bounc(e|y|ing)|collid(e|es|ing)|collision|fall(s|ing)?|throw(s|ing)?|jump(s|ing)?|heav(y|ier)|weight|friction|momentum)\b/i;
+const EDIT_MULTIPLAYER_TRIGGER = /\b(multiplayer|(2|two)[- ]?player|co-?op|with (a|my) friend|versus|vs\.?|play together)\b/i;
+export function editGates(message: string): EditGates {
+  const out: EditGates = {};
+  if (AUDIO_TRIGGER.test(message)) out.audio = true;
+  const sports = SPORTS_TRIGGER.test(message);
+  if (sports || subjectSuggestsThree(message) || GENRES.some((g) => g.trigger.test(message))) out.models = true;
+  if (sports) out.sports = true;
+  if (EDIT_PHYSICS_TRIGGER.test(message)) out.physics = true;
+  if (EDIT_SAVE_TRIGGER.test(message)) out.save = true;
+  if (EDIT_MULTIPLAYER_TRIGGER.test(message)) out.multiplayer = true;
+  return out;
+}
 
 // Iteration insurance: a game already built WITH library assets keeps its
 // catalogs on follow-up turns even when the keyword text has scrolled away.
@@ -121,6 +159,7 @@ export function catalogGates(input: { message: string; history: ChatMessage[]; p
   const texts = [input.message, ...input.history.filter((m) => m.role === "child").map((m) => m.text)];
   const artifacts = input.history.map((m) => m.artifactHtml).filter((h): h is string => Boolean(h));
   const save = texts.some((t) => SAVE_TRIGGER.test(t)) || artifacts.some((h) => SAVE_ARTIFACT.test(h));
+  const sportsGame = texts.some((t) => SPORTS_TRIGGER.test(t)) || artifacts.some((h) => SPORTS_ARTIFACT.test(h));
 
   if (input.paid) {
     // Paid unlocks the catalog on every build turn, so most paid turns are NOT
@@ -128,7 +167,7 @@ export function catalogGates(input: { message: string; history: ChatMessage[]; p
     // actually said 3D. (paid is hardwired false at the call site today;
     // TECH_DEBT #11.)
     const paidReason = threeReasonFrom(texts, artifacts) ?? "subject";
-    return { three: true, threeReason: paidReason, audio: true, save };
+    return { three: true, threeReason: paidReason, audio: true, save, ...(sportsGame ? { sports: true } : {}) };
   }
 
   const reason = threeReasonFrom(texts, artifacts);
@@ -136,6 +175,7 @@ export function catalogGates(input: { message: string; history: ChatMessage[]; p
   return {
     three: reason !== null,
     ...(reason ? { threeReason: reason } : {}),
+    ...(reason !== null && sportsGame ? { sports: true } : {}),
     audio: texts.some((t) => AUDIO_TRIGGER.test(t)) || artifacts.some((h) => AUDIO_ARTIFACT.test(h)),
     save,
   };

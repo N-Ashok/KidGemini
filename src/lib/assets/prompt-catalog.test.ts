@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 vi.mock("server-only", () => ({}));
 
-import { THREE_PROMPT_SECTION, threePromptSection, modelsPromptSection, audioPromptSection, retrievedModelNames, modelNamesBlock } from "./prompt-catalog";
+import { THREE_PROMPT_SECTION, threePromptSection, modelsPromptSection, audioPromptSection, retrievedModelNames, modelNamesBlock, THREE_EDIT_CHEATSHEET } from "./prompt-catalog";
 import { THREE_MARKER } from "./inject";
 import { GENRE_IDS, modelsInGenre } from "./asset-taxonomy";
 import { RETIRED } from "./retired";
@@ -567,7 +567,7 @@ describe("the indian games category (2026-07-30 batch) renders in the real catal
 // team-AI pattern. Static (derived from the manifest, not the message), so
 // the byte-stability test below still holds and prefix caching survives.
 describe("the sports playbook teaches rules + dynamics, cache-safely", () => {
-  const section = modelsPromptSection(realManifest as AssetManifest);
+  const section = modelsPromptSection(realManifest as AssetManifest, { sports: true }); // gated since 2026-08-25
 
   it("teaches the object of a team sport (score in the OPPONENT's goal, restart, win condition)", () => {
     expect(section).toMatch(/opponent'?s goal/i);
@@ -778,5 +778,38 @@ describe("threePromptSection — one body, two lead-ins", () => {
       expect(s, v).toContain("<!--USES_THREE-->");
       expect(s, v).toContain("preserveDrawingBuffer: true");
     }
+  });
+});
+
+// 2026-08-25 (noble-orbiting-stallman step 1): the sports playbook is a GENRE
+// playbook, gated on the game — not on the manifest happening to hold sports models.
+describe("modelsPromptSection — sports playbook rides only when the sports gate is on", () => {
+  it("SG.1 off by default (a race track / dino game pays nothing for football rules)", () => {
+    const section = modelsPromptSection(realManifest as AssetManifest);
+    expect(section).not.toMatch(/opponent'?s goal/i);
+    expect(section).not.toMatch(/air hockey/i);
+  });
+
+  it("SG.2 on when asked for", () => {
+    const section = modelsPromptSection(realManifest as AssetManifest, { sports: true });
+    expect(section).toMatch(/opponent'?s goal/i);
+    expect(section).toMatch(/air hockey/i);
+  });
+
+  it("SG.3 both shapes are byte-stable (cache contract holds per gate set)", () => {
+    expect(modelsPromptSection(realManifest as AssetManifest)).toBe(modelsPromptSection(realManifest as AssetManifest));
+    expect(modelsPromptSection(realManifest as AssetManifest, { sports: true })).toBe(modelsPromptSection(realManifest as AssetManifest, { sports: true }));
+  });
+});
+
+describe("THREE_EDIT_CHEATSHEET — what an edit turn keeps of the 3D teaching", () => {
+  it("CS.1 is small and carries the rules a patch can violate", () => {
+    expect(THREE_EDIT_CHEATSHEET.length).toBeLessThan(1600); // ~400 tokens
+    expect(THREE_EDIT_CHEATSHEET).toContain("<!--USES_MODELS");
+    expect(THREE_EDIT_CHEATSHEET).toMatch(/loadModel\(/);
+    expect(THREE_EDIT_CHEATSHEET).toMatch(/placeModel\(/);
+    expect(THREE_EDIT_CHEATSHEET).toMatch(/never invent a model name/i);
+    expect(THREE_EDIT_CHEATSHEET).toMatch(/animations/);
+    expect(THREE_EDIT_CHEATSHEET).toMatch(/from "three"/);
   });
 });

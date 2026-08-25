@@ -1,0 +1,14 @@
+{
+  "_comment": "Replay session for docs/2026-08-25_PRD_EditTurnCost_CachingAndThinking.md. A synthetic, child-shaped 'physics world' conversation (build → edits → rewind → pause → edit) that stands in for a real kid session so cost per turn can be measured before/after a prompt-shape change WITHOUT touching any child's transcript. Run: node scripts/replay-session.mjs physics-world --label before. Costs real model calls (~$0.30–0.50 per run).",
+  "id": "physics-world",
+  "turns": [
+    { "id": "t1-build", "text": "3D - make a physics world where I can throw balls at a tower of blocks and knock them down" },
+    { "id": "t2-edit-bounce", "text": "make the balls bounce more" },
+    { "id": "t3-edit-score", "text": "add a score that counts how many blocks fell off the table" },
+    { "id": "t4-edit-reset", "text": "add a reset button so I can build the tower again" },
+    { "id": "t5-edit-bigball", "text": "make a big heavy ball I can throw when I press B" },
+    { "id": "t6-rewind-edit", "text": "change the blocks to red and blue", "pinTo": "t4-edit-reset" },
+    { "id": "t7-pause-edit", "text": "add a timer that counts down from 60 seconds", "pauseMs": 240000 },
+    { "id": "t8-edit-sound", "text": "play a sound when the tower falls" }
+  ]
+}

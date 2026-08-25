@@ -1776,3 +1776,50 @@ describe("POST /api/chat — bible-teacher persona (gate + fail-closed resolutio
     expect(replyStreamMock).not.toHaveBeenCalled();
   });
 });
+
+// 2026-08-25 PRD_EditTurnCost: the replay harness (scripts/replay-session.mjs)
+// measures cost per turn from what Google actually billed. It reads the
+// billed usage off the `done` frame — but ONLY when EXPOSE_TURN_USAGE=1, so a
+// production client never sees token counts (they are operator data, served
+// by /api/usage behind ADMIN_SECRET).
+describe("POST /api/chat — done frame carries billed usage only under EXPOSE_TURN_USAGE", () => {
+  const doneOf = (text: string) => JSON.parse(text.trim().split("\n").find((l) => l.includes('"type":"done"'))!);
+  async function* withUsage(text: string) {
+    yield { kind: "delta", text };
+    yield {
+      kind: "usage",
+      text: "",
+      model: "gemini-3.7-flash",
+      usage: { promptTokens: 20000, outputTokens: 1500, thoughtTokens: 600, cachedTokens: 8000 },
+    };
+  }
+
+  it("U.1 exposes model + billed tokens + estimated cost on the done frame when the flag is on", async () => {
+    vi.stubEnv("EXPOSE_TURN_USAGE", "1");
+    authMock.mockResolvedValue(null);
+    replyStreamMock.mockReturnValue(withUsage("Hello!"));
+
+    const res = await POST(makeReq({ message: "hello", history: [] }));
+    const done = doneOf(await res.text());
+
+    expect(done.usage).toEqual({
+      model: "gemini-3.7-flash",
+      promptTokens: 20000,
+      cachedTokens: 8000,
+      outputTokens: 1500,
+      thoughtTokens: 600,
+      costUsd: expect.any(Number),
+    });
+    expect(done.usage.costUsd).toBeGreaterThan(0);
+  });
+
+  it("U.2 never exposes usage when the flag is off (default)", async () => {
+    authMock.mockResolvedValue(null);
+    replyStreamMock.mockReturnValue(withUsage("Hello!"));
+
+    const res = await POST(makeReq({ message: "hello", history: [] }));
+    const done = doneOf(await res.text());
+
+    expect(done.usage).toBeUndefined();
+  });
+});

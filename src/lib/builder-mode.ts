@@ -11,6 +11,13 @@ import type { ChatMessage } from "@/types/chat.types";
 // commit-to-one-interpretation line in CHILD_SYSTEM_PROMPT; raise back via
 // GEMINI_BUILDER_THINKING_BUDGET if game quality visibly drops.
 const DEFAULT_THINKING_BUDGET = 1024; // bounded: ~5-10s worst-case silence
+// Edit turns (2026-08-25 PRD_EditTurnCost §4.B): a SEARCH/REPLACE patch against
+// a source the model reads verbatim needs far less deliberation than a fresh
+// build. Probe (scripts/probe-thinking.mjs, 3.7-flash on Vertex, 3 reps):
+// budgets 256–1024 → 0–154 thought tokens, 3/3 clean patches; an UNBOUNDED
+// budget (-1 / unset) → 1,200–3,300 thoughts, 22–26s, and a dropped patch.
+// The prod strict-retry rung already patches fine at a halved budget.
+const DEFAULT_EDIT_THINKING_BUDGET = 512;
 const DEFAULT_MAX_OUTPUT_TOKENS = 24576; // full games run 10-20K tokens; 8K squeezed them
 
 /** A turn pays for thinking when the child asks for a game outright, or is
@@ -38,10 +45,13 @@ export function isGameBuildTurn(message: string, history: ChatMessage[]): boolea
 
 /** Builder-turn generation overrides, env-tunable (shape documented in
  *  .env.example). Junk values fall back to defaults — never NaN into the API. */
-export function builderGenOverrides(env: Record<string, string | undefined>) {
+export function builderGenOverrides(env: Record<string, string | undefined>, opts: { isEdit?: boolean } = {}) {
+  const thinkingBudget = opts.isEdit
+    ? positiveInt(env.GEMINI_EDIT_THINKING_BUDGET, DEFAULT_EDIT_THINKING_BUDGET)
+    : positiveInt(env.GEMINI_BUILDER_THINKING_BUDGET, DEFAULT_THINKING_BUDGET);
   return {
     thinkingConfig: {
-      thinkingBudget: positiveInt(env.GEMINI_BUILDER_THINKING_BUDGET, DEFAULT_THINKING_BUDGET),
+      thinkingBudget,
       // Thought summaries stream back as parts flagged `thought: true` — the
       // route turns them into the kid-facing planning line (kid-thought.ts)
       // so the thinking phase isn't a silent "Thinking…" stare (2026-07-11).

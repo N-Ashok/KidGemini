@@ -308,6 +308,17 @@ export function editReplyProse(reply: string): string {
  *  whatever the edit adds — unlike a repair, a feature edit can introduce
  *  new visible content the safety rules must still govern. Modeled on
  *  repair-prompt.ts's already-proven REPAIR_SYSTEM_PROMPT wording. */
+/** 2026-08-25 PRD_EditTurnCost §4.A: the current game's source rides the FINAL
+ *  user turn as this block (gemini.ts buildContents), never the history — so
+ *  the 10–25k-token blob can't invalidate the cached prefix, and the model
+ *  reads the exact bytes applyPatch will search. Wording deliberately close
+ *  to strictEditRetry's "Current game source:", which patches reliably in prod. */
+export const GAME_SOURCE_HEADER =
+  "Current game source — the version the child is playing right now. Every SEARCH block must copy lines exactly from this:";
+export function gameSourceBlock(html: string): string {
+  return `${GAME_SOURCE_HEADER}\n\`\`\`html\n${html}\n\`\`\``;
+}
+
 export const GAME_EDIT_PROMPT_SECTION = `The child already has a working game from this conversation. If this message is actually asking you to change or add something to it, this is NOT a fresh build — do not rewrite the whole file. If the message isn't about the game at all (a question, plain chat), ignore everything below and just answer normally instead.
 If — and only if — the child is clearly asking for a COMPLETELY DIFFERENT game (a brand-new game, not a change, addition, or tweak to this one), do NOT rebuild anything: reply with exactly ${NEW_GAME_SENTINEL} on its own line, and nothing else at all (no sentence, no code). When in doubt, treat it as a change to the current game, not a new game.
 First, on its own line, write ONE short, encouraging sentence about what you added (no code, no markdown fence).

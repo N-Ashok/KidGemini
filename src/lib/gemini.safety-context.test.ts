@@ -78,7 +78,24 @@ describe("child-builder safety context injection (pinned)", () => {
       { id: "2", role: "assistant", text: "here!", createdAt: 2, artifactHtml: "<html>g</html>" },
     ];
     const contents = await contentsSentToGemini({ message: "add a mega evolution button", history });
-    expect(finalTurnFirstText(contents)).toBe(CHILD_BUILDER_CONTEXT);
+    // 2026-08-25 PRD_EditTurnCost §4.A: the game source now rides the tail
+    // FIRST; the safety framing is the next part, still on the final turn only.
+    const parts = contents[contents.length - 1]!.parts.map((p: { text?: string }) => p.text ?? "");
+    expect(parts[0]).toContain("<html>g</html>");
+    expect(parts[1]).toBe(CHILD_BUILDER_CONTEXT);
+  });
+
+  it("the tail carries the MODEL VIEW of the game — delivered runtime stripped, the child's code intact (PRD_EditTurnCost §4.A2)", async () => {
+    const delivered = `<html><body><script>window.__arGlGuard = 1; window.__arGlGuardVersion = 9;</script><script type="module">// --- KID ---\nconst x = 1;</script><script>window.AR_ASSETS={"a":"u"};</script></body></html>`;
+    const history: ChatMessage[] = [
+      { id: "1", role: "child", text: "make me a game", createdAt: 1 },
+      { id: "2", role: "assistant", text: "here!", createdAt: 2, artifactHtml: delivered },
+    ];
+    const contents = await contentsSentToGemini({ message: "make it faster", history });
+    const tail = contents[contents.length - 1]!.parts[0]!.text!;
+    expect(tail).toContain("// --- KID ---");
+    expect(tail).not.toContain("__arGlGuard");
+    expect(tail).not.toContain("AR_ASSETS");
   });
 
   it("ordinary chat turn (not a build) is NOT injected — the child's words go as-is", async () => {

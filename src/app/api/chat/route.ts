@@ -585,6 +585,7 @@ export async function POST(req: NextRequest) {
       try {
         const retry = await chatModel.reply({
           history,
+          activeGameMessageId,
           message:
             `${message}\n\n(IMPORTANT: your previous attempt was CUT OFF before it finished — ` +
             `it did not end with </html>. Output the COMPLETE, self-contained HTML document ` +
@@ -618,6 +619,7 @@ export async function POST(req: NextRequest) {
       try {
         const starter = await chatModel.reply({
           history,
+          activeGameMessageId,
           message:
             `${message}\n\n(Your previous attempts were CUT OFF — there was too much to generate ` +
             `at once. Build a COMPLETE, WORKING game NOW using only a SMALL representative subset ` +
@@ -1016,6 +1018,7 @@ export async function POST(req: NextRequest) {
         try {
           const corrective = await chatModel.reply({
             history,
+            activeGameMessageId,
             // The remedy must match the violation. `badScripts` fires for ANY
             // off-origin script — a 2D game that pulled Tone.js off a CDN is a
             // real hit — and the 3D half of this instruction would tell that
@@ -1094,6 +1097,27 @@ export async function POST(req: NextRequest) {
       artifactHtml: deliverableHtml,
       ...(newGamePrompt ? { newGamePrompt: true } : {}),
       ...(nextAskHints ? { nextAskHints } : {}),
+      // Operator instrument ONLY (2026-08-25 PRD_EditTurnCost §6): the replay
+      // harness reads what Google billed for this turn off the done frame.
+      // Gated on EXPOSE_TURN_USAGE=1 so a production client never sees token
+      // counts — that is /api/usage's job, behind ADMIN_SECRET.
+      ...(process.env.EXPOSE_TURN_USAGE === "1" && streamUsage
+        ? {
+            usage: {
+              model: servedModel,
+              promptTokens: streamUsage.promptTokens,
+              cachedTokens: streamUsage.cachedTokens ?? 0,
+              outputTokens: streamUsage.outputTokens,
+              thoughtTokens: streamUsage.thoughtTokens ?? 0,
+              costUsd: estimateCostUsd(servedModel, {
+                prompt: streamUsage.promptTokens,
+                output: streamUsage.outputTokens,
+                thoughts: streamUsage.thoughtTokens,
+                cached: streamUsage.cachedTokens,
+              }),
+            },
+          }
+        : {}),
     });
     // Keep the finished result server-side even if nobody is listening — a
     // disconnected client polls /api/chat/result instead of re-generating.

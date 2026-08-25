@@ -9,7 +9,7 @@
 // under-unlock breaks the kid's game mid-iteration).
 
 import { describe, it, expect } from "vitest";
-import { catalogGates, threeUnlockReason } from "./catalog-gate";
+import { catalogGates, threeUnlockReason, editGates } from "./catalog-gate";
 import type { ChatMessage } from "@/types/chat.types";
 
 const msg = (role: "child" | "assistant", text: string, artifactHtml?: string): ChatMessage =>
@@ -280,5 +280,61 @@ describe("threeUnlockReason — which lead-in the 3D prompt gets", () => {
   it("no unlock at all reports null", () => {
     expect(threeUnlockReason({ message: "make me a platformer game", history: [], paid: false })).toBeNull();
     expect(threeUnlockReason({ message: "how are you today?", history: [], paid: false })).toBeNull();
+  });
+});
+
+// 2026-08-25 plan "slim the 3D instruction on edit turns" (noble-orbiting-stallman):
+// the sports playbook (~1,000 tokens) used to ride EVERY 3D turn because the
+// MANIFEST holds sports models. It is a genre playbook — gate it on the game.
+describe("catalogGates — sports gate (playbook only for sports games)", () => {
+  const game3d = (html: string): ChatMessage => ({ id: "g", role: "assistant", text: "here", createdAt: 1, artifactHtml: html });
+
+  it("SP.1 a plain 3D ask does not unlock sports", () => {
+    const g = catalogGates({ message: "3D - make a race track", history: [], paid: false });
+    expect(g.three).toBe(true);
+    expect(g.sports).toBeUndefined();
+  });
+
+  it("SP.2 sports words in the ask unlock it (football, cricket, goalkeeper…)", () => {
+    for (const ask of ["3D - a football game", "make a cricket game in 3D", "3d penalty shootout"]) {
+      expect(catalogGates({ message: ask, history: [], paid: false }), ask).toMatchObject({ three: true, sports: true });
+    }
+  });
+
+  it("SP.3 a game that already loads a sports model keeps the playbook on edits (iteration insurance)", () => {
+    const history = [game3d('<script type="module">import {Scene} from "three"; loadModel("soccer_ball")</script>')];
+    expect(catalogGates({ message: "make the ball faster", history, paid: false })).toMatchObject({ three: true, sports: true });
+  });
+
+  it("SP.4 sports is a build-turn gate like the others — chit-chat about football pays nothing", () => {
+    expect(catalogGates({ message: "who won the football last night?", history: [], paid: false })).toEqual({ three: false, audio: false, save: false });
+  });
+});
+
+// Same plan, step 2: the save playbooks (~870 tokens) rode 62 of 72 prod turns
+// on EDITS, unlocked by "build" in "build me a race track". On an edit turn they
+// are sent only when the ask itself is about saving/progress.
+describe("editGates — what an EDIT turn's ask re-introduces", () => {
+  it("EG.1 a plain edit needs nothing extra", () => {
+    expect(editGates("change the blocks to red and blue")).toEqual({});
+    expect(editGates("add a reset button")).toEqual({});
+  });
+
+  it("EG.2 save/progress words bring the save playbooks", () => {
+    for (const ask of ["add a save button", "remember my progress", "let me continue where I left off", "add checkpoints"]) {
+      expect(editGates(ask), ask).toMatchObject({ save: true });
+    }
+  });
+
+  it("EG.3 'build' alone does NOT (it unlocked save on 'build me a race track')", () => {
+    expect(editGates("build a second tower")).toEqual({});
+  });
+
+  it("EG.4 audio / models / physics / sports / multiplayer words bring their sections", () => {
+    expect(editGates("play a sound when the tower falls")).toMatchObject({ audio: true });
+    expect(editGates("add a horse that runs around")).toMatchObject({ models: true });
+    expect(editGates("make gravity stronger so blocks fall faster")).toMatchObject({ physics: true });
+    expect(editGates("turn it into a football match")).toMatchObject({ sports: true, models: true });
+    expect(editGates("make it two player with my friend")).toMatchObject({ multiplayer: true });
   });
 });

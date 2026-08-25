@@ -61,3 +61,30 @@ describe("builderGenOverrides — env-tunable, sane defaults", () => {
     expect(o.maxOutputTokens).toBe(24576);
   });
 });
+
+// 2026-08-25 PRD_EditTurnCost §4.B: an edit turn is a SEARCH/REPLACE patch
+// against a source the model is reading verbatim — it needs far less thinking
+// than a fresh build. Prod showed 2–4× the build budget being spent on edits.
+describe("builderGenOverrides — edit turns get their own, smaller thinking budget", () => {
+  it("E.1 default edit budget is 512 (build stays 1024)", () => {
+    expect(builderGenOverrides({}, { isEdit: true }).thinkingConfig.thinkingBudget).toBe(512);
+    expect(builderGenOverrides({}, { isEdit: false }).thinkingConfig.thinkingBudget).toBe(1024);
+    expect(builderGenOverrides({}).thinkingConfig.thinkingBudget).toBe(1024);
+  });
+
+  it("E.2 GEMINI_EDIT_THINKING_BUDGET overrides the edit budget only", () => {
+    const env = { GEMINI_EDIT_THINKING_BUDGET: "768" };
+    expect(builderGenOverrides(env, { isEdit: true }).thinkingConfig.thinkingBudget).toBe(768);
+    expect(builderGenOverrides(env, { isEdit: false }).thinkingConfig.thinkingBudget).toBe(1024);
+  });
+
+  it("E.3 junk edit budget falls back to the default, never NaN", () => {
+    expect(builderGenOverrides({ GEMINI_EDIT_THINKING_BUDGET: "lots" }, { isEdit: true }).thinkingConfig.thinkingBudget).toBe(512);
+  });
+
+  it("E.4 edit turns keep thought summaries and the full output headroom (a patch can be big)", () => {
+    const o = builderGenOverrides({}, { isEdit: true });
+    expect(o.thinkingConfig.includeThoughts).toBe(true);
+    expect(o.maxOutputTokens).toBe(24576);
+  });
+});

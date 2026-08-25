@@ -13,7 +13,8 @@ secrets or the raw Gemini API.
 Browser ── pages: / (chat) · /help · /parent · /admin · /admin/help · /upgrade
    │
    ▼ API routes (runtime: nodejs)
-/api/chat      → history trim (newest game + last 12 msgs, lib/history-trim.ts)
+/api/chat      → history trim (fixed placeholders, hysteresis window 12+6, lib/history-trim.ts;
+                   current game source rides the FINAL user turn — 2026-08-25 PRD_EditTurnCost)
                  → input rules (deterministic, lib/safety.rules.ts)
                  → chat (Gemini chat model: built-in safety thresholds +
                    child-safety system prompt; no output monitor — 2026-07-09)

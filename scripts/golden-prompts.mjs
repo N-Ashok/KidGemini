@@ -58,11 +58,15 @@ if (!selected.length) throw new Error(`no prompt matched ${only.join(', ')} — 
 mkdirSync(runsDir, { recursive: true });
 
 const files = [];
+// Local dev only (same reason as replay-session.mjs): the guest gate caps tokens
+// per IP and this runner is a fresh guest every prompt; geo.ts honours
+// x-forwarded-for. Meaningless behind Caddy, which overwrites the header.
+const fakeIp = () => `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`;
 for (const p of selected) {
   process.stdout.write(`  generating ${p.id} … `);
   const res = await fetch(`${BASE}/api/chat`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': fakeIp() },
     body: JSON.stringify({ message: p.text, history: [] }),
   }).catch((e) => {
     throw new Error(`could not reach ${BASE} — is \`npm run dev\` running? (${e.message})`);

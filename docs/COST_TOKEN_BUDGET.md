@@ -27,17 +27,20 @@ investigate (see Monitoring).
 
 | Component | Tokens | Billed as | Notes |
 |---|---|---|---|
-| Child-safety system prompt | ~1,100 | input, every turn | stable, necessary |
+| Child-safety system prompt (build turns) | ~1,450 | input, build turns | `CHILD_SAFETY_CORE` (~160) + `CHILD_BUILD_RULES` — measured 2026-08-25 |
+| Edit-turn instruction (2026-08-25) | ~1,200 total | input, edit turns | safety core + `EDIT_CRAFT_RULES` + `THREE_EDIT_CHEATSHEET` + edit contract; full playbooks return only when the ask names them (`editGates`). Was ~7,700 |
+| Sports playbook | ~1,000 | input, 3D SPORTS builds only | gated on the game since 2026-08-25 (was every 3D turn) |
 | 3D engine section (keyword/artifact-gated) | ~450 | input, 3D turns | `catalog-gate.ts` |
 | Motion/physics playbook (3D-gated) | ~826 | input, 3D build turns | `physics-playbook.ts` — 456→763→826 (SOLID THINGS, 2026-08-06); budget test caps at 830; next addition must displace, not extend |
 | Model catalog (**the whole library**, 106 models) | ~889 | input | `prompt-catalog.ts` — static since 2026-07-24 (was a varying 150–290; see waste ledger #4). Grows with the library; ceiling 1,500 pinned by test |
 | Audio catalog (keyword-gated) | ~150 | input | |
 | Save/continue building clause (keyword/artifact-gated) | ~500 | input, build/world turns | `save-state-playbook.ts`, `gates.save` in `catalog-gate.ts` — docs/2026-08-01_PRD_SaveContinueBuilding.md |
 | Published-game save/continue clause (same gate) | ~380 | input, build/world turns | `published-save-playbook.ts`, same `gates.save` — TECH_DEBT #27/#70 |
-| Newest game's code in history | ~10–15k | input, every iteration turn | older versions stripped to placeholders (`history-trim.ts`, 12-msg window) |
+| Current game's code — on the FINAL user turn, MODEL VIEW (2026-08-25) | ~3–8k (was ~10–25k delivered) | input, every iteration turn | `assets/model-view.ts` strips the ~35k chars of injected runtime the model was re-reading every turn — | never in history any more; history carries fixed placeholders and a 12+6 hysteresis window (`history-trim.ts`) so the prefix before the game block caches — `2026-08-25_PRD_EditTurnCost_CachingAndThinking.md` |
 | Kid's message (+ folded text attachment) | 10–100+ | input | |
 | Image attachment | ~258 flat | input | |
-| Thinking | ≤1,024 (capped) | output | `GEMINI_BUILDER_THINKING_BUDGET` |
+| Thinking — build turn | ≤1,024 (capped) | output | `GEMINI_BUILDER_THINKING_BUDGET` |
+| Thinking — edit turn | ≤512 (capped, 2026-08-25) | output | `GEMINI_EDIT_THINKING_BUDGET` — probe showed an UNBOUNDED budget spends 1.2–3.3k thoughts on a one-line patch; prod showed 2–4k/edit, i.e. the box env is not bounding it (owner to check `GEMINI_BUILDER_THINKING_BUDGET` on the box) |
 | The generated game | ~10–20k | output | **the dominant cost** |
 
 Plain chat turns: system prompt + window only; thinking 0; no catalogs.

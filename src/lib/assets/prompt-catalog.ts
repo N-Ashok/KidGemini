@@ -287,6 +287,7 @@ export function modelNamesBlock(names: readonly string[]): string {
  */
 export function modelsPromptSection(
   manifest: AssetManifest = manifestJson as AssetManifest,
+  opts: { sports?: boolean } = {},
 ): string {
   const models = manifest.assets.filter((a) => a.type === "model");
   if (models.length === 0) return "";
@@ -299,7 +300,11 @@ export function modelsPromptSection(
   // wastes tokens re-implementing attribution.
   const attributed = models.filter((m) => m.license === "CC-BY-3.0").map((m) => m.name);
   const categories = categoryCountLines(available);
-  const hasSports = modelsInGenre("sports", available).length > 0;
+  // 2026-08-25: the sports playbook is a GENRE playbook — it rides only when
+  // the caller's gate says this is a sports game (catalog-gate.ts `sports`),
+  // not whenever the manifest happens to hold sports models. Still byte-stable
+  // per (manifest, gate set), so the cache contract holds.
+  const hasSports = Boolean(opts.sports) && modelsInGenre("sports", available).length > 0;
   return `**Ready-made 3D models**: for a 3D game you may ALSO use professional
 low-poly models from the toy box. Here is what the toy box HOLDS, by category:
 ${categories}
@@ -433,6 +438,22 @@ what you need and use the names you are given.
  * lockstep-by-construction as the models. Works in 2D AND 3D games. Empty
  * string when the manifest has no audio (zero prompt tokens).
  */
+/** What an EDIT turn keeps of the 3D teaching (2026-08-25, plan
+ *  noble-orbiting-stallman step 3): the rules a PATCH can violate, and nothing
+ *  about how to lay out a scene — the scene exists. ~350 tokens in place of the
+ *  ~4,700-token 3D/catalog/physics stack. The full sections return on an edit
+ *  only when the ask names that subsystem (catalog-gate.ts editGates). */
+export const THREE_EDIT_CHEATSHEET = `**3D game — editing rules**: this game is a Three.js scene that already works.
+- Keep \`import { … } from "three"\` as the ONLY engine import; never add a <script src> or a CDN.
+- Models: \`loadModel(name)\` → Promise of an object or null; \`placeModel(name, { at: {x, z}, metres?: true })\`
+  positions one correctly (YOU still \`scene.add\` it). Use only names listed in the "Toy box —"
+  line at the end of this conversation, and list every model you use in the
+  \`<!--USES_MODELS: a, b-->\` marker line — NEVER invent a model name; build anything else from
+  primitive shapes. If a model is null, keep the placeholder.
+- Animations: pick a clip by name from \`m.animations\` (\`/run|walk/\`, then
+  \`/gallop|swim|fly|jump|attack/\`, then \`[0]\`); never invent a clip name or a part name.
+- Keep the game loop starting immediately with placeholders; never \`await\` before the first frame.`;
+
 export function audioPromptSection(manifest: AssetManifest = manifestJson as AssetManifest): string {
   const sfx = manifest.assets.filter((a) => a.type === "sfx").map((a) => a.name);
   const music = manifest.assets.filter((a) => a.type === "music").map((a) => a.name);
