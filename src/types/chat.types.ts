@@ -55,6 +55,12 @@ export interface ChatMessage {
    *  chose to send them, so the client needs no flag-awareness of its own,
    *  just render-if-present (ChatPanel.container.tsx). */
   nextAskHints?: string[];
+  /** Whole Sparks this ask cost (docs/2026-08-27_PRD_SparksPage.md) — set on
+   *  the assistant reply from the turn's `sparks` frame once the platform has
+   *  answered the debit. Absent on guest turns, on replies older than this
+   *  feature, and when the platform was too slow to answer in time (the
+   *  parent statement stays authoritative). Persisted with the message. */
+  sparks?: number;
   createdAt: number;
 }
 

@@ -11,6 +11,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useSession, signIn, signOut } from "@/lib/useAriantraSession";
+import { formatSparks } from "@/lib/sparks-display";
 
 interface RecentItem {
   id: string;
@@ -18,6 +19,9 @@ interface RecentItem {
   /** Timestamp when pinned, null/absent otherwise — pinned rows are sorted
    *  first by the container (chat-organize.ts). */
   pinnedAt?: number | null;
+  /** Sparks this chat has used so far (sum of its replies' receipts,
+   *  docs/2026-08-27_PRD_SparksPage.md §2b). Absent/0 → nothing shown. */
+  sparks?: number;
 }
 
 interface SidebarProps {
@@ -284,6 +288,11 @@ export function Sidebar(props: SidebarProps) {
                 >
                   {r.pinnedAt != null && <span aria-label="Pinned" className="mr-1">📌</span>}
                   {r.title}
+                  {r.sparks != null && r.sparks > 0 && (
+                    <span className="ml-2 text-xs text-ink-500" aria-label={`${formatSparks(r.sparks)} Sparks used in this chat`}>
+                      ⚡ {formatSparks(r.sparks)}
+                    </span>
+                  )}
                 </button>
                 {/* ⋮ menu (owner ask 2026-08-06, replaces the lone hover-✕):
                     Rename / Pin / Delete, like other chat apps. Keeps the

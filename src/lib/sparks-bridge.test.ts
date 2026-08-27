@@ -144,3 +144,21 @@ describe("creditPurchase — Phase 5 Sparks pack top-up (server-to-server, no se
     expect(r.status).toBe(502);
   });
 });
+
+// 2026-08-27 (docs/2026-08-27_PRD_SparksPage.md §3): the platform's debit
+// answer carries { charged, balance }. billSparks now RETURNS it so the chat
+// route can show a receipt — still never awaited on the hot path, still
+// never throws.
+describe("billSparks — returns the platform's receipt", () => {
+  const debit = { sessionToken: "jwt", replyId: "r1", seq: 0, kind: "chat", usage: { model: "m", tokensIn: 1, tokensOut: 1 } };
+  it("R.1 resolves { charged, balance } from a 200", async () => {
+    fetchMock.mockImplementation(() => okJson({ charged: 12, balance: 288, gauge: "good" }));
+    expect(await billSparks(debit)).toEqual({ charged: 12, balance: 288 });
+  });
+  it("R.2 resolves null on a rejected debit or a malformed body — never throws", async () => {
+    fetchMock.mockImplementation(() => Promise.resolve({ status: 500, json: () => Promise.resolve({}) } as unknown as Response));
+    expect(await billSparks(debit)).toBeNull();
+    fetchMock.mockImplementation(() => Promise.reject(new Error("down")));
+    expect(await billSparks(debit)).toBeNull();
+  });
+});

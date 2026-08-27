@@ -8,9 +8,12 @@
 // (err toward unlocking — a false unlock costs a few prompt tokens, an
 // under-unlock breaks the kid's game mid-iteration).
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { catalogGates, threeUnlockReason, editGates } from "./catalog-gate";
 import type { ChatMessage } from "@/types/chat.types";
+
+// THREE_SUBJECT_UNLOCK is stubbed per-test below; never let it leak between tests.
+afterEach(() => vi.unstubAllEnvs());
 
 const msg = (role: "child" | "assistant", text: string, artifactHtml?: string): ChatMessage =>
   ({ role, text, artifactHtml }) as ChatMessage;
@@ -81,6 +84,7 @@ describe("catalogGates — free tier: keyword-invoked, 3D and audio gate indepen
   });
 
   it("\"3 dogs\" unlocks on the SUBJECT, never on the digit — the reason proves which gate fired", () => {
+    vi.stubEnv("THREE_SUBJECT_UNLOCK", "on"); // subject unlock is opt-in since 2026-08-27
     expect(threeUnlockReason({ message: "a game with 3 dogs", history: [], paid: false })).toBe("subject");
   });
 
@@ -203,6 +207,10 @@ describe("catalogGates — save gate (docs/2026-08-01_PRD_SaveContinueBuilding.m
 // the 3D gate did not. These tests are that principle, applied.
 // ─────────────────────────────────────────────────────────────────────────
 describe("catalogGates — a SUBJECT the model library covers unlocks 3D (§9 err-toward-unlocking)", () => {
+  // 2026-08-27: the subject unlock is OFF by default (owner: first game is 2D);
+  // these tests pin the fallback path behind THREE_SUBJECT_UNLOCK=on.
+  beforeEach(() => vi.stubEnv("THREE_SUBJECT_UNLOCK", "on"));
+  afterEach(() => vi.unstubAllEnvs());
   it("the demo session's exact ask unlocks the 3D catalog — the horse model must be reachable", () => {
     // 2026-08-22, demo, iOS Safari. This turn shipped a canvas horse drawn
     // from a filled rectangle, stroked legs and a dot eye.
@@ -274,6 +282,7 @@ describe("threeUnlockReason — which lead-in the 3D prompt gets", () => {
   });
 
   it("a subject-only unlock is 'subject' — 3D is OFFERED, never forced", () => {
+    vi.stubEnv("THREE_SUBJECT_UNLOCK", "on"); // subject unlock is opt-in since 2026-08-27
     expect(threeUnlockReason({ message: "Make a game where I can ride horses", history: [], paid: false })).toBe("subject");
   });
 
@@ -336,5 +345,41 @@ describe("editGates — what an EDIT turn's ask re-introduces", () => {
     expect(editGates("make gravity stronger so blocks fall faster")).toMatchObject({ physics: true });
     expect(editGates("turn it into a football match")).toMatchObject({ sports: true, models: true });
     expect(editGates("make it two player with my friend")).toMatchObject({ multiplayer: true });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 2026-08-27 (owner decision, reverses the 2026-08-23 subject unlock by
+// default): a child's FIRST game is 2D. 3D is unlocked only when they ask —
+// "3D" or quality words (realistic / real life / better graphics). The
+// subject unlock stays in the code behind THREE_SUBJECT_UNLOCK=on (rule 11:
+// a working path is kept as a fallback, never deleted in the same change).
+// ─────────────────────────────────────────────────────────────────────────
+describe("catalogGates — 2D first; 3D only when the child asks for it (2026-08-27)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("F.1 a first-time subject ask (car / horse / rocket / football) is 2D by default", () => {
+    for (const ask of ["make a car racing game", "Make a game where I can ride horses", "a game with a rocket flying to a planet", "a football game with goals"]) {
+      expect(catalogGates({ message: ask, history: [], paid: false }).three, ask).toBe(false);
+      expect(threeUnlockReason({ message: ask, history: [], paid: false }), ask).toBeNull();
+    }
+  });
+
+  it("F.2 quality words unlock 3D as 'asked' — realistic / real life / better graphics", () => {
+    for (const ask of ["make a realistic car game", "a real life horse riding game", "a dino game with better graphics", "make my game look real"]) {
+      expect(catalogGates({ message: ask, history: [], paid: false }).three, ask).toBe(true);
+      expect(threeUnlockReason({ message: ask, history: [], paid: false }), ask).toBe("asked");
+    }
+  });
+
+  it("F.3 quality words in an EARLIER child turn still count (history is monotonic, same as '3d')", () => {
+    const history = [msg("child", "make it realistic"), msg("assistant", "Sure!")];
+    expect(catalogGates({ message: "make a car game", history, paid: false }).three).toBe(true);
+  });
+
+  it("F.4 THREE_SUBJECT_UNLOCK=on restores the 2026-08-23 behaviour (subject → 'subject')", () => {
+    vi.stubEnv("THREE_SUBJECT_UNLOCK", "on");
+    expect(threeUnlockReason({ message: "Make a game where I can ride horses", history: [], paid: false })).toBe("subject");
+    expect(catalogGates({ message: "make a car racing game", history: [], paid: false }).three).toBe(true);
   });
 });

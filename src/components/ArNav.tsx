@@ -35,6 +35,8 @@
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { signIn, useSession } from "@/lib/useAriantraSession";
+import { useSparksBalance } from "@/lib/useSparksBalance";
+import { formatSparks } from "@/lib/sparks-display";
 import { isTabActive, mobileTabs } from "@/lib/nav-tabs";
 
 const DEV = process.env.NODE_ENV === "development";
@@ -64,6 +66,10 @@ const CREATE_URL = "/";
 
 export function ArNav() {
   const { status } = useSession();
+  // Live balance (docs/2026-08-27_PRD_SparksPage.md §2b; owner 2026-08-27:
+  // everyone sees it). null = loading → "⚡ …", never a blank.
+  const balance = useSparksBalance(status === "authenticated");
+  const sparksLabel = balance == null ? "⚡ …" : `⚡ ${formatSparks(balance)}`;
   const pathname = usePathname();
   const isChatRoute = pathname === "/";
 
@@ -91,7 +97,7 @@ export function ArNav() {
                 Sparks wallet only exists on this app, and only means
                 something signed-in (PRD-SPARKS Phase 4). */}
             {status === "authenticated" && (
-              <a href="/wallet" className="ar-link">⚡ Sparks</a>
+              <a href="/wallet" className="ar-link" title="Your Sparks">{sparksLabel}</a>
             )}
             <a href={`${WWW_URL}/#how`} className="ar-link">How it works</a>
             <a href={`${WWW_URL}/pricing.html`} className="ar-link">Pricing</a>
@@ -150,7 +156,8 @@ export function ArNav() {
             className={`ar-tab ${isTabActive(tab, pathname ?? "/") ? "on" : ""}`}
           >
             <span className="ar-tab-icon" aria-hidden="true">{tab.icon}</span>
-            {tab.label}
+            {/* Mobile Sparks tab shows the live balance once known (PRD_SparksPage §2b). */}
+            {tab.id === "sparks" && balance != null ? formatSparks(balance) : tab.label}
           </a>
         ))}
       </nav>
@@ -180,7 +187,7 @@ export function ArNav() {
               <a href={GAMES_URL} className="ar-link" onClick={() => setMobileSheetOpen(false)}>Games by kids</a>
               <a href="/" className="ar-link on" onClick={() => setMobileSheetOpen(false)}>Games-Lab</a>
               {status === "authenticated" && (
-                <a href="/wallet" className="ar-link" onClick={() => setMobileSheetOpen(false)}>⚡ Sparks</a>
+                <a href="/wallet" className="ar-link" onClick={() => setMobileSheetOpen(false)} title="Your Sparks">{sparksLabel}</a>
               )}
               <a href={`${WWW_URL}/#how`} className="ar-link" onClick={() => setMobileSheetOpen(false)}>How it works</a>
               <a href={`${WWW_URL}/pricing.html`} className="ar-link" onClick={() => setMobileSheetOpen(false)}>Pricing</a>

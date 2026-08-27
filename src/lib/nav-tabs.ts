@@ -50,9 +50,9 @@ export function mobileTabs(pathname: string, gamesUrl: string, bibleGamesUrl: st
     // "Game Stuff" gallery (PRD-3D-GAMES-AND-ASSETS §9b): discovery IS the
     // feature — an invisible library never gets asked for. Persona-neutral.
     { id: "toybox", href: "/assets", label: "Toy Box", icon: "🧰" },
-    // Sparks wallet (PRD-SPARKS Phase 4) — celebration-first: games built,
-    // ⚡ earned, referral code. Never shows deductions (owner decision
-    // 2026-07-25). Persona-neutral like Toy Box.
+    // Sparks page (PRD-SPARKS Phase 4; since 2026-08-27 also the money side:
+    // available / used / per-chat / per-request — docs/2026-08-27_PRD_SparksPage.md).
+    // Persona-neutral like Toy Box.
     { id: "sparks", href: "/wallet", label: "Sparks", icon: "⚡" },
   ];
 

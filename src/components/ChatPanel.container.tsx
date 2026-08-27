@@ -18,6 +18,8 @@ import { canContinueFromHere } from "@/lib/chat-rewind";
 // Never render raw SEARCH/REPLACE hunks mid-stream (BUG-FIX-LOG 2026-07-18
 // "not kid friendly") — every partial-text render goes through this.
 import { streamingDisplayText } from "@/lib/game-edit";
+import { chatSparksTotal, formatSparks } from "@/lib/sparks-display";
+import { publishSparksBalance } from "@/lib/useSparksBalance";
 import {
   canQueue,
   drainDecision,
@@ -652,7 +654,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
     () =>
       sortPinnedFirst(
         mergeRecents(
-          searchChats(convos, searchQuery).map((c) => ({ id: c.id, title: c.title, pinnedAt: c.pinnedAt ?? null })),
+          searchChats(convos, searchQuery).map((c) => ({ id: c.id, title: c.title, pinnedAt: c.pinnedAt ?? null, sparks: chatSparksTotal(c.messages) })),
           remoteIndex,
           searchQuery,
         ),
@@ -1243,7 +1245,7 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
           const line = buffer.slice(0, nl).trim();
           buffer = buffer.slice(nl + 1);
           if (!line) continue;
-          const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null; newGamePrompt?: boolean; threeDNewGame?: boolean; nextAskHints?: string[]; sparksOver?: boolean };
+          const ev = JSON.parse(line) as { type: string; text?: string; artifactHtml?: string | null; newGamePrompt?: boolean; threeDNewGame?: boolean; nextAskHints?: string[]; sparksOver?: boolean; charged?: number; balance?: number };
           if (ev.type === "thinking") {
             if (ev.text) setThinking(ev.text);
           } else if (ev.type === "delta") {
@@ -1260,6 +1262,17 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
             setReply("");
             setThinking(null);
             console.warn(`[chat] ↻ fallback model restart @${Date.now() - startedAt}ms — partial reply cleared`);
+          } else if (ev.type === "sparks") {
+            // Receipt for this ask (docs/2026-08-27_PRD_SparksPage.md §3):
+            // arrives AFTER done, once the platform has answered the debit.
+            // Recorded on the reply and persisted with the chat (the Sparks
+            // page reads it), shown under the reply, and the balance is
+            // broadcast to the header (owner 2026-08-27: chat window AND page).
+            if (typeof ev.charged === "number") {
+              const charged = ev.charged;
+              patchActive((c) => ({ ...c, messages: c.messages.map((m) => (m.id === replyId ? { ...m, sparks: charged } : m)) }));
+            }
+            if (typeof ev.balance === "number") publishSparksBalance(ev.balance);
           } else if (ev.type === "done") {
             setReply(ev.text ?? acc, ev.artifactHtml ?? undefined, ev.newGamePrompt, ev.threeDNewGame, ev.nextAskHints);
             setPreview((a) => nextArtifact({ type: "done", artifactHtml: ev.artifactHtml }, a));
@@ -1831,13 +1844,19 @@ export function ChatPanelContainer({ persona }: ChatPanelContainerProps = {}) {
               {/* 2D→3D info panel (owner decision 2026-07-26): ONE OK button —
                   no fork in the road. 3D is a NEW game; the 2D one stays in
                   this chat, so the child knowingly ends up with two games. */}
+              {/* Sparks receipt for this ask (docs/2026-08-27_PRD_SparksPage.md §2b). */}
+              {m.role === "assistant" && m.sparks != null && (
+                <div className="mt-1 pl-1 text-xs text-ink-500" aria-label={`This ask used ${formatSparks(m.sparks)} Sparks`}>
+                  ⚡ {formatSparks(m.sparks)} for this ask
+                </div>
+              )}
               {m.threeDNewGame && !busy && i === active.messages.length - 1 && (
                 <div className="mt-1 pl-1">
                   <button
                     onClick={() => answerThreeDOk(m.id, active.messages[i - 1]?.text ?? "")}
                     className="rounded-full bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-500"
                   >
-                    OK — build my 3D game! 🚀
+                    Yes! Build my new game 🚀
                   </button>
                 </div>
               )}

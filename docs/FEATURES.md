@@ -631,9 +631,16 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
   a real-browser harness), pixel ratio capped at 2, ambient + one
   directional light only, no shadows/post-processing, low poly. Sent only
   on game-BUILD turns (chit-chat pays zero extra tokens)
+- **2D first (owner decision 2026-08-27).** A child's FIRST game is 2D. 3D
+  unlocks only when they ask for it — literally (`3d`) OR in kid-words about
+  how it looks: **"realistic", "real life", "lifelike", "better/real/good
+  graphics", "look(s) real"** (`THREE_QUALITY_RE`, folded into the single
+  `THREE_WANT_RE` in `src/lib/builder-mode.ts`). The 2026-08-23 *subject*
+  unlock (car/horse/rocket asks → 3D) is OFF by default and kept behind
+  `THREE_SUBJECT_UNLOCK=on` as the fallback (rule 11).
 - **Which turns get the 3D section** — `catalogGates()`
   (`src/lib/assets/catalog-gate.ts`) decides from the child's own words, via
-  the shared `THREE_ASK_RE` in `src/lib/builder-mode.ts`. It matches the
+  the shared `THREE_WANT_RE` in `src/lib/builder-mode.ts`. Its 3D half matches the
   spellings children actually use — `3d`, `3-d`, `3 d`, `three dimensional`,
   `3-dimensional` — and deliberately not `3-day` / `3 dogs` / `3ds max`. It is
   ONE definition shared with the build-turn gate; it was previously two
@@ -662,9 +669,11 @@ What the app does today. Product intent: `PRD.md`; system map: `ARCHITECTURE.md`
 - 2D stays the default; unmarked games pass through byte-identical
 - **2D→3D is a NEW game** (owner decision 2026-07-26, supersedes the in-place
   conversion rebuild of BUG-FIX-LOG 2026-07-23): asking an existing 2D game to
-  "make it 3D" answers instantly (no model call, nothing billed) with an info
-  panel — "3D means building a whole NEW game… you'll have TWO games!" — and
-  ONE OK button. OK opens a fresh chat seeded with the 2D source
+  "make it 3D" — or, since 2026-08-27, "make it realistic" / "better
+  graphics" / "look real" — answers instantly (no model call, nothing billed)
+  with an info panel worded in the child's OWN ask (`threeDNewGameLine(message)`:
+  "To make your game look real, I need to build a whole NEW game! 🎉 … you'll
+  have TWO games!") and ONE button ("Yes! Build my new game 🚀"). OK opens a fresh chat seeded with the 2D source
   (`threeDConversation`, not slug-bound) and builds the 3D version there with
   `forceRebuild`; the 2D game survives untouched in its own chat, so the child
   knowingly ends up with two games. The new chat is titled **`3D - <name>`**
@@ -1091,12 +1100,26 @@ server-to-server contract as `arcade-partner.ts`).
   losers, with Ari's own `costUsd`) bills the platform ledger fire-and-forget
   from `api/chat/route.ts` (`billTurnSparks`) — guests unbilled (no account),
   safety calls never billed (our overhead, not the child's).
+  **Chat is free (owner decision 2026-08-27, BUG-FIX-LOG same day):** debits
+  are queued and fired only if the turn DELIVERED a game; a question, plain
+  chat or failed edit sends nothing. The exhaustion gate is scoped to
+  `isGameBuildTurn`, so an exhausted kid can still talk to Ari when no game is
+  in play.
 - **3D pricing (2026-08-08)**: `billTurnSparks` reports `is3D: gates.three`
   (the same `catalogGates()` predicate that gates the 3D asset catalog) on
   every debit, billing 3D builds AND edits at the platform's 3D rate —
   correctly re-detecting an edit on an EXISTING 3D game from its prior
   artifact's markers, not just the turn's message text. See
   `docs/PRD-3D-GAMES-AND-ASSETS.md`'s 3D pricing amendment.
+- **Sparks page shows the money side (2026-08-27, `docs/2026-08-27_PRD_SparksPage.md`;
+  owner decision: EVERYONE sees it — revises the 2026-07-25 no-deductions rule
+  below)**: `/wallet` gains ⚡ available / used / added (parent statement via
+  `GET /api/sparks/usage`), "What each chat used" (per-chat totals summed in
+  SQLite with `json_each`), and, on tapping a chat, what each request cost.
+  The per-ask cost is the platform's debit answer, emitted by the chat route
+  as a `sparks` frame AFTER `done` (bounded by `SPARKS_RECEIPT_WAIT_MS`, never
+  delaying the reply) and persisted as `ChatMessage.sparks`. The chat window,
+  sidebar and header show NO Sparks numbers (owner: "not in the chat window").
 - **Kid wallet `/wallet`** (`WalletPanel`, nav tab "Sparks ⚡"): celebration-
   first — games built, ⚡ EARNED, friends joined, credits-only history,
   referral code, coupon entry. NO deductions/balance/rupees (owner decision

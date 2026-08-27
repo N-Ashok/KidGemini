@@ -403,7 +403,7 @@ describe("POST /api/chat — Sparks exhaustion gate (2026-08-07)", () => {
 
   it("out of sparks → paywall event with the buy-sparks message, Gemini never called", async () => {
     fetchGateMock.mockResolvedValue({ status: 200, data: { canStart: false, trialUsed: false } });
-    const res = await POST(makeReq({ message: "add a boss", history: [] }, COOKIES));
+    const res = await POST(makeReq({ message: "add a boss to my game", history: [] }, COOKIES));
     const text = await res.text();
     expect(text).toContain('"type":"paywall"');
     expect(text).toContain('"sparksOver":true');
@@ -416,6 +416,77 @@ describe("POST /api/chat — Sparks exhaustion gate (2026-08-07)", () => {
     const res = await POST(makeReq({ message: "add a boss", history: [] }, COOKIES));
     expect(await res.text()).toContain('"type":"done"');
     expect(replyStreamMock).toHaveBeenCalledTimes(1);
+  });
+
+  // 2026-08-27 Sparks receipt (docs/2026-08-27_PRD_SparksPage.md §3): after
+  // the done frame, ONE `sparks` frame with what this ask cost + the balance.
+  it("SP.1 emits a sparks frame after done with the platform's charged + balance", async () => {
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: '<!doctype html><html><body><div id="score">0</div></body></html>' }));
+    billSparksMock.mockResolvedValue({ charged: 12, balance: 288 });
+    const res = await POST(makeReq({ message: "add a boss", history: [] }, COOKIES));
+    const text = await res.text();
+    const lines = text.trim().split("\n").map((l) => JSON.parse(l) as { type: string; charged?: number; balance?: number });
+    const doneAt = lines.findIndex((l) => l.type === "done");
+    const sparksAt = lines.findIndex((l) => l.type === "sparks");
+    expect(doneAt).toBeGreaterThanOrEqual(0);
+    expect(sparksAt).toBeGreaterThan(doneAt); // the reply is never held back for bookkeeping
+    expect(lines[sparksAt]).toEqual({ type: "sparks", charged: 12, balance: 288 });
+  });
+
+  it("SP.2 a platform that never answers → done still arrives, no sparks frame, within the wait budget", async () => {
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: '<!doctype html><html><body><div id="score">0</div></body></html>' }));
+    process.env.SPARKS_RECEIPT_WAIT_MS = "30";
+    billSparksMock.mockReturnValue(new Promise(() => {}));
+    const res = await POST(makeReq({ message: "add a boss", history: [] }, COOKIES));
+    const text = await res.text();
+    expect(text).toContain('"type":"done"');
+    expect(text).not.toContain('"type":"sparks"');
+    delete process.env.SPARKS_RECEIPT_WAIT_MS;
+  });
+
+  // 2026-08-27 owner decision: CHAT IS FREE. A turn that delivers no game
+  // (a question about the game, a plain chat) sends NO debit — the model
+  // cost is ours. Only a turn that ships/changes a game bills.
+  const GAME_REPLY = "Here's your game!\n```html\n<!doctype html><html><body><div id=\"score\">0</div>" + "x".repeat(4000) + "</body></html>\n```";
+
+  it("CF.1 a chat-only reply (no game delivered) is never billed and gets no sparks frame", async () => {
+    replyStreamMock.mockReturnValue(one("Those green shapes are lily pads! 🌿"));
+    billSparksMock.mockResolvedValue({ charged: 157, balance: 100 });
+    const res = await POST(makeReq({ message: "what are the pacman things for?", history: [] }, COOKIES));
+    const text = await res.text();
+    expect(text).toContain('"type":"done"');
+    expect(text).not.toContain('"type":"sparks"');
+    expect(billSparksMock).not.toHaveBeenCalled();
+  });
+
+  it("CF.2 a reply that delivers a game IS billed and receipted", async () => {
+    replyStreamMock.mockReturnValue(one(GAME_REPLY));
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: '<!doctype html><html><body><div id="score">0</div></body></html>' }));
+    billSparksMock.mockResolvedValue({ charged: 40, balance: 900 });
+    const res = await POST(makeReq({ message: "make me a frog game", history: [] }, COOKIES));
+    const text = await res.text();
+    expect(billSparksMock).toHaveBeenCalled();
+    expect(text).toContain('"type":"sparks"');
+  });
+
+  it("CF.3 out of Sparks: a pure chat still streams (chat is free); a game ask is refused", async () => {
+    fetchGateMock.mockResolvedValue({ status: 200, data: { canStart: false, trialUsed: false } });
+    replyStreamMock.mockReturnValue(one("Hi! 👋"));
+    const chat = await (await POST(makeReq({ message: "what do frogs eat?", history: [] }, COOKIES))).text();
+    expect(chat).toContain('"type":"done"');
+    expect(chat).not.toContain('"type":"paywall"');
+    const build = await (await POST(makeReq({ message: "make me a frog game", history: [] }, COOKIES))).text();
+    expect(build).toContain('"type":"paywall"');
+  });
+
+  it("SP.3 a guest (no session) is never billed and gets no sparks frame", async () => {
+    authMock.mockResolvedValue(null);
+    billSparksMock.mockResolvedValue({ charged: 12, balance: 288 });
+    const res = await POST(makeReq({ message: "add a boss", history: [] }));
+    const text = await res.text();
+    expect(text).toContain('"type":"done"');
+    expect(text).not.toContain('"type":"sparks"');
+    expect(billSparksMock).not.toHaveBeenCalled();
   });
 
   it("platform gate unreachable → fail OPEN, the turn streams (an outage never blocks a kid)", async () => {
@@ -451,6 +522,7 @@ describe("POST /api/chat — 3D pricing (docs/PRD-SPARKS.md)", () => {
 
   it("a fresh '3d' build sends is3D:true on every billed usage row", async () => {
     replyStreamMock.mockReturnValue(one("Here's your 3D game!"));
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: THREE_GAME }));
     const res = await POST(makeReq({ message: "make me a 3d racing game", history: [] }, COOKIES));
     await res.text(); // drain the stream — billing fires as the stream finishes
     expect(res.status).toBe(200);
@@ -462,6 +534,7 @@ describe("POST /api/chat — 3D pricing (docs/PRD-SPARKS.md)", () => {
 
   it("a plain 2D build never sends is3D at all", async () => {
     replyStreamMock.mockReturnValue(one("Here's your game!"));
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: '<!doctype html><html><body><div id="score">0</div></body></html>' }));
     const res = await POST(makeReq({ message: "make me a maze game", history: [] }, COOKIES));
     await res.text();
     expect(res.status).toBe(200);
@@ -484,7 +557,8 @@ describe("POST /api/chat — 3D pricing (docs/PRD-SPARKS.md)", () => {
       { id: "2", role: "assistant" as const, text: "Here!", artifactHtml: THREE_GAME, createdAt: 2 },
     ];
     replyStreamMock.mockReturnValue(one("Added a boost pad!"));
-    const res = await POST(makeReq({ message: "add a boost pad", history: historyWithThreeGame }, COOKIES));
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: THREE_GAME }));
+    const res = await POST(makeReq({ message: "add a boost pad", history: historyWithThreeGame, forceRebuild: true }, COOKIES));
     await res.text();
     expect(res.status).toBe(200);
     expect(billSparksMock).toHaveBeenCalled();
@@ -503,7 +577,8 @@ describe("POST /api/chat — 3D pricing (docs/PRD-SPARKS.md)", () => {
       },
     ];
     replyStreamMock.mockReturnValue(one("Added a boost pad!"));
-    const res = await POST(makeReq({ message: "add a boost pad", history: historyWith2DGame }, COOKIES));
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: '<!doctype html><html><body><div id="score">0</div></body></html>' }));
+    const res = await POST(makeReq({ message: "add a boost pad", history: historyWith2DGame, forceRebuild: true }, COOKIES));
     await res.text();
     expect(res.status).toBe(200);
     expect(billSparksMock).toHaveBeenCalled();

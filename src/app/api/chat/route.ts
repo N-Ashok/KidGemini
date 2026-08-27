@@ -14,7 +14,7 @@ import type { ChainSummary } from "@/types/model-ledger.types";
 import { SafetyBlockedError } from "@/lib/model-runner";
 import {
   isGameEditTurn, isThreeConversionTurn, currentGameHtml, editReplyProse, looksLikeAttemptedEdit, looksLikeCompleteDocument, looksTruncatedDocument,
-  regenReplyProse, reconcileAssetMarkers, reconcileAssetMarkersWithReason, detectsNewGame, NEW_GAME_PROMPT_LINE, THREE_D_NEW_GAME_LINE,
+  regenReplyProse, reconcileAssetMarkers, reconcileAssetMarkersWithReason, detectsNewGame, NEW_GAME_PROMPT_LINE, threeDNewGameLine,
 } from "@/lib/game-edit";
 import { stripAssetMarkers } from "@/lib/assets/markers";
 import { applyPatch } from "@/lib/repair-prompt";
@@ -35,6 +35,8 @@ import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
 import { SESSION_COOKIE } from "@/lib/ariantra-session";
 import { billSparks, fetchGate } from "@/lib/sparks-bridge";
+import { settleSparksReceipt, sparksReceiptWaitMs } from "@/lib/sparks-receipt";
+import { isGameBuildTurn } from "@/lib/builder-mode";
 import { catalogGates } from "@/lib/assets/catalog-gate";
 import { resolvePersona } from "@/lib/persona/persona";
 import { GUEST_ASK_LIMIT, GUEST_COOKIE, GUEST_COOKIE_LEGACY, GUEST_COOKIE_MAX_AGE_S, GUEST_WINDOW_MS, IP_GUEST_TOKEN_CAP, guestTokenLimitFor, signedInDailyTokenLimit } from "@/lib/gate.config";
@@ -299,6 +301,22 @@ export async function POST(req: NextRequest) {
   // never the child's. Fire-and-forget — billing must never slow a turn.
   const sparksToken = signedIn ? req.cookies.get(SESSION_COOKIE)?.value ?? "" : "";
   let sparksSeq = 0;
+  // 2026-08-27 receipt (docs/2026-08-27_PRD_SparksPage.md §3): every debit's
+  // answer is collected here and settled, bounded, AFTER the done frame.
+  const sparksDebits: Promise<{ charged: number; balance: number } | null>[] = [];
+  // CHAT IS FREE (owner decision 2026-08-27, BUG-FIX-LOG same day): a turn
+  // that delivers NO game — a question about the game, plain chat, a failed
+  // edit — sends no debit; the model cost is ours. Debits are queued until
+  // the turn knows whether it shipped a game (`turnBillable`), then fired or
+  // dropped. Paths that bail out early never reach the decision → free.
+  let turnBillable: boolean | null = null;
+  const queuedDebits: Array<() => void> = [];
+  function settleTurnBillable(deliveredGame: boolean) {
+    turnBillable = deliveredGame;
+    if (deliveredGame) for (const fire of queuedDebits) fire();
+    else if (queuedDebits.length) console.log(`[api/chat] ⚡ chat-only turn — ${queuedDebits.length} debit(s) not billed (chat is free) @${ms()}ms`);
+    queuedDebits.length = 0;
+  }
   // 3D pricing (platform repo docs/PRD-SPARKS.md 3D pricing amendment): the
   // SAME pure predicate configFor() uses internally to gate the 3D asset
   // catalog (gemini.ts's `gates.three`, paid:false hardwired until
@@ -310,20 +328,24 @@ export async function POST(req: NextRequest) {
   const is3D = catalogGates({ message, history, paid: false }).three;
   function billTurnSparks(kind: string, model: string, promptTokens: number, outputTokens: number, real: TokenUsage | null | undefined, costUsd: number) {
     if (!sparksToken || kind === "safety") return;
-    billSparks({
-      sessionToken: sparksToken,
-      replyId: replyId ?? "no-reply-id",
-      seq: sparksSeq++,
-      kind,
-      is3D,
-      usage: {
-        model,
-        tokensIn: real?.promptTokens ?? promptTokens,
-        tokensOut: (real?.outputTokens ?? outputTokens) + (real?.thoughtTokens ?? 0),
-        tokensCached: real?.cachedTokens,
-        costUsd,
-      },
-    });
+    const fire = () => {
+      sparksDebits.push(billSparks({
+        sessionToken: sparksToken,
+        replyId: replyId ?? "no-reply-id",
+        seq: sparksSeq++,
+        kind,
+        is3D,
+        usage: {
+          model,
+          tokensIn: real?.promptTokens ?? promptTokens,
+          tokensOut: (real?.outputTokens ?? outputTokens) + (real?.thoughtTokens ?? 0),
+          tokensCached: real?.cachedTokens,
+          costUsd,
+        },
+      }));
+    };
+    if (turnBillable === null) queuedDebits.push(fire);
+    else if (turnBillable) fire();
   }
 
   function recordUsage(
@@ -419,7 +441,7 @@ export async function POST(req: NextRequest) {
   if (!forceRebuild && isThreeConversionTurn(message, history, activeGameMessageId)) {
     console.log(`[api/chat] 🎮 2D→3D conversion — a new game, offering fresh chat @${ms()}ms`);
     return ndjson((send) => {
-      send({ type: "done", text: THREE_D_NEW_GAME_LINE, artifactHtml: null, threeDNewGame: true });
+      send({ type: "done", text: threeDNewGameLine(message), artifactHtml: null, threeDNewGame: true });
     }, guestCookieHeader(setGuestCookie));
   }
 
@@ -432,7 +454,10 @@ export async function POST(req: NextRequest) {
   // hiccup: a Sparks outage must never stop a kid's turn (mirror of
   // billSparks's fire-and-forget stance; money is protected fail-CLOSED at
   // the order route instead). Guests never bill, so they are never gated.
-  if (sparksToken) {
+  // Scoped to game-build turns (owner 2026-08-27, chat is free): an exhausted
+  // kid can still TALK to Ari — a pure chat with no game in play streams
+  // normally; an ask that looks like building/changing a game is refused.
+  if (sparksToken && isGameBuildTurn(message, history)) {
     const gate = await fetchGate(sparksToken);
     if (gate.status === 200 && gate.data.canStart === false) {
       console.log(`[api/chat] ⚡ sparks exhausted — turn refused @${ms()}ms`);
@@ -1128,7 +1153,17 @@ export async function POST(req: NextRequest) {
     // Wrapped in trackTurn (2026-07-17): this is bookkeeping like the turnResults
     // call above it — a DB write failure here must not turn an already-shown
     // reply into a 500 for the kid.
+    // Chat is free (owner 2026-08-27): only a turn that delivered a game bills.
+    settleTurnBillable(deliverableHtml !== null);
     trackTurn(() => recordUsage("chat", servedModel, message, full, false, streamUsage));
+    // Sparks receipt (2026-08-27, docs/2026-08-27_PRD_SparksPage.md §3): the
+    // done frame is already out; wait a bounded moment for the platform's
+    // debit answers and tell the kid what this ask cost + the new balance.
+    // Silent platform ⇒ no frame, never a delay (settleSparksReceipt caps).
+    {
+      const receipt = await settleSparksReceipt(sparksDebits, sparksReceiptWaitMs());
+      if (receipt) send({ type: "sparks", charged: receipt.charged, balance: receipt.balance });
+    }
     // Screen-time cap (PRD-SCREEN-TIME-CAP-MVP Part B) — a completion always
     // records its own ping (so a short session counts even before the first
     // heartbeat tick), plus ScreenTimeHeartbeat.tsx pings independently while

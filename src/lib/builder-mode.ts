@@ -37,6 +37,19 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 24576; // full games run 10-20K tokens; 8K squ
  *  end at `d` keeps "3ds max" out. */
 export const THREE_ASK_RE = /\b3\s*-?\s*d\b|\b3\s*-?\s*dimensional\b|\bthree[\s-]?dimensional\b/i;
 
+/** 2026-08-27 (owner): a child rarely says "3D" — they say what they SEE.
+ *  "realistic", "real life", "lifelike", "better/real/good graphics",
+ *  "look(s) real", "more real". These are the kid-words for the same ask.
+ *  Deliberately NOT matched: "really", "real names", "is that real?" (a
+ *  question, not a look), "graph". */
+export const THREE_QUALITY_RE =
+  /\brealistic\b|\breal[\s-]?life\b|\blife[\s-]?like\b|\b(better|real|good|cool|amazing|awesome)\s+graphics\b|\b(looks?|looking|feel|feels|more)\s+real\b/i;
+
+/** The single "this child wants 3D" definition — literal 3D words OR the
+ *  quality words above. Shared by the catalog gate (assets/catalog-gate.ts)
+ *  and the 2D→3D conversion predicate (game-edit.ts) so they never disagree. */
+export const THREE_WANT_RE = new RegExp(`${THREE_ASK_RE.source}|${THREE_QUALITY_RE.source}`, "i");
+
 export function isGameBuildTurn(message: string, history: ChatMessage[]): boolean {
   if (/\bgame\b/i.test(message)) return true;
   if (THREE_ASK_RE.test(message)) return true;

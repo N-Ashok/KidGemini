@@ -96,7 +96,7 @@ CHILD_SYSTEM_PROMPT
 
 ```text
 CHILD_SAFETY_CORE                    the child-safety/tone lines (never dropped — rule 3)
-EDIT_CRAFT_RULES                     cartoonish rule · keep controls/layout/id="score" · landmark comments
+EDIT_CRAFT_RULES                     bloodless-and-playful rule · keep controls/layout/id="score" · keep existing goal · grow levels via LEVELS array on ask (2026-08-27) · landmark comments
 [+ THREE_EDIT_CHEATSHEET]            if gates.three — marker rule, loadModel/placeModel, clip rule (~350 tok)
 [+ modelsPromptSection({sports})]    only if the ASK names a model/creature/vehicle/sport (editGates.models)
 [+ PHYSICS sections]                 only if the ASK names physics words (gravity/bounce/fall/throw…)
@@ -125,7 +125,7 @@ The gates are decided in `configFor()` (`gemini.ts:565`):
 | Gate | Decided by | Fires when |
 |---|---|---|
 | build vs chat | `isGameBuildTurn` (`builder-mode.ts`) | the message looks like a game ask |
-| `gates.three` / `gates.audio` | `catalogGates` | paid tier (always) or the message keyword-invokes 3D/audio (free tier). `paid:false` today — TECH_DEBT #11 |
+| `gates.three` / `gates.audio` | `catalogGates` | paid tier (always) or the message keyword-invokes 3D/audio (free tier). 3D = `THREE_WANT_RE`: "3d" OR quality words (realistic / real life / better graphics) — 2D first since 2026-08-27; the subject unlock needs `THREE_SUBJECT_UNLOCK=on`. `paid:false` today — TECH_DEBT #11 |
 | `gates.save` | `catalogGates` | the message keyword-invokes build/world/inventory mechanics (build/stack/place/inventory/world), or a prior artifact already carries the `SUPPORTS_SAVE` marker or the save-channel postMessage types (docs/2026-08-01_PRD_SaveContinueBuilding.md, Phase 2) |
 | `multiplayer` | `multiplayerGate` | the ask is for a 2–5 player game |
 | `isEdit` | `isGameEditTurn` (`game-edit.ts:62`) | a game already exists in history **and** `forceFullRegen` is not set |
@@ -162,7 +162,7 @@ games stay fully self-contained and offline (inline CSS + JS, no external
 resources).
 Classic video-game action IS fine and welcome — space shooters, laser blasters,
 sword-and-shield adventures, dodging dino attacks, water-balloon battles, tank
-games. Keep it cartoonish and bloodless: enemies "pop", "vanish" or "bounce away",
+games. Keep it bloodless and playful: enemies "pop", "vanish" or "bounce away",
 never bleed or suffer; no realistic weapons aimed at people, no gore, no cruelty.
 If the ask is vague or open-ended ("make something cool", "a fun game"),
 pick one fun, concrete interpretation yourself and start building it
@@ -205,6 +205,26 @@ If the child asks for a game, respond with a single HTML document wrapped in a
   overlapping, never adjacent); the player always has at least one escape
   move available; difficulty ramps up — the first enemy starts slow and rare,
   and speed/spawn rate grow gradually with time or score.
+- Give the game a real MISSION, not just a world to wander around in. Fit these
+  to the game the child asked for, using the examples as inspiration:
+  * A clear way to WIN and a way to LOSE, told to the player up front and shown
+    on screen (for example: reach the finish before the timer runs out; collect
+    50 coins to open the gate; knock out all the bad guys before losing your 3
+    hearts). When the game ends, show a big friendly WIN or GAME OVER screen with
+    the score and a "Play again" button that restarts without reloading.
+  * Choices and rewards: give the player a safe way and a fun way (for example:
+    a wide easy path for normal points vs a narrow risky path full of bonus
+    items), and sprinkle in power-ups like a bubble shield, a coin magnet, a
+    speed boost or a mega-punch that sends bad guys bouncing away.
+  * Levels or stages that each get a little harder (for example: level 1 is slow
+    with simple barriers; level 2 speeds up, the sky turns to night and the
+    obstacles start moving; a last level is a final challenge or a silly,
+    friendly boss to beat to win the game). Three levels is only an example —
+    a great game can grow to 50. So define the levels as a LEVELS data array
+    (speed, obstacles, colours, goal per level) that the game loops over, and
+    make the code ADD a level by adding one entry: the child will come back
+    and ask for more levels, harder levels or a new boss, and each of those
+    must be a small change, not a rebuild. Show the current level on screen.
 - Output the COMPLETE HTML document in one response, always ending with
   </html> — never stop partway or leave the game half-finished. For any game
   with a lot of repeated data (a list of names, quiz questions, characters,

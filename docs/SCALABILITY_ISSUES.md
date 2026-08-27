@@ -218,3 +218,15 @@ Statuses: `ACCEPTED` (known limit, deliberately deferred) · `OPEN` (needs actio
   client-side — serve the size lookup from the server at inject time only (the injector already
   runs server-side; it is `ensure-runtime`'s preview-render floor that needs the client copy), or
   split a `manifest.sizes.json` fetched on demand.
+
+## 10. Sparks page: stream-scoped receipt, full-statement totals, json_each per-chat sums — **ACCEPTED (documented ceilings)**
+
+`docs/2026-08-27_PRD_SparksPage.md` §5. (a) The per-ask "⚡ N" is settled
+inside a ≤2.5 s window after the `done` frame, so hedge-race LOSERS (billed
+after streaming) are not in it — the parent statement stays authoritative.
+Trigger: losers >10% of turns → persist receipts by replyId server-side.
+(b) `GET /api/sparks/usage` reads the platform parent statement (≤200 rows)
+once per Sparks-page load because no `{ balance: true }` partner call exists;
+(c) per-chat totals walk every message of every chat with `json_each` (≤500
+chats). Triggers: partner-call latency or the usage query in slow logs → add
+the light partner call / a denormalised `sparks` column.

@@ -14,7 +14,7 @@ import {
   REPEATED_REQUEST_SECTION, GAME_EDIT_STRICT_RETRY_SECTION, REBUILT_GAME_LINE,
   streamingDisplayText, EDIT_STREAM_WORKING_LINE,
   detectsNewGame, NEW_GAME_SENTINEL, NEW_GAME_PROMPT_LINE,
-  isThreeConversionTurn,
+  isThreeConversionTurn, threeDNewGameLine, THREE_D_NEW_GAME_LINE,
 } from "./game-edit";
 import type { ChatMessage } from "@/types/chat.types";
 
@@ -423,5 +423,35 @@ describe("detectsNewGame — self-declared new game (PRD-RESILIENT-GENERATION §
     expect(streamingDisplayText("NEW_GAME_REQ")).toBe(EDIT_STREAM_WORKING_LINE);
     // ordinary prose is untouched
     expect(streamingDisplayText("Making it blue!")).toBe("Making it blue!");
+  });
+});
+
+// 2026-08-27 (owner): "make it realistic / real life / better graphics" on an
+// existing 2D game is a 3D ask too, and the NEW-game line must speak in the
+// child's own words — a child who said "look real" is not told about "3D".
+describe("isThreeConversionTurn + threeDNewGameLine — quality words are a 3D ask, wording echoes the child", () => {
+  const TWO_D = [msg("child", "make me a racing game"), msg("assistant", GAME_V1)];
+
+  it("R.1 'make it realistic' / 'better graphics' on a 2D game is a conversion turn", () => {
+    for (const ask of ["make it realistic", "can it have better graphics", "make the cars look real", "make it real life"])
+      expect(isThreeConversionTurn(ask, TWO_D), ask).toBe(true);
+  });
+  it("R.2 an ordinary edit is not", () => {
+    expect(isThreeConversionTurn("make the car red", TWO_D)).toBe(false);
+  });
+  it("R.3 the line echoes the child's ask and always says the 2D game stays and they get TWO games", () => {
+    const three = threeDNewGameLine("make it 3d");
+    const real = threeDNewGameLine("make the cars look real");
+    const gfx = threeDNewGameLine("can it have better graphics");
+    expect(three).toMatch(/3D/);
+    expect(real).toMatch(/look real/i);
+    expect(real).not.toMatch(/^Making your game 3D/);
+    expect(gfx).toMatch(/better graphics/i);
+    for (const line of [three, real, gfx]) {
+      expect(line).toContain("TWO games");
+      expect(line).toMatch(/stays? (safe )?right here/i);
+      expect(line).toMatch(/new (chat|game)/i);
+    }
+    expect(THREE_D_NEW_GAME_LINE).toBe(threeDNewGameLine("make it 3d"));
   });
 });

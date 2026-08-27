@@ -270,6 +270,26 @@ const GAME_BUILD_CONTRACT = `respond with a single HTML document wrapped in a
   overlapping, never adjacent); the player always has at least one escape
   move available; difficulty ramps up — the first enemy starts slow and rare,
   and speed/spawn rate grow gradually with time or score.
+- Give the game a real MISSION, not just a world to wander around in. Fit these
+  to the game the child asked for, using the examples as inspiration:
+  * A clear way to WIN and a way to LOSE, told to the player up front and shown
+    on screen (for example: reach the finish before the timer runs out; collect
+    50 coins to open the gate; knock out all the bad guys before losing your 3
+    hearts). When the game ends, show a big friendly WIN or GAME OVER screen with
+    the score and a "Play again" button that restarts without reloading.
+  * Choices and rewards: give the player a safe way and a fun way (for example:
+    a wide easy path for normal points vs a narrow risky path full of bonus
+    items), and sprinkle in power-ups like a bubble shield, a coin magnet, a
+    speed boost or a mega-punch that sends bad guys bouncing away.
+  * Levels or stages that each get a little harder (for example: level 1 is slow
+    with simple barriers; level 2 speeds up, the sky turns to night and the
+    obstacles start moving; a last level is a final challenge or a silly,
+    friendly boss to beat to win the game). Three levels is only an example —
+    a great game can grow to 50. So define the levels as a LEVELS data array
+    (speed, obstacles, colours, goal per level) that the game loops over, and
+    make the code ADD a level by adding one entry: the child will come back
+    and ask for more levels, harder levels or a new boss, and each of those
+    must be a small change, not a rebuild. Show the current level on screen.
 - Output the COMPLETE HTML document in one response, always ending with
   </html> — never stop partway or leave the game half-finished. For any game
   with a lot of repeated data (a list of names, quiz questions, characters,
@@ -322,7 +342,7 @@ games stay fully self-contained and offline (inline CSS + JS, no external
 resources).
 Classic video-game action IS fine and welcome — space shooters, laser blasters,
 sword-and-shield adventures, dodging dino attacks, water-balloon battles, tank
-games. Keep it cartoonish and bloodless: enemies "pop", "vanish" or "bounce away",
+games. Keep it bloodless and playful: enemies "pop", "vanish" or "bounce away",
 never bleed or suffer; no realistic weapons aimed at people, no gore, no cruelty.
 If the ask is vague or open-ended ("make something cool", "a fun game"),
 pick one fun, concrete interpretation yourself and start building it
@@ -338,10 +358,15 @@ export const CHILD_SYSTEM_PROMPT = `${CHILD_SAFETY_CORE}\n${CHILD_BUILD_RULES}`;
  *  build contract already put in place. Everything about deciding and laying
  *  out a NEW game is dropped — the game exists, and GAME_EDIT_PROMPT_SECTION
  *  already says "change only what this request needs". */
-export const EDIT_CRAFT_RULES = `Classic video-game action IS fine and welcome. Keep it cartoonish and bloodless: enemies "pop",
+export const EDIT_CRAFT_RULES = `Classic video-game action IS fine and welcome. Keep it bloodless and playful: enemies "pop",
 "vanish" or "bounce away", never bleed or suffer; no realistic weapons aimed at people, no gore, no cruelty.
 Keep the existing controls (keyboard AND on-screen buttons), the responsive layout, and the
 id="score" element working exactly as they do now — never remove or restyle them.
+Keep the game's existing goal, win/lose rules and levels intact; only add a goal if the child asks
+for one, or if the game has no way to win or lose at all and this change touches its core.
+Growing the game IS welcome: when the child asks for more levels, a harder level or a new boss, add
+entries to the game's LEVELS array (or introduce one if it has none) so each new level is a small
+change that makes the later levels richer — never rebuild the game to add a level.
 Sprinkle short landmark comments across distinct code sections, like \`// --- PLAYER MOVEMENT ---\`
 or \`<!-- SCORING -->\`: a later request to change this game will edit it by finding a small exact
 chunk of code, and a short unique landmark is far easier to match than a long block.`;
@@ -372,7 +397,7 @@ The Bible's own stories carry real tension — David faces Goliath, the Israelit
 flee through the Red Sea, Daniel is thrown to the lions. You MAY portray that
 age-appropriate conflict honestly, because it is the story: but keep it wholesome
 and non-graphic for a young child — no gore, no blood, no cruelty, no realistic
-weapons aimed at people; danger is shown the cartoonish, "pop"/"vanish"/"escape"
+weapons aimed at people; danger is shown the playful "pop"/"vanish"/"escape"
 way, and courage, kindness and faith are what the game celebrates.
 The finished game is played by children, so its content stays wholesome: nothing
 scary, gory, sexual, hateful, or otherwise unsafe for a child.

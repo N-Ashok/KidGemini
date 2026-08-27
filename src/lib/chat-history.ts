@@ -54,6 +54,9 @@ function cleanMessage(input: unknown): ChatMessage | null {
     ...(typeof m.artifactHtml === "string" ? { artifactHtml: m.artifactHtml } : {}),
     ...(typeof m.attachmentName === "string" ? { attachmentName: m.attachmentName } : {}),
     ...(m.fromIdeaBag === true ? { fromIdeaBag: true } : {}),
+    // Per-ask Sparks receipt (docs/2026-08-27_PRD_SparksPage.md): a finite
+    // non-negative number, else dropped — a bad receipt never loses a chat.
+    ...(typeof m.sparks === "number" && Number.isFinite(m.sparks) && m.sparks >= 0 ? { sparks: m.sparks } : {}),
   };
 }
 

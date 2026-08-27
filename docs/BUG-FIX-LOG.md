@@ -11,6 +11,106 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-27 — a plain chat answer cost 157 ⚡ while the wallet promised "Chatting with Ari is always free"
+
+**Symptom (owner UAT, the moment the per-ask receipt went live).** The child asked what the
+"Pac-Man things" in their game were; Ari answered in text (lily pads, no game touched) and
+the new receipt line read **⚡ 157 for this ask**. The wallet page's low-balance card says
+"Chatting with Ari is always free". Both could not be true.
+
+**Root cause.** `api/chat/route.ts` billed EVERY signed-in turn (`billTurnSparks` on every
+`kind:"chat"` usage row) — the platform prices tokens, and a question asked with a whole
+game in context is thousands of input tokens even when nothing is built. The free-chat
+promise existed only in copy; PRD-SPARKS never stated the rule either way. The exhaustion
+gate likewise refused ALL turns, chat included. The receipt did not create the charge; it
+made a charge visible that had been silently happening since 2026-07-25.
+
+**Owner decision (2026-08-27).** Chat is FREE: a turn that delivers no game — a question,
+plain chat, a failed edit — sends no debit; Ari eats the model cost. Only a turn that ships
+or changes a game bills. An exhausted kid can still talk to Ari.
+
+**Fix.** Debits are queued per turn and fired only once the turn knows it delivered a game
+(`settleTurnBillable(deliverableHtml !== null)`); every early-exit path never reaches the
+decision → free. The exhaustion gate is scoped to `isGameBuildTurn` (a pure chat with no
+game in play streams normally; a game ask is refused). No platform change.
+
+**What still bills that a kid might call "chat".** Once a game exists in the conversation,
+`isGameBuildTurn` is true for every message, so an exhausted kid's follow-up QUESTION about
+their game is still gated (we cannot know pre-turn whether the model will build). Logged in
+`Ariantra-Platform/docs/TECH_DEBT.md`. Billing itself is exact: a question that produces no
+game is never charged.
+
+**Tests.** `api/chat/route.test.ts` CF.1 (chat-only → no debit, no receipt), CF.2 (game →
+billed + receipted), CF.3 (exhausted: chat streams, game ask refused). The 3D-pricing and
+receipt tests now deliver an artifact to be billable. Full suite green.
+
+## 2026-08-27 — first games went 3D on a subject word; "make it realistic" did nothing; the 3D panel spoke in words the child never used
+
+**Symptom (owner UAT).** (1) A first-time ask like "make a car game" went straight to a
+Three.js build via the 2026-08-23 subject unlock — the owner wants a child's FIRST game to be
+2D. (2) The words kids actually use for wanting 3D — "realistic", "real life", "better
+graphics", "make it look real" — triggered nothing: only the literal token "3D" did. (3) The
+2D→3D panel always said "Making your game 3D means…" even when the child had said "look real".
+
+**Fix.**
+- `src/lib/builder-mode.ts`: new `THREE_QUALITY_RE` (realistic · real life · lifelike ·
+  better/real/good graphics · look(s)/feels/more real) folded with `THREE_ASK_RE` into ONE
+  `THREE_WANT_RE`, used by both the catalog gate and the conversion predicate.
+- `src/lib/assets/catalog-gate.ts`: the subject unlock is now behind `THREE_SUBJECT_UNLOCK=on`
+  (default off). **Rule 11:** this reverses a 4-day-old owner decision (the "block-diagram
+  horse", 2026-08-23), so the path is kept as a documented fallback, not deleted. What breaks
+  if 2D-first is wrong: "ride horses" without a quality word draws a canvas horse again.
+  Not measured against production asks (no DB pull authorised this session) — the owner's
+  instruction was explicit.
+- `src/lib/game-edit.ts`: `threeDNewGameLine(message)` phrases the panel in the child's ask
+  ("To make your game look real / give your game better graphics / make your game 3D, I need
+  to build a whole NEW game…"); `THREE_D_NEW_GAME_LINE` stays as the "3D" default. Route §1b
+  uses it. Button copy: "Yes! Build my new game 🚀" (`ChatPanel.container.tsx`).
+- `.env.example`: `THREE_SUBJECT_UNLOCK` documented.
+
+**Tests.** builder-mode Q.1–Q.3, catalog-gate F.1–F.4 (subject describe now runs under the
+flag), game-edit R.1–R.3; route D3.1–D3.3 unchanged and green. Full suite 2559 green; tsc clean.
+
+**Not done.** No screenshot of the re-worded panel (rule 9) — the copy change is one string
+in an existing button; take the visual pass on the next UAT round.
+
+## 2026-08-27 — generated games were "explore with no goal": no way to win, lose, or level up
+
+**Symptom (owner UAT).** Most games Ari built were a world to wander around in — no mission,
+no win/lose condition, nothing changed as you played. The build contract only asked for
+*playability* (3-second grace, safe spawn, gentle ramp), never for a *goal*.
+
+**Fix.** `src/lib/gemini.ts` `GAME_BUILD_CONTRACT` gains one bullet, phrased as examples the
+model fits to the child's ask (owner: "not the exact thing I pasted — examples; include a
+beating-up-bad-guys game"): (1) a clear way to WIN and to LOSE, shown up front, with a WIN /
+GAME OVER screen and a "Play again" button; (2) choices and rewards — safe way vs fun way,
+power-ups (bubble shield, coin magnet, mega-punch that sends bad guys bouncing away);
+(3) levels that get a little harder, ending in a final challenge or a silly, friendly boss.
+Three levels is ONLY an example (owner: "a great game is 50 levels"): the prompt now requires
+levels to live in a LEVELS data array so that "more levels / harder level / new boss" is a
+one-entry change in a later ask, not a rebuild. Same session, owner also asked for the word
+"cartoonish" to go: the wholesome-action rule is now "bloodless and playful" (build, edit and
+Bible-teacher shapes); the safety-context line for the classifier ("cartoon-style game",
+`gemini.ts` ~563) is a different mechanism and was left as is.
+
+**Edit turns (owner question: same guideline?).** No — `EDIT_CRAFT_RULES` gets a single
+line: keep the existing goal/win-lose/levels intact; add them only if the child asks or the
+game has none and the edit touches its core. Full design examples on an edit would make
+"make the car red" rewrite the game into a 3-level one, blowing the patch and the diff.
+But growing the game IS an edit-turn job: the edit rules explicitly welcome "more levels / a
+harder level / a new boss" as entries added to the LEVELS array — never a rebuild.
+
+**Cost.** Build system instruction +~1,050 chars (~260 tokens); it sits inside the stable
+cached prefix (byte-identical turn to turn — S.1/S.2 still pass). Edit instruction +~50 tokens.
+
+**Tests.** `gemini.prompt.test.ts` GD.1–GD.5 + GD.3b (build), ED.10/ED.11 (edit shape has the preserve + grow-levels lines
+and NOT the design examples). Failed before, pass after; full `src/lib` suite green (2169).
+
+**Not yet verified end-to-end (rule 12).** This is a prompt change; whether real generations
+now have missions is a *behaviour* claim. Run the golden-prompt runner / a few live builds
+("a dino game", "a car game", "beat the bad guys") and check for win/lose + levels before
+calling it fixed.
+
 ## 2026-08-23 — the helicopter got a rotor, and the log lied about it twice
 
 - **Reported:** owner — "i feel the helicopter needs to have skeleton to rotate the rotor",

@@ -167,3 +167,27 @@ describe("splitOldArtifacts — keep the recent window inline, externalize the r
     expect(toStore).toEqual([]);
   });
 });
+
+// 2026-08-27 (docs/2026-08-27_PRD_SparksPage.md): the per-ask Sparks receipt
+// rides the assistant reply as `sparks`. The whitelist must let it through,
+// or the Sparks page has nothing to show — and must drop junk.
+describe("sanitizeConversation keeps the Sparks receipt on a reply", () => {
+  const base = (extra: Record<string, unknown>) => ({
+    id: "c", title: "t",
+    messages: [
+      { id: "m1", role: "child", text: "add a boss", createdAt: 1 },
+      { id: "m2", role: "assistant", text: "Done!", createdAt: 2, ...extra },
+    ],
+  });
+  it("SK.1 a finite non-negative number survives the round-trip", () => {
+    expect(sanitizeConversation(base({ sparks: 12 }))!.messages[1]!.sparks).toBe(12);
+    expect(sanitizeConversation(base({ sparks: 0 }))!.messages[1]!.sparks).toBe(0);
+  });
+  it("SK.2 junk is dropped, never rejected (a bad receipt must not lose the chat)", () => {
+    for (const junk of ["12", -3, Number.NaN, null, {}]) {
+      const c = sanitizeConversation(base({ sparks: junk }));
+      expect(c, String(junk)).not.toBeNull();
+      expect(c!.messages[1]!.sparks, String(junk)).toBeUndefined();
+    }
+  });
+});

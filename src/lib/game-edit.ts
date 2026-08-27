@@ -7,7 +7,7 @@
 // REPAIR_SYSTEM_PROMPT / applyPatch()), applied here to feature requests
 // instead of bug fixes.
 
-import { isGameBuildTurn } from "./builder-mode";
+import { isGameBuildTurn, THREE_ASK_RE, THREE_WANT_RE } from "./builder-mode";
 import { arAssetsKeys, assetMarkerLiterals, assetMarkerNames, hasAssetMarker, looksInjected, stripAssetMarkers, stripAssetMarkersForDisplay, THREE_MARKER } from "./assets/markers";
 import { hidePartialNextAskLine } from "./next-ask-sentinel";
 import type { ChatMessage } from "@/types/chat.types";
@@ -67,7 +67,9 @@ export function isGameEditTurn(message: string, history: ChatMessage[], pinnedId
 /** The child is asking for 3D — `3d`, `3-d`, or "three dimensional", in any
  *  language (the incident was Hinglish: "isko 3D game Banega"). The token is the
  *  signal, so English and Hinglish requests match alike. */
-const MESSAGE_WANTS_3D = /\b3\s?-?\s?d\b|three[\s-]?dimensional/i;
+// 2026-08-27: one definition with the catalog gate — "3D" OR the kid-words
+// for it ("realistic", "real life", "better graphics"). See builder-mode.ts.
+const MESSAGE_WANTS_3D = THREE_WANT_RE;
 
 /** True when `html` is already a Three.js game — it imports "three", carries the
  *  <!--USES_THREE--> marker, was asset-injected (import map / AR_ASSETS), or
@@ -238,8 +240,20 @@ export const NEW_GAME_PROMPT_LINE =
  *  game always survives in its own chat, and the child knowingly ends up with
  *  TWO games. The OK button + fresh-chat seeding live client-side
  *  (ChatPanel.container.tsx / edit-entry.ts's threeDConversation). */
-export const THREE_D_NEW_GAME_LINE =
-  "Making your game 3D means building a whole NEW game! 🎉 Your 2D game stays safe right here in this chat. Tap OK and I'll build the 3D version in a brand-new chat — you'll have TWO games!";
+/** 2026-08-27 (owner): say it in the child's OWN words. A child who asked
+ *  "make it look real" or "better graphics" has never said "3D" — the line
+ *  names what THEY asked for, then explains it means a brand-new game. */
+export function threeDNewGameLine(message: string): string {
+  const m = message.toLowerCase();
+  const wish = /graphics/.test(m)
+    ? "give your game better graphics"
+    : /realistic|real[\s-]?life|life[\s-]?like|\breal\b/.test(m) && !THREE_ASK_RE.test(m)
+      ? "make your game look real"
+      : "make your game 3D";
+  return `To ${wish}, I need to build a whole NEW game! 🎉 Your game stays safe right here in this chat. Tap the button and I'll build the new version in a brand-new chat — you'll have TWO games!`;
+}
+/** The default ("3D") wording — kept for the route test and any caller without the ask. */
+export const THREE_D_NEW_GAME_LINE = threeDNewGameLine("make it 3d");
 
 /**
  * True when the model self-declared a NEW-GAME request (PRD §11). Fail toward

@@ -86,6 +86,38 @@ describe("CHILD_SYSTEM_PROMPT (safety instruction, monitor replacement)", () => 
     expect(CHILD_SYSTEM_PROMPT).toMatch(/landmark comment/i);
     expect(CHILD_SYSTEM_PROMPT).toMatch(/short,\s*distinct/i);
   });
+
+  // 2026-08-27 (owner): most generated games were "explore with no goal" —
+  // no way to win, no way to lose, nothing changes as you play. The build
+  // contract now asks for a mission (win + lose), choices/rewards, and
+  // levels that get harder, taught by EXAMPLE rather than as a fixed recipe.
+  describe("game-design guidance — a game needs a mission, choices and rising difficulty (2026-08-27)", () => {
+    it("GD.1 requires a clear way to WIN and a way to LOSE, with a game-over/win screen and replay", () => {
+      expect(CHILD_SYSTEM_PROMPT).toMatch(/clear\s+way\s+to\s+WIN\s+and\s+a\s+way\s+to\s+LOSE/);
+      expect(CHILD_SYSTEM_PROMPT).toMatch(/play\s+again/i);
+    });
+    it("GD.2 asks for choices and rewards (risky path / power-ups) as examples", () => {
+      expect(CHILD_SYSTEM_PROMPT).toMatch(/safe\s+way\s+and\s+a\s+fun\s+way/i);
+      expect(CHILD_SYSTEM_PROMPT).toMatch(/power-ups?/i);
+    });
+    it("GD.3 asks for levels or stages that get a little harder, e.g. a final challenge/boss", () => {
+      expect(CHILD_SYSTEM_PROMPT).toMatch(/a\s+little\s+harder/i);
+      expect(CHILD_SYSTEM_PROMPT).toMatch(/boss/i);
+    });
+    it("GD.3b three levels is only an example — levels live in a LEVELS array so a child can grow the game (toward 50) in later asks", () => {
+      expect(CHILD_SYSTEM_PROMPT).toMatch(/three\s+levels\s+is\s+only\s+an\s+example/i);
+      expect(CHILD_SYSTEM_PROMPT).toMatch(/grow\s+to\s+50/i);
+      expect(CHILD_SYSTEM_PROMPT).toMatch(/LEVELS\s+data\s+array/);
+      expect(CHILD_SYSTEM_PROMPT).toMatch(/ask\s+for\s+more\s+levels/i);
+    });
+    it("GD.4 examples cover the bad-guys / enemies genre, kept bloodless (owner ask)", () => {
+      expect(CHILD_SYSTEM_PROMPT).toMatch(/bad\s+guys/i);
+    });
+    it("GD.5 the guidance is framed as examples, not the child's request verbatim", () => {
+      expect(CHILD_SYSTEM_PROMPT).toMatch(/for\s+example|e\.g\./i);
+      expect(CHILD_SYSTEM_PROMPT).toMatch(/fit\s+.*\s+to\s+the\s+game\s+the\s+child\s+asked\s+for/i);
+    });
+  });
 });
 
 // 2026-08-25 PRD_EditTurnCost §4.A (PRD-PROMPT-CACHING Fix C): the system
@@ -137,8 +169,26 @@ describe("edit-turn instruction (slim) vs build-turn instruction (unchanged)", (
       expect(s).toMatch(/child aged between 7 and 14/);
       expect(s).toMatch(/scary, gory, sexual, hateful, or unsafe/);
       expect(s).toMatch(/never refuse a game request/);
-      expect(s).toMatch(/cartoonish and bloodless/);
+      expect(s).toMatch(/bloodless and playful/);
     }
+  });
+
+  // 2026-08-27: an edit must not strip the game's mission/levels, but must NOT
+  // rewrite a small ask ("make the car red") into a 3-level game either — so
+  // the edit shape gets a one-line PRESERVE rule, never the full design guidance.
+  it("ED.10 edit preserves existing win/lose + levels; only adds them on ask or when the game has none — and never the full build design examples", () => {
+    const edit = buildTurnSystemInstruction(gates, false, true, false, "default", true);
+    expect(edit).toMatch(/keep\s+the\s+game'?s\s+existing\s+goal/i);
+    expect(edit).toMatch(/no\s+way\s+to\s+win\s+or\s+lose/i);
+    expect(edit).not.toMatch(/safe\s+way\s+and\s+a\s+fun\s+way/i);
+    expect(edit).not.toMatch(/silly,\s+friendly\s+boss/i);
+  });
+
+  it("ED.11 edit WELCOMES growing the game — more levels / harder level / new boss go into the LEVELS array, never a rebuild", () => {
+    const edit = buildTurnSystemInstruction(gates, false, true, false, "default", true);
+    expect(edit).toMatch(/asks\s+for\s+more\s+levels/i);
+    expect(edit).toMatch(/LEVELS\s+array/);
+    expect(edit).toMatch(/never\s+rebuild\s+the\s+game\s+to\s+add\s+a\s+level/i);
   });
 
   it("ED.4 edit keeps: landmark comments, keep-controls line, the edit contract, next-ask", () => {

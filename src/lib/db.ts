@@ -1067,6 +1067,53 @@ export class SqliteChatHistoryStore implements ChatHistoryStore {
     }
   }
 
+  /** What each chat used (docs/2026-08-27_PRD_SparksPage.md §3): the sum of
+   *  the per-ask receipts (`sparks` on assistant replies), added up INSIDE
+   *  SQLite via json_each so a chat's game HTML never leaves the database to
+   *  total a few numbers. Newest chat first. Scale ceiling: json_each walks
+   *  every message of every chat on each call (≤500 chats) — revisit with a
+   *  denormalised `sparks` column if the Sparks page shows in slow-query logs. */
+  sparksByConversation(userId: string, workspace: Workspace = "default"): { id: string; title: string; updatedAt: number; sparks: number }[] {
+    return getDb()
+      .prepare(
+        `SELECT c.id, c.title, c.updatedAt,
+                COALESCE((SELECT SUM(json_extract(j.value, '$.sparks')) FROM json_each(c.messages) j
+                          WHERE json_extract(j.value, '$.role') = 'assistant'), 0) AS sparks
+         FROM conversations c
+         WHERE c.userId = ? AND c.workspace = ? AND c.deletedAt IS NULL
+         ORDER BY c.updatedAt DESC, c.id LIMIT 500`,
+      )
+      .all(userId, workspace) as { id: string; title: string; updatedAt: number; sparks: number }[];
+  }
+
+  /** What each request in one chat cost: every child ask paired with the
+   *  receipt on the reply that followed it. `sparks: null` = no receipt
+   *  (guest turn, pre-feature reply, or the platform was too slow) — shown as
+   *  "not counted", never as 0. Ask text is clipped to 160 chars in SQL.
+   *  Ownership fail-closed: another user's chat yields []. */
+  sparksAsks(userId: string, id: string): { ask: string; sparks: number | null; at: number }[] {
+    const rows = getDb()
+      .prepare(
+        `SELECT json_extract(j.value, '$.role') AS role,
+                substr(json_extract(j.value, '$.text'), 1, 160) AS text,
+                json_extract(j.value, '$.sparks') AS sparks,
+                json_extract(j.value, '$.createdAt') AS at
+         FROM conversations c, json_each(c.messages) j
+         WHERE c.id = ? AND c.userId = ? AND c.deletedAt IS NULL
+         ORDER BY j.key`,
+      )
+      .all(id, userId) as { role: string; text: string | null; sparks: number | null; at: number | null }[];
+    const out: { ask: string; sparks: number | null; at: number }[] = [];
+    let pendingAsk = "";
+    for (const r of rows) {
+      if (r.role === "child") { pendingAsk = r.text ?? ""; continue; }
+      if (r.role !== "assistant") continue;
+      out.push({ ask: pendingAsk, sparks: typeof r.sparks === "number" ? r.sparks : null, at: typeof r.at === "number" ? r.at : 0 });
+      pendingAsk = "";
+    }
+    return out;
+  }
+
   /** SOFT delete (owner ask 2026-07-26): the row stays in the system — only
    *  the account's VIEW of it goes (list/get filter on deletedAt IS NULL).
    *  Fail-closed on ownership; idempotent (a second call matches nothing).

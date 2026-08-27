@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { isGameBuildTurn, builderGenOverrides } from "./builder-mode";
+import { isGameBuildTurn, builderGenOverrides, THREE_WANT_RE } from "./builder-mode";
 import type { ChatMessage } from "@/types/chat.types";
 
 // Middle-path thinking (owner decision 2026-07-09): ordinary chat keeps
@@ -86,5 +86,25 @@ describe("builderGenOverrides — edit turns get their own, smaller thinking bud
     const o = builderGenOverrides({}, { isEdit: true });
     expect(o.thinkingConfig.includeThoughts).toBe(true);
     expect(o.maxOutputTokens).toBe(24576);
+  });
+});
+
+// 2026-08-27 (owner): a first-time child gets a 2D game; 3D is for when they
+// ASK for it — literally ("3D") or in kid words about looks ("realistic",
+// "real life", "better graphics"). THREE_WANT_RE is that single definition,
+// shared by the catalog gate and the 2D→3D conversion predicate.
+describe("THREE_WANT_RE — the child asked for 3D, in 3D-words or in quality-words", () => {
+  it("Q.1 literal 3D spellings still match (the 2026-08-09 'Calvin' class)", () => {
+    for (const t of ["make it 3d", "Make it 3-D", "a three dimensional game"]) expect(THREE_WANT_RE.test(t), t).toBe(true);
+  });
+  it("Q.2 quality words match: realistic / real life / lifelike / better|real graphics / look(s) real", () => {
+    for (const t of [
+      "make it realistic", "a real life car game", "make the dino look real", "can it have better graphics",
+      "real graphics please", "make it lifelike", "more realistic please", "good graphics like a real game",
+    ]) expect(THREE_WANT_RE.test(t), t).toBe(true);
+  });
+  it("Q.3 ordinary asks do NOT match — 'car game', 'really fun', 'real names', 'graph'", () => {
+    for (const t of ["make a car game", "make it really fun", "use real names of animals", "a game with a bar graph", "is that real?"])
+      expect(THREE_WANT_RE.test(t), t).toBe(false);
   });
 });

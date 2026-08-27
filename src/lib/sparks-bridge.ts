@@ -43,8 +43,8 @@ async function sparksPost(payload: unknown): Promise<SparksResult> {
   }
 }
 
-/** Fire-and-forget metered debit for one usage row of a turn. Never throws,
- *  never awaited on the hot path — a Sparks hiccup must not slow a kid's turn.
+/** Metered debit for one usage row of a turn. Never throws, never awaited
+ *  on the hot path (the returned receipt is settled AFTER the done frame) — a Sparks hiccup must not slow a kid's turn.
  *  Idempotency: (replyId, seq) — the platform ignores replays. */
 export function billSparks(opts: {
   sessionToken: string;
@@ -57,8 +57,8 @@ export function billSparks(opts: {
    *  the platform's fail-closed `=== true` parsing. */
   is3D?: boolean;
   usage: SparksUsageEntry;
-}): void {
-  void sparksPost({
+}): Promise<{ charged: number; balance: number } | null> {
+  return sparksPost({
     sessionToken: opts.sessionToken,
     debit: {
       turnId: `${opts.replyId}:${opts.kind}:${opts.usage.model}:${opts.seq}`,
@@ -67,7 +67,12 @@ export function billSparks(opts: {
       ...(opts.is3D === true ? { is3D: true } : {}),
     },
   }).then((r) => {
-    if (r.status !== 200) console.error(`[sparks-bridge] debit rejected (${r.status})`);
+    if (r.status !== 200) { console.error(`[sparks-bridge] debit rejected (${r.status})`); return null; }
+    // 2026-08-27: the answer carries what was charged + the new balance — the
+    // chat route shows it as a receipt (sparks-receipt.ts). Still never awaited
+    // on the hot path; a malformed answer is simply "no receipt".
+    const { charged, balance } = r.data as { charged?: unknown; balance?: unknown };
+    return typeof charged === "number" && typeof balance === "number" ? { charged, balance } : null;
   });
 }
 

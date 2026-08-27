@@ -5,7 +5,7 @@
 // regexes only — no LLM call, no I/O. Pure logic, no React/Next.
 
 import type { ChatMessage } from "@/types/chat.types";
-import { isGameBuildTurn, THREE_ASK_RE } from "../builder-mode";
+import { isGameBuildTurn, THREE_WANT_RE } from "../builder-mode";
 import { GENRES } from "./model-select";
 import { modelsInGenre, TAXONOMY, type GenreId } from "./asset-taxonomy";
 
@@ -53,7 +53,17 @@ export interface CatalogGates {
 // pattern just didn't implement it. It now lives in ONE place — builder-mode's
 // THREE_ASK_RE — because this was a second copy of the same rule and the two
 // could drift apart (they had).
-const THREE_TRIGGER = THREE_ASK_RE;
+// 2026-08-27 (owner): the trigger is THREE_WANT_RE — literal "3D" OR the
+// kid-words for it ("realistic", "real life", "better graphics").
+const THREE_TRIGGER = THREE_WANT_RE;
+
+/** 2026-08-27 (owner decision): a child's FIRST game is 2D. The subject
+ *  unlock below (2026-08-23) is OFF by default and kept behind
+ *  THREE_SUBJECT_UNLOCK=on as the documented fallback (rule 11) — flip it if
+ *  2D-first turns out to be wrong for the demo-style asks it was built for. */
+function subjectUnlockEnabled(): boolean {
+  return process.env.THREE_SUBJECT_UNLOCK === "on";
+}
 
 // ── The subject unlock (owner decision 2026-08-23) ────────────────────────
 //
@@ -187,7 +197,7 @@ export function catalogGates(input: { message: string; history: ChatMessage[]; p
  *  wording there would invite a rebuild in flat canvas. */
 function threeReasonFrom(texts: string[], artifacts: string[]): ThreeUnlockReason | null {
   if (texts.some((t) => THREE_TRIGGER.test(t)) || artifacts.some((h) => THREE_ARTIFACT.test(h))) return "asked";
-  if (texts.some((t) => subjectSuggestsThree(t))) return "subject";
+  if (subjectUnlockEnabled() && texts.some((t) => subjectSuggestsThree(t))) return "subject";
   return null;
 }
 

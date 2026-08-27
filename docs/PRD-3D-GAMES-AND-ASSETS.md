@@ -393,7 +393,11 @@ every game re-shipped all 1.35 MB inside its HTML.
 - **Paying user:** 3D + audio catalog always available; the model uses it
   whenever the idea fits ("racing game" → 3D + engine SFX).
 - **Free user:** unlocks on triggers. 3D: the token **"3d"** ("3d game",
-  "3d racing", "3d world"…). Audio: **"sound", "music", "sound effects",
+  "3d racing", "3d world"…) **or the kid-words for it** — "realistic",
+  "real life", "lifelike", "better/real graphics", "look(s) real"
+  (2026-08-27, `THREE_QUALITY_RE`). **2D first (owner, 2026-08-27):** a
+  first game with no such ask is 2D even for car/horse/rocket subjects; the
+  2026-08-23 subject unlock is opt-in via `THREE_SUBJECT_UNLOCK=on`. Audio: **"sound", "music", "sound effects",
   "with sound/music"**. Cheap server-side regex before prompt build — no LLM
   call. Err toward unlocking: a false unlock costs a few catalog tokens; an
   under-unlock is a bad kid experience.
