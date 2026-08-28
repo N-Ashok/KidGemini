@@ -47,7 +47,24 @@ Plain chat turns: system prompt + window only; thinking 0; no catalogs.
 Repair calls (self-healing preview): ~4–8k input, ≤4k output, rare — watch
 via TECH_DEBT #30.
 
-## Model chain & pricing (verified 2026-08-18; `pricing.config.ts` mirrors this)
+## Non-Gemini rates (price audit 2026-08-27, BUG-FIX-LOG same day)
+
+| Model | In / Out / Cached per MTok | Note |
+|---|---|---|
+| gpt-5.6-luna | $0.20 / $1.20 / $0.02 | was carried at $1/$6 — now the cheapest frontier model in the catalog |
+| gpt-5.4-mini | $0.75 / $4.50 / $0.075 | |
+| gpt-5.4-nano | $0.20 / $1.25 / $0.02 | |
+| claude-opus-4-8 | $5 / $25 / $0.50 | was $15/$75 (Opus 4.1's retired rate) |
+| claude-sonnet-5 | $2 / $10 / $0.20 | intro rate made permanent |
+| claude-haiku-4-5 | $1 / $5 / $0.10 | was UNDER at $0.8/$4 |
+| kimi-k2 | $0.60 / $2.50 | legacy listing; moonshot-v1-* deprecated/unlisted |
+| deepseek-chat / -reasoner | unverifiable | ids gone from the price page (V4 only, peak/off-peak) — re-verify before enabling |
+
+Anthropic reports `input_tokens` EXCLUDING cache reads; the adapter now passes the superset
+so the shared formula (cached ⊂ prompt) holds across providers. Cache writes (1.25x/2x) are
+counted at base rate — a small, documented under-estimate.
+
+## Model chain & pricing (verified 2026-08-18 and re-verified 2026-08-27; `pricing.config.ts` mirrors this)
 
 Owner decision 2026-08-18: the ladder moved to the Gemini 3.6/3.7 line.
 

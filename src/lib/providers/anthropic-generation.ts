@@ -20,9 +20,13 @@ interface AnthropicEvent {
   usage?: AnthropicUsage;
 }
 interface AnthropicUsage {
+  /** Anthropic's input_tokens EXCLUDES cached tokens (cache reads and writes
+   *  are reported separately) — unlike Gemini's promptTokenCount and
+   *  OpenAI's prompt_tokens, which INCLUDE them. */
   input_tokens?: number;
   output_tokens?: number;
   cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
 }
 
 type CreateStream = (model: string, body: Record<string, unknown>) => Promise<AsyncIterable<AnthropicEvent>>;
@@ -69,11 +73,20 @@ function normalizeStopReason(raw?: string): FinishReason | undefined {
 
 function toUsage(u?: AnthropicUsage): NormalizedUsage | undefined {
   if (!u) return undefined;
+  // pricing.config.ts treats `cached` as a SUBSET of `prompt` (Gemini/OpenAI
+  // semantics), so report the SUPERSET here: fresh + cache reads + cache
+  // writes. Before 2026-08-27 this passed input_tokens alone, and the formula
+  // then SUBTRACTED the cached count from it — every cached Claude turn was
+  // under-costed by (cached × base price). Cache writes bill at 1.25x/2x
+  // base; they are counted at base here (slight under-estimate, documented in
+  // model-registry.ts) rather than not at all.
+  const cacheRead = u.cache_read_input_tokens ?? 0;
+  const cacheWrite = u.cache_creation_input_tokens ?? 0;
   return {
-    promptTokens: u.input_tokens ?? 0,
+    promptTokens: (u.input_tokens ?? 0) + cacheRead + cacheWrite,
     outputTokens: u.output_tokens ?? 0,
     thoughtTokens: 0, // Claude extended thinking, when used, bills within output
-    cachedTokens: u.cache_read_input_tokens ?? 0,
+    cachedTokens: cacheRead,
   };
 }
 

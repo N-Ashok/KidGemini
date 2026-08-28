@@ -62,9 +62,12 @@ export const MODEL_CATALOG: ModelSpec[] = [
   // safetySettings. If a code path is ever added that calls OpenAI WITHOUT
   // that wrapper, this flag becomes a lie and these must go back to
   // `prompt-only` — the gate trusts it and does not re-check.
-  { id: "gpt-5.6-luna", provider: "openai", tier: "frontier", inputPerMTok: 1.0, outputPerMTok: 6.0, safety: "provider-enforced" },
-  { id: "gpt-5.4-mini", provider: "openai", tier: "workhorse", inputPerMTok: 0.75, outputPerMTok: 4.5, safety: "provider-enforced" },
-  { id: "gpt-5.4-nano", provider: "openai", tier: "lite", inputPerMTok: 0.2, outputPerMTok: 1.25, safety: "provider-enforced" },
+  // Prices verified 2026-08-27 against developers.openai.com/api/docs/pricing
+  // (price audit, BUG-FIX-LOG same day): luna had been carried at $1/$6 —
+  // 5x its real $0.20/$1.20. Cached input is 10% of input on every GPT-5.x.
+  { id: "gpt-5.6-luna", provider: "openai", tier: "frontier", inputPerMTok: 0.2, outputPerMTok: 1.2, cachedInputPerMTok: 0.02, safety: "provider-enforced" },
+  { id: "gpt-5.4-mini", provider: "openai", tier: "workhorse", inputPerMTok: 0.75, outputPerMTok: 4.5, cachedInputPerMTok: 0.075, safety: "provider-enforced" },
+  { id: "gpt-5.4-nano", provider: "openai", tier: "lite", inputPerMTok: 0.2, outputPerMTok: 1.25, cachedInputPerMTok: 0.02, safety: "provider-enforced" },
 
   // ── Anthropic (Claude) ──────────────────────────────────────────────────────
   // `prompt-only` (owner decision 2026-07-20): Claude has no per-request safety
@@ -77,9 +80,14 @@ export const MODEL_CATALOG: ModelSpec[] = [
   // best-effort as of 2026-07-20 — VERIFY against Anthropic's current model list
   // and pricing before enabling for real traffic (the prompt-portability eval,
   // docs/PRD-MODEL-FALLBACK.md, is the gate for that).
-  { id: "claude-opus-4-8", provider: "anthropic", tier: "frontier", inputPerMTok: 15.0, outputPerMTok: 75.0, safety: "prompt-only" },
-  { id: "claude-sonnet-5", provider: "anthropic", tier: "workhorse", inputPerMTok: 3.0, outputPerMTok: 15.0, safety: "prompt-only" },
-  { id: "claude-haiku-4-5-20251001", provider: "anthropic", tier: "lite", inputPerMTok: 0.8, outputPerMTok: 4.0, safety: "prompt-only" },
+  // Prices verified 2026-08-27 against platform.claude.com/docs/en/about-claude/pricing
+  // (price audit): Opus 4.8 is $5/$25 (was carried at the retired Opus 4.1's
+  // $15/$75), Sonnet 5 $2/$10 (introductory rate made permanent), Haiku 4.5
+  // $1/$5 (was UNDER at $0.8/$4). Cache reads are 10% of input. Cache WRITES
+  // (1.25x/2x) are not modelled — see anthropic-generation.ts toUsage().
+  { id: "claude-opus-4-8", provider: "anthropic", tier: "frontier", inputPerMTok: 5.0, outputPerMTok: 25.0, cachedInputPerMTok: 0.5, safety: "prompt-only" },
+  { id: "claude-sonnet-5", provider: "anthropic", tier: "workhorse", inputPerMTok: 2.0, outputPerMTok: 10.0, cachedInputPerMTok: 0.2, safety: "prompt-only" },
+  { id: "claude-haiku-4-5-20251001", provider: "anthropic", tier: "lite", inputPerMTok: 1.0, outputPerMTok: 5.0, cachedInputPerMTok: 0.1, safety: "prompt-only" },
 
   // ── Moonshot (Kimi) ─────────────────────────────────────────────────────────
   // `prompt-only`, same gate as Claude. Moonshot is OpenAI-API-compatible, so it
@@ -89,6 +97,10 @@ export const MODEL_CATALOG: ModelSpec[] = [
   // why (beyond the prompt-only gate) it stays behind MOONSHOT_API_KEY and off
   // by default. Do not enable for real kid traffic without that review. Ids +
   // prices best-effort 2026-07-20 — VERIFY before enabling.
+  // 2026-08-27 audit: kimi-k2 $0.60/$2.50 still matches Moonshot's LEGACY
+  // listing (K2.5/K2.6/K3 are the current line); moonshot-v1-8k/32k no longer
+  // appear on the price page at all (deprecated) — their rates below are
+  // unverifiable and the ids may be dead. Re-verify before ever enabling.
   { id: "kimi-k2", provider: "moonshot", tier: "frontier", inputPerMTok: 0.6, outputPerMTok: 2.5, safety: "prompt-only" },
   { id: "moonshot-v1-32k", provider: "moonshot", tier: "workhorse", inputPerMTok: 0.5, outputPerMTok: 2.0, safety: "prompt-only" },
   { id: "moonshot-v1-8k", provider: "moonshot", tier: "lite", inputPerMTok: 0.2, outputPerMTok: 0.8, safety: "prompt-only" },
@@ -111,6 +123,13 @@ export const MODEL_CATALOG: ModelSpec[] = [
   // benchmarks, but tier is a judgement about GAME-BUILD output quality
   // (model-provider.types.ts) — run the portability eval before trusting it
   // with a build turn.
+  // ⚠️ 2026-08-27 audit: api-docs.deepseek.com/quick_start/pricing now lists
+  // ONLY deepseek-v4-flash ($0.22/$0.66, cache hit $0.007, off-peak; 2x peak)
+  // and deepseek-v4-pro ($0.66/$1.98, cache hit $0.022, off-peak; 2x peak).
+  // "deepseek-chat"/"deepseek-reasoner" are not on it — these rates are the
+  // old V3.x ones and the ids may alias or be dead. Time-of-day pricing does
+  // not fit the flat catalog either. Left as-is because DeepSeek is off by
+  // default (key + prompt-only opt-in); re-verify and remodel before enabling.
   { id: "deepseek-reasoner", provider: "deepseek", tier: "frontier", inputPerMTok: 0.55, outputPerMTok: 2.19, cachedInputPerMTok: 0.14, safety: "prompt-only" },
   { id: "deepseek-chat", provider: "deepseek", tier: "workhorse", inputPerMTok: 0.27, outputPerMTok: 1.1, cachedInputPerMTok: 0.07, safety: "prompt-only" },
 ];

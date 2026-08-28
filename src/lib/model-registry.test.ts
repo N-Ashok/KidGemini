@@ -68,12 +68,17 @@ describe("chainFor — price-ordered within a tier", () => {
     const tiers = chain.map((id) => specFor(id)!.tier);
     const ranks = tiers.map((t) => ["frontier", "workhorse", "lite"].indexOf(t));
     expect(ranks).toEqual([...ranks].sort((a, b) => a - b)); // never climbs back up
-    // 2026-08-18: gemini-3.7-flash ($0.75/$3.75) is now the cheapest frontier
-    // model in the catalog, so it heads the chain ahead of gpt-5.6-luna.
-    expect(chain[0]).toBe("gemini-3.7-flash");
+    // 2026-08-27 price audit: gpt-5.6-luna's REAL price is $0.20/$1.20 (it
+    // had been carried at $1/$6), which makes it the cheapest frontier model
+    // in the catalog — so with an OpenAI key present the auto-derived chain
+    // now heads with it, ahead of gemini-3.7-flash ($0.75/$3.75). Production
+    // pins an explicit MODEL_FALLBACK_CHAIN (docs/COST_TOKEN_BUDGET.md), so
+    // this only changes routing on a box that relies on the auto chain.
+    expect(chain[0]).toBe("gpt-5.6-luna");
+    expect(chain).toContain("gemini-3.7-flash");
   });
 
-  it("R.4 crosses providers once permitted — gpt-5.6-luna ($1/$6) beats gemini-3.5-flash ($1.5/$9) at the same tier", () => {
+  it("R.4 crosses providers once permitted — gpt-5.6-luna ($0.20/$1.20) beats gemini-3.5-flash ($1.5/$9) at the same tier", () => {
     // The whole point of the rewrite: the cheaper equal-tier model wins even
     // though it belongs to a different provider.
     const chain = chainFor({ primary: "gemini-3.5-flash", tier: "frontier", env: KEYS });

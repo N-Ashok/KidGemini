@@ -139,3 +139,27 @@ describe("MODEL_PRICING is derived from the catalog (one price source)", () => {
     expect(usd).toBeCloseTo(0.2 + 1.25, 6); // not 1.5 + 9.0
   });
 });
+
+// 2026-08-27 price audit (owner ask: "verify on the internet and cross-verify").
+// Gemini rates all matched ai.google.dev/gemini-api/docs/pricing. These did NOT:
+// gpt-5.6-luna was carried at $1/$6 (official $0.20/$1.20 — 5x over), Claude
+// Opus 4.8 at $15/$75 (official $5/$25), Sonnet 5 at $3/$15 (official $2/$10,
+// made permanent), Haiku 4.5 at $0.8/$4 (official $1/$5 — UNDER). OpenAI and
+// Anthropic cache reads are 10% of input, not the 25% Gemini default.
+describe("price audit 2026-08-27 — non-Gemini rates match the providers' published prices", () => {
+  const perM = (id: string) => estimateCostUsd(id, { prompt: 1_000_000, output: 1_000_000 });
+  it("PA.1 gpt-5.6-luna is $0.20 in / $1.20 out (developers.openai.com/api/docs/pricing)", () => {
+    expect(perM("gpt-5.6-luna")).toBeCloseTo(0.2 + 1.2, 6);
+  });
+  it("PA.2 Claude Opus 4.8 $5/$25, Sonnet 5 $2/$10, Haiku 4.5 $1/$5 (platform.claude.com/docs/en/about-claude/pricing)", () => {
+    expect(perM("claude-opus-4-8")).toBeCloseTo(5 + 25, 6);
+    expect(perM("claude-sonnet-5")).toBeCloseTo(2 + 10, 6);
+    expect(perM("claude-haiku-4-5-20251001")).toBeCloseTo(1 + 5, 6);
+  });
+  it("PA.3 OpenAI + Anthropic cached input bills at 10% of input, never the 25% Gemini default", () => {
+    for (const [id, input] of [["gpt-5.6-luna", 0.2], ["gpt-5.4-mini", 0.75], ["gpt-5.4-nano", 0.2], ["claude-opus-4-8", 5], ["claude-sonnet-5", 2], ["claude-haiku-4-5-20251001", 1]] as const) {
+      const allCached = estimateCostUsd(id, { prompt: 1_000_000, cached: 1_000_000, output: 0 });
+      expect(allCached, id).toBeCloseTo(input * 0.1, 6);
+    }
+  });
+});

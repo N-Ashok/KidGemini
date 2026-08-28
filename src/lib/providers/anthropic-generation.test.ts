@@ -76,7 +76,12 @@ describe("AnthropicGenerator.openStream", () => {
       ]),
     );
     const final = out.at(-1)!;
-    expect(final.usage).toMatchObject({ promptTokens: 50, outputTokens: 7, cachedTokens: 10 });
+    // 2026-08-27 price audit: Anthropic's input_tokens EXCLUDES cache reads,
+    // but pricing.config treats `cached` as a SUBSET of `prompt` (Gemini/OpenAI
+    // semantics). The adapter must report the superset — 50 fresh + 10 cached
+    // = 60 prompt — or every cached Claude turn is under-costed by the cached
+    // count and its base price.
+    expect(final.usage).toMatchObject({ promptTokens: 60, outputTokens: 7, cachedTokens: 10 });
     expect(final.finishReason).toBe("stop");
   });
 
