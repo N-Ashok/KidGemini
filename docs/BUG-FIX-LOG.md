@@ -11,6 +11,59 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-27 — price audit: four catalog rates were wrong, and Claude turns were under-costed by construction
+
+**Ask (owner).** "Are the pricing calculations correct for the token and the model used? Verify
+on the internet and cross-verify."
+
+**Verified correct** (against `ai.google.dev/gemini-api/docs/pricing`, 2026-08-27): all eight
+Gemini rows — 3.7-flash, 3.6-flash ($0.75/$3.75/$0.075, promo until 2026-12-31), 3.5-flash,
+3.5-flash-lite, 3-flash-preview, 3.1-pro-preview (≤200k tier), 2.5-flash, 2.5-flash-lite.
+Thinking tokens bill as output — the formula already does that. gpt-5.4-mini, gpt-5.4-nano,
+kimi-k2 (legacy listing) also matched.
+
+**Wrong, now fixed** (`src/lib/model-registry.ts`):
+
+| model | was | official | source |
+|---|---|---|---|
+| gpt-5.6-luna | $1.00 / $6.00 | **$0.20 / $1.20**, cached $0.02 | developers.openai.com/api/docs/pricing |
+| claude-opus-4-8 | $15 / $75 | **$5 / $25**, cache read $0.50 | platform.claude.com/docs/en/about-claude/pricing |
+| claude-sonnet-5 | $3 / $15 | **$2 / $10** (intro rate made permanent), cache read $0.20 | same |
+| claude-haiku-4-5 | $0.80 / $4 | **$1 / $5** (was UNDER), cache read $0.10 | same |
+
+Also: OpenAI and Anthropic cached input is 10% of input, not the 25% Gemini default the
+formula assumed when `cachedInputPerMTok` was unset — explicit rates added for all six.
+
+**Formula bug (Anthropic only).** `pricing.config.ts` treats `cached` as a subset of `prompt`
+(true for Gemini's `promptTokenCount` and OpenAI's `prompt_tokens`). Anthropic's
+`input_tokens` EXCLUDES cache reads, but `providers/anthropic-generation.ts` passed it as
+`promptTokens` — so the formula subtracted the cached count from a number that never
+contained it: every cached Claude turn was under-costed by (cached × base price). The adapter
+now reports the superset (fresh + cache read + cache write); cache writes are counted at
+base rate (their 1.25x/2x premium is not modelled — documented in the catalog).
+
+**Unverifiable, flagged, left as-is** (both providers are OFF by default — key + prompt-only
+opt-in): `deepseek-chat`/`deepseek-reasoner` no longer appear on DeepSeek's price page (only
+V4 flash/pro, with peak/off-peak rates the flat catalog cannot express);
+`moonshot-v1-8k/32k` are deprecated and unlisted. Re-verify and remodel before enabling.
+
+**Knock-on.** With its real price gpt-5.6-luna is the cheapest frontier model, so the
+AUTO-derived chain heads with it when an OpenAI key is present (R.14 updated). Production
+pins `MODEL_FALLBACK_CHAIN` explicitly, so prod routing is unchanged.
+
+**Platform mirror + FX (not changed here, cross-repo).** `Ariantra-Platform
+src/lib/sparks/memory-sparks-repos.ts` carries claude-sonnet-5 at $3/$15 (now wrong) — it is
+a fallback only (Ari sends `costUsd` on every debit), logged in TECH_DEBT. Ari's dashboard
+uses `USD_INR_RATE` default 95 while the platform ledger uses `usdInr: 87` — the two ₹ figures
+differ by ~9% by construction; owner to pick one.
+
+**Sparks impact.** None for kids today: the live chain is Gemini-only and every Gemini rate
+was already right. The corrections change what the dashboard/ledger WOULD charge on a
+non-Gemini rescue.
+
+**Tests.** `pricing.config.test.ts` PA.1–PA.3, `providers/anthropic-generation.test.ts`
+(superset usage), `model-registry.test.ts` R.14/R.4 updated.
+
 ## 2026-08-27 — a plain chat answer cost 157 ⚡ while the wallet promised "Chatting with Ari is always free"
 
 **Symptom (owner UAT, the moment the per-ask receipt went live).** The child asked what the

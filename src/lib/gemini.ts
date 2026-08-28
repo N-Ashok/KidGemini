@@ -20,6 +20,7 @@ import {
 } from "./game-edit";
 import { promptPrefixV2Enabled } from "./history-trim";
 import { modelViewOf } from "./assets/model-view";
+import { sliceEditSource, editSliceEnabled } from "./edit-slice";
 import { PERSONAS, type PersonaId } from "./persona/persona";
 import { NEXT_ASK_EDIT_PROMPT_SECTION, NEXT_ASK_PROMPT_SECTION, resolveNextAsk } from "./next-ask-sentinel";
 import { fallbackChain, isModelGone, shouldTryNextModel } from "./model-fallback";
@@ -304,12 +305,17 @@ const GAME_BUILD_CONTRACT = `respond with a single HTML document wrapped in a
   made-up one.
 - Above each logically distinct part of the code (player movement/controls,
   scoring, enemy/obstacle spawning, rendering, the start/game-over screens,
-  etc.), add a short, distinct landmark comment naming that part, e.g.
-  \`// --- PLAYER MOVEMENT ---\` or \`<!-- SCORING -->\`. A later request to
-  change this game will edit it by finding a small exact chunk of code, and a
-  short unique landmark is far easier to relocate exactly than a large block
-  of gameplay logic — this makes future edits land cleanly instead of
-  requiring the whole game to be rebuilt.
+  etc.), add a landmark comment that NAMES that part and then, after a colon,
+  says in one short plain line what it does, e.g.
+  \`// --- PLAYER MOVEMENT: arrow keys and the on-screen buttons steer the car ---\`
+  or \`<!-- SCORING: shows the score box and adds 10 points per coin -->\`.
+  Keep each name short, distinct and unique in the file, and the summary
+  under about twelve words. Two things depend on these landmarks: a later
+  request to change this game edits it by finding a small exact chunk of
+  code, and a short unique landmark is far easier to relocate exactly than a
+  large block of gameplay logic; and the summaries let a later edit be shown
+  the list of parts plus only the parts it needs, instead of the whole game.
+  So label EVERY section this way — including any you add later.
 - Keep it wholesome; work fully offline unless a CDN library is allowed above.`;
 
 // Exported so tests can pin the child-safety instruction (it replaced the
@@ -367,9 +373,15 @@ for one, or if the game has no way to win or lose at all and this change touches
 Growing the game IS welcome: when the child asks for more levels, a harder level or a new boss, add
 entries to the game's LEVELS array (or introduce one if it has none) so each new level is a small
 change that makes the later levels richer — never rebuild the game to add a level.
-Sprinkle short landmark comments across distinct code sections, like \`// --- PLAYER MOVEMENT ---\`
-or \`<!-- SCORING -->\`: a later request to change this game will edit it by finding a small exact
-chunk of code, and a short unique landmark is far easier to match than a long block.`;
+Keep every landmark comment and its summary exactly as it is, like
+\`// --- PLAYER MOVEMENT: arrow keys and the on-screen buttons steer the car ---\` or
+\`<!-- SCORING: shows the score box and adds 10 points per coin -->\`; if you add a new section,
+give it a landmark in that same NAME: short summary shape. A later request will edit this game by
+finding a small exact chunk of code, and a short unique landmark is far easier to match than a long
+block — the summaries are also what lets an edit be shown only the parts it needs.
+Some parts of the game may be shown to you collapsed to their landmark line with a note saying the
+lines are hidden: those lines still exist, unchanged. Never edit or re-create a hidden part, and
+never treat a collapsed note as code to keep — only change code you can actually see.`;
 
 // Bible-teacher persona (PRD-BIBLE-TEACHER §6). Audience is a VERIFIED-ADULT
 // Sunday-school / kids' Bible teacher building games FOR their class of children
@@ -710,7 +722,17 @@ export class GeminiChatModel implements ChatModel {
     // child's code, not ~10k tokens of our boilerplate. applyPatch still runs
     // against the delivered document — every line of the view exists in it.
     const stored = build && promptPrefixV2Enabled() ? currentGameHtml(input.history, input.activeGameMessageId) : undefined;
-    const gameSource = stored ? modelViewOf(stored) : undefined;
+    // EDIT_SLICE=on (experiment 2026-08-27, edit-slice.ts): on an EDIT turn,
+    // show the model only the landmark sections the ask touches. Shown text is
+    // verbatim so hunks still apply to the full document; a miss falls to the
+    // strict retry, which re-sends the FULL source (strictEditRetry composes
+    // from currentHtml, not this view).
+    const fullView = stored ? modelViewOf(stored) : undefined;
+    const slice = fullView && editSliceEnabled() && isGameEditTurn(input.message, input.history, input.activeGameMessageId)
+      ? sliceEditSource(fullView, input.message)
+      : null;
+    if (slice?.sliced) console.log(`[edit-slice] shown=${slice.shown.length} hidden=${slice.hidden.length} chars ${slice.fullChars}→${slice.slicedChars} (${Math.round(100 * slice.slicedChars / slice.fullChars)}%)`);
+    const gameSource = slice?.sliced ? slice.source : fullView;
     const tailSections = build && promptPrefixV2Enabled() && isRepeatedRequest(input.message, input.history) ? [REPEATED_REQUEST_SECTION] : [];
     // An error-report paste gets the more specific fix framing; every other
     // build turn keeps the battle framing verified live 2026-07-27.

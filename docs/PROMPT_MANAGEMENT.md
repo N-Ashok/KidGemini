@@ -96,7 +96,7 @@ CHILD_SYSTEM_PROMPT
 
 ```text
 CHILD_SAFETY_CORE                    the child-safety/tone lines (never dropped — rule 3)
-EDIT_CRAFT_RULES                     bloodless-and-playful rule · keep controls/layout/id="score" · keep existing goal · grow levels via LEVELS array on ask (2026-08-27) · landmark comments
+EDIT_CRAFT_RULES                     bloodless-and-playful rule · keep controls/layout/id="score" · keep existing goal · grow levels via LEVELS array on ask (2026-08-27) · landmarks WITH summaries + collapsed-section rule (2026-08-28)
 [+ THREE_EDIT_CHEATSHEET]            if gates.three — marker rule, loadModel/placeModel, clip rule (~350 tok)
 [+ modelsPromptSection({sports})]    only if the ASK names a model/creature/vehicle/sport (editGates.models)
 [+ PHYSICS sections]                 only if the ASK names physics words (gravity/bounce/fall/throw…)
@@ -237,6 +237,19 @@ If the child asks for a game, respond with a single HTML document wrapped in a
   accurately, include as many correct ones as you are sure of and build the
   game around that set: a smaller ACCURATE set is always better than a padded,
   made-up one.
+- Above each logically distinct part of the code (player movement/controls,
+  scoring, enemy/obstacle spawning, rendering, the start/game-over screens,
+  etc.), add a landmark comment that NAMES that part and then, after a colon,
+  says in one short plain line what it does, e.g.
+  \`// --- PLAYER MOVEMENT: arrow keys and the on-screen buttons steer the car ---\`
+  or \`<!-- SCORING: shows the score box and adds 10 points per coin -->\`.
+  Keep each name short, distinct and unique in the file, and the summary
+  under about twelve words. Two things depend on these landmarks: a later
+  request to change this game edits it by finding a small exact chunk of
+  code, and a short unique landmark is far easier to relocate exactly than a
+  large block of gameplay logic; and the summaries let a later edit be shown
+  the list of parts plus only the parts it needs, instead of the whole game.
+  So label EVERY section this way — including any you add later.
 - Keep it wholesome; work fully offline unless a CDN library is allowed above.
 ````
 

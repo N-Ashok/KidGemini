@@ -1111,6 +1111,19 @@ server-to-server contract as `arcade-partner.ts`).
   correctly re-detecting an edit on an EXISTING 3D game from its prior
   artifact's markers, not just the turn's message text. See
   `docs/PRD-3D-GAMES-AND-ASSETS.md`'s 3D pricing amendment.
+- **Landmark summaries + edit slicing (2026-08-28, `docs/2026-08-28_EXPERIMENT_EditSlicing.md`)**:
+  every landmark the build writes now carries a one-line summary of what that
+  part does (`// --- SCORING: shows the score box and adds 10 points per coin ---`).
+  Behind `EDIT_SLICE=on` (default OFF), an edit turn is shown the full list of
+  landmarks plus only the section bodies its ask names — measured −45% input,
+  −36% cost per edit, 6/6 patches applied, 12/12 games still running, every
+  hidden section intact. **2D games only** (owner decision 2026-08-28): on a
+  3D game the same experiment broke a game — the picker hid INITIALIZATION for
+  "change the sky to night", so the model rewrote `init()` and shipped a
+  duplicate declaration that crashes. A picker miss is therefore NOT always a
+  safe `search_not_found`. `sliceEditSource` refuses any game `gameUsesThree`
+  recognises, and the flag stays OFF by default pending a post-apply
+  duplicate-declaration guard and a lite-model section picker.
 - **Sparks page shows the money side (2026-08-27, `docs/2026-08-27_PRD_SparksPage.md`;
   owner decision: EVERYONE sees it — revises the 2026-07-25 no-deductions rule
   below)**: `/wallet` gains ⚡ available / used / added (parent statement via

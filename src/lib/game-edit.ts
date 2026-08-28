@@ -75,7 +75,7 @@ const MESSAGE_WANTS_3D = THREE_WANT_RE;
  *  <!--USES_THREE--> marker, was asset-injected (import map / AR_ASSETS), or
  *  calls the 3D model loader. Such a game EDITS normally; only a 2D game needs
  *  the rebuild-instead-of-patch treatment. */
-function gameUsesThree(html: string): boolean {
+export function gameUsesThree(html: string): boolean {
   return (
     looksInjected(html) ||
     html.includes(THREE_MARKER) ||

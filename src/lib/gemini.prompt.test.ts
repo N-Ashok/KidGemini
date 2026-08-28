@@ -244,3 +244,23 @@ describe("edit-turn instruction (slim) vs build-turn instruction (unchanged)", (
     expect(edit).toMatch(/Sunday-school/);
   });
 });
+
+// 2026-08-28 (owner idea): landmarks now carry a one-line summary of what the
+// section does, so an EDIT turn can be shown a table of contents plus only the
+// sections it needs (src/lib/edit-slice.ts) instead of the whole game.
+describe("landmark summaries — the build labels each section (2026-08-28)", () => {
+  it("LS.1 the build contract asks for NAME: one-line summary, with both comment styles as examples", () => {
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/after\s+a\s+colon/i);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/PLAYER MOVEMENT:/);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/<!--\s*SCORING:/);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/short,\s*distinct/i); // the pre-existing pin still holds
+  });
+  it("LS.2 it says WHY — a later edit is shown the summaries and only the sections it needs", () => {
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/only\s+the\s+parts?\s+it\s+needs/i);
+  });
+  it("LS.3 an EDIT keeps the summaries and writes one for any new section it adds", () => {
+    const edit = buildTurnSystemInstruction({ three: false, audio: false, save: false }, false, true, false, "default", true);
+    expect(edit).toMatch(/keep\s+.*summar/i);
+    expect(edit).toMatch(/new\s+section/i);
+  });
+});
