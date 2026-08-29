@@ -11,6 +11,210 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-29 — making music mandatory made games kill themselves (and the verifier called an empty file clean)
+
+Found while browser-verifying the first game built with the new game-feel section — NOT by a
+test, and not by the owner. Two defects, one of them caused by my own audio change earlier the
+same day.
+
+### 1. A defensive wrapper that is fatal
+
+The generated game contained:
+
+```js
+function playMusic(name) {
+  if (typeof window.playMusic === 'function') return window.playMusic(name);
+  return { stop: () => {} };
+}
+```
+
+In a classic (non-module) script a top-level function declaration BECOMES a property of
+`window`, so this **replaced** our injected helper — and then called itself. Browser:
+`RangeError: Maximum call stack size exceeded`, whole game dead.
+
+The model was being careful; the care is what kills it. And it only started happening because
+the audio playbook now REQUIRES background music (PRD-Audio Phase 2), so every build writes
+music code.
+
+**Fixed twice, deliberately.** The playbook now forbids writing your own `playSound`/
+`playMusic` — *"not even a careful one that checks the real helper exists first"* — and
+`findShadowedHelpers()` in `scripts/playability.mjs` fails any artifact that declares
+`function playSound|playMusic|loadModel|placeModel|modelSize|modelParts`. Verified: the lint
+catches the crashed game and explains why; our own runtime's `window.playSound = function...`
+assignment is correctly NOT flagged (PL.14).
+
+### 2. "Nothing" was reported as clean
+
+A second build returned a **zero-byte artifact**, and `verify-game-html.mjs` printed **✓**. An
+empty file throws no errors, renders no canvas, and passed every check we had.
+`looksLikeAGame()` now fails an artifact under 200 chars, one with no `<script>`, or one with
+neither a canvas nor anything interactive. The floor only ever catches "the model returned
+nothing" — real games are 12k–70k chars.
+
+### Also this session, and worth recording as a pattern
+
+The audio playbook's token ceiling was raised twice (488 → 501 → 567) before I stopped and
+wrote a trigger into the test: *at 620, switch to retrieval — do not raise this again*. When
+the no-redefine rule then pushed it over, the fix was to TRIM PROSE, not to move the line —
+which promptly broke three older pins whose exact phrases had been trimmed away
+("never inside the game loop", "do not create your own Audio", "never block on audio"). All
+three were restored. A ceiling only means something if breaching it costs you something.
+
+## 2026-08-29 — games were correct and felt like nothing (the game-feel playbook)
+
+**Owner trigger:** *"for a turbo boost, it was pathetic."* A boost changed a speed variable
+with no shake, no particles, no sound. The prompt taught how to make a game CORRECT and
+nothing about making it feel like anything.
+
+`assets/game-feel-playbook.ts`, **always-on**, 296 tokens, on build AND edit turns:
+- **Punch** — freeze 3–5 frames on impact, shake scaled to the event, particles at the point
+  of contact, slide/fade between screens, buttons that press in. With the calibration clause
+  the research demands: *enough that the player FEELS it, never so much that they cannot see
+  what is happening.* Medium and high juiciness beat both NONE and EXTREME on player
+  experience, motivation, play time and score — "add lots of juice" would aim at the losing band.
+- **A cosmetic choice at the start** — character/colour/hat, changing only how it looks. For
+  ages 7–12 a task-IRRELEVANT choice measurably raised intrinsic motivation and learning.
+- **Progress toward the goal** — "12 / 50", a bar, laps left. Feedback must show DISTANCE TO
+  THE GOAL, not just a score.
+
+**Always-on, not gated** (owner decision): keyword-gating audio had left 93% of real games
+silent, and "this game feels like nothing" is just as invisible in a child's words. On edits
+too, because the owner's complaint WAS an edit — +296 tok per edit, ~₹0.6/day at current
+volume, and the 2D-edit instruction ceiling moved 6,000 → 7,000 chars with that stated.
+
+**Verified on a real build**: particles, `shakeAmount`, a "Choose your hero:" picker and live
+progress all present; only hit-stop missing. Four of five, first try.
+
+**Honest caveat.** Generation is variable: of three builds after the fixes, one was clean, one
+crashed on `Assignment to constant variable`, one returned nothing. That is the model, not the
+prompt — which is the argument for the lints over the prompt rules.
+
+## 2026-08-29 — racing games had no engine sound to reach for (library gap, step 1 of the fix)
+
+**Owner ask**, after the demo bike game's music turned out to be a dead track: *"can you remove
+the music / and provide racing music / not the background music"* — clarified as **engine and
+racing sound effects rather than a music bed**.
+
+**The gap, measured.** We own 28 sfx and 7 music loops; the closest thing to a vehicle was
+`whoosh`. **Kenney — the CC0 source this pipeline is built around — publishes no vehicle audio
+at all** (checked their whole Audio category: Casino, Sci-fi, Interface, Impact, Voiceover x2,
+Music Jingles, RPG, Digital, UI; their "Racing Pack"/"Racing Kit"/"Car Kit" are models and
+sprites). So the model reaching for `bg_loop_adventure` on a racing game was real unmet demand,
+not carelessness.
+
+**Licensing, verified per page (not from a search summary).**
+- GGBotNet, *Car Sound Effects Pack* — **CC0**, no attribution. 13 .ogg files: engine loop x2,
+  acceleration x2, start-up, turning-off, horn, parking brake, doors, hood, trunk. ACCEPTED.
+- qubodup, *Car Engine Loop 96kHz* — **CC-BY 3.0 / GPL**, attribution required. **REJECTED**:
+  this pipeline is CC0-only.
+
+**Blocker and fix.** The pack ships as a zip, and `vendor-audio.mjs` supported only a Kenney
+kit zip (URL looked up in `KENNEY_ZIPS`) or a single-file URL. Added **`kind: 'zip'`** — the
+same extract-one-file-by-suffix move as `kenney`, with the archive URL pinned inline.
+
+**Added (5 sounds, dry-run verified end to end — download, extract, transcode, budget):**
+
+| name | type | from | result |
+|---|---|---|---|
+| `engine_loop` | music | Car_Engine_Loop.ogg | 35.6 KB, 3.0s |
+| `engine_start` | sfx | Car_Engine_Start_Up.ogg | 23.6 KB, 2.0s |
+| `engine_stop` | sfx | Car_Engine_Turning_Off.ogg | 23.6 KB, 2.0s |
+| `horn` | sfx | Car_Horn.ogg | 6.5 KB, 0.5s |
+| `brake` | sfx | Car_Parking_Brake.ogg | 5.9 KB, 0.5s |
+
+`engine_loop` is typed **music, not sfx**, deliberately: `playMusic` is the only helper that
+loops seamlessly, and an engine bed is exactly what replaces background music in a racing game
+— which is what the owner asked for.
+
+**Dropped, and why the budget won.** `engine_rev` (Car_Acceleration.ogg) transcodes to
+**36,406 bytes against the 30 KB sfx budget**; Acceleration_2 is the same length. The budget is
+a real load-time constraint, so the sound was dropped rather than the budget raised — a boost
+already has `whoosh`, and the engine bed can be pitched up with the `playSound` pitch argument
+added earlier the same day.
+
+**ALL THREE STEPS DONE (2026-08-29).**
+2. Owner ran the upload. All five published and verified (200, sha256 match, immutable); the
+   35 pre-existing sounds were skipped as already present, and the 318 models were untouched —
+   the script merges manifest entries by name rather than rewriting the file.
+   **The upload's own gate then failed on OUR OWN token ceiling** (AP.5): naming five more
+   sounds pushed `audioPromptSection` 488 -> 501 tokens, one over the 500 limit. The manifest
+   had already been written by that point, so nothing was lost — but it is worth recording that
+   the asset pipeline's last stage runs the prompt tests, so a library addition can be blocked
+   by a prompt budget.
+3. Racing events now taught: `playMusic("engine_loop")` as the bed for a driving/riding game
+   instead of a music track, `engine_start` on the countdown, `brake` on a hard turn,
+   `horn` on a tap, `engine_stop` at the end.
+
+**Verified on real builds after the upload.** "make me a bike racing game" -> music
+`engine_loop`, effects `engine_start, engine_stop, hit, coin_pickup, click, jingle_win,
+game_over`. "make me a car racing game with 3 laps" -> `engine_loop` + `brake, engine_start,
+coin_pickup, pop, win`. **Zero invented names in either** — the failure mode that started this
+whole thread.
+
+**The ceiling moved twice and that is the real finding.** 488 -> 501 (five sounds added) ->
+567 (racing map taught). `audioPromptSection` names every sound we own AND rides every build
+turn, so it grows with the asset library. Set once at 620 (~1.2% of a build) with an explicit
+trigger written into the test: at 620, switch to retrieval the way `modelsPromptSection`
+already does for 318 models — do not raise the number again.
+
+## 2026-08-29 — games asked for sounds we do not own, and shipped silent while the chat claimed otherwise
+
+**Report (owner).** *"The background music is very suspenseful and it don't change on prompt."*
+Traced on the demo account's bike-racing game (13 versions).
+
+**What the versions show.**
+
+| ask | result |
+|---|---|
+| v1–v8 | `playMusic("bg_loop_upbeat")` |
+| v7 "change the music to something upbeat" | **no change** — it was already `bg_loop_upbeat` |
+| v9 "change the music" | `playMusic("bg_loop_adventure")` |
+
+**`bg_loop_adventure` does not exist.** The shipped game's injected `AR_ASSETS` holds only
+`bg_loop_upbeat` and `jingle_win`; the invented name was dropped. At runtime `load()` finds no
+URL, logs `[ariantra] unknown sound`, returns null — so the game plays **no background music
+at all**. Meanwhile the assistant's reply told the child *"I changed the background soundtrack
+to the energetic and bouncy `bg_loop_playful`"* — a third name, matching neither the code nor
+the library. The chat said one thing, the code did another, and the game went quiet.
+
+**Why nothing caught it.** An unknown asset name is a `console.warn`, not an error.
+`preview-verify` reacts only to errors, rejections and resource 404s, so it never fires
+self-repair and the verifier passes the game clean. Same shape as the fairy bug the same day:
+a silent failure that every mechanical check approves.
+
+**Scale, measured over 239 recent production games.** 25 have audio; **4 of those (16%) call
+at least one name that does not exist** — `bg_loop_adventure`, `apple`, `bump`, `shoot`,
+`move`, `push`, `lose`. One is a music name, i.e. permanently silent background.
+
+**Owner decision (2026-08-29), deliberately NOT a fallback sound.** If we have nothing that
+fits the situation, play nothing — a wrong sound is worse than none — but **write the miss
+down**, and review weekly to turn real demand into new library assets. Nothing about a miss is
+ever shown to a child.
+
+**Fix.**
+- `src/lib/assets/missing-audio.ts` `missingAudioNames()` — pure; extracts every
+  `playSound`/`playMusic` name from a delivered game and diffs it against the manifest.
+  Ignores our own injected runtime helper definitions.
+- `src/lib/db.ts` `SqliteMissingAssetStore` + `missing_assets` table — one row per name,
+  counted, with first/last seen, so the register ranks by real demand. Writes are fail-safe.
+- `src/app/api/chat/route.ts` — every delivered artifact is scanned at the delivery point
+  (both the injected and the raw-fallback path) and misses are recorded. Server-side only.
+- `scripts/missing-sounds.mjs` — the weekly shopping list, most-wanted first.
+- **The invented call is left in the game on purpose**: the day that asset lands in the
+  manifest, every game that already asked for it starts working.
+
+**Tests.** `missing-audio.test.ts` MA.1–MA.6 (music vs sfx, dedupe, the common case costs
+nothing, and our own runtime helper is never mistaken for a request);
+`db.missing-assets.test.ts` MR.1–MR.3 (counts repeats rather than duplicating rows, ranks by
+demand, empty batch is a no-op); `api/chat/route.test.ts` MRR.1–MRR.3, including that the miss
+never reaches the child's reply. Full suite 2679 green.
+
+**Not fixed here.** The demo game is still silent — it needs a re-ask or a patch. We do not
+yet PREVENT the model inventing names (the playbook lists the valid ones; a hard generation-
+time check is a separate change). And "very suspenseful" is unexplained: before the break this
+game played `bg_loop_upbeat`, and after it plays nothing — if suspenseful music is still
+audible it is a different game, not this one.
+
 ## 2026-08-29 — a game that ran perfectly and was impossible to play (the fairy puzzle)
 
 **Report (owner).** *"the last game i made was un playable, instructions were unclear and it

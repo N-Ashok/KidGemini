@@ -7,6 +7,7 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { CHILD_SYSTEM_PROMPT, buildTurnSystemInstruction } from "./gemini";
+import { GAME_FEEL_PROMPT_SECTION } from "./assets/game-feel-playbook";
 import { MULTIPLAYER_PROMPT_SECTION } from "./multiplayer-prompt";
 
 describe("buildTurnSystemInstruction — multiplayer gate (independent of 3D/audio)", () => {
@@ -16,7 +17,11 @@ describe("buildTurnSystemInstruction — multiplayer gate (independent of 3D/aud
   });
 
   it("multiplayer=false, both catalog gates closed too → exactly the bare child prompt", () => {
-    expect(buildTurnSystemInstruction({ three: false, audio: false }, false)).toBe(CHILD_SYSTEM_PROMPT);
+    // 2026-08-29: GAME_FEEL_PROMPT_SECTION is ALWAYS-ON (owner decision), so the
+    // "bare" prompt is now core + game feel. Keyword-gating audio had left 93%
+    // of real games silent; "feels like nothing" is just as invisible in a
+    // child's words, so this one is not gated either.
+    expect(buildTurnSystemInstruction({ three: false, audio: false }, false)).toBe(`${CHILD_SYSTEM_PROMPT}\n\n${GAME_FEEL_PROMPT_SECTION}`);
   });
 
   it("multiplayer=true alone (a plain 2D multiplayer game) carries the section with no 3D/audio catalog", () => {

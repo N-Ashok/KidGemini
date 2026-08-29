@@ -98,6 +98,19 @@ export function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_usage_ip ON usage_events(ip);
     -- Per-IP rate-limit state (docs/SCALABILITY_ISSUES.md #3). Persists so a block lasts until
     -- next day and strikes are remembered across days for the 3-strike pay wall.
+    -- Missing-sound register (owner decision 2026-08-29). When a generated
+    -- game calls for an asset we do not own we play NOTHING — a wrong sound is
+    -- worse than none — but we write the miss down here so the weekly review
+    -- can turn real demand into new library assets. Server-side only; no part
+    -- of this is ever shown to a child.
+    CREATE TABLE IF NOT EXISTS missing_assets (
+      name TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      count INTEGER NOT NULL,
+      firstSeen INTEGER NOT NULL,
+      lastSeen INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS ip_limits (
       ip TEXT PRIMARY KEY,
       windowStart INTEGER NOT NULL,
@@ -1475,4 +1488,35 @@ function trim(value: string | null | undefined, max: number): string | null {
   const text = value?.trim();
   if (!text) return null;
   return text.length > max ? text.slice(0, max) : text;
+}
+
+/** The missing-sound register (owner decision 2026-08-29, docs/BUG-FIX-LOG.md
+ *  same day). One row per asset name a generated game asked for and we do not
+ *  have, counted so the weekly review can rank real demand. Writes are
+ *  fail-safe: a bookkeeping error must never break a child's turn. */
+export class SqliteMissingAssetStore {
+  record(items: ReadonlyArray<{ name: string; kind: string }>, now: number = Date.now()): void {
+    if (!items.length) return;
+    try {
+      const stmt = getDb().prepare(
+        `INSERT INTO missing_assets (name, kind, count, firstSeen, lastSeen)
+         VALUES (@name, @kind, 1, @now, @now)
+         ON CONFLICT(name) DO UPDATE SET count = count + 1, lastSeen = @now`,
+      );
+      for (const it of items) stmt.run({ name: it.name, kind: it.kind, now });
+    } catch (e) {
+      console.error(`[missing-assets] record failed: ${(e as Error).message}`);
+    }
+  }
+
+  /** Most-wanted first — the shopping list. */
+  top(limit = 50): Array<{ name: string; kind: string; count: number; firstSeen: number; lastSeen: number }> {
+    try {
+      return getDb()
+        .prepare(`SELECT name, kind, count, firstSeen, lastSeen FROM missing_assets ORDER BY count DESC, lastSeen DESC LIMIT ?`)
+        .all(limit) as Array<{ name: string; kind: string; count: number; firstSeen: number; lastSeen: number }>;
+    } catch {
+      return [];
+    }
+  }
 }

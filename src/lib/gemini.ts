@@ -11,6 +11,7 @@ import { threePromptSection, modelsPromptSection, audioPromptSection, modelNames
 import { PHYSICS_PROMPT_SECTION, physicsEnginePromptSection } from "./assets/physics-playbook";
 import { SAVE_STATE_PROMPT_SECTION } from "./assets/save-state-playbook";
 import { PROCGEN_PROMPT_SECTION } from "./assets/procgen-playbook";
+import { GAME_FEEL_PROMPT_SECTION } from "./assets/game-feel-playbook";
 import { PUBLISHED_SAVE_PROMPT_SECTION } from "./assets/published-save-playbook";
 import { catalogGates, editGates, type CatalogGates, type EditGates } from "./assets/catalog-gate";
 import { multiplayerGate } from "./multiplayer-gate";
@@ -481,6 +482,7 @@ export function buildTurnSystemInstruction(
       ...(gates.three && editNeeds.models ? [modelsPromptSection(undefined, { sports: Boolean(editNeeds.sports) })] : []),
       ...(gates.three && editNeeds.physics ? [PHYSICS_PROMPT_SECTION, physicsEnginePromptSection()] : []),
       ...(editNeeds.audio ? [audioPromptSection()] : []),
+      GAME_FEEL_PROMPT_SECTION,
       ...(editNeeds.procgen ? [PROCGEN_PROMPT_SECTION] : []),
       ...(editNeeds.save ? [SAVE_STATE_PROMPT_SECTION, PUBLISHED_SAVE_PROMPT_SECTION] : []),
       ...(multiplayer || editNeeds.multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),
@@ -493,6 +495,7 @@ export function buildTurnSystemInstruction(
   const sections = [
     ...(gates.three ? [threePromptSection(gates.threeReason), modelsPromptSection(undefined, { sports: Boolean(gates.sports) }), PHYSICS_PROMPT_SECTION, physicsEnginePromptSection()] : []),
     ...(gates.audio ? [audioPromptSection()] : []),
+    GAME_FEEL_PROMPT_SECTION,
     ...(gates.procgen ? [PROCGEN_PROMPT_SECTION] : []),
     ...(gates.save ? [SAVE_STATE_PROMPT_SECTION, PUBLISHED_SAVE_PROMPT_SECTION] : []),
     ...(multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),

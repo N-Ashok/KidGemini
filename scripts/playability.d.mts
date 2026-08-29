@@ -11,3 +11,5 @@ export declare function judgePlayability(s: {
   forwardVsBack: number;
 }): { playable: boolean; reason?: string };
 export declare function findFrozenStateRisks(source: string): string[];
+export declare function findShadowedHelpers(source: string): string[];
+export declare function looksLikeAGame(html: string): { ok: boolean; reason?: string };

@@ -60,6 +60,8 @@ const KENNEY_PAGE = (kit) => `https://kenney.nl/assets/${kit}`;
 
 // ── the curated set (PRD §4.5: ~10 SFX + 3 music) ────────────────────────────
 // kind 'kenney': file is the ogg name inside the kit zip (matched by suffix).
+// kind 'zip':    same, but the archive URL is pinned inline (any CC0 zip).
+// kind 'url':    a single audio file, downloaded directly.
 // kind 'url': a direct CC0 file; sourceUrl = the page proving the license.
 const SOUNDS = [
   { name: 'jump', type: 'sfx', source: { kind: 'kenney', kit: 'digital-audio', file: 'phaseJump1.ogg' } },
@@ -140,6 +142,49 @@ const SOUNDS = [
   },
   // Kenney jingles are ~1 s stingers — played one-shot via playSound, not looped.
   { name: 'jingle_win', type: 'music', source: { kind: 'kenney', kit: 'music-jingles', file: 'jingles_NES13.ogg' } },
+
+  // ── Racing/engine batch (2026-08-29, owner ask: "provide racing music, not
+  // the background music" — i.e. the game should SOUND like racing rather than
+  // carry a music bed). We owned nothing: the closest of the 28 effects was
+  // `whoosh`, and Kenney publishes no vehicle audio at all. Source is
+  // GGBotNet's Car Sound Effects Pack, CC0 verified on the asset page itself
+  // (no attribution required); qubodup's engine loop was REJECTED — it is
+  // CC-BY 3.0/GPL, and this pipeline is CC0-only.
+  //
+  // engine_loop is typed `music`, not `sfx`, deliberately: playMusic is the
+  // only helper that loops seamlessly, and an engine bed is exactly what
+  // replaces background music in a racing game. The rest are one-shots.
+  {
+    name: 'engine_loop', type: 'music',
+    source: { kind: 'zip', url: 'https://opengameart.org/sites/default/files/car_sound_effects_pack.zip', file: 'Car_Engine_Loop.ogg' },
+    sourceUrl: 'https://opengameart.org/content/car-sound-effects-pack-low-quality',
+  },
+  {
+    name: 'engine_start', type: 'sfx',
+    source: { kind: 'zip', url: 'https://opengameart.org/sites/default/files/car_sound_effects_pack.zip', file: 'Car_Engine_Start_Up.ogg' },
+    sourceUrl: 'https://opengameart.org/content/car-sound-effects-pack-low-quality',
+  },
+  // NO engine_rev. Car_Acceleration.ogg transcodes to 36.4 KB against the
+  // 30 KB sfx budget (measured 2026-08-29 on a dry run), and Acceleration_2 is
+  // the same length. The budget is a real load-time constraint, so the sound is
+  // dropped rather than the budget raised: a boost already has `whoosh`, and
+  // the engine bed can be pitched up instead.
+  {
+    name: 'engine_stop', type: 'sfx',
+    source: { kind: 'zip', url: 'https://opengameart.org/sites/default/files/car_sound_effects_pack.zip', file: 'Car_Engine_Turning_Off.ogg' },
+    sourceUrl: 'https://opengameart.org/content/car-sound-effects-pack-low-quality',
+  },
+  {
+    name: 'horn', type: 'sfx',
+    source: { kind: 'zip', url: 'https://opengameart.org/sites/default/files/car_sound_effects_pack.zip', file: 'Car_Horn.ogg' },
+    sourceUrl: 'https://opengameart.org/content/car-sound-effects-pack-low-quality',
+  },
+  {
+    name: 'brake', type: 'sfx',
+    source: { kind: 'zip', url: 'https://opengameart.org/sites/default/files/car_sound_effects_pack.zip', file: 'Car_Parking_Brake.ogg' },
+    sourceUrl: 'https://opengameart.org/content/car-sound-effects-pack-low-quality',
+  },
+
 ];
 
 await mkdir(outDir, { recursive: true });
@@ -163,6 +208,23 @@ async function acquire(sound) {
     execFileSync('unzip', ['-o', '-j', zipPath, `*${sound.source.file}`, '-d', dir], { stdio: 'pipe' });
     const extracted = readdirSync(dir).find((f) => f.endsWith(sound.source.file));
     if (!extracted) throw new Error(`${sound.name}: ${sound.source.file} not found in ${sound.source.kit}`);
+    return join(dir, extracted);
+  }
+  // kind 'zip' (2026-08-29): the same extract-one-file-from-an-archive move as
+  // 'kenney', but the archive URL is pinned inline instead of looked up in
+  // KENNEY_ZIPS. Added because Kenney publishes NO vehicle audio at all
+  // (checked their whole Audio category), and the one verified CC0 source for
+  // engine sound — GGBotNet's Car Sound Effects Pack on OpenGameArt — ships as
+  // a zip, which neither existing kind could consume.
+  if (sound.source.kind === 'zip') {
+    const zipPath = join(cacheDir, sound.source.url.split('/').pop());
+    if (!existsSync(zipPath)) {
+      console.log(`  ↓ ${sound.source.url}`);
+      await download(sound.source.url, zipPath);
+    }
+    execFileSync('unzip', ['-o', '-j', zipPath, `*${sound.source.file}`, '-d', dir], { stdio: 'pipe' });
+    const extracted = readdirSync(dir).find((f) => f.endsWith(sound.source.file));
+    if (!extracted) throw new Error(`${sound.name}: ${sound.source.file} not found in ${sound.source.url}`);
     return join(dir, extracted);
   }
   const raw = join(dir, sound.source.url.split('/').pop());

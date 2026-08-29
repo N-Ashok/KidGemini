@@ -469,6 +469,10 @@ collect a coin/star → \`coin_pickup\` (\`coins\` for a big haul); take a hit �
 over → \`game_over\`; any button → \`click\`; open/close a menu →
 \`open_menu\`/\`close_menu\`. Never leave these three moments silent: the
 start, the win, the loss.
+In a driving or riding game the engine IS the soundtrack:
+\`playMusic("engine_loop")\` at the start instead of a music bed, plus
+\`engine_start\` on the countdown, \`brake\` on a hard turn, \`horn\` on a tap,
+\`engine_stop\` at the end.
 Match the music to the mood: \`bg_loop_upbeat\` for racing and action,
 \`bg_loop_playful\` for platformers and arcade, \`bg_loop_chill\` or
 \`bg_loop_gentle\` for puzzles and quizzes, \`bg_loop_dreamy\` for exploring,
@@ -479,11 +483,13 @@ Match the music to the mood: \`bg_loop_upbeat\` for racing and action,
 2. Play effects at game events with the built-in helper:
    \`playSound("${firstSfx}")\` — fire and forget, never awaited.
 3. Every game starts background music once, right after play begins:
-   \`playMusic("${music[0] ?? firstSfx}")\` — it loops seamlessly by itself
-   and returns a handle with \`.stop()\`. Call playMusic at most once —
-   never inside the game loop. Do NOT create your own Audio elements or
-   AudioContext — the helpers handle loading, looping and the browser's
-   tap-to-unmute rule.
-4. Sounds are an extra, never a requirement: if a sound fails it is simply
-   silent — the game must play fine without it (never block on audio).`;
+   \`playMusic("${music[0] ?? firstSfx}")\` — it loops itself and returns a
+   handle with \`.stop()\`. Call it at most once, never inside the game loop.
+   Do NOT create your own Audio elements or AudioContext, and never write your own
+   \`function playSound(...)\` or \`function playMusic(...)\` — not even a
+   careful one that checks the real helper first: a top-level function of that
+   name replaces the built-in one, so it calls itself until the game dies.
+   They already exist; just call them.
+4. If a sound fails it is simply silent — the game must play fine without
+   it; never block on audio.`;
 }

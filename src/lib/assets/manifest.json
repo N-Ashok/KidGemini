@@ -5561,6 +5561,51 @@
         14,
         6
       ]
+    },
+    {
+      "name": "engine_loop",
+      "type": "music",
+      "url": "https://assets.ariantra.com/engine_loop.24a84f.mp3",
+      "bytes": 36406,
+      "license": "CC0",
+      "sourceUrl": "https://opengameart.org/content/car-sound-effects-pack-low-quality",
+      "sha256": "24a84fad42a0e25b5e2f8edcd4d5338c77ad4787f4cc018512311f63a63f52d2"
+    },
+    {
+      "name": "engine_start",
+      "type": "sfx",
+      "url": "https://assets.ariantra.com/engine_start.6f6eda.mp3",
+      "bytes": 24181,
+      "license": "CC0",
+      "sourceUrl": "https://opengameart.org/content/car-sound-effects-pack-low-quality",
+      "sha256": "6f6eda6417f59abfc561e24ea065736ba82a030fa4ad9d03de656acc3670ff11"
+    },
+    {
+      "name": "engine_stop",
+      "type": "sfx",
+      "url": "https://assets.ariantra.com/engine_stop.deb1a6.mp3",
+      "bytes": 24181,
+      "license": "CC0",
+      "sourceUrl": "https://opengameart.org/content/car-sound-effects-pack-low-quality",
+      "sha256": "deb1a67c7835c8ee8f28e77b94b18a76a009a1c2a051dc9c145285c573926539"
+    },
+    {
+      "name": "horn",
+      "type": "sfx",
+      "url": "https://assets.ariantra.com/horn.ade7fa.mp3",
+      "bytes": 6626,
+      "license": "CC0",
+      "sourceUrl": "https://opengameart.org/content/car-sound-effects-pack-low-quality",
+      "sha256": "ade7fa48967ac78719a8ee38526dfc227447018596645125d1661e10b927d339"
+    },
+    {
+      "name": "brake",
+      "type": "sfx",
+      "url": "https://assets.ariantra.com/brake.79f232.mp3",
+      "bytes": 5999,
+      "license": "CC0",
+      "sourceUrl": "https://opengameart.org/content/car-sound-effects-pack-low-quality",
+      "sha256": "79f2325fe2bea4d35f7c2181d7aba47e8eeb2607965f231191f361c3318afe15"
     }
   ]
 }

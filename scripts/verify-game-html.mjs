@@ -35,7 +35,7 @@ import { readFileSync, readdirSync, writeFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { sampleDistance, judgePlayability, findFrozenStateRisks } from "./playability.mjs";
+import { sampleDistance, judgePlayability, findFrozenStateRisks, findShadowedHelpers, looksLikeAGame } from "./playability.mjs";
 
 const argv = process.argv.slice(2);
 const PLAY = argv.includes("--play");
@@ -145,7 +145,12 @@ for (const file of files) {
   // that separated the broken fairy game from its one-character fix. The
   // browser probes could not — idle sparkle animation changed more pixels than
   // the sprite moving a whole tile (calibration in BUG-FIX-LOG 2026-08-29).
+  // "Nothing" is not clean (2026-08-29): a zero-byte artifact used to pass.
+  const isGame = looksLikeAGame(html);
+  if (!isGame.ok) failures.push(`not a game: ${isGame.reason}`);
   for (const risk of findFrozenStateRisks(html)) failures.push(`frozen state: ${risk}`);
+  // Redefining an injected global is instant death by recursion (2026-08-29).
+  for (const risk of findShadowedHelpers(html)) failures.push(`shadowed helper: ${risk}`);
 
   // ── Playability probe (--play). ADVISORY, not a failure: a HUD that changes
   // proves the controls work, but a HUD that does not change may only mean the

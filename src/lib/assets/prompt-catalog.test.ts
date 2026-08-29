@@ -12,6 +12,8 @@ vi.mock("server-only", () => ({}));
 
 import { THREE_PROMPT_SECTION, threePromptSection, modelsPromptSection, audioPromptSection, retrievedModelNames, modelNamesBlock, THREE_EDIT_CHEATSHEET } from "./prompt-catalog";
 import { THREE_MARKER } from "./inject";
+import manifestJson from "./manifest.json";
+import { GAME_FEEL_PROMPT_SECTION } from "./game-feel-playbook";
 import { GENRE_IDS, modelsInGenre } from "./asset-taxonomy";
 import { RETIRED } from "./retired";
 import type { ChatMessage } from "@/types/chat.types";
@@ -95,7 +97,11 @@ describe("buildTurnSystemInstruction — tier/keyword gates (PRD §9/§11: free 
   it("both gates closed → EXACTLY the bare child prompt, zero catalog tokens", () => {
     // multiplayer is a separate, independent gate (PRD-MULTIPLAYER.md Phase 4)
     // — held at false here so this stays a pure test of the 3D/audio gates.
-    expect(buildTurnSystemInstruction({ three: false, audio: false }, false)).toBe(CHILD_SYSTEM_PROMPT);
+    // 2026-08-29: GAME_FEEL_PROMPT_SECTION is ALWAYS-ON (owner decision), so the
+    // "bare" prompt is now core + game feel. Keyword-gating audio had left 93%
+    // of real games silent; "feels like nothing" is just as invisible in a
+    // child's words, so this one is not gated either.
+    expect(buildTurnSystemInstruction({ three: false, audio: false }, false)).toBe(`${CHILD_SYSTEM_PROMPT}\n\n${GAME_FEEL_PROMPT_SECTION}`);
   });
 
   it("3D gate alone → 3D + models sections, no audio catalog", () => {
@@ -845,8 +851,59 @@ describe("audioPromptSection — event→sound map and mandatory music (2026-08-
   });
 
   it("AP.5 stays inside its token ceiling (PRD §8 — revisit past ~420 tokens)", () => {
-    // Now rides EVERY build turn (Phase 1), so this is an always-on cost:
-    // ~488 tok = ~+0.9% of a build. Ceiling 500.
-    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(500);
+    // ALWAYS-ON since PRD-Audio Phase 1, so this ceiling is a real cost gate.
+    //
+    // It moved twice on 2026-08-29 — 488 → 501 when 5 racing sounds joined the
+    // library (the section names every sound we own), then → 567 when the
+    // racing event map was taught. Both were legitimate, but the trajectory is
+    // the point: THIS SECTION GROWS WITH THE ASSET LIBRARY, so the ceiling is
+    // set once here with headroom rather than nudged per addition.
+    //
+    // 620 ≈ 1.2% of a build. THE TRIGGER: at 620, stop listing every name
+    // inline and switch to retrieval, the way modelsPromptSection already does
+    // for 318 models — do not simply raise this number again.
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(620);
+  });
+});
+
+// 2026-08-29, after the racing sounds landed on the asset host: only NOW is it
+// safe to teach these names. Teaching a name that does not resolve is exactly
+// the bug that started this (playMusic("bg_loop_adventure") → silent game), so
+// AR.7 pins that every name the playbook teaches actually exists.
+describe("audioPromptSection — racing sounds (2026-08-29)", () => {
+  const section = audioPromptSection();
+
+  it("AP.6 maps racing EVENTS to the new sounds — not merely lists their names", () => {
+    expect(section).toMatch(/driving or riding[\s\S]{0,60}engine_loop/i);
+    expect(section).toMatch(/engine_start/);
+    expect(section).toMatch(/hard turn|skid|brake hard[\s\S]{0,40}brake|brake[\s\S]{0,40}hard/i);
+    expect(section).toMatch(/horn/);
+  });
+
+  it("AP.7 EVERY sound name the playbook mentions exists in the manifest", () => {
+    // The load-bearing one. A taught name that does not resolve ships a silent
+    // game and the chat claims otherwise (BUG-FIX-LOG 2026-08-29).
+    const known = new Set(
+      (manifestJson as { assets: Array<{ name: string; type: string }> }).assets
+        .filter((a) => a.type === "sfx" || a.type === "music")
+        .map((a) => a.name),
+    );
+    const taught = [...new Set([...section.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]!))];
+    expect(taught.length).toBeGreaterThan(10); // the map really is being read
+    const bogus = taught.filter((n) => !known.has(n));
+    expect(bogus, `taught but missing from the library: ${bogus.join(", ")}`).toEqual([]);
+  });
+});
+
+// 2026-08-29: making music mandatory made the model write music code on every
+// build — and its defensive `function playMusic(name){ ... window.playMusic(name) }`
+// wrapper replaced our injected helper and recursed until the stack blew.
+// Browser-verified: "Maximum call stack size exceeded", game dead.
+describe("audioPromptSection — never redefine the helpers (2026-08-29)", () => {
+  it("AP.8 forbids writing your own playSound/playMusic, and says why", () => {
+    const section = audioPromptSection();
+    expect(section).toMatch(/never\s+write\s+your\s+own/i);
+    expect(section).toMatch(/function\s+playSound|function\s+playMusic/);
+    expect(section).toMatch(/replaces?\s+the\s+built-in|calls?\s+itself/i);
   });
 });

@@ -29,7 +29,9 @@ import { kidThoughtLine } from "@/lib/kid-thought";
 import { trimHistory } from "@/lib/history-trim";
 import { RulesClassifier } from "@/lib/safety.rules";
 import { KIND_REDIRECT, SPARKS_OVER_LINE, MODEL_GLITCH_RETRY, BUILD_INCOMPLETE_RETRY, BUILD_STARTER_SPLIT, EDIT_FAILED_SOFT, adultSafetyBlockMessage } from "@/lib/chat-copy";
-import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore, SqliteTurnResultStore, SqliteScreenTimeStore } from "@/lib/db";
+import { SqliteAlertStore, SqliteUsageStore, SqliteRateLimitStore, SqliteTurnResultStore, SqliteScreenTimeStore, SqliteMissingAssetStore } from "@/lib/db";
+import { missingAudioNames } from "@/lib/assets/missing-audio";
+import manifestJson from "@/lib/assets/manifest.json";
 import { resolveGeo } from "@/lib/geo";
 import { estimateCostUsd } from "@/lib/pricing.config";
 import { getAriantraSession } from "@/lib/ariantra-session.server";
@@ -50,6 +52,12 @@ const rules = new RulesClassifier();
 const chatModel = new GeminiChatModel();
 const alerts = new SqliteAlertStore();
 const usage = new SqliteUsageStore();
+const missingAssets = new SqliteMissingAssetStore();
+/** Every sound/music name the library actually holds — the yardstick for the
+ *  missing-sound register (owner decision 2026-08-29). Computed once. */
+const KNOWN_AUDIO_NAMES = (manifestJson as { assets: Array<{ name: string; type: string }> }).assets
+  .filter((a) => a.type === "sfx" || a.type === "music")
+  .map((a) => a.name);
 const rateLimit = new SqliteRateLimitStore();
 const turnResults = new SqliteTurnResultStore();
 
@@ -546,6 +554,15 @@ export async function POST(req: NextRequest) {
     // ENOENT → the done event was lost and the preview never opened). On ANY
     // injection failure, fall back to the raw artifact: the preview opens, and
     // a 3D game's import error lands in its Console tab, not a dead end.
+    function recordMissingAudio(html: string): void {
+      try {
+        const missing = missingAudioNames(html, KNOWN_AUDIO_NAMES);
+        if (!missing.length) return;
+        console.log(`[api/chat] 🔇 sounds asked for but not in the library: ${missing.map((m) => `${m.name}(${m.kind})`).join(", ")}`);
+        missingAssets.record(missing);
+      } catch { /* bookkeeping must never break a turn */ }
+    }
+
     function toDeliverable(rawHtml: string | undefined): string | null {
       if (!rawHtml) return null;
       try {
@@ -570,9 +587,16 @@ export async function POST(req: NextRequest) {
         // runtime helper wrongly imported from "three" (loadModel…) is a dead
         // import line, and dropping it here retires the ~50s corrective retry
         // that used to be the only cure.
+        // Missing-sound register (owner decision 2026-08-29): if the game
+        // asked for an asset we do not own we deliberately DO NOT substitute
+        // one — a wrong sound is worse than none, and the call stays in the
+        // game so it starts working the day the asset lands. We just write the
+        // miss down for the weekly library review. Never surfaced to a child.
+        recordMissingAudio(injected.html);
         return ensureMultiplayerMarker(ensureAssetRuntime(ensureThreeImports(stripRuntimeGlobalImports(injected.html))));
       } catch (err) {
         console.error(`[api/chat] ✖ asset injection failed @${ms()}ms (serving raw artifact): ${(err as Error).message}`);
+        recordMissingAudio(rawHtml);
         return ensureMultiplayerMarker(ensureAssetRuntime(ensureThreeImports(stripRuntimeGlobalImports(rawHtml))));
       }
     }

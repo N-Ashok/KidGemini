@@ -1111,6 +1111,49 @@ server-to-server contract as `arcade-partner.ts`).
   correctly re-detecting an edit on an EXISTING 3D game from its prior
   artifact's markers, not just the turn's message text. See
   `docs/PRD-3D-GAMES-AND-ASSETS.md`'s 3D pricing amendment.
+- **Racing/engine audio, step 1 (2026-08-29)**: `scripts/vendor-audio.mjs`
+  gained `kind: 'zip'` (extract one file from any pinned CC0 archive, not just
+  a Kenney kit) because Kenney publishes no vehicle audio at all, and five
+  racing sounds are pinned from GGBotNet's CC0 Car Sound Effects Pack —
+  `engine_loop` (music, so `playMusic` can loop it as the bed), `engine_start`,
+  `engine_stop`, `horn`, `brake` — **uploaded, verified and taught**. A driving
+  or riding game now starts `playMusic("engine_loop")` as its bed instead of a
+  music track, with `engine_start` on the countdown, `brake` on a hard turn,
+  `horn` on a tap. Verified on real builds: both a bike and a car racing game
+  used them with zero invented names. `engine_rev` was dropped rather than
+  raise the 30 KB sfx budget. Note: `audioPromptSection` names every sound we
+  own and rides every build, so it grows with the library — its token ceiling
+  carries an explicit trigger to switch to retrieval rather than be raised
+  again.
+- **Game feel — always on (2026-08-29, `assets/game-feel-playbook.ts`,
+  `docs/2026-08-29_PRD_GameFeelAndMotivation.md`)**: 296 tokens on every build
+  AND edit turn teaching three evidenced things — impact punch (3–5 frame
+  freeze, shake scaled to the event, particles, tweened transitions) *with* the
+  don't-overdo-it clause, since research shows extreme juice under-performs
+  both medium and none; a cosmetic character/colour choice on the start screen
+  (a task-irrelevant choice measurably raises intrinsic motivation at ages
+  7–12); and live progress toward the goal, not just a score. Always-on rather
+  than gated for the same reason audio is: keyword-gating left 93% of games
+  silent, and "feels like nothing" is equally invisible in a child's words.
+- **Two more delivery lints (2026-08-29)**: `findShadowedHelpers` fails any
+  game that declares its own `playSound`/`playMusic`/`loadModel` — a top-level
+  function of that name replaces our injected helper and recurses until the
+  stack blows (a real shipped crash); and `looksLikeAGame` fails an empty or
+  contentless artifact, after the verifier reported a **zero-byte game as
+  clean**.
+- **Missing-sound register (2026-08-29, owner decision)**: when a generated
+  game calls for an asset the library does not hold, we deliberately do NOT
+  substitute another sound — a wrong sound is worse than none — so the game
+  stays quiet at that moment, and the miss is recorded server-side in
+  `missing_assets` (`SqliteMissingAssetStore`, scanned at the delivery point in
+  `api/chat/route.ts`). `node scripts/missing-sounds.mjs` prints the register
+  most-wanted first as a weekly shopping list for the asset library. The
+  invented call is left in the game on purpose: the day that asset lands, every
+  game that already asked for it starts working. Nothing about a miss is ever
+  shown to a child. Measured cause: 4 of 25 production games with audio (16%)
+  called a name that does not exist, one of them a music name — that game
+  shipped with permanently silent background music while the chat claimed the
+  soundtrack had been changed.
 - **Playability checks (2026-08-29, BUG-FIX-LOG same day)**: a generated game
   can throw zero errors, draw a canvas and be impossible to play — one shipped.
   `scripts/verify-game-html.mjs` now runs a **frozen-state lint** (always on,

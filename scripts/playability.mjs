@@ -91,3 +91,42 @@ export function findFrozenStateRisks(source) {
   }
   return out;
 }
+
+/** Injected runtime globals a generated game must never REDEFINE.
+ *  BUG-FIX-LOG 2026-08-29: a game wrote a defensive
+ *  `function playMusic(name){ if (typeof window.playMusic === 'function')
+ *  return window.playMusic(name); }`. In a classic script a top-level function
+ *  declaration becomes a property of window, so it replaced our helper and
+ *  called itself until the stack blew — killing the whole game. The intent was
+ *  careful; the effect is fatal, and no error appears until it runs. */
+const INJECTED_GLOBALS = ['playSound', 'playMusic', 'loadModel', 'placeModel', 'modelSize', 'modelParts'];
+
+export function findShadowedHelpers(source) {
+  const out = [];
+  for (const name of INJECTED_GLOBALS) {
+    // A DECLARATION (`function playMusic(`), not an assignment — our own
+    // runtime defines these as `window.playMusic = function (...)`, which is
+    // the legitimate definition and must not be flagged.
+    const decl = new RegExp(`function\\s+${name}\\s*\\(`);
+    if (!decl.test(source)) continue;
+    out.push(
+      `\`${name}\` is redefined with \`function ${name}(...)\`. In a classic script that REPLACES the injected window.${name}, so any call to window.${name} inside it recurses until the stack blows and the game dies. Delete the wrapper — ${name}() already exists globally; just call it.`,
+    );
+  }
+  return out;
+}
+
+/** Is this artifact a game at all? BUG-FIX-LOG 2026-08-29: a build returned a
+ *  ZERO-BYTE artifact and verify-game-html.mjs reported it clean — an empty
+ *  file throws no errors, so every check passed. "Nothing" must never read as
+ *  success. */
+export function looksLikeAGame(html) {
+  const s = (html || '').trim();
+  if (s.length < 200) return { ok: false, reason: 'empty or near-empty — no game was produced' };
+  const hasCanvas = /<canvas[\s>]/i.test(s);
+  const hasScript = /<script[\s>]/i.test(s);
+  const hasInteractive = /<button[\s>]|id=["']score["']|addEventListener/i.test(s);
+  if (!hasScript) return { ok: false, reason: 'no <script> — nothing can run' };
+  if (!hasCanvas && !hasInteractive) return { ok: false, reason: 'no canvas and nothing interactive — not a playable game' };
+  return { ok: true };
+}

@@ -103,9 +103,19 @@ const turnCalls: Array<{ op: string; replyId: string; userId: string; text?: str
 const screenTimePings: string[] = [];
 const screenTimeCalls: Array<{ accountId: string; userLabel: string | null }> = [];
 let screenTimeThrows = false;
+// 2026-08-29: the missing-sound register (owner decision) — the route scans
+// every delivered game for audio names the library does not hold and writes
+// them down for the weekly review. Captured here so the route tests can assert
+// on it and so a bookkeeping write never leaks into a real DB.
+const missingAssetCalls: Array<Array<{ name: string; kind: string }>> = [];
 vi.mock("@/lib/db", () => ({
   SqliteAlertStore: class {
     record() {}
+  },
+  SqliteMissingAssetStore: class {
+    record(items: Array<{ name: string; kind: string }>) {
+      missingAssetCalls.push(items);
+    }
   },
   SqliteScreenTimeStore: class {
     recordPing(accountId: string) {
@@ -1896,5 +1906,65 @@ describe("POST /api/chat — done frame carries billed usage only under EXPOSE_T
     const done = doneOf(await res.text());
 
     expect(done.usage).toBeUndefined();
+  });
+});
+
+// Missing-sound register (owner decision 2026-08-29, docs/BUG-FIX-LOG.md same
+// day). Measured cause: 4 of 25 production games with audio called a name we
+// do not own — bg_loop_adventure, bump, shoot, apple — and the game shipped
+// SILENT, because an unknown name is only a console.warn. The owner's rule is
+// deliberately NOT a fallback sound: play nothing, but write the miss down so
+// the weekly review turns real demand into library assets. Nothing reaches the
+// child.
+describe("POST /api/chat — missing-sound register (2026-08-29)", () => {
+  const SESSION = { userId: "user:kid@example.com", email: "kid@example.com", name: "Kid" };
+  const COOKIES = { ariantra_session: "jwt-kid" };
+
+  beforeEach(() => {
+    missingAssetCalls.length = 0;
+    authMock.mockResolvedValue(SESSION);
+  });
+
+  it("MRR.1 a game asking for a sound we do not have records the miss, by kind", async () => {
+    const html = `<!doctype html><html><body><div id="score">0</div><script>
+      playMusic("bg_loop_adventure"); playSound("bump"); playSound("jump");
+    </script></body></html>`;
+    replyStreamMock.mockReturnValue(one("Here!"));
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: html }));
+    await (await POST(makeReq({ message: "make me a bike racing game", history: [] }, COOKIES))).text();
+    const flat = missingAssetCalls.flat();
+    expect(flat).toEqual(
+      expect.arrayContaining([
+        { name: "bg_loop_adventure", kind: "music" },
+        { name: "bump", kind: "sfx" },
+      ]),
+    );
+    // `jump` is in the library — it must NOT be recorded as missing.
+    expect(flat.map((x) => x.name)).not.toContain("jump");
+  });
+
+  it("MRR.2 a game using only real sounds records nothing — the common case is free", async () => {
+    const html = `<!doctype html><html><body><div id="score">0</div><script>
+      playSound("jump"); playSound("coin_pickup");
+    </script></body></html>`;
+    replyStreamMock.mockReturnValue(one("Here!"));
+    extractArtifactMock.mockImplementation(() => ({ text: "Here!", artifactHtml: html }));
+    await (await POST(makeReq({ message: "make me a jumping game", history: [] }, COOKIES))).text();
+    expect(missingAssetCalls.flat()).toEqual([]);
+  });
+
+  it("MRR.3 the miss is NEVER shown to the child — it is a server-side register only", async () => {
+    const html = `<!doctype html><html><body><div id="score">0</div><script>playSound("bump");</script></body></html>`;
+    replyStreamMock.mockReturnValue(one("Here is your game!"));
+    extractArtifactMock.mockImplementation(() => ({ text: "Here is your game!", artifactHtml: html }));
+    const body = await (await POST(makeReq({ message: "make me a game", history: [] }, COOKIES))).text();
+    expect(missingAssetCalls.flat().length).toBeGreaterThan(0);
+    // `bump` DOES appear — it is the game's own source code. What must never
+    // reach the child is any note ABOUT the miss.
+    expect(body).not.toMatch(/not in the library|missing sound|no sound available|we don't have that sound/i);
+    // The kid-facing prose says nothing about it either.
+    const done = JSON.parse(body.trim().split("\n").find((l) => l.includes('"done"'))!);
+    expect(done.text).toContain("Here is your game!");
+    expect(done.text.replace(/```html[\s\S]*?```/, "")).not.toMatch(/sound|audio|music/i);
   });
 });

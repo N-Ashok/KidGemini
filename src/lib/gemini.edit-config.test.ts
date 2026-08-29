@@ -27,6 +27,7 @@ vi.mock("./retry", () => ({
 }));
 
 import { CHILD_SYSTEM_PROMPT, CHILD_SAFETY_CORE, EDIT_CRAFT_RULES, buildTurnSystemInstruction, GeminiChatModel } from "./gemini";
+import { GAME_FEEL_PROMPT_SECTION } from "./assets/game-feel-playbook";
 import { GAME_EDIT_PROMPT_SECTION } from "./game-edit";
 
 describe("buildTurnSystemInstruction — isEdit param", () => {
@@ -49,8 +50,11 @@ describe("buildTurnSystemInstruction — isEdit param", () => {
   });
 
   it("isEdit=true with everything else off is exactly safety core + edit craft + edit section", () => {
+    // 2026-08-29: game feel is ALWAYS-ON, on edits too — the owner's original
+    // complaint ("for a turbo boost, it was pathetic") WAS an edit, so an edit
+    // that adds a feature needs punch as much as a fresh build does.
     const full = buildTurnSystemInstruction({ three: false, audio: false }, false, true);
-    expect(full).toBe(`${CHILD_SAFETY_CORE}\n${EDIT_CRAFT_RULES}\n\n${GAME_EDIT_PROMPT_SECTION}`);
+    expect(full).toBe(`${CHILD_SAFETY_CORE}\n${EDIT_CRAFT_RULES}\n\n${GAME_FEEL_PROMPT_SECTION}\n\n${GAME_EDIT_PROMPT_SECTION}`);
   });
 });
 

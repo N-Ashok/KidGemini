@@ -13,6 +13,7 @@ import { SAVE_STATE_PROMPT_SECTION } from "./assets/save-state-playbook";
 import { MULTIPLAYER_PROMPT_SECTION } from "./multiplayer-prompt";
 import { NEXT_ASK_EDIT_PROMPT_SECTION } from "./next-ask-sentinel";
 import { PROCGEN_PROMPT_SECTION } from "./assets/procgen-playbook";
+import { GAME_FEEL_PROMPT_SECTION } from "./assets/game-feel-playbook";
 
 describe("CHILD_SYSTEM_PROMPT (safety instruction, monitor replacement)", () => {
   it("states the audience is a child aged 7 to 14", () => {
@@ -225,7 +226,11 @@ describe("edit-turn instruction (slim) vs build-turn instruction (unchanged)", (
   it("ED.7 a 2D edit is just core + craft + edit contract (+ next-ask)", () => {
     const edit = buildTurnSystemInstruction({ three: false, audio: false, save: false }, false, true, false, "default", true);
     expect(edit).not.toContain(THREE_EDIT_CHEATSHEET);
-    expect(edit.length).toBeLessThan(6000);
+    // 5,184 -> 6,366 chars on 2026-08-29 when the always-on game-feel section
+    // joined edit turns (+296 tok, ~₹0.6/day at current volume). Kept because
+    // the owner's complaint was itself an edit. Ceiling 7,000: past that, the
+    // slim-edit instruction has stopped being slim — cut content, do not raise.
+    expect(edit.length).toBeLessThan(7000);
   });
 
   it("ED.9 EDIT_INSTRUCTION_V2=off restores the full build prompt on edits (rollback switch)", () => {
@@ -312,5 +317,26 @@ describe("state-commit rule (2026-08-29)", () => {
   it("SC.2 forbids gating a state change on a strict float comparison, and names the failure", () => {
     expect(CHILD_SYSTEM_PROMPT).toMatch(/>=/);
     expect(CHILD_SYSTEM_PROMPT).toMatch(/freezes?\s+after\s+one\s+step/i);
+  });
+});
+
+// 2026-08-29 (docs/2026-08-29_PRD_GameFeelAndMotivation.md §4.1–4.3). ALWAYS-ON
+// by owner decision: keyword-gating audio left 93% of real games silent, and
+// "this game feels like nothing" is just as invisible in a child's words.
+describe("game feel — always on (2026-08-29)", () => {
+  it("GFW.1 rides a plain BUILD turn with every catalog gate closed", () => {
+    const bare = buildTurnSystemInstruction({ three: false, audio: false, save: false }, false, false, false, "default", false);
+    expect(bare).toContain(GAME_FEEL_PROMPT_SECTION);
+  });
+
+  it("GFW.2 rides an EDIT turn too — a turbo boost added later needs punch as much as a fresh build", () => {
+    const edit = buildTurnSystemInstruction({ three: false, audio: false, save: false }, false, true, false, "default", false);
+    expect(edit).toContain(GAME_FEEL_PROMPT_SECTION);
+  });
+
+  it("GFW.3 the cache prefix stays byte-stable with it in place", () => {
+    const gates = { three: true, threeReason: "asked" as const, audio: true, save: true };
+    expect(buildTurnSystemInstruction(gates, true, true, false, "default", true))
+      .toBe(buildTurnSystemInstruction(gates, true, true, false, "default", true));
   });
 });
