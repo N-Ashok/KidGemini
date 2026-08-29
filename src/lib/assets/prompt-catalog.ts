@@ -459,15 +459,26 @@ export function audioPromptSection(manifest: AssetManifest = manifestJson as Ass
   const music = manifest.assets.filter((a) => a.type === "music").map((a) => a.name);
   if (sfx.length === 0 && music.length === 0) return "";
   const firstSfx = sfx[0] ?? music[0]!;
-  return `**Real game sounds**: you may add professional sound effects and music
-to ANY game (2D or 3D). Sound effects: ${sfx.join(", ") || "(none)"}.
+  return `**Real game sounds**: every game gets sound — a silent game feels
+broken. Sound effects: ${sfx.join(", ") || "(none)"}.
 Music: ${music.join(", ") || "(none)"}.
+Use the RIGHT sound for the event, or it feels wrong: jump → \`jump\`;
+collect a coin/star → \`coin_pickup\` (\`coins\` for a big haul); take a hit →
+\`hit\`; blow up → \`explosion\`; grab a power-up or boost → \`powerup\` plus
+\`whoosh\`; shoot → \`laser\`; win → \`win\` (or \`jingle_win\`); lose or game
+over → \`game_over\`; any button → \`click\`; open/close a menu →
+\`open_menu\`/\`close_menu\`. Never leave these three moments silent: the
+start, the win, the loss.
+Match the music to the mood: \`bg_loop_upbeat\` for racing and action,
+\`bg_loop_playful\` for platformers and arcade, \`bg_loop_chill\` or
+\`bg_loop_gentle\` for puzzles and quizzes, \`bg_loop_dreamy\` for exploring,
+\`bg_loop_swing\` for something silly.
 1. Add the marker \`<!--USES_AUDIO: ${firstSfx}-->\` as a line at the top of
    \`<body>\`, naming ONLY the sounds you use (comma-separated; only names
    from the lists above — anything else is ignored).
 2. Play effects at game events with the built-in helper:
    \`playSound("${firstSfx}")\` — fire and forget, never awaited.
-3. Start background music once, right after the game starts:
+3. Every game starts background music once, right after play begins:
    \`playMusic("${music[0] ?? firstSfx}")\` — it loops seamlessly by itself
    and returns a handle with \`.stop()\`. Call playMusic at most once —
    never inside the game loop. Do NOT create your own Audio elements or

@@ -10,6 +10,7 @@ import { REPORT_HEADER } from "./error-report";
 import { threePromptSection, modelsPromptSection, audioPromptSection, modelNamesBlock, retrievedModelNames, THREE_EDIT_CHEATSHEET } from "./assets/prompt-catalog";
 import { PHYSICS_PROMPT_SECTION, physicsEnginePromptSection } from "./assets/physics-playbook";
 import { SAVE_STATE_PROMPT_SECTION } from "./assets/save-state-playbook";
+import { PROCGEN_PROMPT_SECTION } from "./assets/procgen-playbook";
 import { PUBLISHED_SAVE_PROMPT_SECTION } from "./assets/published-save-playbook";
 import { catalogGates, editGates, type CatalogGates, type EditGates } from "./assets/catalog-gate";
 import { multiplayerGate } from "./multiplayer-gate";
@@ -291,6 +292,8 @@ const GAME_BUILD_CONTRACT = `respond with a single HTML document wrapped in a
     make the code ADD a level by adding one entry: the child will come back
     and ask for more levels, harder levels or a new boss, and each of those
     must be a small change, not a rebuild. Show the current level on screen.
+    Better still, if the levels follow a pattern, write a small function that
+    BUILDS level N from its number instead of typing each one out.
 - Output the COMPLETE HTML document in one response, always ending with
   </html> — never stop partway or leave the game half-finished. For any game
   with a lot of repeated data (a list of names, quiz questions, characters,
@@ -373,6 +376,9 @@ for one, or if the game has no way to win or lose at all and this change touches
 Growing the game IS welcome: when the child asks for more levels, a harder level or a new boss, add
 entries to the game's LEVELS array (or introduce one if it has none) so each new level is a small
 change that makes the later levels richer — never rebuild the game to add a level.
+If the game already builds its levels from a function or a seed, add levels by widening that rule —
+raise the level count or extend the difficulty formula — never by pasting hand-written level data
+alongside a generator.
 Keep every landmark comment and its summary exactly as it is, like
 \`// --- PLAYER MOVEMENT: arrow keys and the on-screen buttons steer the car ---\` or
 \`<!-- SCORING: shows the score box and adds 10 points per coin -->\`; if you add a new section,
@@ -467,6 +473,7 @@ export function buildTurnSystemInstruction(
       ...(gates.three && editNeeds.models ? [modelsPromptSection(undefined, { sports: Boolean(editNeeds.sports) })] : []),
       ...(gates.three && editNeeds.physics ? [PHYSICS_PROMPT_SECTION, physicsEnginePromptSection()] : []),
       ...(editNeeds.audio ? [audioPromptSection()] : []),
+      ...(editNeeds.procgen ? [PROCGEN_PROMPT_SECTION] : []),
       ...(editNeeds.save ? [SAVE_STATE_PROMPT_SECTION, PUBLISHED_SAVE_PROMPT_SECTION] : []),
       ...(multiplayer || editNeeds.multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),
       GAME_EDIT_PROMPT_SECTION,
@@ -478,6 +485,7 @@ export function buildTurnSystemInstruction(
   const sections = [
     ...(gates.three ? [threePromptSection(gates.threeReason), modelsPromptSection(undefined, { sports: Boolean(gates.sports) }), PHYSICS_PROMPT_SECTION, physicsEnginePromptSection()] : []),
     ...(gates.audio ? [audioPromptSection()] : []),
+    ...(gates.procgen ? [PROCGEN_PROMPT_SECTION] : []),
     ...(gates.save ? [SAVE_STATE_PROMPT_SECTION, PUBLISHED_SAVE_PROMPT_SECTION] : []),
     ...(multiplayer ? [MULTIPLAYER_PROMPT_SECTION] : []),
     ...(isEdit ? [GAME_EDIT_PROMPT_SECTION] : []),

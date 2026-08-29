@@ -12,6 +12,7 @@ import { THREE_EDIT_CHEATSHEET, audioPromptSection } from "./assets/prompt-catal
 import { SAVE_STATE_PROMPT_SECTION } from "./assets/save-state-playbook";
 import { MULTIPLAYER_PROMPT_SECTION } from "./multiplayer-prompt";
 import { NEXT_ASK_EDIT_PROMPT_SECTION } from "./next-ask-sentinel";
+import { PROCGEN_PROMPT_SECTION } from "./assets/procgen-playbook";
 
 describe("CHILD_SYSTEM_PROMPT (safety instruction, monitor replacement)", () => {
   it("states the audience is a child aged 7 to 14", () => {
@@ -262,5 +263,36 @@ describe("landmark summaries — the build labels each section (2026-08-28)", ()
     const edit = buildTurnSystemInstruction({ three: false, audio: false, save: false }, false, true, false, "default", true);
     expect(edit).toMatch(/keep\s+.*summar/i);
     expect(edit).toMatch(/new\s+section/i);
+  });
+});
+
+// 2026-08-29: generate levels from a rule instead of hand-typing them. The
+// full how-to is a gated playbook (assets/procgen-playbook.ts); these pin the
+// two always-present nudges and that the playbook rides the right turns.
+describe("procedural generation (2026-08-29)", () => {
+  it("PGP.1 the build contract nudges toward a function that BUILDS level N", () => {
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/BUILDS level N/);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/instead of typing each one out/i);
+  });
+
+  it("PGP.2 an EDIT widens the existing rule rather than pasting level data beside a generator", () => {
+    const edit = buildTurnSystemInstruction({ three: false, audio: false, save: false }, false, true, false, "default", true);
+    expect(edit).toMatch(/widening that rule/i);
+    expect(edit).toMatch(/never by pasting hand-written level data/i);
+  });
+
+  it("PGP.3 the playbook rides a gated BUILD turn, and is absent when the gate is closed", () => {
+    const on = buildTurnSystemInstruction({ three: false, audio: false, save: false, procgen: true }, false, false, false, "default", false);
+    const off = buildTurnSystemInstruction({ three: false, audio: false, save: false }, false, false, false, "default", false);
+    expect(on).toContain(PROCGEN_PROMPT_SECTION);
+    expect(off).not.toContain(PROCGEN_PROMPT_SECTION);
+  });
+
+  it("PGP.4 on an EDIT turn it rides only when the ASK asks for it", () => {
+    const gates = { three: false, audio: false, save: false } as const;
+    const asked = buildTurnSystemInstruction(gates, false, true, false, "default", false, { procgen: true });
+    const plain = buildTurnSystemInstruction(gates, false, true, false, "default", false, {});
+    expect(asked).toContain(PROCGEN_PROMPT_SECTION);
+    expect(plain).not.toContain(PROCGEN_PROMPT_SECTION);
   });
 });

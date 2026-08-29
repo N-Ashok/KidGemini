@@ -40,12 +40,14 @@ describe("catalogGates — paid tier: inbuilt, both catalogs on every build turn
 });
 
 describe("catalogGates — free tier: keyword-invoked, 3D and audio gate independently", () => {
+  // 2026-08-29 (PRD-Audio Phase 1): "neither catalog" now means neither 3D nor
+  // save — AUDIO rides every build turn, because 93% of real games were silent.
   it("a plain game ask unlocks neither catalog (rung-1 inline content, exactly today's product)", () => {
-    expect(catalogGates({ message: "make me a platformer game", history: [], paid: false })).toEqual({ three: false, audio: false, save: false });
+    expect(catalogGates({ message: "make me a platformer game", history: [], paid: false })).toEqual({ three: false, audio: true, save: false });
   });
 
   it("\"3d\" unlocks the 3D catalog only", () => {
-    expect(catalogGates({ message: "3d cars", history: [], paid: false })).toEqual({ three: true, threeReason: "asked", audio: false, save: false });
+    expect(catalogGates({ message: "3d cars", history: [], paid: false })).toEqual({ three: true, threeReason: "asked", audio: true, save: false });
   });
 
   // BUG_LOG 2026-08-09 ("Calvin"). A child ended his ask with "Make it 3-D" —
@@ -99,7 +101,7 @@ describe("catalogGates — free tier: keyword-invoked, 3D and audio gate indepen
   });
 
   it("does not fire inside words (\"grade3d\", \"unsound\", \"musical\" stay locked)", () => {
-    expect(catalogGates({ message: "make a grade3d unsound musical game", history: [], paid: false })).toEqual({ three: false, audio: false, save: false });
+    expect(catalogGates({ message: "make a grade3d unsound musical game", history: [], paid: false })).toEqual({ three: false, audio: true, save: false });
   });
 });
 
@@ -110,17 +112,17 @@ describe("catalogGates — iteration turns keep the catalog (history scan, §9 e
   ];
 
   it("\"make it faster\" after a 3d ask keeps the 3D catalog", () => {
-    expect(catalogGates({ message: "make it faster", history: built3d, paid: false })).toEqual({ three: true, threeReason: "asked", audio: false, save: false });
+    expect(catalogGates({ message: "make it faster", history: built3d, paid: false })).toEqual({ three: true, threeReason: "asked", audio: true, save: false });
   });
 
   it("a prior artifact carrying USES_AUDIO keeps the audio catalog even if the keyword text is gone", () => {
     const history = [msg("assistant", "Here's your game! 🎮", "<html><!--USES_AUDIO: jump--><canvas></canvas></html>")];
-    expect(catalogGates({ message: "add a second level", history, paid: false })).toEqual({ three: false, audio: true, save: false });
+    expect(catalogGates({ message: "add a second level", history, paid: false })).toEqual({ three: false, audio: true, save: false, procgen: true }); // "level" opens the procgen playbook (2026-08-29)
   });
 
   it("a prior artifact carrying USES_THREE / USES_MODELS keeps the 3D catalog", () => {
     const history = [msg("assistant", "Here's your game! 🎮", "<html><!--USES_THREE--><!--USES_MODELS: car--></html>")];
-    expect(catalogGates({ message: "make the car red", history, paid: false })).toEqual({ three: true, threeReason: "asked", audio: false, save: false });
+    expect(catalogGates({ message: "make the car red", history, paid: false })).toEqual({ three: true, threeReason: "asked", audio: true, save: false });
   });
 
   // REGRESSION (BUG-FIX-LOG 2026-07-20, "DoubleSide" — days-long UAT
@@ -135,22 +137,22 @@ describe("catalogGates — iteration turns keep the catalog (history scan, §9 e
       '<html><head><script type="importmap">{"imports":{"three":"https://assets.ariantra.com/three.07fb80.js"}}</script></head>' +
       '<body><!--USES_MULTIPLAYER--><script type="module">import { Scene } from "three";</script></body></html>';
     expect(catalogGates({ message: "add an oval track", history: [msg("assistant", "Here! 🌟", noMarker)], paid: false }))
-      .toEqual({ three: true, threeReason: "asked", audio: false, save: false });
+      .toEqual({ three: true, threeReason: "asked", audio: true, save: false, procgen: true }); // "track" opens the procgen playbook (2026-08-29)
   });
 
   it("a marker-less game calling loadModel() keeps the 3D catalog", () => {
     const history = [msg("assistant", "Here! 🌟", '<html><script>loadModel("car").then(m => {});</script></html>')];
-    expect(catalogGates({ message: "make the car red", history, paid: false })).toEqual({ three: true, threeReason: "asked", audio: false, save: false });
+    expect(catalogGates({ message: "make the car red", history, paid: false })).toEqual({ three: true, threeReason: "asked", audio: true, save: false });
   });
 
   it("a marker-less game calling playSound()/playMusic() keeps the audio catalog", () => {
     const history = [msg("assistant", "Here! 🌟", '<html><script>playSound("win"); playMusic("bg_loop_chill");</script></html>')];
-    expect(catalogGates({ message: "add a second level", history, paid: false })).toEqual({ three: false, audio: true, save: false });
+    expect(catalogGates({ message: "add a second level", history, paid: false })).toEqual({ three: false, audio: true, save: false, procgen: true }); // "level" opens the procgen playbook (2026-08-29)
   });
 
   it("iterating on a plain 2D silent game stays locked (no keyword anywhere)", () => {
     const history = [msg("child", "make me a maze game"), msg("assistant", "Here's your game! 🎮", "<html><canvas></canvas></html>")];
-    expect(catalogGates({ message: "add more walls", history, paid: false })).toEqual({ three: false, audio: false, save: false });
+    expect(catalogGates({ message: "add more walls", history, paid: false })).toEqual({ three: false, audio: true, save: false, procgen: true }); // history says "maze" — procgen is monotonic (2026-08-29)
   });
 });
 
@@ -175,7 +177,7 @@ describe("catalogGates — save gate (docs/2026-08-01_PRD_SaveContinueBuilding.m
   });
 
   it("a plain game ask with no build/world keyword stays locked", () => {
-    expect(catalogGates({ message: "make me a platformer game", history: [], paid: false })).toEqual({ three: false, audio: false, save: false });
+    expect(catalogGates({ message: "make me a platformer game", history: [], paid: false })).toEqual({ three: false, audio: true, save: false });
   });
 
   it("a prior artifact carrying SUPPORTS_SAVE keeps the clause even once the keyword scrolls away", () => {
@@ -189,7 +191,7 @@ describe("catalogGates — save gate (docs/2026-08-01_PRD_SaveContinueBuilding.m
   });
 
   it("save gates independently of three/audio — a 2D building game unlocks save with neither engine nor sound", () => {
-    expect(catalogGates({ message: "a game where I build a tower", history: [], paid: false })).toEqual({ three: false, audio: false, save: true });
+    expect(catalogGates({ message: "a game where I build a tower", history: [], paid: false })).toEqual({ three: false, audio: true, save: true });
   });
 });
 
@@ -381,5 +383,99 @@ describe("catalogGates — 2D first; 3D only when the child asks for it (2026-08
     vi.stubEnv("THREE_SUBJECT_UNLOCK", "on");
     expect(threeUnlockReason({ message: "Make a game where I can ride horses", history: [], paid: false })).toBe("subject");
     expect(catalogGates({ message: "make a car racing game", history: [], paid: false }).three).toBe(true);
+  });
+});
+
+// 2026-08-29: the procedural-generation playbook (procgen-playbook.ts) rides
+// turns where the child is asking for levels / a generated world, and NOTHING
+// else — a spelling quiz must never be dragged into a level generator.
+describe("catalogGates — procgen gate (2026-08-29)", () => {
+  const on = (message: string, history: ChatMessage[] = []) => catalogGates({ message, history, paid: false }).procgen === true;
+
+  it("PGG.1 fires on level/stage/wave games and on generated-world words", () => {
+    for (const ask of [
+      "make a game with 10 levels", "a game with harder stages", "an endless runner game",
+      "a maze game that is different every time", "a dungeon crawler game", "a game with random caves",
+      "make a game with waves of enemies", "a game where the world is generated",
+    ]) expect(on(ask), ask).toBe(true);
+  });
+
+  it("PGG.2 does NOT fire on flat, hand-authored game kinds", () => {
+    for (const ask of [
+      "a quiz game for kids", "a spelling game", "a ludo game with dice",
+      "a carrom game", "a memory card game", "make a chess game",
+    ]) expect(on(ask), ask).toBe(false);
+  });
+
+  it("PGG.3 still nested under the build-turn gate — chit-chat about levels pays nothing", () => {
+    expect(on("i reached level 5 at school today")).toBe(false);
+  });
+
+  it("PGG.4 monotonic like the other gates — an EARLIER child message still counts", () => {
+    const history = [msg("child", "make a game with lots of levels"), msg("assistant", "Here!", "<html>g</html>")];
+    expect(on("make it blue", history)).toBe(true);
+  });
+
+  it("PGG.5 word-bounded — no false fire on 'levelling' look-alikes inside other words", () => {
+    expect(on("a game about a bevelled edge")).toBe(false);
+  });
+});
+
+describe("editGates — procgen on an EDIT turn reads only the current ask", () => {
+  it("PGE.1 fires when the ask is about growing or regenerating levels", () => {
+    for (const ask of ["add more levels", "make harder levels", "make it endless", "make the maze different every time", "generate a new map"])
+      expect(editGates(ask).procgen, ask).toBe(true);
+  });
+  it("PGE.2 silent on an ordinary edit", () => {
+    expect(editGates("make the car red").procgen).toBeUndefined();
+    expect(editGates("make the buttons bigger").procgen).toBeUndefined();
+  });
+});
+
+// 2026-08-29 (docs/2026-08-29_PRD_Audio.md §4 Phase 1). MEASURED: 93% of real
+// games were silent, because audio unlocked only on the words
+// sound/music/song/sfx. A child asking for a racing game — or a turbo boost —
+// was never told the 28 sounds exist. Audio now rides every game BUILD turn.
+describe("catalogGates — audio is on by default for a build turn (2026-08-29)", () => {
+  const audioOn = (message: string, history: ChatMessage[] = []) => catalogGates({ message, history, paid: false }).audio;
+
+  it("AU.1 a game ask with NO sound word still unlocks audio — the 93%-silent fix", () => {
+    for (const ask of [
+      "make a racing game", "make a jumping game with 20 levels",
+      "a quiz game for kids", "make me a maze game",
+    ]) expect(audioOn(ask), ask).toBe(true);
+  });
+
+  it("AU.1b the owner's turbo-boost turn — an EDIT on an existing game — unlocks audio too", () => {
+    // Note: with NO history this ask is not a game turn at all (isGameBuildTurn
+    // needs "game", a 3D word, or a prior artifact), which is itself why the
+    // original turn got nothing. In the real incident a game existed.
+    const history = [msg("child", "3D - make a car driving game"), msg("assistant", "Here!", "<html>car game</html>")];
+    expect(audioOn("add a turbo boost power-up that makes the car go fast", history)).toBe(true);
+  });
+
+  it("AU.2 chit-chat is still silent — the build-turn gate above it is unchanged", () => {
+    expect(audioOn("i like music")).toBe(false);
+    expect(audioOn("how are you today?")).toBe(false);
+  });
+});
+
+// 2026-08-29, found by MEASUREMENT after Phase 1 shipped: widening only the
+// BUILD gate left the owner's actual bug unfixed. "add a turbo boost power-up"
+// is an EDIT, and the edit gate still needed the word "sound" — so the turbo
+// boost came back with no music and zero sound effects, exactly as reported.
+// An edit that introduces a NEW EVENT needs that event's sound.
+describe("editGates — an edit that adds a noisy event unlocks audio (2026-08-29)", () => {
+  it("AU.3 the turbo-boost class: new events bring their sounds", () => {
+    for (const ask of [
+      "add a turbo boost power-up that makes the car go fast",
+      "make the player jump", "add coins to collect", "make the enemies explode",
+      "add a laser gun", "add a win screen", "make it crash when you hit a wall",
+    ]) expect(editGates(ask).audio, ask).toBe(true);
+  });
+
+  it("AU.4 a cosmetic edit stays silent — no new event, no new tokens", () => {
+    for (const ask of ["make the car red", "make the buttons bigger", "change the sky to daytime"])
+      expect(editGates(ask).audio, ask).toBeUndefined();
   });
 });

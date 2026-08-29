@@ -813,3 +813,40 @@ describe("THREE_EDIT_CHEATSHEET — what an edit turn keeps of the 3D teaching",
     expect(THREE_EDIT_CHEATSHEET).toMatch(/from "three"/);
   });
 });
+
+// 2026-08-29 (docs/2026-08-29_PRD_Audio.md §4 Phase 2). The playbook listed 28
+// sound names and never said which fits which event, so the model guessed —
+// the owner's "awkward audio on a good gameplay is a broken game". And only 7%
+// of real games had background music, so music is now stated as a requirement,
+// not an option.
+describe("audioPromptSection — event→sound map and mandatory music (2026-08-29)", () => {
+  const section = audioPromptSection();
+
+  it("AP.1 is directive about background music starting when play begins (7% → the fix)", () => {
+    expect(section).toMatch(/every game starts background music|start background music/i);
+    expect(section).toMatch(/playMusic\(/);
+  });
+
+  it("AP.2 maps events to specific sounds so the model stops guessing", () => {
+    for (const pair of [/jump\s*→\s*\\?`?jump/i, /collect[\s\S]{0,40}coin_pickup/i, /win\s*→[\s\S]{0,20}win/i, /over\s*→[\s\S]{0,20}game_over/i, /button\s*→[\s\S]{0,20}click/i]) {
+      expect(section, String(pair)).toMatch(pair);
+    }
+  });
+
+  it("AP.3 maps game mood to a music loop, so a space shooter does not get swing", () => {
+    expect(section).toMatch(/bg_loop_upbeat[\s\S]{0,40}(racing|action)/i);
+    expect(section).toMatch(/bg_loop_chill|bg_loop_gentle/);
+  });
+
+  it("AP.4 names the three moments that must never be silent", () => {
+    expect(section).toMatch(/start/i);
+    expect(section).toMatch(/\bwin\b/i);
+    expect(section).toMatch(/lose|game over/i);
+  });
+
+  it("AP.5 stays inside its token ceiling (PRD §8 — revisit past ~420 tokens)", () => {
+    // Now rides EVERY build turn (Phase 1), so this is an always-on cost:
+    // ~488 tok = ~+0.9% of a build. Ceiling 500.
+    expect(Math.ceil(section.length / 4)).toBeLessThanOrEqual(500);
+  });
+});

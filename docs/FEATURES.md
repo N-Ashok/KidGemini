@@ -1111,6 +1111,35 @@ server-to-server contract as `arcade-partner.ts`).
   correctly re-detecting an edit on an EXISTING 3D game from its prior
   artifact's markers, not just the turn's message text. See
   `docs/PRD-3D-GAMES-AND-ASSETS.md`'s 3D pricing amendment.
+- **Audio by default (2026-08-29, `docs/2026-08-29_PRD_Audio.md`)**: measured
+  that **93% of 237 real games were silent** — 10% had any audio, 7% had
+  background music — because audio unlocked only on the words
+  sound/music/song/sfx. Now: audio rides **every game build turn**, and an
+  **edit that introduces a noisy event** (boost/turbo/power-up, jump, shoot,
+  explode, crash, collect/coins, win, lose) brings it too — that second half
+  was added after measurement showed the owner's "add a turbo boost" edit
+  still came back silent. The playbook is directive rather than permissive,
+  requires background music to start when play begins, and carries an
+  event→sound map (jump→`jump`, collect→`coin_pickup`, boost→`powerup`+
+  `whoosh`, win→`win`, lose→`game_over`) plus a mood→music map, which is what
+  stops mismatched "awkward" audio. `playSound(name, {pitch, volume,
+  minInterval})` now jitters pitch ±10% by default (ear fatigue), mixes via a
+  gain node, and refuses to retrigger the same sound within 50 ms (burst
+  clipping) — and because the runtime is injected at delivery, **existing
+  games get those two fixes on their next render**.
+- **Levels that build themselves (2026-08-29, `assets/procgen-playbook.ts`)**:
+  a gated playbook (`gates.procgen` / `editGates.procgen`, ~596 tokens, zero
+  when it does not fire) teaching procedural generation the way Spelunky does
+  it — difficulty as a clamped formula of the level index, a seeded PRNG so
+  level 3 replays identically, the guaranteed path carved BEFORE obstacles are
+  scattered (so a generated level cannot be unwinnable), hand-made chunks
+  rather than per-tile noise, a cap on every retry loop, and the existing
+  winnability floor applied as the generator places things. Fires on
+  levels/stages/waves/endless/random/maze/dungeon/world/map/track; silent on
+  quiz/spelling/board/card games. Two always-on one-liners nudge the build
+  toward "a function that BUILDS level N" and tell edits to widen the existing
+  rule instead of pasting level data beside a generator. Written because
+  fifty hand-typed levels is also the shape that made builds truncate.
 - **Landmark summaries + edit slicing (2026-08-28, `docs/2026-08-28_EXPERIMENT_EditSlicing.md`)**:
   every landmark the build writes now carries a one-line summary of what that
   part does (`// --- SCORING: shows the score box and adds 10 points per coin ---`).

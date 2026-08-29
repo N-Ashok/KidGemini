@@ -84,6 +84,7 @@ CHILD_SYSTEM_PROMPT
   [+ THREE_PROMPT_SECTION]          if gates.three
   [+ modelsPromptSection(context)]  if gates.three  (and manifest has models)
   [+ audioPromptSection()]          if gates.audio   (and manifest has audio)
+  [+ PROCGEN_PROMPT_SECTION]        if gates.procgen
   [+ SAVE_STATE_PROMPT_SECTION]     if gates.save
   [+ PUBLISHED_SAVE_PROMPT_SECTION] if gates.save  (same gate — additive, see §2.5a)
   [+ MULTIPLAYER_PROMPT_SECTION]    if multiplayerGate fires
@@ -98,6 +99,7 @@ CHILD_SYSTEM_PROMPT
 CHILD_SAFETY_CORE                    the child-safety/tone lines (never dropped — rule 3)
 EDIT_CRAFT_RULES                     bloodless-and-playful rule · keep controls/layout/id="score" · keep existing goal · grow levels via LEVELS array on ask (2026-08-27) · landmarks WITH summaries + collapsed-section rule (2026-08-28)
 [+ THREE_EDIT_CHEATSHEET]            if gates.three — marker rule, loadModel/placeModel, clip rule (~350 tok)
+[+ PROCGEN_PROMPT_SECTION]           only if the ASK asks for more/endless/random levels (editGates.procgen)
 [+ modelsPromptSection({sports})]    only if the ASK names a model/creature/vehicle/sport (editGates.models)
 [+ PHYSICS sections]                 only if the ASK names physics words (gravity/bounce/fall/throw…)
 [+ audioPromptSection()]             only if the ASK names sound/music
@@ -125,7 +127,9 @@ The gates are decided in `configFor()` (`gemini.ts:565`):
 | Gate | Decided by | Fires when |
 |---|---|---|
 | build vs chat | `isGameBuildTurn` (`builder-mode.ts`) | the message looks like a game ask |
-| `gates.three` / `gates.audio` | `catalogGates` | paid tier (always) or the message keyword-invokes 3D/audio (free tier). 3D = `THREE_WANT_RE`: "3d" OR quality words (realistic / real life / better graphics) — 2D first since 2026-08-27; the subject unlock needs `THREE_SUBJECT_UNLOCK=on`. `paid:false` today — TECH_DEBT #11 |
+| `gates.audio` | `catalogGates` | **always true on a game build turn since 2026-08-29** (PRD-Audio: 93% of real games were silent under the old keyword gate). On EDIT turns it needs a sound word OR a gameplay-event word (`EDIT_AUDIO_EVENT_TRIGGER`: boost/jump/shoot/explode/collect/win/lose…) |
+| `gates.three` | `catalogGates` | paid tier (always) or the message keyword-invokes 3D (free tier). 3D = `THREE_WANT_RE`: "3d" OR quality words (realistic / real life / better graphics) — 2D first since 2026-08-27; the subject unlock needs `THREE_SUBJECT_UNLOCK=on`. `paid:false` today — TECH_DEBT #11 |
+| `gates.procgen` | `catalogGates` | the message (or an earlier child message) names levels/stages/waves/endless/random/maze/dungeon/world/map/track. Text only — there is no artifact marker for "this game has a generator". Deliberately silent on quiz/spelling/board/card games (2026-08-29) |
 | `gates.save` | `catalogGates` | the message keyword-invokes build/world/inventory mechanics (build/stack/place/inventory/world), or a prior artifact already carries the `SUPPORTS_SAVE` marker or the save-channel postMessage types (docs/2026-08-01_PRD_SaveContinueBuilding.md, Phase 2) |
 | `multiplayer` | `multiplayerGate` | the ask is for a 2–5 player game |
 | `isEdit` | `isGameEditTurn` (`game-edit.ts:62`) | a game already exists in history **and** `forceFullRegen` is not set |
@@ -367,6 +371,27 @@ Music: MUSIC_A, ....
 4. Sounds are an extra, never a requirement: if a sound fails it is simply
    silent — the game must play fine without it (never block on audio).
 ````
+
+### 2.4b `PROCGEN_PROMPT_SECTION` — if `gates.procgen` (`assets/procgen-playbook.ts`)
+
+Static, ~596 tokens, ceiling 600 (PG.8). Owner ask 2026-08-29 after reading how
+Minecraft / No Man's Sky / Dead Cells / Spelunky generate content. Summary of
+what it mandates: derive each level's numbers from its index with clamped
+formulas (`speed = 4 + level * 0.6`); never use bare `Math.random()` for
+layout — seed a supplied mulberry32 one-liner from the level number so level 3
+replays identically; carve the guaranteed route start→goal FIRST and only then
+scatter obstacles into unmarked tiles (Spelunky's solvable-by-construction
+rule, which is why this and not cellular automata / noise, whose known
+failure is disconnected or unjumpable maps); assemble four to six hand-made
+chunks rather than randomising every tile; cap any retry loop (an uncapped one
+freezes the page); and apply the existing winnability floor — 3-second grace,
+clear spawn, an escape move, jumpable gaps — as the generator places things.
+
+Measured on two real builds (2026-08-29): the gate fired on both, both games
+used a seeded PRNG with **zero** bare `Math.random()`, one used the prompt's
+exact one-liner, one wrote `// --- WORLD GENERATOR: builds a safe path and adds
+hazards based on level ---` and gated hazards until level 3, and both ran clean
+in a browser.
 
 ### 2.5 `SAVE_STATE_PROMPT_SECTION` — if `gates.save` (`save-state-playbook.ts:24`)
 

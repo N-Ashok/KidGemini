@@ -32,6 +32,11 @@ export interface CatalogGates {
   // same as omitting three/audio would if they were optional. New call sites
   // should set it explicitly; catalogGates() itself always returns it.
   save?: boolean;
+  /** The procedural-generation playbook (assets/procgen-playbook.ts, 2026-08-29)
+   *  — generate levels from a rule + seed instead of hand-typing them. Text
+   *  signal only (this turn's message + the child's earlier ones); unlike
+   *  three/save there is no artifact marker for "this game has a generator". */
+  procgen?: boolean;
   /** The sports playbook (rules + team AI, ~1,000 tokens) — set only when
    *  `three` is on AND the game is a sports game (2026-08-25: it used to ride
    *  every 3D turn because the MANIFEST holds sports models). Absent = off. */
@@ -101,6 +106,11 @@ const THREE_SUBJECT_TRIGGERS: readonly RegExp[] = GENRES.filter((g) => THREE_SUB
 export function subjectSuggestsThree(text: string): boolean {
   return THREE_SUBJECT_TRIGGERS.some((re) => re.test(text));
 }
+// 2026-08-29. Deliberately IN: levels/stages/waves — the difficulty-curve half
+// of the playbook applies to any level-based game, which is the commonest and
+// most valuable hit. Deliberately OUT: quiz/spelling/board/card games, which
+// are authored, not generated. A miss is safe — it just means today's prompt.
+const PROCGEN_TRIGGER = /\b(levels?|stages?|waves?|rounds?|endless|infinite|random(ly|ise|ize|ised|ized)?|procedural(ly)?|generated?|mazes?|dungeons?|caves?|worlds?|maps?|tracks?|roguelike|never the same)\b|\bevery ?time\b/i;
 const AUDIO_TRIGGER = /\b(sounds?|music|songs?|sfx)\b/i;
 // Build/world/inventory mechanics (docs/2026-08-01_PRD_SaveContinueBuilding.md):
 // a kid naming placement/persistence mechanics, not just "make me a game".
@@ -119,22 +129,35 @@ const SPORTS_ARTIFACT = new RegExp(`(?:loadModel|placeModel)\\(\\s*["'](?:${SPOR
  *  ~870 tokens of save playbook on every later edit is exactly the waste. */
 export interface EditGates {
   audio?: boolean;
+  procgen?: boolean;
   models?: boolean;
   physics?: boolean;
   sports?: boolean;
   save?: boolean;
   multiplayer?: boolean;
 }
+// 2026-08-29 (PRD-Audio, added after measurement): an EDIT that introduces a
+// new EVENT needs that event's sound. Triggering on the word "sound" alone is
+// what left the owner's turbo boost silent — nobody says "add a turbo boost
+// with sound". Deliberately event-words, not sound-words. A cosmetic edit
+// (colour, size, layout) still gets nothing.
+// Gameplay EVENTS only. `button`/`menu`/`score`/`goal` were deliberately
+// removed after EG.1 caught "add a reset button" firing the whole 488-token
+// playbook for one click — poor value, and those words are common in ordinary
+// edits. UI clicks are covered on the build turn instead.
+const EDIT_AUDIO_EVENT_TRIGGER = /\b(boost|turbo|power-?up|jump(s|ing)?|shoot(s|ing)?|laser|gun|explo(de|des|sion|sions)|crash(es)?|collect(s|ing)?|coins?|pickup|collision|win(s|ning)?|lose|lost|game ?over)\b/i;
+const EDIT_PROCGEN_TRIGGER = /\b(more|new|another|harder|extra) levels?\b|\blevels?\b(?=.*\b(more|add|generate)\b)|\b(endless|infinite|procedural(ly)?|roguelike|regenerate|generate)\b|\bdifferent every ?time\b|\bnew (maze|map|world|track|dungeon|cave)s?\b|\brandom(ly|ise|ize|ised|ized)?\b/i;
 const EDIT_SAVE_TRIGGER = /\b(save|saving|saved|progress|continue|resume|checkpoints?|remember|load my)\b/i;
 const EDIT_PHYSICS_TRIGGER = /\b(physics|gravity|bounc(e|y|ing)|collid(e|es|ing)|collision|fall(s|ing)?|throw(s|ing)?|jump(s|ing)?|heav(y|ier)|weight|friction|momentum)\b/i;
 const EDIT_MULTIPLAYER_TRIGGER = /\b(multiplayer|(2|two)[- ]?player|co-?op|with (a|my) friend|versus|vs\.?|play together)\b/i;
 export function editGates(message: string): EditGates {
   const out: EditGates = {};
-  if (AUDIO_TRIGGER.test(message)) out.audio = true;
+  if (AUDIO_TRIGGER.test(message) || EDIT_AUDIO_EVENT_TRIGGER.test(message)) out.audio = true;
   const sports = SPORTS_TRIGGER.test(message);
   if (sports || subjectSuggestsThree(message) || GENRES.some((g) => g.trigger.test(message))) out.models = true;
   if (sports) out.sports = true;
   if (EDIT_PHYSICS_TRIGGER.test(message)) out.physics = true;
+  if (EDIT_PROCGEN_TRIGGER.test(message)) out.procgen = true;
   if (EDIT_SAVE_TRIGGER.test(message)) out.save = true;
   if (EDIT_MULTIPLAYER_TRIGGER.test(message)) out.multiplayer = true;
   return out;
@@ -169,6 +192,7 @@ export function catalogGates(input: { message: string; history: ChatMessage[]; p
   const texts = [input.message, ...input.history.filter((m) => m.role === "child").map((m) => m.text)];
   const artifacts = input.history.map((m) => m.artifactHtml).filter((h): h is string => Boolean(h));
   const save = texts.some((t) => SAVE_TRIGGER.test(t)) || artifacts.some((h) => SAVE_ARTIFACT.test(h));
+  const procgen = texts.some((t) => PROCGEN_TRIGGER.test(t));
   const sportsGame = texts.some((t) => SPORTS_TRIGGER.test(t)) || artifacts.some((h) => SPORTS_ARTIFACT.test(h));
 
   if (input.paid) {
@@ -177,7 +201,7 @@ export function catalogGates(input: { message: string; history: ChatMessage[]; p
     // actually said 3D. (paid is hardwired false at the call site today;
     // TECH_DEBT #11.)
     const paidReason = threeReasonFrom(texts, artifacts) ?? "subject";
-    return { three: true, threeReason: paidReason, audio: true, save, ...(sportsGame ? { sports: true } : {}) };
+    return { three: true, threeReason: paidReason, audio: true, save, ...(procgen ? { procgen: true } : {}), ...(sportsGame ? { sports: true } : {}) };
   }
 
   const reason = threeReasonFrom(texts, artifacts);
@@ -186,8 +210,16 @@ export function catalogGates(input: { message: string; history: ChatMessage[]; p
     three: reason !== null,
     ...(reason ? { threeReason: reason } : {}),
     ...(reason !== null && sportsGame ? { sports: true } : {}),
-    audio: texts.some((t) => AUDIO_TRIGGER.test(t)) || artifacts.some((h) => AUDIO_ARTIFACT.test(h)),
+    // 2026-08-29 (docs/2026-08-29_PRD_Audio.md §4 Phase 1): audio rides EVERY
+    // game build turn, not just ones naming a sound. MEASURED before this:
+    // 10% of 237 real games had any audio, 7% had music — because a child who
+    // asks for "a racing game" or "a turbo boost" was never told the 28 sounds
+    // exist. A silent game is a worse default than ~250 unused tokens
+    // (~+$0.0002, +0.5% of a build). The keyword and artifact paths remain for
+    // the edit side, which is unchanged.
+    audio: true,
     save,
+    ...(procgen ? { procgen: true } : {}),
   };
 }
 

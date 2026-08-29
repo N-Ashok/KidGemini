@@ -886,13 +886,39 @@ export function audioHelper(): string {
     while (e > s && Math.abs(d[e]) < t) e--;
     return { start: s / buf.sampleRate, end: (e + 1) / buf.sampleRate };
   }
-  window.playSound = function (name) {
+  // playSound(name, opts?) — docs/2026-08-29_PRD_Audio.md §4 Phase 3.
+  //  * pitch: default is a RANDOM ±10% jitter, because one file replayed
+  //    identically 200 times is the classic ear-fatigue bug; an explicit
+  //    pitch wins, so a game can still do a rising-pitch combo.
+  //  * volume: rides a gain node (sfx default 1.0; music stays 0.5).
+  //  * minInterval: the same sound cannot retrigger within 50ms, so ten
+  //    collisions in one frame play once instead of stacking into clipping.
+  // Both fixes are HERE and not in the prompt because the prompt cannot reach
+  // them — and because the runtime is injected at delivery, every game that
+  // already exists gets them on its next render.
+  var lastPlayed = {};
+  window.playSound = function (name, opts) {
     try {
+      opts = opts || {};
+      var gap = opts.minInterval === undefined ? 50 : opts.minInterval;
+      var now = (window.performance && window.performance.now) ? window.performance.now() : +new Date();
+      if (gap > 0 && lastPlayed[name] !== undefined && now - lastPlayed[name] < gap) return;
+      lastPlayed[name] = now;
+      var rate = opts.pitch === undefined ? 0.9 + Math.random() * 0.2 : opts.pitch;
+      var vol = opts.volume === undefined ? 1 : opts.volume;
       load(name).then(function (buf) {
         if (!buf) return;
         var src = context().createBufferSource();
         src.buffer = buf;
-        src.connect(context().destination);
+        if (src.playbackRate) src.playbackRate.value = rate;
+        if (vol === 1) {
+          src.connect(context().destination);
+        } else {
+          var g = context().createGain();
+          g.gain.value = vol;
+          src.connect(g);
+          g.connect(context().destination);
+        }
         src.start();
       });
     } catch (e) { /* a silent effect, never a broken game */ }
