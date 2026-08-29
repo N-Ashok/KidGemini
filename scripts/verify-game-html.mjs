@@ -26,6 +26,7 @@
 //
 //   node scripts/verify-game-html.mjs game.html [more.html ...]
 //   node scripts/verify-game-html.mjs --json report.json game.html
+//   node scripts/verify-game-html.mjs --play game.html   # ALSO try to play it
 //   node scripts/verify-game-html.mjs --settle 6000 game.html   # slow models
 //
 // Exit code 0 = every file clean, 1 = at least one failed. Safe for CI.
@@ -34,7 +35,10 @@ import { readFileSync, readdirSync, writeFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { sampleDistance, judgePlayability, findFrozenStateRisks } from "./playability.mjs";
+
 const argv = process.argv.slice(2);
+const PLAY = argv.includes("--play");
 const jsonIdx = argv.indexOf("--json");
 const settleIdx = argv.indexOf("--settle");
 const SETTLE_MS = settleIdx >= 0 ? Number(argv[settleIdx + 1]) : 4500;
@@ -135,8 +139,55 @@ for (const file of files) {
     })
     .catch((e) => ({ probeError: String(e.message || e) }));
 
-  const usesModels = /loadModel\s*\(/.test(html);
   const failures = [];
+
+  // ── Frozen-state lint. Always on: deterministic, and it is the ONLY check
+  // that separated the broken fairy game from its one-character fix. The
+  // browser probes could not — idle sparkle animation changed more pixels than
+  // the sprite moving a whole tile (calibration in BUG-FIX-LOG 2026-08-29).
+  for (const risk of findFrozenStateRisks(html)) failures.push(`frozen state: ${risk}`);
+
+  // ── Playability probe (--play). ADVISORY, not a failure: a HUD that changes
+  // proves the controls work, but a HUD that does not change may only mean the
+  // canned key sequence never reached a coin. Reported, never fatal.
+  let play = null;
+  if (PLAY) {
+    try {
+      // The game lives in an IFRAME (srcdoc), so everything here must target
+      // that frame — reading the wrapper page finds no #score and sends key
+      // events nowhere. Clicking inside the frame first gives it focus.
+      const frame = page.frames().find((f) => f !== page.mainFrame());
+      if (!frame) throw new Error("no game frame");
+      for (const label of ["Start", "Play", "Begin", "Go"]) {
+        const btn = frame.locator(`button:has-text("${label}")`).first();
+        if ((await btn.count()) && (await btn.isVisible())) { await btn.click(); break; }
+      }
+      await page.waitForTimeout(700);
+      await page.locator("#g").click({ position: { x: 5, y: 5 } }).catch(() => {});
+      const read = () => frame.evaluate(() => ({
+        score: document.getElementById("score")?.textContent?.trim() ?? null,
+        text: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 200),
+      }));
+      const first = await read();
+      const states = new Set([JSON.stringify(first)]);
+      const keys = ["ArrowRight", "ArrowUp", "ArrowLeft", "ArrowDown", " ", "ArrowRight", "ArrowRight", "ArrowDown"];
+      for (let i = 0; i < 40; i++) {
+        await page.keyboard.press(keys[i % keys.length]);
+        await page.waitForTimeout(120);
+        states.add(JSON.stringify(await read()));
+      }
+      const last = await read();
+      play = {
+        scoreBefore: first.score, scoreAfter: last.score,
+        hudStates: states.size,
+        responded: states.size > 1,
+      };
+    } catch (e) {
+      play = { probeError: String(e.message || e) };
+    }
+  }
+
+  const usesModels = /loadModel\s*\(/.test(html);
   for (const e of errors) failures.push(`${e.kind}: ${e.text}`);
   for (const r of badResponses) failures.push(`asset ${r.status}: ${r.url}${r.why ? ` (${r.why})` : ""}`);
   if (probe.probeError) failures.push(`could not read the frame: ${probe.probeError}`);
@@ -148,7 +199,7 @@ for (const file of files) {
     if (probe.canvases === 0) failures.push("no <canvas> was created — the game never rendered");
   }
 
-  results.push({ file: basename(file), ok: failures.length === 0, failures, probe });
+  results.push({ file: basename(file), ok: failures.length === 0, failures, probe, ...(play ? { play } : {}) });
   await page.close();
 }
 
@@ -161,6 +212,13 @@ for (const r of results) {
     console.log(
       `    loadModel:${r.probe.loadModel} joins:${r.probe.modelJoins} helper:v${r.probe.helperVersion} ` +
         `assets:${r.probe.assets} sizes:${r.probe.sizes} edges:${r.probe.edges} canvas:${r.probe.canvases}`,
+    );
+  }
+  if (r.play && !r.play.probeError) {
+    console.log(
+      r.play.responded
+        ? `    play: controls respond (score ${r.play.scoreBefore} → ${r.play.scoreAfter}, ${r.play.hudStates} HUD states)`
+        : `    play: ⚠ nothing on screen changed across 40 inputs — LOOK AT THIS ONE (advisory: the canned keys may never have reached a pickup)`,
     );
   }
   for (const f of r.failures) console.log(`    - ${f}`);

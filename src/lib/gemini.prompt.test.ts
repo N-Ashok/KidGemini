@@ -296,3 +296,21 @@ describe("procedural generation (2026-08-29)", () => {
     expect(plain).not.toContain(PROCGEN_PROMPT_SECTION);
   });
 });
+
+// 2026-08-29 (BUG-FIX-LOG same day, the fairy puzzle): a game shipped that was
+// impossible to play. The player's logical position was committed ONLY inside
+// the renderer, behind `if (animProgress > 1)` — false when the accumulator
+// lands on exactly 1.0 — so the fairy froze after one step. Zero JS errors,
+// and three of Ari's own edit turns failed to find it. This rule is always-on
+// (NOT in the physics playbook, which only rides 3D turns — the broken game
+// was 2D and got no movement guidance at all).
+describe("state-commit rule (2026-08-29)", () => {
+  it("SC.1 the logical position is committed by the input/step code, never inside the drawing code", () => {
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/never\s+inside\s+the\s+drawing\s+code/i);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/real\s+position/i);
+  });
+  it("SC.2 forbids gating a state change on a strict float comparison, and names the failure", () => {
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/>=/);
+    expect(CHILD_SYSTEM_PROMPT).toMatch(/freezes?\s+after\s+one\s+step/i);
+  });
+});

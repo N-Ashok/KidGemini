@@ -294,6 +294,14 @@ const GAME_BUILD_CONTRACT = `respond with a single HTML document wrapped in a
     must be a small change, not a rebuild. Show the current level on screen.
     Better still, if the levels follow a pattern, write a small function that
     BUILDS level N from its number instead of typing each one out.
+- If a move is animated, change the player's REAL position in the same code
+  that handled the input — never inside the drawing code. Draw the sprite from
+  an in-between value if you like, but the real position stays the one the
+  game decides from. And never gate a change on a strict comparison with a
+  counter that adds fractions: a counter stepped by 0.2 lands on exactly 1,
+  \`1 > 1\` is false, the change never happens, and the player freezes after one
+  step while every later move is worked out from the old position. Write
+  \`>= 1\`.
 - Output the COMPLETE HTML document in one response, always ending with
   </html> — never stop partway or leave the game half-finished. For any game
   with a lot of repeated data (a list of names, quiz questions, characters,

@@ -11,6 +11,71 @@ Entries are **newest first**. Don't rewrite history — fix forward with a new e
 
 ---
 
+## 2026-08-29 — a game that ran perfectly and was impossible to play (the fairy puzzle)
+
+**Report (owner).** *"the last game i made was un playable, instructions were unclear and it
+is impossible to play."* The chat shows the child asked three times and Ari never fixed it:
+"not understanding the game play inside the game need guidance text", "not going on the blue
+drop it just is not moving beyond", "it is confined to 3 squares, it has to go beyond it".
+
+**Root cause — one character.** In the generated game's renderer:
+
+```js
+if (player.animProgress < 1) {
+  player.animProgress += 0.2;
+  if (player.animProgress > 1) {      // 0.2 0.4 0.6 0.8 1.0 — never > 1
+    player.animProgress = 1;
+    player.x = player.targetX;        // the move is NEVER committed
+```
+
+The accumulator lands on exactly `1.0`, so the commit branch never runs. `tryMove`'s own
+recovery guard is `if (animProgress < 1)` — also false at 1.0 — so nothing unsticks it. The
+fairy's logical position froze at the start square after one step, and every later keypress
+recomputed the same destination.
+
+**Measured, on the owner's actual artifact.** 60 key presses → **1 cell reached, 0/3
+dewdrops**. 18 slow presses plus the on-screen buttons → same. Changing `> 1` to `>= 1` →
+**7 cells, 1/3 dewdrops**. Two secondary defects confirmed: the board is 8x5 with a full wall
+border, leaving a **6x3 interior** ("confined to 3 squares"), and walls are drawn almost
+identically to floor, so a child cannot see where they may go.
+
+**Why nothing caught it.** The game throws ZERO JavaScript errors and
+`verify-game-html.mjs` reported "runs clean". Every mechanical check we own passed a game
+that cannot be played. Three of Ari's own edit turns failed on it because "it won't move"
+does not point at an animation-commit bug.
+
+**Fix — two instruments and a prompt rule (owner chose 3 then 2).**
+
+1. `scripts/playability.mjs` `findFrozenStateRisks()` — a **static lint**, always on, wired
+   into the verifier as a hard failure. Fires only when the SAME identifier is both advanced
+   by a fractional literal and compared with a strict `> 1`. Flags the broken game with the
+   exact diagnosis; passes the fixed game and both known-good control games.
+2. `--play` **advisory probe** in the verifier: starts the game, presses 40 varied keys
+   INSIDE THE IFRAME (the game runs in `srcdoc`; a page-level probe reads nothing and sends
+   keys nowhere), and reports whether the HUD/`#score` ever changes. Broken game: no change.
+   Fixed game: `score 0 → 50`. Advisory, never fatal — a HUD that changes proves the controls
+   work, but a HUD that does not change may only mean the canned keys never reached a pickup
+   (control game g0 behaves that way).
+3. `GAME_BUILD_CONTRACT` gains an always-on rule: commit the real position in the code that
+   handled the input, never inside the drawing code, and never gate a change on a strict
+   comparison with a fractional counter. **Always-on deliberately** — `PHYSICS_PROMPT_SECTION`
+   only rides 3D turns, and this game was 2D, so it received no movement guidance at all.
+
+**What did NOT work, and is worth remembering.** A whole-canvas pixel-diff probe was built
+first and **calibrated out**: the broken and fixed games were indistinguishable (idle
+0.021/0.015, after-input 0.030/0.032, forward-vs-back 0.027/0.033) because the fairy's hover
+and sparkle animation changes more pixels than the sprite moving a whole tile — and two
+working games read as entirely static. Generic black-box "did the screen change" is not a
+usable playability signal.
+
+**Tests.** `src/lib/playability.test.ts` PL.1–PL.11 (PL.4 encodes the fairy bug's exact
+signature; PL.8–PL.11 pin the lint, including that `>= 1` and integer counters are NOT
+flagged). `gemini.prompt.test.ts` SC.1–SC.2 pin the prompt rule. Full suite 2667 green.
+
+**Not fixed by this change.** The owner's stored game is still broken — regenerating or
+patching it is a separate action, not yet taken. The cramped 6x3 board and the
+wall-looks-like-floor readability problem are also untouched.
+
 ## 2026-08-27 — price audit: four catalog rates were wrong, and Claude turns were under-costed by construction
 
 **Ask (owner).** "Are the pricing calculations correct for the token and the model used? Verify

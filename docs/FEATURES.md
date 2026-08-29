@@ -1111,6 +1111,16 @@ server-to-server contract as `arcade-partner.ts`).
   correctly re-detecting an edit on an EXISTING 3D game from its prior
   artifact's markers, not just the turn's message text. See
   `docs/PRD-3D-GAMES-AND-ASSETS.md`'s 3D pricing amendment.
+- **Playability checks (2026-08-29, BUG-FIX-LOG same day)**: a generated game
+  can throw zero errors, draw a canvas and be impossible to play — one shipped.
+  `scripts/verify-game-html.mjs` now runs a **frozen-state lint** (always on,
+  hard failure): an identifier both advanced by a fractional step and gated by
+  a strict `> 1` never commits, which freezes the player after one move. And
+  `--play` starts the game, presses 40 keys inside the game's iframe and
+  reports whether the HUD/`#score` ever changes — **advisory only**, since a
+  static HUD may just mean the canned keys never reached a pickup. A
+  whole-canvas pixel-diff probe was tried first and rejected: idle animation
+  changes more pixels than a sprite moving a tile.
 - **Audio by default (2026-08-29, `docs/2026-08-29_PRD_Audio.md`)**: measured
   that **93% of 237 real games were silent** — 10% had any audio, 7% had
   background music — because audio unlocked only on the words
